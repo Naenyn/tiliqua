@@ -40,7 +40,14 @@ macro_rules! impl_persist {
             impl hal::persist::Persist for $PERSISTX {
                 fn set_persistence(&mut self, value: u8) {
                     let p = value as u32;
-                    if p <= 15 {
+                    if p == 0 {
+                        // 0 means "no phosphor" — use maximum decay.  The old
+                        // mapping (16 - p) produced 16, which truncates to 0 in
+                        // the 4-bit decay path and disables fading entirely.
+                        self.set_decay(15);
+                        self.set_holdoff(32);
+                        self.set_skip(0);
+                    } else if p <= 15 {
                         self.set_decay((16 - p) as u8);
                         self.set_holdoff(32);
                         self.set_skip(0);

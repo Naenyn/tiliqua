@@ -32,6 +32,10 @@ class LineCmd(data.Struct):
     pixel: Pixel
     # Whether this is completing or continuing an existing line strip.
     cmd:   LineStripCmd
+    # When set, draw the explicit segment (x0, y0) -> (x, y) without chaining.
+    use_seg: unsigned(1)
+    x0: signed(12)
+    y0: signed(11)
 
 
 class _LinePlotter(wiring.Component):
@@ -43,8 +47,12 @@ class _LinePlotter(wiring.Component):
     stream of (many more) ``PlotRequest``s, using Bresenham's algorithm.
     """
 
-    i: In(stream.Signature(LineCmd))
-    o: Out(stream.Signature(PlotRequest))
+    def __init__(self, *, offset=OffsetMode.ABSOLUTE):
+        self.offset = offset
+        super().__init__({
+            "i": In(stream.Signature(LineCmd)),
+            "o": Out(stream.Signature(PlotRequest)),
+        })
 
     def elaborate(self, platform) -> Module:
         m = Module()
@@ -75,7 +83,17 @@ class _LinePlotter(wiring.Component):
             with m.State('IDLE'):
                 m.d.comb += self.i.ready.eq(1)
                 with m.If(self.i.valid):
-                    with m.If(has_prev_point):
+                    with m.If(self.i.payload.use_seg):
+                        m.d.sync += [
+                            current_x.eq(self.i.payload.x0),
+                            current_y.eq(self.i.payload.y0),
+                            target_x.eq(self.i.payload.x),
+                            target_y.eq(self.i.payload.y),
+                            current_pixel.eq(self.i.payload.pixel),
+                            end_strip.eq(1),
+                        ]
+                        m.next = 'SETUP_BRESENHAM'
+                    with m.Elif(has_prev_point):
                         # Draw line from previous to new point
                         m.d.sync += [
                             current_x.eq(prev_x),
@@ -104,7 +122,7 @@ class _LinePlotter(wiring.Component):
                     self.o.payload.y.eq(prev_y),
                     self.o.payload.pixel.eq(current_pixel),
                     self.o.payload.blend.eq(BlendMode.REPLACE),
-                    self.o.payload.offset.eq(OffsetMode.ABSOLUTE),
+                    self.o.payload.offset.eq(self.offset),
                 ]
                 with m.If(self.o.ready):
                     with m.If(end_strip):
@@ -158,7 +176,7 @@ class _LinePlotter(wiring.Component):
                     self.o.payload.y.eq(current_y),
                     self.o.payload.pixel.eq(current_pixel),
                     self.o.payload.blend.eq(BlendMode.REPLACE),
-                    self.o.payload.offset.eq(OffsetMode.ABSOLUTE),
+                    self.o.payload.offset.eq(self.offset),
                 ]
 
                 with m.If(self.o.ready):

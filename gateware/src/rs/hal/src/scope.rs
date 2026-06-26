@@ -29,8 +29,24 @@ macro_rules! impl_scope {
                 self.registers.timebase().write(|w| unsafe { w.timebase().bits(raw) });
             }
 
-            pub fn set_yscale(&mut self, vs: tiliqua_lib::scope::VScale) {
-                self.registers.yscale().write(|w| unsafe { w.yscale().bits(vs.to_scale_bits()) });
+            pub fn set_yscale_ch(&mut self, ch: usize, vs: tiliqua_lib::scope::VScale) {
+                let bits = vs.to_scale_bits();
+                match ch {
+                    0 => self.registers.yscale0().write(|w| unsafe { w.yscale().bits(bits) }),
+                    1 => self.registers.yscale1().write(|w| unsafe { w.yscale().bits(bits) }),
+                    2 => self.registers.yscale2().write(|w| unsafe { w.yscale().bits(bits) }),
+                    3 => self.registers.yscale3().write(|w| unsafe { w.yscale().bits(bits) }),
+                    _ => return,
+                };
+            }
+
+            pub fn set_channel_mask(&mut self, visible: [bool; 4]) {
+                self.registers.channel_en().write(|w| {
+                    w.ch0().bit(visible[0]);
+                    w.ch1().bit(visible[1]);
+                    w.ch2().bit(visible[2]);
+                    w.ch3().bit(visible[3])
+                });
             }
 
             pub fn set_hue(&mut self, hue: u8) {
@@ -71,6 +87,13 @@ macro_rules! impl_scope {
                     w.enable().bit(enabled);
                     w.trigger_always().bit(trigger_always)
                 });
+            }
+
+            pub fn set_plot_region(&mut self, x_lo: i16, x_hi: i16, y_lo: i16, y_hi: i16) {
+                self.registers.plot_x_lo().write(|w| unsafe { w.value().bits(x_lo as u16) });
+                self.registers.plot_x_hi().write(|w| unsafe { w.value().bits(x_hi as u16) });
+                self.registers.plot_y_lo().write(|w| unsafe { w.value().bits(y_lo as u16) });
+                self.registers.plot_y_hi().write(|w| unsafe { w.value().bits(y_hi as u16) });
             }
         }
     )+ };

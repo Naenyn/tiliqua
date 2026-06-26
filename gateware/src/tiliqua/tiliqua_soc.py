@@ -64,7 +64,7 @@ class TiliquaSoc(Component):
     def __init__(self, *, firmware_bin_path, ui_name, ui_tag, platform_class, clock_settings,
                  touch=False, finalize_csr_bridge=True, poke_outputs=False, mainram_size=0x4000,
                  fw_location=None, fw_offset=None, cpu_variant="tiliqua_rv32im",
-                 extra_cpu_regions=[], fb_overlay=None):
+                 extra_cpu_regions=[], fb_overlay=None, enable_persist=True):
 
         super().__init__({})
 
@@ -76,6 +76,7 @@ class TiliquaSoc(Component):
         self.firmware_bin_path = firmware_bin_path
         self.touch = touch
         self.clock_settings = clock_settings
+        self.enable_persist = enable_persist
 
         self.platform_class = platform_class
 
@@ -373,12 +374,18 @@ class TiliquaSoc(Component):
                 self.fb.fbp.base.eq(self.framebuffer_periph.fbp.base),
             ]
             wiring.connect(m, wiring.flipped(self.fb.fbp), self.framebuffer_plotter.fbp)
-            wiring.connect(m, wiring.flipped(self.fb.fbp), self.persist_periph.fbp)
+            if self.enable_persist:
+                wiring.connect(m, wiring.flipped(self.fb.fbp), self.persist_periph.fbp)
+            else:
+                m.d.comb += self.persist_periph.fbp.enable.eq(0)
         else:
             # Modeline is dynamic and comes from framebuffer peripheral CSRs
             wiring.connect(m, self.framebuffer_periph.fbp, self.fb.fbp)
             wiring.connect(m, self.framebuffer_periph.fbp, self.framebuffer_plotter.fbp)
-            wiring.connect(m, self.framebuffer_periph.fbp, self.persist_periph.fbp)
+            if self.enable_persist:
+                wiring.connect(m, self.framebuffer_periph.fbp, self.persist_periph.fbp)
+            else:
+                m.d.comb += self.persist_periph.fbp.enable.eq(0)
 
         # audio interface
         m.submodules.pmod0 = self.pmod0

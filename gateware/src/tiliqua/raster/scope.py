@@ -77,7 +77,6 @@ class VectorPeripheral(wiring.Component):
 
         wiring.connect(m, wiring.flipped(self.i), self.stroke.i)
         wiring.connect(m, wiring.flipped(self.bus), self._bridge.bus)
-
         m.d.comb += self._pixels_per_volt.f.pixels_per_volt.r_data.eq(
             psq_from_volts(1).reshape(PSQ_BASE_FBITS))
 

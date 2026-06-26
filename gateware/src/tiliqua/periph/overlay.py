@@ -8,9 +8,41 @@ from amaranth import *
 from amaranth.lib import data, enum, wiring
 from amaranth.lib.cdc import FFSynchronizer
 from amaranth.lib.wiring import In, Out
+from amaranth.utils import ceil_log2
 from amaranth_soc import csr
 
-from ..video.types import Pixel, ScanPixel
+from ..video.types import Pixel, Rotation, ScanPixel
+from . import ui_overlay
+
+
+class OverlayPipeline(wiring.Component):
+    """Grid overlay followed by optional menu UI layer."""
+
+    def __init__(self, *, enable_ui: bool = False):
+        self.enable_ui = enable_ui
+        self.grid = GridOverlay()
+        if enable_ui:
+            self.ui = ui_overlay.UiMenuOverlay()
+        super().__init__({
+            "i": In(ScanPixel),
+            "o": Out(ScanPixel),
+        })
+
+    def elaborate(self, platform):
+        m = Module()
+
+        m.submodules.grid = self.grid
+        m.d.comb += self.grid.i.eq(self.i)
+        if self.enable_ui:
+            m.submodules.ui = self.ui
+            m.d.comb += [
+                self.ui.i.eq(self.grid.o),
+                self.o.eq(self.ui.o),
+            ]
+        else:
+            m.d.comb += self.o.eq(self.grid.o)
+
+        return m
 
 
 class GridOverlay(wiring.Component):
@@ -163,7 +195,7 @@ class GridOverlay(wiring.Component):
 
 
 class Peripheral(wiring.Component):
-    """SoC controls for the grid overlay."""
+    """SoC controls for the grid overlay and optional UI layers."""
 
     class Flags(csr.Register, access="w"):
         grid_style: csr.Field(csr.action.W, unsigned(2))
@@ -181,20 +213,51 @@ class Peripheral(wiring.Component):
         offset_x: csr.Field(csr.action.W, unsigned(12))
         offset_y: csr.Field(csr.action.W, unsigned(12))
 
-    def __init__(self):
-        self.overlay = GridOverlay()
+    class UiControl(csr.Register, access="w"):
+        menu_enable: csr.Field(csr.action.W, unsigned(1))
+        rotation: csr.Field(csr.action.W, Rotation)
 
-        regs = csr.Builder(addr_width=5, data_width=8)
+    class UiMenuPixel(csr.Register, access="w"):
+        pixel: csr.Field(csr.action.W, Pixel)
+
+    class UiMenuOrigin(csr.Register, access="w"):
+        origin_x: csr.Field(csr.action.W, signed(12))
+        origin_y: csr.Field(csr.action.W, signed(12))
+
+    class UiTimings(csr.Register, access="w"):
+        h_active: csr.Field(csr.action.W, unsigned(12))
+        v_active: csr.Field(csr.action.W, unsigned(12))
+
+    class UiMemAddr(csr.Register, access="w"):
+        addr: csr.Field(csr.action.W, unsigned(ceil_log2(ui_overlay.UI_MEM_WORDS)))
+
+    class UiMemData(csr.Register, access="w"):
+        data: csr.Field(csr.action.W, unsigned(32))
+
+    def __init__(self, *, enable_ui: bool = False):
+        self.enable_ui = enable_ui
+        self.overlay = OverlayPipeline(enable_ui=enable_ui)
+
+        regs = csr.Builder(addr_width=6 if enable_ui else 5, data_width=8)
         self._flags        = regs.add("flags",        self.Flags(),       offset=0x0)
         self._grid_spacing = regs.add("grid_spacing", self.GridSpacing(), offset=0x4)
         self._grid_start   = regs.add("grid_start",   self.GridStart(),   offset=0x8)
         self._grid_offset  = regs.add("grid_offset",  self.GridOffset(),  offset=0xC)
+        if enable_ui:
+            self._ui_control    = regs.add("ui_control",    self.UiControl(),    offset=0x10)
+            self._ui_menu_pixel  = regs.add("ui_menu_pixel",  self.UiMenuPixel(),  offset=0x14)
+            self._ui_menu_origin = regs.add("ui_menu_origin", self.UiMenuOrigin(), offset=0x18)
+            self._ui_timings    = regs.add("ui_timings",    self.UiTimings(),    offset=0x1C)
+            self._ui_mem_addr   = regs.add("ui_mem_addr",   self.UiMemAddr(),    offset=0x20)
+            self._ui_mem_data   = regs.add("ui_mem_data",   self.UiMemData(),    offset=0x24)
+            self.ui_mem = ui_overlay.UiMemory()
 
         self._bridge = csr.Bridge(regs.as_memory_map())
 
-        super().__init__({
+        ports = {
             "bus": In(csr.Signature(addr_width=regs.addr_width, data_width=regs.data_width)),
-        })
+        }
+        super().__init__(ports)
         self.bus.memory_map = self._bridge.bus.memory_map
 
     def elaborate(self, platform):
@@ -205,21 +268,78 @@ class Peripheral(wiring.Component):
         wiring.connect(m, wiring.flipped(self.bus), self._bridge.bus)
 
         with m.If(self._flags.f.grid_style.w_stb):
-            m.d.sync += self.overlay.style.eq(self._flags.f.grid_style.w_data)
+            m.d.sync += self.overlay.grid.style.eq(self._flags.f.grid_style.w_data)
 
         with m.If(self._flags.f.grid_pixel.w_stb):
-            m.d.sync += self.overlay.pixel.eq(self._flags.f.grid_pixel.w_data)
+            m.d.sync += self.overlay.grid.pixel.eq(self._flags.f.grid_pixel.w_data)
 
         with m.If(self._grid_spacing.element.w_stb):
-            m.d.sync += self.overlay.spacing_x.eq(self._grid_spacing.f.spacing_x.w_data)
-            m.d.sync += self.overlay.spacing_y.eq(self._grid_spacing.f.spacing_y.w_data)
+            m.d.sync += self.overlay.grid.spacing_x.eq(self._grid_spacing.f.spacing_x.w_data)
+            m.d.sync += self.overlay.grid.spacing_y.eq(self._grid_spacing.f.spacing_y.w_data)
 
         with m.If(self._grid_start.element.w_stb):
-            m.d.sync += self.overlay.start_x.eq(self._grid_start.f.start_x.w_data)
-            m.d.sync += self.overlay.start_y.eq(self._grid_start.f.start_y.w_data)
+            m.d.sync += self.overlay.grid.start_x.eq(self._grid_start.f.start_x.w_data)
+            m.d.sync += self.overlay.grid.start_y.eq(self._grid_start.f.start_y.w_data)
 
         with m.If(self._grid_offset.element.w_stb):
-            m.d.sync += self.overlay.offset_x.eq(self._grid_offset.f.offset_x.w_data)
-            m.d.sync += self.overlay.offset_y.eq(self._grid_offset.f.offset_y.w_data)
+            m.d.sync += self.overlay.grid.offset_x.eq(self._grid_offset.f.offset_x.w_data)
+            m.d.sync += self.overlay.grid.offset_y.eq(self._grid_offset.f.offset_y.w_data)
+
+        if self.enable_ui:
+            m.submodules.ui_mem = self.ui_mem
+            ui = self.overlay.ui
+
+            menu_enable_r = Signal(reset=0)
+            rotation_r = Signal(Rotation, reset=Rotation.NORMAL)
+            menu_pixel_r = Signal(Pixel)
+            menu_origin_x_r = Signal(signed(12), reset=0)
+            menu_origin_y_r = Signal(signed(12), reset=0)
+            h_active_r = Signal(12, reset=0)
+            v_active_r = Signal(12, reset=0)
+
+            m.d.comb += [
+                ui.menu_enable.eq(menu_enable_r),
+                ui.rotation.eq(rotation_r),
+                ui.menu_pixel.eq(menu_pixel_r),
+                ui.menu_origin_x.eq(menu_origin_x_r),
+                ui.menu_origin_y.eq(menu_origin_y_r),
+                ui.h_active.eq(h_active_r),
+                ui.v_active.eq(v_active_r),
+                ui.menu_rdata.eq(self.ui_mem.menu_rdata),
+                self.ui_mem.menu_raddr.eq(ui.menu_raddr),
+            ]
+
+            with m.If(self._ui_control.element.w_stb):
+                m.d.sync += [
+                    menu_enable_r.eq(self._ui_control.f.menu_enable.w_data),
+                    rotation_r.eq(self._ui_control.f.rotation.w_data),
+                ]
+
+            with m.If(self._ui_menu_pixel.element.w_stb):
+                m.d.sync += menu_pixel_r.eq(self._ui_menu_pixel.f.pixel.w_data)
+
+            with m.If(self._ui_menu_origin.element.w_stb):
+                m.d.sync += [
+                    menu_origin_x_r.eq(self._ui_menu_origin.f.origin_x.w_data),
+                    menu_origin_y_r.eq(self._ui_menu_origin.f.origin_y.w_data),
+                ]
+
+            with m.If(self._ui_timings.element.w_stb):
+                m.d.sync += [
+                    h_active_r.eq(self._ui_timings.f.h_active.w_data),
+                    v_active_r.eq(self._ui_timings.f.v_active.w_data),
+                ]
+
+            ui_mem_addr_r = Signal(ceil_log2(ui_overlay.UI_MEM_WORDS), reset=0)
+            with m.If(self._ui_mem_addr.element.w_stb):
+                m.d.sync += ui_mem_addr_r.eq(self._ui_mem_addr.f.addr.w_data)
+
+            m.d.comb += [
+                self.ui_mem.host_waddr.eq(ui_mem_addr_r),
+                self.ui_mem.host_wdata.eq(self._ui_mem_data.f.data.w_data),
+                self.ui_mem.host_wen.eq(self._ui_mem_data.element.w_stb),
+            ]
+            with m.If(self._ui_mem_data.element.w_stb):
+                m.d.sync += ui_mem_addr_r.eq(ui_mem_addr_r + 1)
 
         return m
