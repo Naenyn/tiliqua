@@ -4,6 +4,12 @@ use strum_macros::{EnumIter, IntoStaticStr};
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 #[strum(serialize_all = "kebab-case")]
 pub enum Timebase {
+    #[strum(serialize = "5s/d")]
+    Timebase5s,
+    #[strum(serialize = "2s/d")]
+    Timebase2s,
+    #[strum(serialize = "1s/d")]
+    Timebase1s,
     #[strum(serialize = "500ms/d")]
     Timebase500ms,
     #[strum(serialize = "200ms/d")]
@@ -37,6 +43,9 @@ impl Timebase {
     /// Return the time per division in microseconds.
     pub fn t_div_us(&self) -> u64 {
         match self {
+            Timebase::Timebase5s    => 5_000_000,
+            Timebase::Timebase2s    => 2_000_000,
+            Timebase::Timebase1s    => 1_000_000,
             Timebase::Timebase500ms => 500_000,
             Timebase::Timebase200ms => 200_000,
             Timebase::Timebase100ms => 100_000,
