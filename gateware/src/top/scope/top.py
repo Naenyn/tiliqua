@@ -173,6 +173,8 @@ class ScopeSoc(TiliquaSoc):
             wiring.connect(m, self.scope_periph.o[n], self.plotter.i[n])
         wiring.connect(m, self.scope_periph.clear_o, self.plotter.i[4])
 
+        m.d.comb += self.scope_periph.dbg_plotter.eq(self.plotter.dbg)
+
         wiring.connect(m, wiring.flipped(self.fb.fbp), self.plotter.fbp)
         wiring.connect(m, wiring.flipped(self.fb.fbp), self.scope_periph.fbp)
 

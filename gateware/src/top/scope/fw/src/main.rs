@@ -330,6 +330,7 @@ fn main() -> ! {
         let mut first = true;
         let mut menu_shown = false;
         let mut last_menu_page = Page::Scope1;
+        let mut debug_frame: u32 = 0;
 
         let dvi_w = modeline.h_active as u32;
         let dvi_h = modeline.v_active as u32;
@@ -492,6 +493,22 @@ fn main() -> ! {
                 true,
                 opts.scope2.trig_mode.value == TriggerMode::Always,
             );
+
+            debug_frame = debug_frame.wrapping_add(1);
+            if debug_frame % 600 == 0 {
+                let st = scope.debug_status();
+                let ct = scope.debug_counts();
+                let (ix, iy) = scope.debug_probe();
+                info!(
+                    "scope dbg st={:#010x} ct={:#010x} ncols={:#06x} td={:#010x} ix={} iy={}",
+                    st,
+                    ct,
+                    scope.debug_ncols(),
+                    scope.debug_timebase(),
+                    ix,
+                    iy,
+                );
+            }
 
             first = false;
         }

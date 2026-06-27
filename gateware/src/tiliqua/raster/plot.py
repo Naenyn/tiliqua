@@ -173,6 +173,8 @@ class _FramebufferBackend(wiring.Component):
             "bus": Out(bus_signature),
             # Dynamic attributes of framebuffer needed for plotting.
             "fbp": In(DMAFramebuffer.Properties()),
+            # Debug: backend FSM state (see elaborate for encoding).
+            "dbg_state": Out(unsigned(3)),
         })
 
     def elaborate(self, platform) -> Module:
@@ -262,6 +264,7 @@ class _FramebufferBackend(wiring.Component):
         with m.FSM() as fsm:
 
             with m.State('IDLE'):
+                m.d.comb += self.dbg_state.eq(0)
                 # Note: if a ResetInserter is holding us in reset, we drain
                 # all incoming points and don't draw them anywhere.
                 m.d.comb += self.i.ready.eq(1)
@@ -270,6 +273,7 @@ class _FramebufferBackend(wiring.Component):
                     m.next = 'TRANSFORM'
 
             with m.State('TRANSFORM'):
+                m.d.comb += self.dbg_state.eq(1)
                 m.d.sync += [
                     final_x_r.eq(final_x),
                     final_y_r.eq(final_y),
@@ -277,6 +281,7 @@ class _FramebufferBackend(wiring.Component):
                 m.next = 'CHECK-BOUNDS'
 
             with m.State('CHECK-BOUNDS'):
+                m.d.comb += self.dbg_state.eq(2)
                 m.d.sync += [
                     bus.adr.eq(pixel_addr),
                     bus.sel.eq(1 << pixel_index)
@@ -294,6 +299,7 @@ class _FramebufferBackend(wiring.Component):
                     m.next = 'IDLE'
 
             with m.State('BLEND-READ'):
+                m.d.comb += self.dbg_state.eq(3)
                 m.d.comb += [
                     bus.stb.eq(1),
                     bus.cyc.eq(1),
@@ -305,6 +311,7 @@ class _FramebufferBackend(wiring.Component):
                     m.next = 'BLEND-PROCESS'
 
             with m.State('BLEND-PROCESS'):
+                m.d.comb += self.dbg_state.eq(4)
                 new_intensity = Signal.like(pixel_read.intensity)
                 with m.If(pixel_read.intensity + current_req.pixel.intensity >= Pixel.intensity_max()):
                     m.d.comb += new_intensity.eq(Pixel.intensity_max())
@@ -317,6 +324,7 @@ class _FramebufferBackend(wiring.Component):
                 m.next = 'WRITE'
 
             with m.State('WRITE'):
+                m.d.comb += self.dbg_state.eq(5)
                 m.d.comb += [
                     bus.stb.eq(1),
                     bus.cyc.eq(1),
@@ -344,6 +352,8 @@ class FramebufferPlotter(wiring.Component):
             "bus": Out(bus_signature),
             # Dynamic attributes of framebuffer needed for plotting.
             "fbp": In(DMAFramebuffer.Properties()),
+            # Debug word: backend state + master/slave bus handshakes.
+            "dbg": Out(unsigned(16)),
         })
 
     def elaborate(self, platform) -> Module:
@@ -371,6 +381,21 @@ class FramebufferPlotter(wiring.Component):
         wiring.connect(m, backend.bus, cache.master)
         # Cache -> exposed for connecting to PSRAM DMA
         wiring.connect(m, cache.slave, wiring.flipped(self.bus))
+
+        # Debug: pack backend FSM state + bus handshakes so a stuck plot can be
+        # traced from firmware (see digital_scope debug probe).
+        m.d.comb += self.dbg.eq(Cat(
+            backend.dbg_state,   # bits 2:0  backend FSM state (0=IDLE..5=WRITE)
+            backend.bus.cyc,     # bit 3     master->cache cyc
+            backend.bus.stb,     # bit 4     master->cache stb
+            backend.bus.ack,     # bit 5     master->cache ack
+            backend.bus.we,      # bit 6     master->cache we
+            self.bus.cyc,        # bit 7     cache->psram cyc
+            self.bus.stb,        # bit 8     cache->psram stb
+            self.bus.ack,        # bit 9     cache->psram ack
+            arbiter.o.valid,     # bit 10    arbiter output valid
+            arbiter.o.ready,     # bit 11    arbiter output ready (backend accepts)
+        ))
 
         return m
 

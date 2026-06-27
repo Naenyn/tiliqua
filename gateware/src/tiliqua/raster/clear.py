@@ -24,6 +24,7 @@ class RegionClear(wiring.Component):
             "x_hi": In(signed(16)),
             "y_lo": In(signed(16)),
             "y_hi": In(signed(16)),
+            "busy": Out(1),
             "o": Out(stream.Signature(PlotRequest)),
         })
 
@@ -44,7 +45,10 @@ class RegionClear(wiring.Component):
 
         with m.FSM() as fsm:
             with m.State("IDLE"):
-                m.d.comb += self.o.valid.eq(0)
+                m.d.comb += [
+                    self.o.valid.eq(0),
+                    self.busy.eq(0),
+                ]
                 with m.If(self.start):
                     m.d.sync += [
                         x.eq(self.x_lo),
@@ -53,7 +57,10 @@ class RegionClear(wiring.Component):
                     m.next = "PLOT"
 
             with m.State("PLOT"):
-                m.d.comb += self.o.valid.eq(1)
+                m.d.comb += [
+                    self.o.valid.eq(1),
+                    self.busy.eq(1),
+                ]
                 with m.If(self.o.ready):
                     with m.If((x == (self.x_hi - 1)) & (y == (self.y_hi - 1))):
                         m.next = "IDLE"
@@ -64,5 +71,67 @@ class RegionClear(wiring.Component):
                         ]
                     with m.Else():
                         m.d.sync += x.eq(x + 1)
+
+        return m
+
+
+class ColumnClear(wiring.Component):
+
+    """
+    Clear a single plot column with black ``REPLACE`` pixels.
+
+    ``start`` is a one-cycle pulse; ``x`` selects the column and ``[y_lo, y_hi)``
+    selects the vertical span.  ``busy`` is high until every pixel in the column
+  has been written.
+    """
+
+    def __init__(self):
+        super().__init__({
+            "start": In(1),
+            "x": In(signed(16)),
+            "y_lo": In(signed(16)),
+            "y_hi": In(signed(16)),
+            "busy": Out(1),
+            "o": Out(stream.Signature(PlotRequest)),
+        })
+
+    def elaborate(self, platform):
+        m = Module()
+
+        col_x = Signal(signed(16))
+        y = Signal(signed(16))
+
+        m.d.comb += [
+            self.o.payload.x.eq(col_x),
+            self.o.payload.y.eq(y),
+            self.o.payload.offset.eq(OffsetMode.CENTER),
+            self.o.payload.blend.eq(BlendMode.REPLACE),
+            self.o.payload.pixel.intensity.eq(0),
+            self.o.payload.pixel.color.eq(0),
+        ]
+
+        with m.FSM() as fsm:
+            with m.State("IDLE"):
+                m.d.comb += [
+                    self.o.valid.eq(0),
+                    self.busy.eq(0),
+                ]
+                with m.If(self.start):
+                    m.d.sync += [
+                        col_x.eq(self.x),
+                        y.eq(self.y_lo),
+                    ]
+                    m.next = "PLOT"
+
+            with m.State("PLOT"):
+                m.d.comb += [
+                    self.o.valid.eq(1),
+                    self.busy.eq(1),
+                ]
+                with m.If(self.o.ready):
+                    with m.If(y == (self.y_hi - 1)):
+                        m.next = "IDLE"
+                    with m.Else():
+                        m.d.sync += y.eq(y + 1)
 
         return m
