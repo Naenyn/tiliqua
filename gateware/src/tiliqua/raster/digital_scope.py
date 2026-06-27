@@ -369,15 +369,17 @@ class DigitalScopePeripheral(wiring.Component):
         capture_done_cnt = Signal(8)
         render_done_cnt = Signal(8)
         col_write_cnt = Signal(8)
-        trigger_edge_cnt = Signal(8)
-        trig_prev = Signal()
+        # Dropped-flush counter (reuses the old trigger_edges debug byte): the
+        # capture finished a column but the FIFO was full, so the renderer could
+        # not keep up.  If the top byte of ``ct`` changes between log lines at a
+        # given timebase, render throughput is the bottleneck there; if it stays
+        # constant we are purely sweep-bound.
+        drop_cnt = Signal(8)
+        flush_drop = Signal()
+        m.d.comb += flush_drop.eq(capture.flush_valid & ~flush_fifo.i.ready)
 
-        trigger_pulse = Signal()
-        m.d.comb += trigger_pulse.eq(trig.o.valid & trig.o.payload & ~trig_prev)
-        m.d.sync += trig_prev.eq(trig.o.valid & trig.o.payload)
-
-        with m.If(trigger_pulse):
-            m.d.sync += trigger_edge_cnt.eq(trigger_edge_cnt + 1)
+        with m.If(flush_drop):
+            m.d.sync += drop_cnt.eq(drop_cnt + 1)
         with m.If(capture.sweep_done):
             m.d.sync += capture_done_cnt.eq(capture_done_cnt + 1)
         with m.If(capture.flush_valid):
@@ -434,7 +436,7 @@ class DigitalScopePeripheral(wiring.Component):
             self._debug_count.f.capture_done.r_data.eq(capture_done_cnt),
             self._debug_count.f.render_done.r_data.eq(render_done_cnt),
             self._debug_count.f.col_writes.r_data.eq(col_write_cnt),
-            self._debug_count.f.trigger_edges.r_data.eq(trigger_edge_cnt),
+            self._debug_count.f.trigger_edges.r_data.eq(drop_cnt),
             self._debug_probe.f.in_x.r_data.eq(
                 Mux(rendering, renderer.dbg_col, capture.dbg_in_x)
             ),
