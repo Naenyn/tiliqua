@@ -29,6 +29,14 @@ pub enum Timebase {
     Timebase2ms,
     #[strum(serialize = "1ms/d")]
     Timebase1ms,
+    #[strum(serialize = "500us/d")]
+    Timebase500us,
+    #[strum(serialize = "200us/d")]
+    Timebase200us,
+    #[strum(serialize = "100us/d")]
+    Timebase100us,
+    #[strum(serialize = "50us/d")]
+    Timebase50us,
 }
 
 impl Timebase {
@@ -47,6 +55,10 @@ impl Timebase {
             Timebase::Timebase5ms   => 5_000,
             Timebase::Timebase2ms   => 2_000,
             Timebase::Timebase1ms   => 1_000,
+            Timebase::Timebase500us => 500,
+            Timebase::Timebase200us => 200,
+            Timebase::Timebase100us => 100,
+            Timebase::Timebase50us  => 50,
         }
     }
 }

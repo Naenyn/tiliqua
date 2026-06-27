@@ -23,10 +23,14 @@ macro_rules! impl_scope {
                 (self.px_div_x, self.px_div_y)
             }
 
-            pub fn set_timebase(&mut self, tb: tiliqua_lib::scope::Timebase) {
+            pub fn set_timebase_us(&mut self, t_div_us: u64) {
                 let numer: u64 = (self.px_div_x as u64) * (1u64 << (15 + self.xscale as u32));
-                let raw = (numer * 1_000_000 / (self.fs_up as u64 * tb.t_div_us())) as u32;
+                let raw = (numer * 1_000_000 / (self.fs_up as u64 * t_div_us)) as u32;
                 self.registers.timebase().write(|w| unsafe { w.timebase().bits(raw) });
+            }
+
+            pub fn set_timebase(&mut self, tb: tiliqua_lib::scope::Timebase) {
+                self.set_timebase_us(tb.t_div_us());
             }
 
             pub fn set_yscale_ch(&mut self, ch: usize, vs: tiliqua_lib::scope::VScale) {

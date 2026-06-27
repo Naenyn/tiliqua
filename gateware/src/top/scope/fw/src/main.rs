@@ -440,7 +440,7 @@ fn main() -> ! {
             let (sppd_x, sppd) = scope.pixels_per_div();
             let xscale = xscale_for_full_width(h_active, sppd_x);
             scope.set_xscale(xscale);
-            scope.set_timebase(opts.scope2.timebase.value);
+            scope.set_timebase_us(opts.scope2.timebase.value.t_div_us());
             let (plot_x_lo, plot_x_hi, plot_y_lo, plot_y_hi) =
                 waveform_plot_bounds(h_active, v_active);
             scope.set_plot_region(plot_x_lo, plot_x_hi, plot_y_lo, plot_y_hi);

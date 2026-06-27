@@ -1,9 +1,60 @@
 use opts::*;
 use strum_macros::{EnumIter, IntoStaticStr};
 use tiliqua_lib::palette::ColorPalette;
-pub use tiliqua_lib::scope::{Timebase, VScale};
+pub use tiliqua_lib::scope::VScale;
 use tiliqua_hal::dma_framebuffer::Rotate;
 use serde_derive::{Serialize, Deserialize};
+
+/// SCOPE bitstream time/div menu.  Kept separate from ``tiliqua_lib::scope::Timebase``
+/// so SCOPE can trim or extend its range without affecting other bitstreams.
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
+#[strum(serialize_all = "kebab-case")]
+pub enum ScopeTimebase {
+    #[strum(serialize = "5s/d")]
+    Timebase5s,
+    #[strum(serialize = "2s/d")]
+    Timebase2s,
+    #[strum(serialize = "1s/d")]
+    Timebase1s,
+    #[strum(serialize = "500ms/d")]
+    Timebase500ms,
+    #[strum(serialize = "200ms/d")]
+    Timebase200ms,
+    #[default]
+    #[strum(serialize = "100ms/d")]
+    Timebase100ms,
+    #[strum(serialize = "50ms/d")]
+    Timebase50ms,
+    #[strum(serialize = "20ms/d")]
+    Timebase20ms,
+    #[strum(serialize = "10ms/d")]
+    Timebase10ms,
+    #[strum(serialize = "5ms/d")]
+    Timebase5ms,
+    #[strum(serialize = "2ms/d")]
+    Timebase2ms,
+    #[strum(serialize = "1ms/d")]
+    Timebase1ms,
+}
+
+impl ScopeTimebase {
+    pub fn t_div_us(&self) -> u64 {
+        match self {
+            ScopeTimebase::Timebase5s    => 5_000_000,
+            ScopeTimebase::Timebase2s    => 2_000_000,
+            ScopeTimebase::Timebase1s    => 1_000_000,
+            ScopeTimebase::Timebase500ms => 500_000,
+            ScopeTimebase::Timebase200ms => 200_000,
+            ScopeTimebase::Timebase100ms => 100_000,
+            ScopeTimebase::Timebase50ms  => 50_000,
+            ScopeTimebase::Timebase20ms  => 20_000,
+            ScopeTimebase::Timebase10ms  => 10_000,
+            ScopeTimebase::Timebase5ms   => 5_000,
+            ScopeTimebase::Timebase2ms   => 2_000,
+            ScopeTimebase::Timebase1ms   => 1_000,
+        }
+    }
+}
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 #[strum(serialize_all = "SCREAMING-KEBAB-CASE")]
@@ -128,7 +179,7 @@ pub struct ScopeOpts1 {
 #[derive(OptionPage, Clone)]
 pub struct ScopeOpts2 {
     #[option]
-    pub timebase: EnumOption<Timebase>,
+    pub timebase: EnumOption<ScopeTimebase>,
     #[option]
     pub trig_mode: EnumOption<TriggerMode>,
     #[option]
