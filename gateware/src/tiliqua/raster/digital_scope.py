@@ -311,7 +311,7 @@ class DigitalScopePeripheral(wiring.Component):
             "word": unsigned(128),
         })
         m.submodules.flush_fifo = flush_fifo = stream_util.SyncFIFOBuffered(
-            shape=flush_layout, depth=64)
+            shape=flush_layout, depth=256)
 
         # Capture runs continuously while enabled (after the power-on clear); it
         # rides the ramp and the internal ``armed`` gate restricts accumulation
@@ -350,6 +350,7 @@ class DigitalScopePeripheral(wiring.Component):
             m.d.comb += [
                 capture.scale_y[ch].eq(scale_y[ch]),
                 capture.y_offset[ch].eq(y_offset[ch]),
+                capture.visible[ch].eq(visible[ch]),
             ]
 
         m.d.comb += renderer.plot_x_lo.eq(plot_x_lo)
@@ -367,25 +368,35 @@ class DigitalScopePeripheral(wiring.Component):
         m.d.comb += fsm_state.eq(Cat(capturing, rendering))
 
         capture_done_cnt = Signal(8)
-        render_done_cnt = Signal(8)
-        col_write_cnt = Signal(8)
-        # Dropped-flush counter (reuses the old trigger_edges debug byte): the
-        # capture finished a column but the FIFO was full, so the renderer could
-        # not keep up.  If the top byte of ``ct`` changes between log lines at a
-        # given timebase, render throughput is the bottleneck there; if it stays
-        # constant we are purely sweep-bound.
-        drop_cnt = Signal(8)
+        # Per-sweep debug bytes (reset on each ``capture.sweep_done``):
+        #   trigger_edges (top byte of ``ct``): column flushes dropped this sweep
+        #   col_writes: column flushes emitted this sweep
+        #   render_done: column flushes accepted by the renderer this sweep
+        # Comparing drop vs flush counts shows render headroom; disabling channels
+        # should lower both flush and drop counts at render-bound timebases.
+        drop_sweep_cnt = Signal(8)
+        flush_sweep_cnt = Signal(8)
+        render_sweep_cnt = Signal(8)
         flush_drop = Signal()
-        m.d.comb += flush_drop.eq(capture.flush_valid & ~flush_fifo.i.ready)
+        flush_accept = Signal()
+        m.d.comb += [
+            flush_drop.eq(capture.flush_valid & ~flush_fifo.i.ready),
+            flush_accept.eq(flush_fifo.o.valid & renderer.col_ready),
+        ]
 
-        with m.If(flush_drop):
-            m.d.sync += drop_cnt.eq(drop_cnt + 1)
         with m.If(capture.sweep_done):
-            m.d.sync += capture_done_cnt.eq(capture_done_cnt + 1)
+            m.d.sync += [
+                capture_done_cnt.eq(capture_done_cnt + 1),
+                drop_sweep_cnt.eq(0),
+                flush_sweep_cnt.eq(0),
+                render_sweep_cnt.eq(0),
+            ]
+        with m.If(flush_drop):
+            m.d.sync += drop_sweep_cnt.eq(drop_sweep_cnt + 1)
         with m.If(capture.flush_valid):
-            m.d.sync += col_write_cnt.eq(col_write_cnt + 1)
-        with m.If(flush_fifo.o.valid & renderer.col_ready):
-            m.d.sync += render_done_cnt.eq(render_done_cnt + 1)
+            m.d.sync += flush_sweep_cnt.eq(flush_sweep_cnt + 1)
+        with m.If(flush_accept):
+            m.d.sync += render_sweep_cnt.eq(render_sweep_cnt + 1)
 
         # Render-path diagnostics: select the per-channel handshake signals for
         # whichever channel the renderer is currently drawing, and pack them into
@@ -434,9 +445,9 @@ class DigitalScopePeripheral(wiring.Component):
             self._debug_status.f.test_mode.r_data.eq(0),
             self._debug_status.f.soc_en.r_data.eq(self.soc_en),
             self._debug_count.f.capture_done.r_data.eq(capture_done_cnt),
-            self._debug_count.f.render_done.r_data.eq(render_done_cnt),
-            self._debug_count.f.col_writes.r_data.eq(col_write_cnt),
-            self._debug_count.f.trigger_edges.r_data.eq(drop_cnt),
+            self._debug_count.f.render_done.r_data.eq(render_sweep_cnt),
+            self._debug_count.f.col_writes.r_data.eq(flush_sweep_cnt),
+            self._debug_count.f.trigger_edges.r_data.eq(drop_sweep_cnt),
             self._debug_probe.f.in_x.r_data.eq(
                 Mux(rendering, renderer.dbg_col, capture.dbg_in_x)
             ),

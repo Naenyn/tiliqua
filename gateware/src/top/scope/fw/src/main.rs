@@ -500,7 +500,7 @@ fn main() -> ! {
                 let ct = scope.debug_counts();
                 let (ix, iy) = scope.debug_probe();
                 info!(
-                    "scope dbg st={:#010x} ct={:#010x} ncols={:#06x} td={:#010x} ix={} iy={}",
+                    "scope dbg st={:#010x} ct={:#010x} ncols={:#06x} td={:#010x} ix={} iy={} (ct: drop/flush/render/sweeps per last sweep)",
                     st,
                     ct,
                     scope.debug_ncols(),

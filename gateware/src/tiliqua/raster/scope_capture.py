@@ -40,10 +40,8 @@ class ColumnCapture(wiring.Component):
 
     ``ramp`` supplies the horizontal position; ``audio`` supplies one PSQ per
     channel.  Accumulation is gated (``armed``) to a single clean ramp sweep at
-    a time: armed on a ramp restart (top -> low) and disarmed once the ramp
-    reaches the top.  This guarantees every emitted sweep is complete and
-    trigger-aligned (in NORM the ramp only restarts on a trigger), and it stops
-    the held top-of-ramp samples in NORM mode from piling into the last column.
+    a time, and per-channel min/max updates are skipped for channels with
+    ``visible`` de-asserted (hidden channels stay at the envelope sentinel).
 
     Each finished column is emitted on ``flush_*`` as a 1-cycle pulse.  It is
     not back-pressured: if the downstream FIFO is full the column is simply
@@ -65,6 +63,7 @@ class ColumnCapture(wiring.Component):
             "sample_valid": In(1),
             "ramp": In(PSQ),
             "audio": In(PSQ).array(n_channels),
+            "visible": In(1).array(n_channels),
             "sweep_done": Out(1),
             # Finished-column stream (1-cycle pulse, not back-pressured).
             "flush_valid": Out(1),
@@ -213,10 +212,16 @@ class ColumnCapture(wiring.Component):
                     latched_col.eq(col_index),
                 ]
                 for ch in range(self.n_channels):
-                    m.d.sync += [
-                        col_ymin[ch].eq(in_y[ch]),
-                        col_ymax[ch].eq(in_y[ch]),
-                    ]
+                    with m.If(self.visible[ch]):
+                        m.d.sync += [
+                            col_ymin[ch].eq(in_y[ch]),
+                            col_ymax[ch].eq(in_y[ch]),
+                        ]
+                    with m.Else():
+                        m.d.sync += [
+                            col_ymin[ch].eq(0),
+                            col_ymax[ch].eq(-1),
+                        ]
             with m.Elif(col_index != latched_col):
                 m.d.comb += [
                     do_flush.eq(1),
@@ -224,16 +229,23 @@ class ColumnCapture(wiring.Component):
                 ]
                 m.d.sync += latched_col.eq(col_index)
                 for ch in range(self.n_channels):
-                    m.d.sync += [
-                        col_ymin[ch].eq(in_y[ch]),
-                        col_ymax[ch].eq(in_y[ch]),
-                    ]
+                    with m.If(self.visible[ch]):
+                        m.d.sync += [
+                            col_ymin[ch].eq(in_y[ch]),
+                            col_ymax[ch].eq(in_y[ch]),
+                        ]
+                    with m.Else():
+                        m.d.sync += [
+                            col_ymin[ch].eq(0),
+                            col_ymax[ch].eq(-1),
+                        ]
             with m.Else():
                 for ch in range(self.n_channels):
-                    with m.If(in_y[ch] < col_ymin[ch]):
-                        m.d.sync += col_ymin[ch].eq(in_y[ch])
-                    with m.If(in_y[ch] > col_ymax[ch]):
-                        m.d.sync += col_ymax[ch].eq(in_y[ch])
+                    with m.If(self.visible[ch]):
+                        with m.If(in_y[ch] < col_ymin[ch]):
+                            m.d.sync += col_ymin[ch].eq(in_y[ch])
+                        with m.If(in_y[ch] > col_ymax[ch]):
+                            m.d.sync += col_ymax[ch].eq(in_y[ch])
 
         with m.If(sweep_end & has_col):
             m.d.comb += [

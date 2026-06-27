@@ -20,9 +20,9 @@ class ColumnRenderer(wiring.Component):
     whole sweep.  For each column it keeps a "shown" copy of the envelope
     currently on screen (``shown_mem``).  When a column is (re)drawn it erases
     only the previously-drawn per-channel span (a short black segment) and draws
-    the new one, then updates the shown copy.  If the would-draw envelope is
-    identical to what is already shown (a stable trace) the column is skipped
-    entirely.
+    the new one, then updates the shown copy.  If every channel's target
+    envelope already matches what is shown the column is skipped entirely; if
+    only some channels changed, unchanged channels skip both erase and draw.
 
     Per-channel strokes go through that channel's line plotter port.  Erase and
     draw for a given channel are pushed (in that order) into the same port FIFO,
@@ -158,18 +158,26 @@ class ColumnRenderer(wiring.Component):
         # Updated shown word: keep channels we drew, sentinel for the rest, so
         # next frame only erases what is really on screen.
         sentinel_chunk = Const(ENVELOPE_SENTINEL, unsigned(128))[0:32]
+        ch_target = []
         shown_chunks = []
         for ch in range(self.n_channels):
             lo = 32 * ch
             drew = self.visible[ch] & (self.intensity[ch] > 0) & \
                 (new_ymax[ch] >= new_ymin[ch])
-            shown_chunks.append(
-                Mux(drew, new_word[lo:lo+32], sentinel_chunk)
-            )
+            target = Mux(drew, new_word[lo:lo+32], sentinel_chunk)
+            ch_target.append(target)
+            shown_chunks.append(target)
         m.d.comb += self.sw_data.eq(Cat(*shown_chunks))
 
-        # If what we'd draw is identical to what is already on screen (a stable
-        # trace), skip the column entirely - no erase, draw or shown-write.
+        ch_unchanged = Signal()
+        with m.Switch(draw_ch):
+            for ch in range(self.n_channels):
+                with m.Case(ch):
+                    m.d.comb += ch_unchanged.eq(
+                        shown_word[32 * ch:32 * ch + 32] == ch_target[ch]
+                    )
+
+        # Fast path: every channel already matches its target on screen.
         col_unchanged = Signal()
         m.d.comb += col_unchanged.eq(self.sw_data == shown_word)
 
@@ -212,6 +220,8 @@ class ColumnRenderer(wiring.Component):
                 with m.If(draw_ch == self.n_channels):
                     m.d.sync += [draw_ch.eq(0), erase_phase.eq(0)]
                     m.next = "DRAW"
+                with m.Elif(ch_unchanged):
+                    m.d.sync += draw_ch.eq(draw_ch + 1)
                 with m.Elif(erase_valid):
                     m.d.sync += pending.eq(1)
                     m.next = "ERASE_EMIT"
@@ -228,6 +238,8 @@ class ColumnRenderer(wiring.Component):
                 m.d.comb += [self.busy.eq(1), render_state.eq(5)]
                 with m.If(draw_ch == self.n_channels):
                     m.next = "WRITE_SHOWN"
+                with m.Elif(ch_unchanged):
+                    m.d.sync += draw_ch.eq(draw_ch + 1)
                 with m.Elif(draw_valid):
                     m.d.sync += pending.eq(1)
                     m.next = "DRAW_EMIT"
