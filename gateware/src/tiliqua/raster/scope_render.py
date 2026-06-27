@@ -172,6 +172,12 @@ class ColumnRenderer(wiring.Component):
             )
         m.d.comb += self.sw_data.eq(Cat(*shown_chunks))
 
+        # If what we'd draw this frame is identical to what's already on screen
+        # (a stable triggered trace), skip the column entirely - no erase, no
+        # draw, no shown-RAM write.  This makes a locked trace nearly free.
+        col_unchanged = Signal()
+        m.d.comb += col_unchanged.eq(self.sw_data == shown_word)
+
         m.d.comb += [
             self.dbg_state.eq(render_state),
             self.dbg_col.eq(render_col),
@@ -207,7 +213,19 @@ class ColumnRenderer(wiring.Component):
                     erase_phase.eq(1),
                     pending.eq(0),
                 ]
-                m.next = "ERASE"
+                m.next = "CHECK"
+
+            with m.State("CHECK"):
+                m.d.comb += [self.busy.eq(1), render_state.eq(2)]
+                with m.If(col_unchanged):
+                    # Already correct on screen: skip erase/draw/shown-write.
+                    with m.If(render_col + 1 >= self.ncols):
+                        m.next = "DONE"
+                    with m.Else():
+                        m.d.sync += render_col.eq(render_col + 1)
+                        m.next = "READ"
+                with m.Else():
+                    m.next = "ERASE"
 
             with m.State("ERASE"):
                 m.d.comb += [self.busy.eq(1), render_state.eq(3)]

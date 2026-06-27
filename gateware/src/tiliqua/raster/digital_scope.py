@@ -278,12 +278,22 @@ class DigitalScopePeripheral(wiring.Component):
         m.submodules.ramp = ramp = dsp.Ramp(shape=PSQ)
         timebase = Signal(shape=dsp.Ramp.TIMEBASE_SQ)
 
+        # Only let a (NORM) trigger reset the ramp when the scope is actually
+        # idle and ready for a new sweep.  Otherwise a trigger arriving mid
+        # capture/render would restart the free-running ramp and desync it from
+        # the capture FSM, so the next captured sweep starts mid-screen - the
+        # "first fifth goes black / phase jump" flicker.  Holding the ramp at the
+        # top until IDLE means the trigger that launches a capture is the same
+        # one that resets the ramp, giving a rock-solid, fully aligned sweep with
+        # no extra latency.  In free-run (trigger_always) the ramp is ungated.
+        scope_ready = Signal()
+
         dsp.connect_remap(m, irep2.o[0], trig.i, lambda o, i: [
             i.payload.sample.eq(o.payload),
             i.payload.threshold.eq(trigger_lvl),
         ])
         dsp.connect_remap(m, trig.o, ramp.i, lambda o, i: [
-            i.payload.trigger.eq(o.payload | trigger_always),
+            i.payload.trigger.eq((o.payload & scope_ready) | trigger_always),
             i.payload.td.eq(timebase),
         ])
 
@@ -448,6 +458,12 @@ class DigitalScopePeripheral(wiring.Component):
                     with m.Else():
                         m.d.sync += trigger_seen.eq(0)
                         m.next = "IDLE"
+
+        # The ramp may only be reset by a NORM trigger while we are idle and the
+        # power-on clear has finished (see scope_ready definition above).
+        m.d.comb += scope_ready.eq(
+            fsm.ongoing("IDLE") & self.soc_en & ~region_clear.busy
+        )
 
         # Render-path diagnostics: select the per-channel handshake signals for
         # whichever channel the renderer is currently drawing, and pack them into
