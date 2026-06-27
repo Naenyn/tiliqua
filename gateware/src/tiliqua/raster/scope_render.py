@@ -13,34 +13,35 @@ from .scope_capture import MAX_CAPTURE_COLS, ENVELOPE_SENTINEL
 class ColumnRenderer(wiring.Component):
 
     """
-    Left-to-right column display pass (DATA-style), with incremental erase.
+    Progressive (live) per-column renderer, with incremental erase.
 
-    For each column the renderer keeps a "shown" copy of the envelope currently
-    on screen.  When it revisits a column it erases only the previously-drawn
-    per-channel span (a short black segment) and draws the new one, then updates
-    the shown copy.  This avoids clearing the full plot height every column,
-    which is pathologically slow on a row-major framebuffer.
+    Columns arrive one at a time on the ``col_*`` input as the capture sweep
+    advances; the renderer draws each immediately rather than waiting for a
+    whole sweep.  For each column it keeps a "shown" copy of the envelope
+    currently on screen (``shown_mem``).  When a column is (re)drawn it erases
+    only the previously-drawn per-channel span (a short black segment) and draws
+    the new one, then updates the shown copy.  If the would-draw envelope is
+    identical to what is already shown (a stable trace) the column is skipped
+    entirely.
 
     Per-channel strokes go through that channel's line plotter port.  Erase and
     draw for a given channel are pushed (in that order) into the same port FIFO,
-    so the FIFO guarantees the erase is processed before the draw without any
-    explicit drain/wait.
+    so the FIFO guarantees the erase is processed before the draw.
     """
 
     def __init__(self, *, n_channels=4):
         assert n_channels == 4
         self.n_channels = n_channels
         super().__init__({
-            "start": In(1),
-            "ncols": In(range(MAX_CAPTURE_COLS + 1)),
             "plot_x_lo": In(signed(16)),
             "hue": In(unsigned(4)).array(n_channels),
             "intensity": In(unsigned(4)).array(n_channels),
             "visible": In(1).array(n_channels),
-            # New-envelope RAM (read).
-            "r_en": Out(1),
-            "r_addr": Out(range(MAX_CAPTURE_COLS)),
-            "r_data": In(unsigned(128)),
+            # Incoming finished-column stream from the capture (via a FIFO).
+            "col_valid": In(1),
+            "col_ready": Out(1),
+            "col": In(range(MAX_CAPTURE_COLS)),
+            "word": In(unsigned(128)),
             # Shown-envelope RAM (read + write).
             "s_en": Out(1),
             "s_addr": Out(range(MAX_CAPTURE_COLS)),
@@ -50,7 +51,6 @@ class ColumnRenderer(wiring.Component):
             "sw_data": Out(unsigned(128)),
             "line_o": Out(stream.Signature(LineCmd)).array(n_channels),
             "busy": Out(1),
-            "done": Out(1),
             "dbg_state": Out(unsigned(3)),
             "dbg_col": Out(range(MAX_CAPTURE_COLS)),
             "dbg_draw_ch": Out(unsigned(2)),
@@ -76,9 +76,6 @@ class ColumnRenderer(wiring.Component):
                 shown_ymin[ch].eq(shown_word[lo:lo+16].as_signed()),
                 shown_ymax[ch].eq(shown_word[lo+16:lo+32].as_signed()),
             ]
-
-        screen_x = Signal(signed(16))
-        m.d.comb += screen_x.eq(self.plot_x_lo + render_col)
 
         draw_ch = Signal(range(self.n_channels + 1))
         latched_x = Signal(signed(12))
@@ -121,8 +118,7 @@ class ColumnRenderer(wiring.Component):
 
         # The draw clamps a flat envelope (ymax==ymin) up to a 1px-tall segment.
         # The erase MUST use the identical clamp on the previously-shown span,
-        # otherwise the top pixel of every flat column is left behind and (as a
-        # slow signal drifts) accumulates into a filled band / ghost.
+        # otherwise the top pixel of every flat column is left behind.
         new_hi_clamped = Signal(signed(16))
         shown_hi_clamped = Signal(signed(16))
         m.d.comb += [
@@ -172,9 +168,8 @@ class ColumnRenderer(wiring.Component):
             )
         m.d.comb += self.sw_data.eq(Cat(*shown_chunks))
 
-        # If what we'd draw this frame is identical to what's already on screen
-        # (a stable triggered trace), skip the column entirely - no erase, no
-        # draw, no shown-RAM write.  This makes a locked trace nearly free.
+        # If what we'd draw is identical to what is already on screen (a stable
+        # trace), skip the column entirely - no erase, draw or shown-write.
         col_unchanged = Signal()
         m.d.comb += col_unchanged.eq(self.sw_data == shown_word)
 
@@ -186,44 +181,29 @@ class ColumnRenderer(wiring.Component):
         ]
 
         with m.FSM(name="render"):
-            with m.State("IDLE"):
-                m.d.comb += render_state.eq(0)
-                with m.If(self.start):
-                    m.d.sync += render_col.eq(0)
-                    m.next = "READ"
-
-            with m.State("READ"):
-                m.d.comb += [
-                    self.busy.eq(1),
-                    self.r_en.eq(1),
-                    self.r_addr.eq(render_col),
-                    self.s_en.eq(1),
-                    self.s_addr.eq(render_col),
-                    render_state.eq(1),
-                ]
-                m.next = "READ_WAIT"
+            with m.State("WAIT"):
+                m.d.comb += [self.col_ready.eq(1), render_state.eq(0)]
+                with m.If(self.col_valid):
+                    m.d.comb += [self.s_en.eq(1), self.s_addr.eq(self.col)]
+                    m.d.sync += [
+                        render_col.eq(self.col),
+                        new_word.eq(self.word),
+                        latched_x.eq(self.plot_x_lo + self.col),
+                        draw_ch.eq(0),
+                        erase_phase.eq(1),
+                        pending.eq(0),
+                    ]
+                    m.next = "READ_WAIT"
 
             with m.State("READ_WAIT"):
-                m.d.comb += [self.busy.eq(1), render_state.eq(2)]
-                m.d.sync += [
-                    new_word.eq(self.r_data),
-                    shown_word.eq(self.s_data),
-                    draw_ch.eq(0),
-                    latched_x.eq(screen_x),
-                    erase_phase.eq(1),
-                    pending.eq(0),
-                ]
+                m.d.comb += [self.busy.eq(1), render_state.eq(1)]
+                m.d.sync += shown_word.eq(self.s_data)
                 m.next = "CHECK"
 
             with m.State("CHECK"):
                 m.d.comb += [self.busy.eq(1), render_state.eq(2)]
                 with m.If(col_unchanged):
-                    # Already correct on screen: skip erase/draw/shown-write.
-                    with m.If(render_col + 1 >= self.ncols):
-                        m.next = "DONE"
-                    with m.Else():
-                        m.d.sync += render_col.eq(render_col + 1)
-                        m.next = "READ"
+                    m.next = "WAIT"
                 with m.Else():
                     m.next = "ERASE"
 
@@ -265,17 +245,8 @@ class ColumnRenderer(wiring.Component):
                     self.busy.eq(1),
                     self.sw_en.eq(1),
                     self.sw_addr.eq(render_col),
-                    render_state.eq(2),
+                    render_state.eq(7),
                 ]
-                with m.If(render_col + 1 >= self.ncols):
-                    m.next = "DONE"
-                with m.Else():
-                    m.d.sync += render_col.eq(render_col + 1)
-                    m.next = "READ"
-
-            with m.State("DONE"):
-                m.d.comb += [self.done.eq(1), render_state.eq(0)]
-                with m.If(~self.start):
-                    m.next = "IDLE"
+                m.next = "WAIT"
 
         return m

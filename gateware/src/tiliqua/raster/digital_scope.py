@@ -200,17 +200,6 @@ class DigitalScopePeripheral(wiring.Component):
             psq_from_volts(1).reshape(PSQ_BASE_FBITS))
         m.d.comb += self._fs.f.fs.r_data.eq(self.fs)
 
-        envelope_mem = memory.Memory(
-            data=memory.MemoryData(
-                shape=unsigned(128),
-                depth=MAX_CAPTURE_COLS,
-                init=[0] * MAX_CAPTURE_COLS,
-            )
-        )
-        m.submodules.envelope_mem = envelope_mem
-        envelope_wr = envelope_mem.write_port()
-        envelope_rd = envelope_mem.read_port()
-
         # "Shown" envelope: what each column currently has on screen, so the
         # renderer can erase only the previously-drawn span.  Init to the
         # sentinel so the very first pass erases nothing.
@@ -278,22 +267,12 @@ class DigitalScopePeripheral(wiring.Component):
         m.submodules.ramp = ramp = dsp.Ramp(shape=PSQ)
         timebase = Signal(shape=dsp.Ramp.TIMEBASE_SQ)
 
-        # Only let a (NORM) trigger reset the ramp when the scope is actually
-        # idle and ready for a new sweep.  Otherwise a trigger arriving mid
-        # capture/render would restart the free-running ramp and desync it from
-        # the capture FSM, so the next captured sweep starts mid-screen - the
-        # "first fifth goes black / phase jump" flicker.  Holding the ramp at the
-        # top until IDLE means the trigger that launches a capture is the same
-        # one that resets the ramp, giving a rock-solid, fully aligned sweep with
-        # no extra latency.  In free-run (trigger_always) the ramp is ungated.
-        scope_ready = Signal()
-
         dsp.connect_remap(m, irep2.o[0], trig.i, lambda o, i: [
             i.payload.sample.eq(o.payload),
             i.payload.threshold.eq(trigger_lvl),
         ])
         dsp.connect_remap(m, trig.o, ramp.i, lambda o, i: [
-            i.payload.trigger.eq((o.payload & scope_ready) | trigger_always),
+            i.payload.trigger.eq(o.payload | trigger_always),
             i.payload.td.eq(timebase),
         ])
 
@@ -322,7 +301,27 @@ class DigitalScopePeripheral(wiring.Component):
         m.submodules.capture = capture = ColumnCapture()
         m.submodules.renderer = renderer = ColumnRenderer()
 
+        # Progressive rendering: each column finished by the capture is pushed
+        # into this FIFO and drawn immediately by the renderer, so the trace
+        # paints live left-to-right as the ramp sweeps instead of waiting for a
+        # whole acquire-then-render cycle.  Flushes are dropped if the FIFO is
+        # full, which only happens at very fast timebases.
+        flush_layout = data.StructLayout({
+            "col": range(MAX_CAPTURE_COLS),
+            "word": unsigned(128),
+        })
+        m.submodules.flush_fifo = flush_fifo = stream_util.SyncFIFOBuffered(
+            shape=flush_layout, depth=64)
+
+        # Capture runs continuously while enabled (after the power-on clear); it
+        # rides the ramp and the internal ``armed`` gate restricts accumulation
+        # to clean, complete, trigger-aligned sweeps.
+        capturing = Signal()
+        m.d.comb += capturing.eq(self.soc_en & ~region_clear.busy)
+
         m.d.comb += [
+            capture.active.eq(capturing),
+            capture.clear.eq(enable_clear),
             capture.plot_x_lo.eq(plot_x_lo),
             capture.plot_x_hi.eq(plot_x_hi),
             capture.scale_x.eq(scale_x),
@@ -333,12 +332,13 @@ class DigitalScopePeripheral(wiring.Component):
             capture.audio[1].eq(ch_merges[1].o.payload[1]),
             capture.audio[2].eq(ch_merges[2].o.payload[1]),
             capture.audio[3].eq(ch_merges[3].o.payload[1]),
-            envelope_wr.en.eq(capture.w_en),
-            envelope_wr.addr.eq(capture.w_addr),
-            envelope_wr.data.eq(capture.w_data),
-            envelope_rd.en.eq(renderer.r_en),
-            envelope_rd.addr.eq(renderer.r_addr),
-            renderer.r_data.eq(envelope_rd.data),
+            flush_fifo.i.valid.eq(capture.flush_valid),
+            flush_fifo.i.payload.col.eq(capture.flush_col),
+            flush_fifo.i.payload.word.eq(capture.flush_word),
+            renderer.col_valid.eq(flush_fifo.o.valid),
+            renderer.col.eq(flush_fifo.o.payload.col),
+            renderer.word.eq(flush_fifo.o.payload.word),
+            flush_fifo.o.ready.eq(renderer.col_ready),
             shown_rd.en.eq(renderer.s_en),
             shown_rd.addr.eq(renderer.s_addr),
             renderer.s_data.eq(shown_rd.data),
@@ -352,14 +352,7 @@ class DigitalScopePeripheral(wiring.Component):
                 capture.y_offset[ch].eq(y_offset[ch]),
             ]
 
-        render_ncols = Signal(range(MAX_CAPTURE_COLS + 1), init=1)
-        with m.If(capture.sweep_done):
-            m.d.sync += render_ncols.eq(capture.max_col + 1)
-
-        m.d.comb += [
-            renderer.ncols.eq(ncols),
-            renderer.plot_x_lo.eq(plot_x_lo),
-        ]
+        m.d.comb += renderer.plot_x_lo.eq(plot_x_lo)
         for ch in range(self.n_channels):
             m.d.comb += [
                 renderer.hue[ch].eq(hue[ch]),
@@ -368,102 +361,29 @@ class DigitalScopePeripheral(wiring.Component):
             ]
             wiring.connect(m, renderer.line_o[ch], line_fifos[ch].i)
 
-        trigger_seen = Signal()
-        trigger_edge = Signal()
-        m.d.comb += trigger_edge.eq(
-            trig.o.valid &
-            trig.o.payload &
-            ~trigger_seen &
-            ~trigger_always
-        )
-
-        capturing = Signal()
         rendering = Signal()
+        m.d.comb += rendering.eq(renderer.busy)
         fsm_state = Signal(2)
+        m.d.comb += fsm_state.eq(Cat(capturing, rendering))
 
         capture_done_cnt = Signal(8)
         render_done_cnt = Signal(8)
         col_write_cnt = Signal(8)
         trigger_edge_cnt = Signal(8)
-        renderer_done_prev = Signal()
+        trig_prev = Signal()
 
-        with m.If(trigger_edge):
+        trigger_pulse = Signal()
+        m.d.comb += trigger_pulse.eq(trig.o.valid & trig.o.payload & ~trig_prev)
+        m.d.sync += trig_prev.eq(trig.o.valid & trig.o.payload)
+
+        with m.If(trigger_pulse):
             m.d.sync += trigger_edge_cnt.eq(trigger_edge_cnt + 1)
         with m.If(capture.sweep_done):
             m.d.sync += capture_done_cnt.eq(capture_done_cnt + 1)
-        with m.If(capture.w_en):
+        with m.If(capture.flush_valid):
             m.d.sync += col_write_cnt.eq(col_write_cnt + 1)
-        with m.If(renderer.done & ~renderer_done_prev):
+        with m.If(flush_fifo.o.valid & renderer.col_ready):
             m.d.sync += render_done_cnt.eq(render_done_cnt + 1)
-        m.d.sync += renderer_done_prev.eq(renderer.done)
-
-        m.d.comb += [
-            capture.active.eq(capturing),
-            capture.clear.eq(enable_clear),
-            renderer.start.eq(rendering),
-        ]
-
-        with m.FSM(name="scope") as fsm:
-            with m.State("IDLE"):
-                m.d.comb += fsm_state.eq(0)
-                m.d.sync += rendering.eq(0)
-                with m.If(~self.soc_en):
-                    m.d.sync += [
-                        capturing.eq(0),
-                        trigger_seen.eq(0),
-                    ]
-                with m.Elif(region_clear.busy):
-                    # Hold off until the initial full-screen clear completes.
-                    m.d.sync += capturing.eq(0)
-                with m.Elif(trigger_always):
-                    m.d.sync += capturing.eq(1)
-                    m.next = "CAPTURE"
-                with m.Elif(trigger_edge):
-                    m.d.sync += [
-                        capturing.eq(1),
-                        trigger_seen.eq(1),
-                    ]
-                    m.next = "CAPTURE"
-                with m.Else():
-                    m.d.sync += capturing.eq(0)
-
-            with m.State("CAPTURE"):
-                m.d.comb += fsm_state.eq(1)
-                with m.If(~self.soc_en):
-                    m.d.sync += [
-                        capturing.eq(0),
-                        trigger_seen.eq(0),
-                    ]
-                    m.next = "IDLE"
-                with m.Elif(capture.sweep_done):
-                    m.d.sync += [
-                        capturing.eq(0),
-                        rendering.eq(1),
-                    ]
-                    m.next = "RENDER"
-
-            with m.State("RENDER"):
-                m.d.comb += fsm_state.eq(2)
-                with m.If(~self.soc_en):
-                    m.d.sync += [
-                        rendering.eq(0),
-                        trigger_seen.eq(0),
-                    ]
-                    m.next = "IDLE"
-                with m.Elif(renderer.done):
-                    m.d.sync += rendering.eq(0)
-                    with m.If(trigger_always):
-                        m.d.sync += capturing.eq(1)
-                        m.next = "CAPTURE"
-                    with m.Else():
-                        m.d.sync += trigger_seen.eq(0)
-                        m.next = "IDLE"
-
-        # The ramp may only be reset by a NORM trigger while we are idle and the
-        # power-on clear has finished (see scope_ready definition above).
-        m.d.comb += scope_ready.eq(
-            fsm.ongoing("IDLE") & self.soc_en & ~region_clear.busy
-        )
 
         # Render-path diagnostics: select the per-channel handshake signals for
         # whichever channel the renderer is currently drawing, and pack them into
@@ -508,7 +428,7 @@ class DigitalScopePeripheral(wiring.Component):
             self._debug_status.f.has_col.r_data.eq(capture.dbg_has_col),
             self._debug_status.f.sweep_end.r_data.eq(capture.dbg_sweep_end),
             self._debug_status.f.renderer_busy.r_data.eq(renderer.busy),
-            self._debug_status.f.renderer_done.r_data.eq(renderer.done),
+            self._debug_status.f.renderer_done.r_data.eq(~renderer.busy),
             self._debug_status.f.test_mode.r_data.eq(0),
             self._debug_status.f.soc_en.r_data.eq(self.soc_en),
             self._debug_count.f.capture_done.r_data.eq(capture_done_cnt),

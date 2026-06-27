@@ -35,11 +35,19 @@ ENVELOPE_SENTINEL = 0xFFFF0000_FFFF0000_FFFF0000_FFFF0000
 class ColumnCapture(wiring.Component):
 
     """
-    Accumulate per-column min/max envelopes while ``active``.
+    Accumulate per-column min/max envelopes while ``active`` and stream each
+    finished column out as soon as it completes (progressive / live rendering).
 
     ``ramp`` supplies the horizontal position; ``audio`` supplies one PSQ per
-    channel.  Column envelopes are stored in dual-port block RAM for the render
-    pass.
+    channel.  Accumulation is gated (``armed``) to a single clean ramp sweep at
+    a time: armed on a ramp restart (top -> low) and disarmed once the ramp
+    reaches the top.  This guarantees every emitted sweep is complete and
+    trigger-aligned (in NORM the ramp only restarts on a trigger), and it stops
+    the held top-of-ramp samples in NORM mode from piling into the last column.
+
+    Each finished column is emitted on ``flush_*`` as a 1-cycle pulse.  It is
+    not back-pressured: if the downstream FIFO is full the column is simply
+    dropped, which only ever happens at very fast timebases.
     """
 
     def __init__(self, *, n_channels=4):
@@ -58,9 +66,10 @@ class ColumnCapture(wiring.Component):
             "ramp": In(PSQ),
             "audio": In(PSQ).array(n_channels),
             "sweep_done": Out(1),
-            "w_en": Out(1),
-            "w_addr": Out(range(MAX_CAPTURE_COLS)),
-            "w_data": Out(unsigned(128)),
+            # Finished-column stream (1-cycle pulse, not back-pressured).
+            "flush_valid": Out(1),
+            "flush_col": Out(range(MAX_CAPTURE_COLS)),
+            "flush_word": Out(unsigned(128)),
             "dbg_in_x": Out(signed(16)),
             "dbg_in_y0": Out(signed(16)),
             "dbg_in_plot": Out(1),
@@ -95,11 +104,14 @@ class ColumnCapture(wiring.Component):
         col_ymin = Array(Signal(signed(16)) for _ in range(self.n_channels))
         col_ymax = Array(Signal(signed(16)) for _ in range(self.n_channels))
 
-        # Envelope RAM clear: on capture start, blank every column to the "no
-        # data" sentinel so unvisited columns from a previous sweep don't render
-        # stale envelopes.  Takes MAX_CAPTURE_COLS cycles (block RAM, fast).
-        clearing = Signal()
-        clear_addr = Signal(range(MAX_CAPTURE_COLS))
+        at_end = Signal()
+        prev_at_end = Signal()
+        m.d.comb += at_end.eq(self.ramp > RAMP_END)
+
+        # ``armed`` restricts accumulation to a clean, in-progress sweep.  It is
+        # set on a ramp restart and cleared at the top, so partial sweeps and the
+        # NORM hold-at-top never pollute the captured columns.
+        armed = Signal()
 
         col_index = Signal(range(MAX_CAPTURE_COLS))
         in_plot = Signal()
@@ -108,7 +120,7 @@ class ColumnCapture(wiring.Component):
             in_plot.eq(
                 self.sample_valid &
                 self.active &
-                ~clearing &
+                armed &
                 (in_x >= self.plot_x_lo) &
                 (in_x < self.plot_x_hi) &
                 (col_index < MAX_CAPTURE_COLS)
@@ -125,10 +137,6 @@ class ColumnCapture(wiring.Component):
         sweeping = Signal()
         m.d.sync += active_prev.eq(self.active)
         m.d.comb += active_rise.eq(self.active & ~active_prev)
-
-        at_end = Signal()
-        prev_at_end = Signal()
-        m.d.comb += at_end.eq(self.ramp > RAMP_END)
 
         pen_lift = Signal()
         m.d.comb += pen_lift.eq(
@@ -153,6 +161,16 @@ class ColumnCapture(wiring.Component):
         m.d.comb += sweep_end.eq(pen_lift | end_reached)
         m.d.comb += self.sweep_done.eq(sweep_end)
 
+        # Ramp restart (top -> low): start of a fresh sweep.  Does not depend on
+        # has_col, so it works before any accumulation has begun.
+        sweep_restart = Signal()
+        m.d.comb += sweep_restart.eq(
+            self.active &
+            self.sample_valid &
+            prev_at_end &
+            ~at_end
+        )
+
         with m.If(self.clear | active_rise):
             m.d.sync += [
                 has_col.eq(0),
@@ -160,19 +178,13 @@ class ColumnCapture(wiring.Component):
                 prev_at_end.eq(0),
                 sweeping.eq(0),
                 max_col.eq(0),
-                clearing.eq(1),
-                clear_addr.eq(0),
+                armed.eq(0),
             ]
             for ch in range(self.n_channels):
                 m.d.sync += [
                     col_ymin[ch].eq(0),
                     col_ymax[ch].eq(-1),
                 ]
-        with m.Elif(clearing):
-            m.d.sync += clear_addr.eq(clear_addr + 1)
-            with m.If(clear_addr == (MAX_CAPTURE_COLS - 1)):
-                m.d.sync += clearing.eq(0)
-
         with m.Elif(self.active & self.sample_valid):
             m.d.sync += [
                 prev_x.eq(in_x),
@@ -181,11 +193,17 @@ class ColumnCapture(wiring.Component):
             with m.If(~at_end):
                 m.d.sync += sweeping.eq(1)
 
+        # Disarm at sweep end, (re)arm on restart.  sweep_restart is applied
+        # last so a wrap that is simultaneously an end and a restart keeps us
+        # armed for the new sweep.
         with m.If(sweep_end):
             m.d.sync += [
                 has_col.eq(0),
                 has_prev_x.eq(0),
+                armed.eq(0),
             ]
+        with m.If(sweep_restart):
+            m.d.sync += armed.eq(1)
 
         with m.If(in_plot):
             with m.If(~has_col):
@@ -223,23 +241,13 @@ class ColumnCapture(wiring.Component):
                 flush_col.eq(latched_col),
             ]
 
-        m.d.sync += self.w_en.eq(0)
-        with m.If(clearing):
-            m.d.sync += [
-                self.w_en.eq(1),
-                self.w_addr.eq(clear_addr),
-                self.w_data.eq(ENVELOPE_SENTINEL),
-            ]
-        with m.Elif(do_flush):
-            m.d.sync += [
-                self.w_en.eq(1),
-                self.w_addr.eq(flush_col),
-                self.w_data.eq(flush_word),
-            ]
-            with m.If(flush_col > max_col):
-                m.d.sync += max_col.eq(flush_col)
+        with m.If(do_flush & (flush_col > max_col)):
+            m.d.sync += max_col.eq(flush_col)
 
         m.d.comb += [
+            self.flush_valid.eq(do_flush),
+            self.flush_col.eq(flush_col),
+            self.flush_word.eq(flush_word),
             self.dbg_in_x.eq(in_x),
             self.dbg_in_y0.eq(in_y[0]),
             self.dbg_in_plot.eq(in_plot),
