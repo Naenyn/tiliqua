@@ -56,11 +56,12 @@ const CHAN34_ROWS: &[MenuRow] = &[
 const SCOPE_ROWS: &[MenuRow] = &[
     MenuRow::Opt(0, "Timebase"),
     MenuRow::Opt(1, "Trigger"),
-    MenuRow::Opt(2, "Trig Lvl"),
-    MenuRow::Opt(3, "Grid"),
-    MenuRow::Opt(4, "Grid Int"),
-    MenuRow::Opt(5, "Intensity"),
-    MenuRow::Opt(6, "Hue"),
+    MenuRow::Opt(2, "Trigger CH"),
+    MenuRow::Opt(3, "Trig Lvl"),
+    MenuRow::Opt(4, "Grid"),
+    MenuRow::Opt(5, "Grid Int"),
+    MenuRow::Opt(6, "Intensity"),
+    MenuRow::Opt(7, "Hue"),
 ];
 
 const MENU_ROWS: &[MenuRow] = &[

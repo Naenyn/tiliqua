@@ -46,6 +46,8 @@ class DigitalScopePeripheral(wiring.Component):
     class Flags(csr.Register, access="w"):
         enable: csr.Field(csr.action.W, unsigned(1))
         trigger_always: csr.Field(csr.action.W, unsigned(1))
+        trigger_falling: csr.Field(csr.action.W, unsigned(1))
+        trigger_ch: csr.Field(csr.action.W, unsigned(2))
 
     class Hue(csr.Register, access="w"):
         hue: csr.Field(csr.action.W, unsigned(8))
@@ -179,6 +181,8 @@ class DigitalScopePeripheral(wiring.Component):
 
         trigger_lvl = Signal(shape=PSQ)
         trigger_always = Signal()
+        trigger_falling = Signal()
+        trigger_ch = Signal(2)
 
         scale_x = Signal(unsigned(4))
         scale_y = Array(Signal(unsigned(3)) for _ in range(self.n_channels))
@@ -274,7 +278,8 @@ class DigitalScopePeripheral(wiring.Component):
 
         m.submodules.irep2 = irep2 = dsp.Split(2, replicate=True, source=self.isplit4.o[0], shape=PSQ)
 
-        m.submodules.trig = trig = dsp.Trigger(shape=PSQ)
+        m.submodules.trig = trig = dsp.Trigger(shape=PSQ, tap=True)
+        m.d.comb += trig.falling.eq(trigger_falling)
         m.submodules.ramp = ramp = dsp.Ramp(shape=PSQ)
         timebase = Signal(shape=dsp.Ramp.TIMEBASE_SQ)
 
@@ -309,10 +314,14 @@ class DigitalScopePeripheral(wiring.Component):
         with m.Elif(trig_seen & ~trigger_always & ~ramp_at_top & ~pending_trig):
             m.d.sync += pending_trig.eq(1)
 
-        dsp.connect_remap(m, irep2.o[0], trig.i, lambda o, i: [
-            i.payload.sample.eq(o.payload),
-            i.payload.threshold.eq(trigger_lvl),
-        ])
+        m.d.comb += [
+            trig.i.valid.eq(self.isplit4.o[0].valid),
+            trig.i.payload.threshold.eq(trigger_lvl),
+        ]
+        with m.Switch(trigger_ch):
+            for ch in range(self.n_channels):
+                with m.Case(ch):
+                    m.d.comb += trig.i.payload.sample.eq(self.isplit4.o[ch].payload)
         dsp.connect_remap(m, trig.o, ramp.i, lambda o, i: [
             i.payload.trigger.eq(ramp_fire),
             i.payload.td.eq(timebase),
@@ -530,6 +539,10 @@ class DigitalScopePeripheral(wiring.Component):
 
         with m.If(self._flags.f.trigger_always.w_stb):
             m.d.sync += trigger_always.eq(self._flags.f.trigger_always.w_data)
+        with m.If(self._flags.f.trigger_falling.w_stb):
+            m.d.sync += trigger_falling.eq(self._flags.f.trigger_falling.w_data)
+        with m.If(self._flags.f.trigger_ch.w_stb):
+            m.d.sync += trigger_ch.eq(self._flags.f.trigger_ch.w_data)
 
         with m.If(self._hue.f.hue.w_stb):
             for ch in range(self.n_channels):

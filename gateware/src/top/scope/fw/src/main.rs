@@ -23,7 +23,7 @@ use tiliqua_lib::color::HI8;
 
 use options::*;
 use menu_draw::draw_scope_menu;
-use scope_debug::{draw_scope_debug_hud, log_scope_debug};
+use scope_debug::{log_scope_debug, redraw_scope_debug_hud};
 use opts::persistence::*;
 use opts::{Options, OptionTrait};
 use opts::cc_map::{MidiCcMapper, CcMapMode};
@@ -106,8 +106,11 @@ impl UiLayerPort for OverlayUiPort<'_> {
     }
 }
 
+/// Left margin from the active display edge to the debug HUD bitmap.
+const DEBUG_HUD_MARGIN: u32 = 8;
 /// Right margin from the active display edge to the menu bitmap.
 const MENU_MARGIN_X: u32 = 16;
+
 const MENU_DRAW_Y: u32 = 18;
 
 fn ui_menu_origin(h_active: u32, v_active: u32) -> (u32, u32) {
@@ -160,23 +163,32 @@ fn sync_ui_overlay_csrs(
     v_active: u32,
     rotation: Rotate,
     menu_shown: bool,
+    debug_hud: bool,
     hue: u8,
 ) {
-    let (menu_x, menu_y) = ui_menu_origin(h_active, v_active);
+    let (origin_x, origin_y, transparent) = if menu_shown {
+        let (x, y) = ui_menu_origin(h_active, v_active);
+        (x, y, false)
+    } else if debug_hud {
+        (DEBUG_HUD_MARGIN, DEBUG_HUD_MARGIN, true)
+    } else {
+        (0, 0, false)
+    };
     let menu_px = ((10u8) << 4) | hue;
     overlay.ui_timings().write(|w| unsafe {
         w.h_active().bits(h_active as u16);
         w.v_active().bits(v_active as u16)
     });
     overlay.ui_menu_origin().write(|w| unsafe {
-        w.origin_x().bits(menu_x as u16);
-        w.origin_y().bits(menu_y as u16)
+        w.origin_x().bits(origin_x as u16);
+        w.origin_y().bits(origin_y as u16)
     });
     overlay.ui_menu_pixel().write(|w| unsafe {
         w.pixel().bits(menu_px)
     });
     overlay.ui_control().write(|w| unsafe {
-        w.menu_enable().bit(menu_shown);
+        w.menu_enable().bit(menu_shown || debug_hud);
+        w.menu_transparent().bit(transparent);
         w.rotation().bits(rotation as u8)
     });
 }
@@ -323,6 +335,7 @@ fn main() -> ! {
         let mut menu_shown = false;
         let mut last_menu_page = Page::Chan12;
         let mut debug_frame: u32 = 0;
+        let mut overlay_active = false;
 
         let dvi_w = modeline.h_active as u32;
         let dvi_h = modeline.v_active as u32;
@@ -335,6 +348,7 @@ fn main() -> ! {
             dvi_w,
             dvi_h,
             modeline.rotate.clone(),
+            false,
             false,
             boot_ui_hue,
         );
@@ -353,6 +367,7 @@ fn main() -> ! {
             });
 
             let on_help_page = opts.tracker.page.value == Page::Help;
+            let debug_hud = opts.misc.debug.value == DebugHud::On && !on_help_page;
 
             if opts.menu.palette.value != last_palette || first {
                 opts.menu.palette.value.write_to_hardware(&mut display);
@@ -388,10 +403,25 @@ fn main() -> ! {
                     last_menu_page = opts.tracker.page.value;
                 }
                 menu_shown = true;
-            } else if menu_shown {
-                clear_ui_menu(&mut ui_menu, &ui_port);
-                menu_shown = false;
+            } else {
+                if menu_shown {
+                    clear_ui_menu(&mut ui_menu, &ui_port);
+                    menu_shown = false;
+                } else if debug_hud {
+                    redraw_scope_debug_hud(
+                        &mut ui_menu,
+                        &ui_port,
+                        &scope,
+                        opts.menu.ui_hue.value,
+                    );
+                }
             }
+
+            let want_overlay = menu_shown || debug_hud;
+            if !want_overlay && overlay_active {
+                clear_ui_menu(&mut ui_menu, &ui_port);
+            }
+            overlay_active = want_overlay;
 
             if on_help_page {
                 draw::draw_help_page(
@@ -412,6 +442,7 @@ fn main() -> ! {
                 v_active,
                 opts.misc.rotation.value.clone(),
                 menu_shown,
+                debug_hud && !menu_shown,
                 opts.menu.ui_hue.value,
             );
 
@@ -501,21 +532,15 @@ fn main() -> ! {
 
             display.rotate(&opts.misc.rotation.value);
 
-            scope.set_enabled(
+            let trigger = opts.scope.trigger.value;
+            scope.set_trigger(
                 true,
-                opts.scope.trigger.value == TriggerMode::Always,
+                trigger == TriggerMode::Free,
+                trigger == TriggerMode::Falling,
+                opts.scope.trigger_ch.value.hw_index(),
             );
 
-            if opts.misc.debug.value == DebugHud::On {
-                let hx = (h_active / 2) as i32;
-                let hy = (v_active / 2) as i32;
-                draw_scope_debug_hud(
-                    &mut display,
-                    &scope,
-                    opts.menu.ui_hue.value,
-                    Point::new(-hx + 4, -hy + 4),
-                );
-
+            if debug_hud {
                 debug_frame = debug_frame.wrapping_add(1);
                 if debug_frame % 120 == 0 {
                     log_scope_debug(&scope);

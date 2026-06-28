@@ -8,6 +8,8 @@ use tiliqua_hal::embedded_graphics::prelude::{DrawTarget, Drawable, Point};
 use tiliqua_hal::embedded_graphics::text::Text;
 use heapless::String;
 use log::info;
+use tiliqua_pac::constants::OVERLAY_UI_MENU_WORDS;
+use tiliqua_lib::ui_layer::{UiLayer, UiLayerPort};
 
 use tiliqua_fw::Scope0;
 use tiliqua_lib::color::HI8;
@@ -148,4 +150,15 @@ where
         style,
     )
     .draw(display);
+}
+
+pub fn redraw_scope_debug_hud<P: UiLayerPort>(
+    layer: &mut UiLayer<OVERLAY_UI_MENU_WORDS>,
+    port: &P,
+    scope: &Scope0,
+    hue: u8,
+) {
+    layer.clear();
+    draw_scope_debug_hud(layer, scope, hue, Point::new(4, 14));
+    layer.flush(port);
 }

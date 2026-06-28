@@ -97,10 +97,19 @@ macro_rules! impl_scope {
                 self.registers.xpos().write(|w| unsafe { w.xpos().bits(pos as u16) });
             }
 
-            pub fn set_enabled(&mut self, enabled: bool, trigger_always: bool) {
+            pub fn set_trigger(
+                &mut self,
+                enabled: bool,
+                trigger_free: bool,
+                falling: bool,
+                ch: u8,
+            ) {
                 self.registers.flags().write(|w| {
                     w.enable().bit(enabled);
-                    w.trigger_always().bit(trigger_always)
+                    w.trigger_always().bit(trigger_free);
+                    w.trigger_falling().bit(falling);
+                    unsafe { w.trigger_ch().bits(ch.min(3)) };
+                    w
                 });
             }
 

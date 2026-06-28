@@ -109,9 +109,35 @@ pub enum Page {
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 #[strum(serialize_all = "kebab-case")]
 pub enum TriggerMode {
-    Always,
     #[default]
     Rising,
+    Falling,
+    #[strum(serialize = "free")]
+    Free,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
+pub enum TriggerChannel {
+    #[default]
+    #[strum(serialize = "1")]
+    Ch1,
+    #[strum(serialize = "2")]
+    Ch2,
+    #[strum(serialize = "3")]
+    Ch3,
+    #[strum(serialize = "4")]
+    Ch4,
+}
+
+impl TriggerChannel {
+    pub fn hw_index(self) -> u8 {
+        match self {
+            TriggerChannel::Ch1 => 0,
+            TriggerChannel::Ch2 => 1,
+            TriggerChannel::Ch3 => 2,
+            TriggerChannel::Ch4 => 3,
+        }
+    }
 }
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
@@ -241,6 +267,8 @@ pub struct ScopeOpts {
     pub timebase: EnumOption<ScopeTimebase>,
     #[option]
     pub trigger: EnumOption<TriggerMode>,
+    #[option]
+    pub trigger_ch: EnumOption<TriggerChannel>,
     #[option]
     pub trig_lvl: IntOption<TriggerLvlParams>,
     #[option]

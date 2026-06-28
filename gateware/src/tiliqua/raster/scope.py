@@ -211,6 +211,7 @@ class ScopePeripheral(wiring.Component):
 
         # Send one copy to trigger => ramp => X
         m.submodules.trig = trig = dsp.Trigger(shape=PSQ)
+        m.d.comb += trig.falling.eq(0)
         m.submodules.ramp = ramp = dsp.Ramp(shape=PSQ)
         timebase = Signal(shape=dsp.Ramp.TIMEBASE_SQ)
         # Audio => Trigger

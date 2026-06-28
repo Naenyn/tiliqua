@@ -215,6 +215,7 @@ class Peripheral(wiring.Component):
 
     class UiControl(csr.Register, access="w"):
         menu_enable: csr.Field(csr.action.W, unsigned(1))
+        menu_transparent: csr.Field(csr.action.W, unsigned(1))
         rotation: csr.Field(csr.action.W, Rotation)
 
     class UiMenuPixel(csr.Register, access="w"):
@@ -290,6 +291,7 @@ class Peripheral(wiring.Component):
             ui = self.overlay.ui
 
             menu_enable_r = Signal(reset=0)
+            menu_transparent_r = Signal(reset=0)
             rotation_r = Signal(Rotation, reset=Rotation.NORMAL)
             menu_pixel_r = Signal(Pixel)
             menu_origin_x_r = Signal(signed(12), reset=0)
@@ -299,6 +301,7 @@ class Peripheral(wiring.Component):
 
             m.d.comb += [
                 ui.menu_enable.eq(menu_enable_r),
+                ui.menu_transparent.eq(menu_transparent_r),
                 ui.rotation.eq(rotation_r),
                 ui.menu_pixel.eq(menu_pixel_r),
                 ui.menu_origin_x.eq(menu_origin_x_r),
@@ -312,6 +315,7 @@ class Peripheral(wiring.Component):
             with m.If(self._ui_control.element.w_stb):
                 m.d.sync += [
                     menu_enable_r.eq(self._ui_control.f.menu_enable.w_data),
+                    menu_transparent_r.eq(self._ui_control.f.menu_transparent.w_data),
                     rotation_r.eq(self._ui_control.f.rotation.w_data),
                 ]
 

@@ -40,6 +40,7 @@ class UiMenuOverlay(wiring.Component):
             "i": In(ScanPixel),
             "o": Out(ScanPixel),
             "menu_enable": In(1),
+            "menu_transparent": In(1),
             "menu_pixel": In(Pixel),
             "menu_origin_x": In(signed(12)),
             "menu_origin_y": In(signed(12)),
@@ -74,6 +75,7 @@ class UiMenuOverlay(wiring.Component):
         m = Module()
 
         menu_en_dvi = Signal()
+        menu_transparent_dvi = Signal()
         menu_px_dvi = Signal(Pixel)
         menu_ox_dvi = Signal(signed(12))
         menu_oy_dvi = Signal(signed(12))
@@ -83,6 +85,8 @@ class UiMenuOverlay(wiring.Component):
 
         m.submodules.menu_en_ff = FFSynchronizer(
             i=self.menu_enable, o=menu_en_dvi, o_domain="dvi")
+        m.submodules.menu_transparent_ff = FFSynchronizer(
+            i=self.menu_transparent, o=menu_transparent_dvi, o_domain="dvi")
         m.submodules.menu_ox_ff = FFSynchronizer(
             i=self.menu_origin_x, o=menu_ox_dvi, o_domain="dvi")
         m.submodules.menu_oy_ff = FFSynchronizer(
@@ -112,6 +116,7 @@ class UiMenuOverlay(wiring.Component):
         menu_bit_idx = Signal(5)
         menu_hit_r = Signal()
         menu_en_r = Signal()
+        menu_transparent_r = Signal()
         black_px = Signal(Pixel)
         overlay_pixel = Signal(Pixel)
 
@@ -142,22 +147,28 @@ class UiMenuOverlay(wiring.Component):
                 menu_bit_idx.eq(menu_bit_addr[0:5]),
                 menu_hit_r.eq(menu_hit),
                 menu_en_r.eq(1),
+                menu_transparent_r.eq(menu_transparent_dvi),
             ]
         with m.Else():
             m.d.dvi += [
                 menu_bit_idx.eq(0),
                 menu_hit_r.eq(0),
                 menu_en_r.eq(0),
+                menu_transparent_r.eq(0),
             ]
 
         m.d.comb += menu_bit.eq(self.menu_rdata.bit_select(menu_bit_idx, 1))
 
         with m.If(self.o.de & menu_en_r & menu_hit_r):
-            with m.If(menu_bit != 0):
-                m.d.comb += overlay_pixel.eq(menu_px_dvi)
+            with m.If(menu_transparent_r):
+                with m.If(menu_bit != 0):
+                    m.d.dvi += self.o.pixel.eq(menu_px_dvi)
             with m.Else():
-                m.d.comb += overlay_pixel.eq(black_px)
-            m.d.dvi += self.o.pixel.eq(overlay_pixel)
+                with m.If(menu_bit != 0):
+                    m.d.comb += overlay_pixel.eq(menu_px_dvi)
+                with m.Else():
+                    m.d.comb += overlay_pixel.eq(black_px)
+                m.d.dvi += self.o.pixel.eq(overlay_pixel)
 
         return m
 

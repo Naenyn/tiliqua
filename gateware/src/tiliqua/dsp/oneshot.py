@@ -16,16 +16,19 @@ class Trigger(wiring.Component):
     """
     When trigger condition is met, output is set to 1, for 1 stream cycle.
 
-    Rising edge only.  Re-arms once the sample falls back below threshold.
+    Rising or falling edge (``falling`` input).  Re-arms once the sample
+    returns to the idle side of the threshold.
     """
 
-    def __init__(self, shape=ASQ):
+    def __init__(self, shape=ASQ, *, tap=False):
         self.shape = shape
+        self.tap = tap
         super().__init__({
             "i": In(stream.Signature(data.StructLayout({
                 "sample":    shape,
                 "threshold": shape,
             }))),
+            "falling": In(unsigned(1)),
             "o": Out(stream.Signature(unsigned(1))),
         })
 
@@ -34,23 +37,37 @@ class Trigger(wiring.Component):
 
         l_sample = Signal(shape=self.shape)
         armed = Signal(reset=1)
+        crossed_rise = Signal()
+        crossed_fall = Signal()
         crossed = Signal()
 
         m.d.comb += [
             self.o.valid.eq(self.i.valid),
-            self.i.ready.eq(self.o.ready),
-            crossed.eq(
+            crossed_rise.eq(
                 (l_sample              < self.i.payload.threshold) &
                 (self.i.payload.sample >= self.i.payload.threshold)
             ),
+            crossed_fall.eq(
+                (l_sample              >= self.i.payload.threshold) &
+                (self.i.payload.sample <  self.i.payload.threshold)
+            ),
+            crossed.eq(Mux(self.falling, crossed_fall, crossed_rise)),
             self.o.payload.eq(crossed & armed),
         ]
+        if self.tap:
+            m.d.comb += self.i.ready.eq(1)
+        else:
+            m.d.comb += self.i.ready.eq(self.o.ready)
 
         with m.If(self.i.valid & self.o.ready):
             m.d.sync += l_sample.eq(self.i.payload.sample)
-            with m.If(self.i.payload.sample < self.i.payload.threshold):
-                m.d.sync += armed.eq(1)
-            with m.Elif(crossed):
+            with m.If(self.falling):
+                with m.If(self.i.payload.sample >= self.i.payload.threshold):
+                    m.d.sync += armed.eq(1)
+            with m.Else():
+                with m.If(self.i.payload.sample < self.i.payload.threshold):
+                    m.d.sync += armed.eq(1)
+            with m.If(crossed):
                 m.d.sync += armed.eq(0)
 
         return m
