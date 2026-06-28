@@ -166,6 +166,37 @@ class DSPTests(unittest.TestCase):
         with sim.write_vcd(vcd_file=open(f"test_resample_{name}.vcd", "w")):
             sim.run()
 
+    def test_linear_resample_is_monotonic_across_discontinuities(self):
+        m = Module()
+        m.submodules.dut = dut = dsp.LinearResample(n_up=8, shape=ASQ)
+        outputs = []
+
+        async def stimulus(ctx):
+            for sample in (-0.75, 0.75, -0.5):
+                await stream.put(ctx, dut.i, fixed.Const(sample, shape=ASQ))
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            while len(outputs) < 16:
+                if ctx.get(dut.o.valid & dut.o.ready):
+                    outputs.append(ctx.get(dut.o.payload).as_float())
+                await ctx.tick()
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        rising = outputs[:8]
+        falling = outputs[8:]
+        self.assertTrue(all(a <= b for a, b in zip(rising, rising[1:])), rising)
+        self.assertTrue(all(a >= b for a, b in zip(falling, falling[1:])), falling)
+        self.assertGreaterEqual(min(outputs), -0.75)
+        self.assertLessEqual(max(outputs), 0.75)
+        self.assertAlmostEqual(rising[-1], 0.75, places=3)
+        self.assertAlmostEqual(falling[-1], -0.5, places=3)
+
     @parameterized.expand([
         ["mux_mac", mac.MuxMAC],
         ["ring_mac", mac.RingMAC],

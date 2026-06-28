@@ -1,5 +1,5 @@
 pub const UI_NAME: &str = "SCOPE";
-pub const UI_TAG: &str = "eef6d9a-";
+pub const UI_TAG: &str = "7aae6d0-";
 pub const HW_REV_MAJOR: u32 = 5;
 pub const USE_EXTERNAL_PLL: bool = true;
 pub const CLOCK_SYNC_HZ: u32 = 60000000;

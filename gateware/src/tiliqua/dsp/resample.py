@@ -124,3 +124,76 @@ class Resample(wiring.Component):
         wiring.connect(m, filt.o, wiring.flipped(self.o))
 
         return m
+
+
+class LinearResample(wiring.Component):
+
+    """Power-of-two linear interpolator for display/visualization paths.
+
+    Emits ``n_up`` evenly-spaced samples between each pair of input samples,
+    including the new endpoint. Unlike the band-limited FIR resampler, linear
+    interpolation is monotonic and cannot create Gibbs overshoot at waveform
+    discontinuities such as saw resets.
+    """
+
+    def __init__(self, *, n_up, shape=ASQ):
+        assert n_up >= 2 and (n_up & (n_up - 1)) == 0
+        self.n_up = n_up
+        self.shape = shape
+        super().__init__({
+            "i": In(stream.Signature(shape)),
+            "o": Out(stream.Signature(shape)),
+        })
+
+    def elaborate(self, platform):
+        m = Module()
+
+        shift = int(math.log2(self.n_up))
+        prev = Signal(self.shape)
+        target = Signal(self.shape)
+        have_prev = Signal()
+        active = Signal()
+        phase = Signal(range(self.n_up + 1))
+
+        current = Signal(signed(self.shape.width + 1))
+        step = Signal(signed(self.shape.width + 1))
+        next_value = Signal(signed(self.shape.width + 1))
+        m.d.comb += [
+            next_value.eq(current + step),
+            self.i.ready.eq(~active),
+            self.o.valid.eq(active),
+            self.o.payload.as_value().eq(
+                Mux(phase == self.n_up, target.as_value(), next_value)
+            ),
+        ]
+
+        with m.If(~active & self.i.valid):
+            with m.If(~have_prev):
+                m.d.sync += [
+                    prev.eq(self.i.payload),
+                    have_prev.eq(1),
+                ]
+            with m.Else():
+                m.d.sync += [
+                    target.eq(self.i.payload),
+                    current.eq(prev.as_value()),
+                    step.eq(
+                        (self.i.payload.as_value() - prev.as_value()) >> shift
+                    ),
+                    phase.eq(1),
+                    active.eq(1),
+                ]
+
+        with m.If(active & self.o.ready):
+            with m.If(phase == self.n_up):
+                m.d.sync += [
+                    prev.eq(target),
+                    active.eq(0),
+                ]
+            with m.Else():
+                m.d.sync += [
+                    current.eq(next_value),
+                    phase.eq(phase + 1),
+                ]
+
+        return m
