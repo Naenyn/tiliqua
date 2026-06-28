@@ -32,6 +32,8 @@ pub type ARMED_R = crate::BitReader;
 pub type PENDING_TRIG_R = crate::BitReader;
 #[doc = "Field `trig_pulse` reader - trig_pulse field"]
 pub type TRIG_PULSE_R = crate::BitReader;
+#[doc = "Field `sweep_holdoff` reader - sweep_holdoff field"]
+pub type SWEEP_HOLDOFF_R = crate::BitReader;
 #[doc = "Field `soc_en` reader - soc_en field"]
 pub type SOC_EN_R = crate::BitReader;
 impl R {
@@ -110,10 +112,15 @@ impl R {
     pub fn trig_pulse(&self) -> TRIG_PULSE_R {
         TRIG_PULSE_R::new(((self.bits >> 15) & 1) != 0)
     }
-    #[doc = "Bit 16 - soc_en field"]
+    #[doc = "Bit 16 - sweep_holdoff field"]
+    #[inline(always)]
+    pub fn sweep_holdoff(&self) -> SWEEP_HOLDOFF_R {
+        SWEEP_HOLDOFF_R::new(((self.bits >> 16) & 1) != 0)
+    }
+    #[doc = "Bit 17 - soc_en field"]
     #[inline(always)]
     pub fn soc_en(&self) -> SOC_EN_R {
-        SOC_EN_R::new(((self.bits >> 16) & 1) != 0)
+        SOC_EN_R::new(((self.bits >> 17) & 1) != 0)
     }
 }
 impl W {}

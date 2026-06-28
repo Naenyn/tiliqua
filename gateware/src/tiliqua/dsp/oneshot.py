@@ -17,12 +17,13 @@ class Trigger(wiring.Component):
     When trigger condition is met, output is set to 1, for 1 stream cycle.
 
     Rising or falling edge (``falling`` input).  Re-arms once the sample
-    returns to the idle side of the threshold.
+    returns to the idle side of the threshold by at least ``hysteresis``.
     """
 
-    def __init__(self, shape=ASQ, *, tap=False):
+    def __init__(self, shape=ASQ, *, tap=False, hysteresis=0):
         self.shape = shape
         self.tap = tap
+        self.hysteresis = hysteresis
         super().__init__({
             "i": In(stream.Signature(data.StructLayout({
                 "sample":    shape,
@@ -40,9 +41,14 @@ class Trigger(wiring.Component):
         crossed_rise = Signal()
         crossed_fall = Signal()
         crossed = Signal()
+        rearm_rise_level = Signal(shape=self.shape)
+        rearm_fall_level = Signal(shape=self.shape)
+        hysteresis = fixed.Const(self.hysteresis, shape=self.shape)
 
         m.d.comb += [
             self.o.valid.eq(self.i.valid),
+            rearm_rise_level.eq(self.i.payload.threshold - hysteresis),
+            rearm_fall_level.eq(self.i.payload.threshold + hysteresis),
             crossed_rise.eq(
                 (l_sample              < self.i.payload.threshold) &
                 (self.i.payload.sample >= self.i.payload.threshold)
@@ -62,13 +68,15 @@ class Trigger(wiring.Component):
         with m.If(self.i.valid & self.o.ready):
             m.d.sync += l_sample.eq(self.i.payload.sample)
             with m.If(self.falling):
-                with m.If(self.i.payload.sample >= self.i.payload.threshold):
+                with m.If(self.i.payload.sample >= rearm_fall_level):
                     m.d.sync += armed.eq(1)
+                with m.Elif(crossed):
+                    m.d.sync += armed.eq(0)
             with m.Else():
-                with m.If(self.i.payload.sample < self.i.payload.threshold):
+                with m.If(self.i.payload.sample < rearm_rise_level):
                     m.d.sync += armed.eq(1)
-            with m.If(crossed):
-                m.d.sync += armed.eq(0)
+                with m.Elif(crossed):
+                    m.d.sync += armed.eq(0)
 
         return m
 

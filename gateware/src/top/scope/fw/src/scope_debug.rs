@@ -19,6 +19,7 @@ pub struct ScopeDebugStatus {
     pub armed: bool,
     pub pending_trig: bool,
     pub ramp_at_top: bool,
+    pub sweep_holdoff: bool,
     pub in_plot: bool,
     pub sweeping: bool,
     pub at_end: bool,
@@ -37,6 +38,7 @@ impl ScopeDebugStatus {
             ramp_at_top: (st >> 12) & 1 != 0,
             armed: (st >> 13) & 1 != 0,
             pending_trig: (st >> 14) & 1 != 0,
+            sweep_holdoff: (st >> 16) & 1 != 0,
         }
     }
 }
@@ -71,12 +73,13 @@ pub fn log_scope_debug(scope: &Scope0) {
     let sw = ScopeDebugSweep::from_regs(scope.debug_counts(), scope.debug_trig());
     let (ix, iy) = scope.debug_probe();
     info!(
-        "scope dbg sweeps={} arm={} pend={} top={} plot={} swp={} \
+        "scope dbg sweeps={} arm={} pend={} top={} ho={} plot={} swp={} \
          trig={} rr={} pen={} end={} flush={} rend={} drop={} ix={} iy={} td={:#x}",
         scope.debug_counts() & 0xff,
         st.armed as u8,
         st.pending_trig as u8,
         st.ramp_at_top as u8,
+        st.sweep_holdoff as u8,
         st.in_plot as u8,
         st.sweeping as u8,
         sw.trig,
@@ -107,12 +110,12 @@ where
 
     let _ = write!(
         line,
-        "A{} P{} T{} I{} S{}",
+        "A{} P{} T{} H{} I{}",
         st.armed as u8,
         st.pending_trig as u8,
         st.ramp_at_top as u8,
+        st.sweep_holdoff as u8,
         st.in_plot as u8,
-        st.sweeping as u8,
     );
     let _ = Text::new(line.as_str(), origin, style).draw(display);
 

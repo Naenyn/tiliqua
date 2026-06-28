@@ -8,7 +8,8 @@ import sys
 import unittest
 
 from amaranth import *
-from amaranth.lib import wiring
+from amaranth.lib import data, stream as amaranth_stream, wiring
+from amaranth.lib.wiring import In, Out
 from amaranth.sim import *
 from parameterized import parameterized
 from scipy import signal
@@ -464,3 +465,241 @@ class DSPTests(unittest.TestCase):
         sim.add_testbench(testbench)
         with sim.write_vcd(vcd_file=open("test_stream_arbiter.vcd", "w")):
             sim.run()
+
+
+class _NormScopeTrigger(wiring.Component):
+    """Trigger + ramp path mirroring ``digital_scope`` NORM / FREE logic."""
+
+    def __init__(self, *, shape=ASQ, td_scale=0.5, hysteresis=0):
+        self._shape = shape
+        self._td_scale = td_scale
+        self._hysteresis = hysteresis
+        super().__init__({
+            "i": In(amaranth_stream.Signature(data.StructLayout({
+                "sample": shape,
+                "threshold": shape,
+            }))),
+            "trigger_always": In(1),
+            "falling": In(1),
+            "o": Out(amaranth_stream.Signature(shape)),
+            "dbg_restarts": Out(unsigned(16)),
+            "dbg_norm_fire": Out(1),
+            "dbg_ramp_at_top": Out(1),
+            "dbg_norm_fire_count": Out(unsigned(16)),
+        })
+
+    def elaborate(self, platform):
+        m = Module()
+        m.submodules.trig = trig = dsp.Trigger(
+            shape=self._shape, hysteresis=self._hysteresis)
+        m.d.comb += trig.falling.eq(self.falling)
+        m.submodules.ramp = ramp = dsp.Ramp(shape=self._shape)
+        td = fixed.Const(self._td_scale, shape=dsp.Ramp.TIMEBASE_SQ)
+
+        ramp_at_top = Signal()
+        prev_ramp_at_top = Signal()
+        ramp_restarted = Signal()
+        trig_seen = Signal()
+        norm_fire = Signal()
+        ramp_fire = Signal()
+        restarts = Signal(16)
+        norm_fire_count = Signal(16)
+
+        m.d.comb += [
+            ramp_at_top.eq(ramp.o.payload > fixed.Const(0.985, shape=self._shape)),
+            ramp_restarted.eq(prev_ramp_at_top & ~ramp_at_top),
+            trig_seen.eq(trig.o.payload & trig.i.valid & trig.o.ready),
+            norm_fire.eq(trig_seen & ramp_at_top & ~self.trigger_always),
+            ramp_fire.eq(self.trigger_always | norm_fire),
+            self.dbg_norm_fire.eq(norm_fire),
+            self.dbg_ramp_at_top.eq(ramp_at_top),
+        ]
+        m.d.sync += prev_ramp_at_top.eq(ramp_at_top)
+
+        with m.If(norm_fire):
+            m.d.sync += norm_fire_count.eq(norm_fire_count + 1)
+        with m.If(ramp_restarted):
+            m.d.sync += restarts.eq(restarts + 1)
+
+        dsp.connect_remap(m, self.i, trig.i, lambda o, i: [
+            i.payload.sample.eq(o.payload.sample),
+            i.payload.threshold.eq(o.payload.threshold),
+        ])
+        dsp.connect_remap(m, trig.o, ramp.i, lambda o, i: [
+            i.payload.trigger.eq(ramp_fire),
+            i.payload.td.eq(td),
+        ])
+        m.d.comb += [
+            self.o.payload.eq(ramp.o.payload),
+            self.o.valid.eq(ramp.o.valid),
+            ramp.o.ready.eq(self.o.ready),
+            self.dbg_restarts.eq(restarts),
+            self.dbg_norm_fire_count.eq(norm_fire_count),
+        ]
+        return m
+
+
+class NormTriggerTests(unittest.TestCase):
+
+    def _make_dut(self, *, trigger_always=False, falling=False, hysteresis=0,
+                  td_scale=0.5):
+        m = Module()
+        dut = _NormScopeTrigger(td_scale=td_scale, hysteresis=hysteresis)
+        m.submodules.dut = dut
+        m.d.comb += [
+            dut.trigger_always.eq(trigger_always),
+            dut.falling.eq(falling),
+        ]
+        return m, dut
+
+    async def _put(self, ctx, dut, sample, threshold=0.0):
+        await stream.put(ctx, dut.i, {
+            "sample": fixed.Const(sample, shape=ASQ),
+            "threshold": fixed.Const(threshold, shape=ASQ),
+        })
+
+    def test_mid_sweep_crossing_not_replayed_at_top(self):
+        """A crossing during the sweep must not restart when the ramp later idles at top."""
+        m, dut = self._make_dut()
+        state = {"saw_mid_crossing": False}
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            threshold = 0.0
+            await self._put(ctx, dut, -0.5, threshold)
+            for sample in (-0.2, 0.2):
+                await self._put(ctx, dut, sample, threshold)
+                if not ctx.get(dut.dbg_ramp_at_top) and ctx.get(dut.dbg_norm_fire) == 0:
+                    state["saw_mid_crossing"] = True
+            restarts_before_top = ctx.get(dut.dbg_restarts)
+            for _ in range(500):
+                await self._put(ctx, dut, 0.9, threshold)
+                if ctx.get(dut.dbg_ramp_at_top):
+                    break
+            self.assertTrue(ctx.get(dut.dbg_ramp_at_top))
+            for _ in range(40):
+                await self._put(ctx, dut, 0.9, threshold)
+            self.assertEqual(ctx.get(dut.dbg_restarts), restarts_before_top)
+            await self._put(ctx, dut, -0.5, threshold)
+            await self._put(ctx, dut, 0.2, threshold)
+            self.assertGreater(ctx.get(dut.dbg_norm_fire_count), 0)
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()
+        self.assertTrue(state["saw_mid_crossing"])
+
+    def test_restart_preceded_by_norm_fire(self):
+        m, dut = self._make_dut()
+        saw_norm_before_restart = []
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            prev_restarts = 0
+            prev_norm_count = 0
+            for n in range(4000):
+                y = 0.9 * math.sin(2 * math.pi * 0.11 * n)
+                await self._put(ctx, dut, y)
+                restarts = ctx.get(dut.dbg_restarts)
+                norm_count = ctx.get(dut.dbg_norm_fire_count)
+                if restarts != prev_restarts:
+                    saw_norm_before_restart.append(norm_count > prev_norm_count)
+                    prev_restarts = restarts
+                    prev_norm_count = norm_count
+            self.assertGreater(len(saw_norm_before_restart), 3)
+            self.assertTrue(all(saw_norm_before_restart), saw_norm_before_restart)
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()
+
+    def test_consecutive_restarts_keep_input_phase(self):
+        """Awkward sweep/input ratio should not alternate by 180 degrees."""
+        m, dut = self._make_dut()
+        restart_samples = []
+        freq = 0.11
+        period = 1.0 / freq
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            prev_restarts = 0
+            for n in range(6000):
+                y = 0.9 * math.sin(2 * math.pi * freq * n)
+                await self._put(ctx, dut, y)
+                restarts = ctx.get(dut.dbg_restarts)
+                if restarts != prev_restarts:
+                    restart_samples.append(n)
+                    prev_restarts = restarts
+            self.assertGreaterEqual(len(restart_samples), 4)
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        ref = restart_samples[0] % period
+        for sample in restart_samples[1:]:
+            phase = sample % period
+            delta = min((phase - ref) % period, (ref - phase) % period)
+            self.assertLess(
+                delta, 1.5,
+                f"restart phase drift: ref={ref} got={phase} samples={restart_samples}",
+            )
+
+    def test_free_mode_restarts_without_crossing(self):
+        m, dut = self._make_dut(trigger_always=True)
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            for n in range(2000):
+                await self._put(ctx, dut, 0.9)
+            self.assertGreater(ctx.get(dut.dbg_restarts), 2)
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()
+
+    def test_hysteresis_rejects_opposite_edge_recrossing(self):
+        """Rising mode must not fire on chatter around the falling crossing."""
+        hysteresis = 0.002
+        m = Module()
+        m.submodules.dut = dut = dsp.Trigger(shape=ASQ, hysteresis=hysteresis)
+        pulse_count = Signal(8)
+        m.d.comb += [dut.falling.eq(0), dut.o.ready.eq(1)]
+        with m.If(dut.o.valid & dut.o.ready & dut.o.payload):
+            m.d.sync += pulse_count.eq(pulse_count + 1)
+
+        async def testbench(ctx):
+            async def put(sample):
+                await stream.put(ctx, dut.i, {
+                    "sample": fixed.Const(sample, shape=ASQ),
+                    "threshold": fixed.Const(0, shape=ASQ),
+                })
+
+            # Launch one legitimate rising trigger. This leaves Trigger
+            # disarmed until the input passes the lower Schmitt threshold.
+            await put(-0.02)
+            await put(0.02)
+            first_count = ctx.get(pulse_count)
+            self.assertEqual(first_count, 1)
+
+            # A tiny below/above-zero recrossing at the falling edge must not
+            # launch an inverted sweep.
+            await put(0.001)
+            await put(-0.0005)
+            await put(0.0005)
+            self.assertEqual(ctx.get(pulse_count), first_count)
+
+            # Once the signal moves beyond the Schmitt re-arm margin, the next
+            # genuine rising crossing must trigger normally.
+            await put(-0.01)
+            await put(0.01)
+            self.assertEqual(ctx.get(pulse_count), first_count + 1)
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()

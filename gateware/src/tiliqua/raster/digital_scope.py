@@ -86,6 +86,7 @@ class DigitalScopePeripheral(wiring.Component):
         armed: csr.Field(csr.action.R, unsigned(1))
         pending_trig: csr.Field(csr.action.R, unsigned(1))
         trig_pulse: csr.Field(csr.action.R, unsigned(1))
+        sweep_holdoff: csr.Field(csr.action.R, unsigned(1))
         soc_en: csr.Field(csr.action.R, unsigned(1))
 
     class DebugCount(csr.Register, access="r"):
@@ -278,49 +279,46 @@ class DigitalScopePeripheral(wiring.Component):
 
         m.submodules.irep2 = irep2 = dsp.Split(2, replicate=True, source=self.isplit4.o[0], shape=PSQ)
 
-        m.submodules.trig = trig = dsp.Trigger(shape=PSQ)
+        # A small Schmitt re-arm margin rejects threshold chatter around the
+        # opposite edge. Without this, a noisy recrossing near a sine wave's
+        # falling zero crossing can qualify as a rising trigger (or vice versa),
+        # producing an occasional 180-degree phase flip.
+        m.submodules.trig = trig = dsp.Trigger(
+            shape=PSQ, hysteresis=0.016 / 8.192)
         m.d.comb += trig.falling.eq(trigger_falling)
         m.submodules.ramp = ramp = dsp.Ramp(shape=PSQ)
         timebase = Signal(shape=dsp.Ramp.TIMEBASE_SQ)
 
         # NORM trigger path (classic hold-at-top scope):
-        #   - Rising edge at top restarts the ramp immediately.
-        #   - First mid-sweep edge per sweep is latched; honoured once on
-        #     enter-top (not level-held for the whole dwell — that free-ran).
-        #   - ``trigger_always`` bypasses latch/holdoff.
-        pending_trig = Signal()
+        #   - Mid-sweep crossings are ignored; only a fresh edge while the ramp
+        #     is waiting at top restarts the sweep.
+        #   - ``trigger_always`` (FREE) restarts as soon as the ramp reaches top.
         ramp_at_top = Signal()
         prev_ramp_at_top = Signal()
         ramp_restarted = Signal()
-        enter_top = Signal()
         trig_seen = Signal()
-        pending_fire = Signal()
         norm_fire = Signal()
         ramp_fire = Signal()
 
         m.d.comb += [
             ramp_at_top.eq(ramp.o.payload > fixed.Const(0.985, shape=PSQ)),
             ramp_restarted.eq(prev_ramp_at_top & ~ramp_at_top),
-            enter_top.eq(ramp_at_top & ~prev_ramp_at_top),
             trig_seen.eq(trig.o.payload & trig.i.valid & trig.o.ready),
-            pending_fire.eq(pending_trig & enter_top),
             norm_fire.eq(trig_seen & ramp_at_top & ~trigger_always),
-            ramp_fire.eq(trigger_always | pending_fire | norm_fire),
+            ramp_fire.eq(trigger_always | norm_fire),
         ]
         m.d.sync += prev_ramp_at_top.eq(ramp_at_top)
 
-        with m.If(enable_clear | ramp_restarted):
-            m.d.sync += pending_trig.eq(0)
-        with m.Elif(trig_seen & ~trigger_always & ~ramp_at_top & ~pending_trig):
-            m.d.sync += pending_trig.eq(1)
-
-        dsp.connect_remap(m, irep2.o[0], trig.i, lambda o, i: [
-            i.payload.threshold.eq(trigger_lvl),
-        ])
+        trig_sample = Signal(shape=PSQ)
         with m.Switch(trigger_ch):
             for ch in range(self.n_channels):
                 with m.Case(ch):
-                    m.d.comb += trig.i.payload.sample.eq(self.isplit4.o[ch].payload)
+                    m.d.comb += trig_sample.eq(self.isplit4.o[ch].payload)
+
+        dsp.connect_remap(m, irep2.o[0], trig.i, lambda o, i: [
+            i.payload.sample.eq(trig_sample),
+            i.payload.threshold.eq(trigger_lvl),
+        ])
         dsp.connect_remap(m, trig.o, ramp.i, lambda o, i: [
             i.payload.trigger.eq(ramp_fire),
             i.payload.td.eq(timebase),
@@ -438,7 +436,7 @@ class DigitalScopePeripheral(wiring.Component):
         m.d.comb += [
             flush_drop.eq(capture.flush_valid & ~flush_fifo.i.ready),
             flush_accept.eq(flush_fifo.o.valid & renderer.col_ready),
-            trig_pulse.eq(norm_fire | pending_fire),
+            trig_pulse.eq(norm_fire),
         ]
 
         with m.If(capture.sweep_done):
@@ -513,8 +511,9 @@ class DigitalScopePeripheral(wiring.Component):
             self._debug_status.f.renderer_done.r_data.eq(~renderer.busy),
             self._debug_status.f.ramp_at_top.r_data.eq(ramp_at_top),
             self._debug_status.f.armed.r_data.eq(capture.dbg_armed),
-            self._debug_status.f.pending_trig.r_data.eq(pending_trig),
+            self._debug_status.f.pending_trig.r_data.eq(0),
             self._debug_status.f.trig_pulse.r_data.eq(trig_pulse),
+            self._debug_status.f.sweep_holdoff.r_data.eq(0),
             self._debug_status.f.soc_en.r_data.eq(self.soc_en),
             self._debug_count.f.capture_done.r_data.eq(capture_done_cnt),
             self._debug_count.f.render_done.r_data.eq(render_sweep_cnt),
