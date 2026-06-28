@@ -88,6 +88,10 @@ class ColumnCapture(wiring.Component):
             "dbg_sweeping": Out(1),
             "dbg_has_col": Out(1),
             "dbg_sweep_end": Out(1),
+            "dbg_armed": Out(1),
+            "dbg_pen_lift": Out(1),
+            "dbg_end_reached": Out(1),
+            "dbg_sweep_restart": Out(1),
             "max_col": Out(range(MAX_CAPTURE_COLS)),
         })
 
@@ -188,8 +192,7 @@ class ColumnCapture(wiring.Component):
         m.d.comb += sweep_end.eq(pen_lift | end_reached)
         m.d.comb += self.sweep_done.eq(sweep_end)
 
-        # Ramp restart (top -> low): start of a fresh sweep.  Does not depend on
-        # has_col, so it works before any accumulation has begun.
+        # Ramp restart (top -> low): start of a fresh sweep.
         sweep_restart = Signal()
         m.d.comb += sweep_restart.eq(
             self.active &
@@ -295,6 +298,10 @@ class ColumnCapture(wiring.Component):
             self.dbg_sweeping.eq(sweeping),
             self.dbg_has_col.eq(has_col),
             self.dbg_sweep_end.eq(sweep_end),
+            self.dbg_armed.eq(armed),
+            self.dbg_pen_lift.eq(pen_lift),
+            self.dbg_end_reached.eq(end_reached),
+            self.dbg_sweep_restart.eq(sweep_restart),
             self.max_col.eq(max_col),
         ]
 

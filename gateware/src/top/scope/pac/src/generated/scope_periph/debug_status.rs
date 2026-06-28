@@ -24,8 +24,14 @@ pub type SWEEP_END_R = crate::BitReader;
 pub type RENDERER_BUSY_R = crate::BitReader;
 #[doc = "Field `renderer_done` reader - renderer_done field"]
 pub type RENDERER_DONE_R = crate::BitReader;
-#[doc = "Field `test_mode` reader - test_mode field"]
-pub type TEST_MODE_R = crate::BitReader;
+#[doc = "Field `ramp_at_top` reader - ramp_at_top field"]
+pub type RAMP_AT_TOP_R = crate::BitReader;
+#[doc = "Field `armed` reader - armed field"]
+pub type ARMED_R = crate::BitReader;
+#[doc = "Field `pending_trig` reader - pending_trig field"]
+pub type PENDING_TRIG_R = crate::BitReader;
+#[doc = "Field `trig_pulse` reader - trig_pulse field"]
+pub type TRIG_PULSE_R = crate::BitReader;
 #[doc = "Field `soc_en` reader - soc_en field"]
 pub type SOC_EN_R = crate::BitReader;
 impl R {
@@ -84,22 +90,37 @@ impl R {
     pub fn renderer_done(&self) -> RENDERER_DONE_R {
         RENDERER_DONE_R::new(((self.bits >> 11) & 1) != 0)
     }
-    #[doc = "Bit 12 - test_mode field"]
+    #[doc = "Bit 12 - ramp_at_top field"]
     #[inline(always)]
-    pub fn test_mode(&self) -> TEST_MODE_R {
-        TEST_MODE_R::new(((self.bits >> 12) & 1) != 0)
+    pub fn ramp_at_top(&self) -> RAMP_AT_TOP_R {
+        RAMP_AT_TOP_R::new(((self.bits >> 12) & 1) != 0)
     }
-    #[doc = "Bit 13 - soc_en field"]
+    #[doc = "Bit 13 - armed field"]
+    #[inline(always)]
+    pub fn armed(&self) -> ARMED_R {
+        ARMED_R::new(((self.bits >> 13) & 1) != 0)
+    }
+    #[doc = "Bit 14 - pending_trig field"]
+    #[inline(always)]
+    pub fn pending_trig(&self) -> PENDING_TRIG_R {
+        PENDING_TRIG_R::new(((self.bits >> 14) & 1) != 0)
+    }
+    #[doc = "Bit 15 - trig_pulse field"]
+    #[inline(always)]
+    pub fn trig_pulse(&self) -> TRIG_PULSE_R {
+        TRIG_PULSE_R::new(((self.bits >> 15) & 1) != 0)
+    }
+    #[doc = "Bit 16 - soc_en field"]
     #[inline(always)]
     pub fn soc_en(&self) -> SOC_EN_R {
-        SOC_EN_R::new(((self.bits >> 13) & 1) != 0)
+        SOC_EN_R::new(((self.bits >> 16) & 1) != 0)
     }
 }
 impl W {}
 #[doc = "A CSR register. Parameters ---------- fields : :class:`dict` or :class:`list` or :class:`Field` Collection of register fields. If ``None`` (default), a dict is populated from Python :term:`variable annotations <python:variable annotations>`. ``fields`` is used to create a :class:`FieldActionMap`, :class:`FieldActionArray`, or :class:`FieldAction`, depending on its type (dict, list, or Field). Interface attributes -------------------- element : :class:`Element` Interface between this register and a CSR bus primitive. Attributes ---------- field : :class:`FieldActionMap` or :class:`FieldActionArray` or :class:`FieldAction` Collection of field instances. f : :class:`FieldActionMap` or :class:`FieldActionArray` or :class:`FieldAction` Shorthand for :attr:`Register.field`. Raises ------ :exc:`TypeError` If ``fields`` is neither ``None``, a :class:`dict`, a :class:`list`, or a :class:`Field`. :exc:`ValueError` If ``fields`` is not ``None`` and at least one variable annotation is a :class:`Field`. :exc:`ValueError` If ``element.access`` is not readable and at least one field is readable. :exc:`ValueError` If ``element.access`` is not writable and at least one field is writable.\n\nYou can [`read`](crate::Reg::read) this register and get [`debug_status::R`](R). You can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`debug_status::W`](W). You can also [`modify`](crate::Reg::modify) this register. See [API](https://docs.rs/svd2rust/#read--modify--write-api)."]
 pub struct DEBUG_STATUS_SPEC;
 impl crate::RegisterSpec for DEBUG_STATUS_SPEC {
-    type Ux = u16;
+    type Ux = u32;
 }
 #[doc = "`read()` method returns [`debug_status::R`](R) reader structure"]
 impl crate::Readable for DEBUG_STATUS_SPEC {}

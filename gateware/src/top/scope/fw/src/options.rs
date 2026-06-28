@@ -140,6 +140,15 @@ pub enum CcHighlight {
 }
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
+pub enum DebugHud {
+    #[default]
+    #[strum(serialize = "Yes")]
+    On,
+    #[strum(serialize = "No")]
+    Off,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 pub enum ChannelVis {
     #[default]
     #[strum(serialize = "Yes")]
@@ -186,6 +195,8 @@ pub struct MiscOpts {
     pub help: EnumOption<HelpPage>,
     #[option]
     pub cc_highlight: EnumOption<CcHighlight>,
+    #[option]
+    pub debug: EnumOption<DebugHud>,
     #[option(false)]
     pub save_settings: ButtonOption<OneShotButtonParams>,
     #[option(false)]

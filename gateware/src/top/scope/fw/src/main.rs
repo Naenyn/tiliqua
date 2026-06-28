@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
 
+mod scope_debug;
+
 use critical_section::Mutex;
 use log::info;
 use riscv_rt::entry;
@@ -21,6 +23,7 @@ use tiliqua_lib::color::HI8;
 
 use options::*;
 use menu_draw::draw_scope_menu;
+use scope_debug::{draw_scope_debug_hud, log_scope_debug};
 use opts::persistence::*;
 use opts::{Options, OptionTrait};
 use opts::cc_map::{MidiCcMapper, CcMapMode};
@@ -503,20 +506,20 @@ fn main() -> ! {
                 opts.scope.trigger.value == TriggerMode::Always,
             );
 
-            debug_frame = debug_frame.wrapping_add(1);
-            if debug_frame % 600 == 0 {
-                let st = scope.debug_status();
-                let ct = scope.debug_counts();
-                let (ix, iy) = scope.debug_probe();
-                info!(
-                    "scope dbg st={:#010x} ct={:#010x} ncols={:#06x} td={:#010x} ix={} iy={} (ct: drop/flush/render/sweeps per last sweep)",
-                    st,
-                    ct,
-                    scope.debug_ncols(),
-                    scope.debug_timebase(),
-                    ix,
-                    iy,
+            if opts.misc.debug.value == DebugHud::On {
+                let hx = (h_active / 2) as i32;
+                let hy = (v_active / 2) as i32;
+                draw_scope_debug_hud(
+                    &mut display,
+                    &scope,
+                    opts.menu.ui_hue.value,
+                    Point::new(-hx + 4, -hy + 4),
                 );
+
+                debug_frame = debug_frame.wrapping_add(1);
+                if debug_frame % 120 == 0 {
+                    log_scope_debug(&scope);
+                }
             }
 
             first = false;

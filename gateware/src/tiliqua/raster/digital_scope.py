@@ -6,6 +6,7 @@ from amaranth import *
 from amaranth.lib import data, memory, stream, wiring
 from amaranth.lib.wiring import In, Out
 from amaranth_soc import csr
+from amaranth_future import fixed
 
 from .. import dsp
 from ..dsp import stream_util
@@ -79,14 +80,23 @@ class DigitalScopePeripheral(wiring.Component):
         sweep_end: csr.Field(csr.action.R, unsigned(1))
         renderer_busy: csr.Field(csr.action.R, unsigned(1))
         renderer_done: csr.Field(csr.action.R, unsigned(1))
-        test_mode: csr.Field(csr.action.R, unsigned(1))
+        ramp_at_top: csr.Field(csr.action.R, unsigned(1))
+        armed: csr.Field(csr.action.R, unsigned(1))
+        pending_trig: csr.Field(csr.action.R, unsigned(1))
+        trig_pulse: csr.Field(csr.action.R, unsigned(1))
         soc_en: csr.Field(csr.action.R, unsigned(1))
 
     class DebugCount(csr.Register, access="r"):
         capture_done: csr.Field(csr.action.R, unsigned(8))
         render_done: csr.Field(csr.action.R, unsigned(8))
         col_writes: csr.Field(csr.action.R, unsigned(8))
-        trigger_edges: csr.Field(csr.action.R, unsigned(8))
+        flush_drops: csr.Field(csr.action.R, unsigned(8))
+
+    class DebugTrig(csr.Register, access="r"):
+        trig_edges: csr.Field(csr.action.R, unsigned(8))
+        ramp_restarts: csr.Field(csr.action.R, unsigned(8))
+        pen_lifts: csr.Field(csr.action.R, unsigned(8))
+        end_reached: csr.Field(csr.action.R, unsigned(8))
 
     class DebugProbe(csr.Register, access="r"):
         in_x: csr.Field(csr.action.R, signed(16))
@@ -150,6 +160,7 @@ class DigitalScopePeripheral(wiring.Component):
         self._debug_ncols     = regs.add("debug_ncols",   self.DebugNcols(),     offset=0x64)
         self._debug_ctl       = regs.add("debug_ctl",     self.DebugCtl(),       offset=0x68)
         self._debug_timebase  = regs.add("debug_timebase", self.DebugTimebase(), offset=0x6C)
+        self._debug_trig      = regs.add("debug_trig",    self.DebugTrig(),      offset=0x70)
 
         self._bridge = csr.Bridge(regs.as_memory_map())
         super().__init__({
@@ -267,12 +278,43 @@ class DigitalScopePeripheral(wiring.Component):
         m.submodules.ramp = ramp = dsp.Ramp(shape=PSQ)
         timebase = Signal(shape=dsp.Ramp.TIMEBASE_SQ)
 
+        # NORM trigger path (classic hold-at-top scope):
+        #   - Rising edge at top restarts the ramp immediately.
+        #   - First mid-sweep edge per sweep is latched; honoured once on
+        #     enter-top (not level-held for the whole dwell — that free-ran).
+        #   - ``trigger_always`` bypasses latch/holdoff.
+        pending_trig = Signal()
+        ramp_at_top = Signal()
+        prev_ramp_at_top = Signal()
+        ramp_restarted = Signal()
+        enter_top = Signal()
+        trig_seen = Signal()
+        pending_fire = Signal()
+        norm_fire = Signal()
+        ramp_fire = Signal()
+
+        m.d.comb += [
+            ramp_at_top.eq(ramp.o.payload > fixed.Const(0.985, shape=PSQ)),
+            ramp_restarted.eq(prev_ramp_at_top & ~ramp_at_top),
+            enter_top.eq(ramp_at_top & ~prev_ramp_at_top),
+            trig_seen.eq(trig.o.payload & trig.i.valid & trig.o.ready),
+            pending_fire.eq(pending_trig & enter_top),
+            norm_fire.eq(trig_seen & ramp_at_top & ~trigger_always),
+            ramp_fire.eq(trigger_always | pending_fire | norm_fire),
+        ]
+        m.d.sync += prev_ramp_at_top.eq(ramp_at_top)
+
+        with m.If(enable_clear | ramp_restarted):
+            m.d.sync += pending_trig.eq(0)
+        with m.Elif(trig_seen & ~trigger_always & ~ramp_at_top & ~pending_trig):
+            m.d.sync += pending_trig.eq(1)
+
         dsp.connect_remap(m, irep2.o[0], trig.i, lambda o, i: [
             i.payload.sample.eq(o.payload),
             i.payload.threshold.eq(trigger_lvl),
         ])
         dsp.connect_remap(m, trig.o, ramp.i, lambda o, i: [
-            i.payload.trigger.eq(o.payload | trigger_always),
+            i.payload.trigger.eq(ramp_fire),
             i.payload.td.eq(timebase),
         ])
 
@@ -353,6 +395,7 @@ class DigitalScopePeripheral(wiring.Component):
                 capture.visible[ch].eq(visible[ch]),
             ]
 
+
         m.d.comb += renderer.plot_x_lo.eq(plot_x_lo)
         for ch in range(self.n_channels):
             m.d.comb += [
@@ -377,11 +420,17 @@ class DigitalScopePeripheral(wiring.Component):
         drop_sweep_cnt = Signal(8)
         flush_sweep_cnt = Signal(8)
         render_sweep_cnt = Signal(8)
+        trig_sweep_cnt = Signal(8)
+        ramp_restart_sweep_cnt = Signal(8)
+        pen_lift_sweep_cnt = Signal(8)
+        end_reached_sweep_cnt = Signal(8)
         flush_drop = Signal()
         flush_accept = Signal()
+        trig_pulse = Signal()
         m.d.comb += [
             flush_drop.eq(capture.flush_valid & ~flush_fifo.i.ready),
             flush_accept.eq(flush_fifo.o.valid & renderer.col_ready),
+            trig_pulse.eq(norm_fire | pending_fire),
         ]
 
         with m.If(capture.sweep_done):
@@ -390,6 +439,10 @@ class DigitalScopePeripheral(wiring.Component):
                 drop_sweep_cnt.eq(0),
                 flush_sweep_cnt.eq(0),
                 render_sweep_cnt.eq(0),
+                trig_sweep_cnt.eq(0),
+                ramp_restart_sweep_cnt.eq(0),
+                pen_lift_sweep_cnt.eq(0),
+                end_reached_sweep_cnt.eq(0),
             ]
         with m.If(flush_drop):
             m.d.sync += drop_sweep_cnt.eq(drop_sweep_cnt + 1)
@@ -397,6 +450,14 @@ class DigitalScopePeripheral(wiring.Component):
             m.d.sync += flush_sweep_cnt.eq(flush_sweep_cnt + 1)
         with m.If(flush_accept):
             m.d.sync += render_sweep_cnt.eq(render_sweep_cnt + 1)
+        with m.If(trig_pulse):
+            m.d.sync += trig_sweep_cnt.eq(trig_sweep_cnt + 1)
+        with m.If(ramp_restarted):
+            m.d.sync += ramp_restart_sweep_cnt.eq(ramp_restart_sweep_cnt + 1)
+        with m.If(capture.dbg_pen_lift):
+            m.d.sync += pen_lift_sweep_cnt.eq(pen_lift_sweep_cnt + 1)
+        with m.If(capture.dbg_end_reached):
+            m.d.sync += end_reached_sweep_cnt.eq(end_reached_sweep_cnt + 1)
 
         # Render-path diagnostics: select the per-channel handshake signals for
         # whichever channel the renderer is currently drawing, and pack them into
@@ -442,12 +503,19 @@ class DigitalScopePeripheral(wiring.Component):
             self._debug_status.f.sweep_end.r_data.eq(capture.dbg_sweep_end),
             self._debug_status.f.renderer_busy.r_data.eq(renderer.busy),
             self._debug_status.f.renderer_done.r_data.eq(~renderer.busy),
-            self._debug_status.f.test_mode.r_data.eq(0),
+            self._debug_status.f.ramp_at_top.r_data.eq(ramp_at_top),
+            self._debug_status.f.armed.r_data.eq(capture.dbg_armed),
+            self._debug_status.f.pending_trig.r_data.eq(pending_trig),
+            self._debug_status.f.trig_pulse.r_data.eq(trig_pulse),
             self._debug_status.f.soc_en.r_data.eq(self.soc_en),
             self._debug_count.f.capture_done.r_data.eq(capture_done_cnt),
             self._debug_count.f.render_done.r_data.eq(render_sweep_cnt),
             self._debug_count.f.col_writes.r_data.eq(flush_sweep_cnt),
-            self._debug_count.f.trigger_edges.r_data.eq(drop_sweep_cnt),
+            self._debug_count.f.flush_drops.r_data.eq(drop_sweep_cnt),
+            self._debug_trig.f.trig_edges.r_data.eq(trig_sweep_cnt),
+            self._debug_trig.f.ramp_restarts.r_data.eq(ramp_restart_sweep_cnt),
+            self._debug_trig.f.pen_lifts.r_data.eq(pen_lift_sweep_cnt),
+            self._debug_trig.f.end_reached.r_data.eq(end_reached_sweep_cnt),
             self._debug_probe.f.in_x.r_data.eq(
                 Mux(rendering, renderer.dbg_col, capture.dbg_in_x)
             ),

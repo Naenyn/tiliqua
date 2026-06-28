@@ -16,7 +16,7 @@ class Trigger(wiring.Component):
     """
     When trigger condition is met, output is set to 1, for 1 stream cycle.
 
-    Currently this only implements rising edge trigger.
+    Rising edge only.  Re-arms once the sample falls back below threshold.
     """
 
     def __init__(self, shape=ASQ):
@@ -33,18 +33,25 @@ class Trigger(wiring.Component):
         m = Module()
 
         l_sample = Signal(shape=self.shape)
+        armed = Signal(reset=1)
+        crossed = Signal()
 
         m.d.comb += [
             self.o.valid.eq(self.i.valid),
             self.i.ready.eq(self.o.ready),
-            self.o.payload.eq(
+            crossed.eq(
                 (l_sample              < self.i.payload.threshold) &
                 (self.i.payload.sample >= self.i.payload.threshold)
             ),
+            self.o.payload.eq(crossed & armed),
         ]
 
         with m.If(self.i.valid & self.o.ready):
             m.d.sync += l_sample.eq(self.i.payload.sample)
+            with m.If(self.i.payload.sample < self.i.payload.threshold):
+                m.d.sync += armed.eq(1)
+            with m.Elif(crossed):
+                m.d.sync += armed.eq(0)
 
         return m
 
@@ -73,15 +80,17 @@ class Ramp(wiring.Component):
         m = Module()
 
         s = Signal(self.TIMEBASE_SQ)
+        at_top = Signal()
 
         m.d.comb += [
             self.o.valid.eq(self.i.valid),
             self.i.ready.eq(self.o.ready),
             self.o.payload.eq(s >> self.shift),
+            at_top.eq(self.o.payload > fixed.Const(0.985, shape=self.shape)),
         ]
 
         with m.If(self.i.valid & self.o.ready):
-            with m.If(self.o.payload > fixed.Const(0.985, shape=self.shape)):
+            with m.If(at_top):
                 with m.If(self.i.payload.trigger):
                     m.d.sync += s.eq(fixed.Const(-1.0, shape=self.shape, clamp=True) << self.shift)
             with m.Else():

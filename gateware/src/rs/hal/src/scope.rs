@@ -119,6 +119,10 @@ macro_rules! impl_scope {
                 self.registers.debug_count().read().bits()
             }
 
+            pub fn debug_trig(&self) -> u32 {
+                self.registers.debug_trig().read().bits()
+            }
+
             pub fn debug_probe(&self) -> (i16, i16) {
                 let r = self.registers.debug_probe().read();
                 (r.in_x().bits() as i16, r.in_y0().bits() as i16)

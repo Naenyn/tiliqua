@@ -8,8 +8,8 @@ pub type CAPTURE_DONE_R = crate::FieldReader;
 pub type RENDER_DONE_R = crate::FieldReader;
 #[doc = "Field `col_writes` reader - col_writes field"]
 pub type COL_WRITES_R = crate::FieldReader;
-#[doc = "Field `trigger_edges` reader - trigger_edges field"]
-pub type TRIGGER_EDGES_R = crate::FieldReader;
+#[doc = "Field `flush_drops` reader - flush_drops field"]
+pub type FLUSH_DROPS_R = crate::FieldReader;
 impl R {
     #[doc = "Bits 0:7 - capture_done field"]
     #[inline(always)]
@@ -26,10 +26,10 @@ impl R {
     pub fn col_writes(&self) -> COL_WRITES_R {
         COL_WRITES_R::new(((self.bits >> 16) & 0xff) as u8)
     }
-    #[doc = "Bits 24:31 - trigger_edges field"]
+    #[doc = "Bits 24:31 - flush_drops field"]
     #[inline(always)]
-    pub fn trigger_edges(&self) -> TRIGGER_EDGES_R {
-        TRIGGER_EDGES_R::new(((self.bits >> 24) & 0xff) as u8)
+    pub fn flush_drops(&self) -> FLUSH_DROPS_R {
+        FLUSH_DROPS_R::new(((self.bits >> 24) & 0xff) as u8)
     }
 }
 impl W {}
