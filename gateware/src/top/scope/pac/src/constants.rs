@@ -1,5 +1,5 @@
 pub const UI_NAME: &str = "SCOPE";
-pub const UI_TAG: &str = "0f8b5c4-";
+pub const UI_TAG: &str = "c45fd27-";
 pub const HW_REV_MAJOR: u32 = 5;
 pub const USE_EXTERNAL_PLL: bool = true;
 pub const CLOCK_SYNC_HZ: u32 = 60000000;
@@ -60,6 +60,6 @@ scope and display pages:
 "###;
 pub const OVERLAY_UI_SCRATCH_BASE: usize = 0x20f00000;
 pub const OVERLAY_UI_MEM_BASE: usize = 0xc1000000;
-pub const OVERLAY_UI_MENU_W: usize = 272;
-pub const OVERLAY_UI_MENU_H: usize = 224;
-pub const OVERLAY_UI_MENU_WORDS: usize = 1904;
+pub const OVERLAY_UI_MENU_W: usize = 250;
+pub const OVERLAY_UI_MENU_H: usize = 160;
+pub const OVERLAY_UI_MENU_WORDS: usize = 1250;

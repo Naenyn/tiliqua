@@ -20,6 +20,7 @@ use tiliqua_hal::embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
 use tiliqua_lib::color::HI8;
 
 use options::*;
+use menu_draw::draw_scope_menu;
 use opts::persistence::*;
 use opts::{Options, OptionTrait};
 use opts::cc_map::{MidiCcMapper, CcMapMode};
@@ -28,9 +29,8 @@ use tiliqua_hal::dma_framebuffer::Rotate;
 use tiliqua_lib::ui_layer::{UiLayer, UiLayerPort, words_psram};
 
 pub const TIMER0_ISR_PERIOD_MS: u32 = 5;
-/// How long the menu stays visible after the last encoder turn/press.
-pub const MENU_HIDE_MS: u32 = 2000;
 
+#[allow(dead_code)] // used when MIDI CC mapping is restored
 fn global_index(opts: &Opts, opt: &dyn OptionTrait) -> usize {
     let key = opt.key().value();
     opts.all().enumerate()
@@ -46,24 +46,9 @@ fn apply_cc_action(opts: &mut Opts, action: &opts::cc_map::CcAction) {
     }
 }
 
-fn build_cc_mapper(opts: &Opts) -> MidiCcMapper {
-    let mut m = MidiCcMapper::new();
-    m.add(42, global_index(opts, &opts.display.ui_hue),   CcMapMode::Absolute);
-    m.add(43, global_index(opts, &opts.display.palette),  CcMapMode::Absolute);
-    m.add(44, global_index(opts, &opts.display.grid),     CcMapMode::Absolute);
-    m.add(45, global_index(opts, &opts.display.grid_i),    CcMapMode::Absolute);
-    m.add(52, global_index(opts, &opts.misc.rotation),    CcMapMode::Absolute);
-    m.add(60, global_index(opts, &opts.scope1.ypos0),     CcMapMode::Absolute);
-    m.add(61, global_index(opts, &opts.scope1.ypos1),     CcMapMode::Absolute);
-    m.add(62, global_index(opts, &opts.scope1.ypos2),     CcMapMode::Absolute);
-    m.add(63, global_index(opts, &opts.scope1.ypos3),     CcMapMode::Absolute);
-    m.add(70, global_index(opts, &opts.scope1.yscale0),   CcMapMode::Absolute);
-    m.add(71, global_index(opts, &opts.scope2.timebase),  CcMapMode::Absolute);
-    m.add(73, global_index(opts, &opts.scope2.trig_mode), CcMapMode::Absolute);
-    m.add(74, global_index(opts, &opts.scope2.trig_lvl),  CcMapMode::Absolute);
-    m.add(75, global_index(opts, &opts.scope2.intensity), CcMapMode::Absolute);
-    m.add(76, global_index(opts, &opts.scope2.hue),       CcMapMode::Absolute);
-    m
+fn build_cc_mapper(_opts: &Opts) -> MidiCcMapper {
+  // MIDI CC mapping TBD after menu restructure.
+  MidiCcMapper::new()
 }
 
 /// Horizontal xscale so the ramp sweep spans the active display width.
@@ -118,16 +103,13 @@ impl UiLayerPort for OverlayUiPort<'_> {
     }
 }
 
-/// Horizontal inset inside the menu layer for draw_options (page title is
-/// right-aligned at pos_x - 12; needs ~80px of headroom to the layer edge).
-const MENU_DRAW_X: u32 = 88;
-const MENU_DRAW_Y: u32 = 24;
+/// Right margin from the active display edge to the menu bitmap.
+const MENU_MARGIN_X: u32 = 16;
+const MENU_DRAW_Y: u32 = 18;
 
 fn ui_menu_origin(h_active: u32, v_active: u32) -> (u32, u32) {
-    let opts_x = h_active - 200;
-    let opts_y = v_active / 2;
-    let menu_x = opts_x.saturating_sub(MENU_DRAW_X);
-    let menu_y = opts_y.saturating_sub(MENU_DRAW_Y);
+    let menu_x = h_active.saturating_sub(MENU_MARGIN_X + OVERLAY_UI_MENU_W as u32);
+    let menu_y = (v_active / 2).saturating_sub(MENU_DRAW_Y);
     (menu_x, menu_y)
 }
 
@@ -147,8 +129,6 @@ fn redraw_ui_menu(
     v_active: u32,
     hue: u8,
 ) {
-    let opts_x = h_active - 200;
-    let opts_y = v_active / 2;
     let (menu_x, menu_y) = ui_menu_origin(h_active, v_active);
 
     menu.clear();
@@ -159,12 +139,13 @@ fn redraw_ui_menu(
     .into_styled(PrimitiveStyle::with_fill(HI8::new(0, 0)))
     .draw(menu)
     .ok();
-    draw::draw_options(
+    draw_scope_menu(
         menu,
         opts,
-        opts_x - menu_x,
-        opts_y - menu_y,
+        opts.tracker.page.value,
         hue,
+        OVERLAY_UI_MENU_W as u32,
+        OVERLAY_UI_MENU_H as u32,
     )
     .ok();
     menu.flush(port);
@@ -210,9 +191,16 @@ impl App {
         let pca9635 = Pca9635Driver::new(i2cdev);
         let pmod = EurorackPmod0::new(peripherals.PMOD0_PERIPH);
         let cc_mapper = build_cc_mapper(&opts);
+        let hide_ms = menu_hide_ms(opts.menu.hide.value);
         Self {
-            ui: ui::UI::new_with_fade(opts, TIMER0_ISR_PERIOD_MS, MENU_HIDE_MS,
-                            encoder, pca9635, pmod),
+            ui: ui::UI::new_with_fade(
+                opts,
+                TIMER0_ISR_PERIOD_MS,
+                hide_ms,
+                encoder,
+                pca9635,
+                pmod,
+            ),
             cc_mapper,
         }
     }
@@ -248,7 +236,7 @@ fn timer0_handler(app: &Mutex<RefCell<App>>) {
 
         if app.ui.opts.misc.help.value == HelpPage::Off
             && app.ui.opts.tracker.page.value == Page::Help {
-            app.ui.opts.tracker.page.value = Page::Scope1;
+            app.ui.opts.tracker.page.value = Page::Chan12;
         }
     });
 }
@@ -298,10 +286,11 @@ fn main() -> ! {
         None
     };
     // Boot straight into the scope; ignore a saved Help-page selection.
-    opts.tracker.page.value = Page::Scope1;
+    opts.tracker.page.value = Page::Chan12;
 
-    let mut last_palette = opts.display.palette.value;
-    let boot_ui_hue = opts.display.ui_hue.value;
+    let mut last_palette = opts.menu.palette.value;
+    let mut last_hide = opts.menu.hide.value;
+    let boot_ui_hue = opts.menu.ui_hue.value;
     let app = Mutex::new(RefCell::new(App::new(opts)));
     critical_section::with(|cs| {
         app.borrow_ref_mut(cs).ui.clear_draw();
@@ -329,7 +318,7 @@ fn main() -> ! {
         };
         let mut first = true;
         let mut menu_shown = false;
-        let mut last_menu_page = Page::Scope1;
+        let mut last_menu_page = Page::Chan12;
         let mut debug_frame: u32 = 0;
 
         let dvi_w = modeline.h_active as u32;
@@ -354,17 +343,25 @@ fn main() -> ! {
 
             let (opts, draw_options, menu_dirty, save_opts, wipe_opts) = critical_section::with(|cs| {
                 let mut app = app.borrow_ref_mut(cs);
-                let save_opts = app.ui.opts.misc.save_opts.poll();
-                let wipe_opts = app.ui.opts.misc.wipe_opts.poll();
+                let save_opts = app.ui.opts.misc.save_settings.poll();
+                let wipe_opts = app.ui.opts.misc.reset_settings.poll();
                 let menu_dirty = app.ui.take_menu_dirty();
                 (app.ui.opts.clone(), app.ui.draw(), menu_dirty, save_opts, wipe_opts)
             });
 
             let on_help_page = opts.tracker.page.value == Page::Help;
 
-            if opts.display.palette.value != last_palette || first {
-                opts.display.palette.value.write_to_hardware(&mut display);
-                last_palette = opts.display.palette.value;
+            if opts.menu.palette.value != last_palette || first {
+                opts.menu.palette.value.write_to_hardware(&mut display);
+                last_palette = opts.menu.palette.value;
+            }
+
+            if opts.menu.hide.value != last_hide || first {
+                critical_section::with(|cs| {
+                    let mut app = app.borrow_ref_mut(cs);
+                    app.ui.set_encoder_fade_ms(menu_hide_ms(opts.menu.hide.value));
+                });
+                last_hide = opts.menu.hide.value;
             }
 
             if draw_options || on_help_page {
@@ -383,7 +380,7 @@ fn main() -> ! {
                         &opts,
                         h_active,
                         v_active,
-                        opts.display.ui_hue.value,
+                        opts.menu.ui_hue.value,
                     );
                     last_menu_page = opts.tracker.page.value;
                 }
@@ -401,7 +398,7 @@ fn main() -> ! {
                     h_active,
                     v_active,
                     opts.help.scroll.value,
-                    opts.display.ui_hue.value,
+                    opts.menu.ui_hue.value,
                 )
                 .ok();
             }
@@ -412,7 +409,7 @@ fn main() -> ! {
                 v_active,
                 opts.misc.rotation.value.clone(),
                 menu_shown,
-                opts.display.ui_hue.value,
+                opts.menu.ui_hue.value,
             );
 
             if save_opts {
@@ -426,7 +423,7 @@ fn main() -> ! {
                     let mut app = app.borrow_ref_mut(cs);
                     app.ui.opts = Opts::default();
                     app.ui.opts.misc.rotation.value = modeline.rotate.clone();
-                    app.ui.opts.tracker.page.value = Page::Scope1;
+                    app.ui.opts.tracker.page.value = Page::Chan12;
                     app.ui.external_modify();
                     if let Some(ref mut flash_persist) = flash_persist_opt {
                         flash_persist.erase_all().unwrap();
@@ -434,25 +431,37 @@ fn main() -> ! {
                 });
             }
 
-            scope.set_hue(opts.scope2.hue.value);
-            scope.set_intensity(opts.scope2.intensity.value);
-            scope.set_trigger_level(opts.scope2.trig_lvl.value);
+            scope.set_hue(opts.scope.hue.value);
+            scope.set_intensity(opts.scope.intensity.value);
+            scope.set_trigger_level(opts.scope.trig_lvl.value);
             let (sppd_x, sppd) = scope.pixels_per_div();
             let xscale = xscale_for_full_width(h_active, sppd_x);
             scope.set_xscale(xscale);
-            scope.set_timebase_us(opts.scope2.timebase.value.t_div_us());
+            scope.set_timebase_us(opts.scope.timebase.value.t_div_us());
             let (plot_x_lo, plot_x_hi, plot_y_lo, plot_y_hi) =
                 waveform_plot_bounds(h_active, v_active);
             scope.set_plot_region(plot_x_lo, plot_x_hi, plot_y_lo, plot_y_hi);
 
-            let ypos = [opts.scope1.ypos0.value, opts.scope1.ypos1.value,
-                         opts.scope1.ypos2.value, opts.scope1.ypos3.value];
-            let yscale = [opts.scope1.yscale0.value, opts.scope1.yscale1.value,
-                          opts.scope1.yscale2.value, opts.scope1.yscale3.value];
-            let vis = [opts.scope1.vis0.value, opts.scope1.vis1.value,
-                       opts.scope1.vis2.value, opts.scope1.vis3.value];
+            let ypos = [
+                opts.chan12.ch1_y_offset.value,
+                opts.chan12.ch2_y_offset.value,
+                opts.chan34.ch3_y_offset.value,
+                opts.chan34.ch4_y_offset.value,
+            ];
+            let yscale = [
+                opts.chan12.ch1_scale.value,
+                opts.chan12.ch2_scale.value,
+                opts.chan34.ch3_scale.value,
+                opts.chan34.ch4_scale.value,
+            ];
+            let vis = [
+                opts.chan12.ch1_enabled.value,
+                opts.chan12.ch2_enabled.value,
+                opts.chan34.ch3_enabled.value,
+                opts.chan34.ch4_enabled.value,
+            ];
             for ch in 0..4usize {
-                scope.set_yscale_ch(ch, yscale[ch]);
+                scope.set_yscale_index(ch, yscale[ch].to_hw_index());
                 scope.set_ypos_px(ch, ypos[ch] * (sppd / 4) as i16);
             }
             scope.set_channel_mask([
@@ -477,21 +486,21 @@ fn main() -> ! {
                 w.start_y().bits((((dvi_h / 2) + 1) % dvi_ppd_y) as u8)
             });
 
-            let grid_style: u8 = match opts.display.grid.value {
+            let grid_style: u8 = match opts.scope.grid.value {
                 GridOverlay::Off => 0,
                 GridOverlay::Grid => 1,
                 GridOverlay::Cross => 2,
             };
             overlay_periph.flags().write(|w| unsafe {
                 w.grid_style().bits(grid_style);
-                w.grid_pixel().bits(((opts.display.grid_i.value as u8) << 4) | opts.display.ui_hue.value)
+                w.grid_pixel().bits(((opts.scope.grid_i.value as u8) << 4) | opts.menu.ui_hue.value)
             });
 
             display.rotate(&opts.misc.rotation.value);
 
             scope.set_enabled(
                 true,
-                opts.scope2.trig_mode.value == TriggerMode::Always,
+                opts.scope.trigger.value == TriggerMode::Always,
             );
 
             debug_frame = debug_frame.wrapping_add(1);

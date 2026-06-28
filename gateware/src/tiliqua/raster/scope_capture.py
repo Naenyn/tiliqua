@@ -14,6 +14,18 @@ from . import PSQ, PSQ_BASE_FBITS
 MAX_CAPTURE_COLS = 1280
 RAMP_END = fixed.Const(0.985, shape=PSQ)
 
+# Eurorack-friendly V/div LUT for ``yscale_idx`` (must match ``ScopeVScale`` in scope FW).
+# Maps sample deflection: in_y = ((-av * mul) >> rshift) + y_offset, where ``av`` is
+# the reshaped PSQ sample (~4000 counts per volt).  One 1 V grid step is ppv>>6 = 62 px.
+YSCALE_LUT = (
+    (159, 10),  # 0: 0.1 V/div
+    (127, 11),  # 1: 0.25 V/div
+    (127, 12),  # 2: 0.5 V/div
+    (127, 13),  # 3: 1.0 V/div
+    (205, 15),  # 4: 2.5 V/div
+    (203, 16),  # 5: 5.0 V/div
+)
+
 
 def envelope_word(ch_ymin, ch_ymax):
     # Channel ``ch`` occupies bits [32*ch : 32*ch+32], with ymin in the low
@@ -58,7 +70,7 @@ class ColumnCapture(wiring.Component):
             "plot_x_hi": In(signed(16)),
             "scale_x": In(unsigned(4)),
             "x_offset": In(signed(16)),
-            "scale_y": In(unsigned(4)).array(n_channels),
+            "scale_y": In(unsigned(3)).array(n_channels),
             "y_offset": In(signed(16)).array(n_channels),
             "sample_valid": In(1),
             "ramp": In(PSQ),
@@ -84,16 +96,32 @@ class ColumnCapture(wiring.Component):
 
         in_x = Signal(signed(16))
         in_y = Array(Signal(signed(16), name=f"in_y{i}") for i in range(self.n_channels))
+        y_mul = Array(Signal(8, name=f"y_mul{i}") for i in range(self.n_channels))
+        y_rshift = Array(Signal(5, name=f"y_rshift{i}") for i in range(self.n_channels))
 
         m.d.comb += in_x.eq(
             (self.ramp.reshape(PSQ_BASE_FBITS).as_value() >> self.scale_x) +
             self.x_offset
         )
         for ch in range(self.n_channels):
-            m.d.comb += in_y[ch].eq(
-                (-self.audio[ch].reshape(PSQ_BASE_FBITS).as_value() >> self.scale_y[ch]) +
-                self.y_offset[ch]
-            )
+            with m.Switch(self.scale_y[ch]):
+                for idx, (mul, rshift) in enumerate(YSCALE_LUT):
+                    with m.Case(idx):
+                        m.d.comb += [
+                            y_mul[ch].eq(mul),
+                            y_rshift[ch].eq(rshift),
+                        ]
+                with m.Default():
+                    m.d.comb += [
+                        y_mul[ch].eq(YSCALE_LUT[3][0]),
+                        y_rshift[ch].eq(YSCALE_LUT[3][1]),
+                    ]
+            av = self.audio[ch].reshape(PSQ_BASE_FBITS).as_value()
+            yprod = Signal(signed(26), name=f"yprod{ch}")
+            m.d.comb += [
+                yprod.eq(-av * y_mul[ch]),
+                in_y[ch].eq((yprod >> y_rshift[ch]) + self.y_offset[ch]),
+            ]
 
         latched_col = Signal(range(MAX_CAPTURE_COLS))
         max_col = Signal(range(MAX_CAPTURE_COLS))

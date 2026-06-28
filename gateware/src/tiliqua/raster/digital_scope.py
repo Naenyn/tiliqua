@@ -170,7 +170,7 @@ class DigitalScopePeripheral(wiring.Component):
         trigger_always = Signal()
 
         scale_x = Signal(unsigned(4))
-        scale_y = Array(Signal(unsigned(4)) for _ in range(self.n_channels))
+        scale_y = Array(Signal(unsigned(3)) for _ in range(self.n_channels))
         x_offset = Signal(signed(16))
         y_offset = Array(Signal(signed(16)) for _ in range(self.n_channels))
         hue = Array(Signal(unsigned(4)) for _ in range(self.n_channels))

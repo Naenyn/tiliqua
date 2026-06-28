@@ -16,9 +16,9 @@ from amaranth_soc.memory import MemoryMap
 from ..video.types import Pixel, Rotation, ScanPixel
 
 # Right-side options panel (local coordinates 0..width-1, 0..height-1).
-# Must fit draw_options layout: ~88px margin + 150px value column + labels.
-MENU_W = 272
-MENU_H = 224
+MENU_W = 250
+# Tall enough for CH 1-2 (9 rows) with one blank line between channel groups.
+MENU_H = 160
 
 MENU_BITS = MENU_W * MENU_H
 MENU_WORDS = (MENU_BITS + 31) // 32
@@ -30,8 +30,8 @@ class UiMenuOverlay(wiring.Component):
     """
     Composites a 1bpp menu bitmap over the incoming video stream.
 
-    Compositing is combinatorial on the incoming ScanPixel so timing matches
-    :class:`GridOverlay` (one registered stage total in the overlay pipeline).
+    One registered pixel stage matches the BRAM read latency so bitmap bits
+    align with the scan coordinates (same pattern as :class:`GridOverlay`).
     When ``menu_enable`` is low the pixel stream passes through unchanged.
     """
 
@@ -98,7 +98,8 @@ class UiMenuOverlay(wiring.Component):
         m.submodules.menu_px_i_ff = FFSynchronizer(
             i=self.menu_pixel.intensity, o=menu_px_dvi.intensity, o_domain="dvi")
 
-        m.d.comb += self.o.eq(self.i)
+        # Registered pass-through (one pipeline stage, like GridOverlay).
+        m.d.dvi += self.o.eq(self.i)
 
         log_x = Signal(signed(12))
         log_y = Signal(signed(12))
@@ -108,10 +109,18 @@ class UiMenuOverlay(wiring.Component):
         menu_bit_addr = Signal(signed(17))
         menu_hit = Signal()
         menu_bit = Signal()
+        menu_bit_idx = Signal(5)
+        menu_hit_r = Signal()
+        menu_en_r = Signal()
         black_px = Signal(Pixel)
         overlay_pixel = Signal(Pixel)
 
-        m.d.comb += self.menu_raddr.eq(0)
+        m.d.comb += [
+            black_px.color.eq(0),
+            black_px.intensity.eq(0),
+            self.menu_raddr.eq(0),
+        ]
+
         with m.If(menu_en_dvi):
             self._logical_xy(
                 m, self.i.x, self.i.y, rotation_dvi, h_active_dvi, v_active_dvi,
@@ -120,23 +129,35 @@ class UiMenuOverlay(wiring.Component):
             m.d.comb += [
                 menu_lx.eq(log_x - menu_ox_dvi),
                 menu_ly.eq(log_y - menu_oy_dvi),
-                menu_row_base.eq((menu_ly << 8) + (menu_ly << 4)),
+                menu_row_base.eq(menu_ly * Const(MENU_W)),
                 menu_bit_addr.eq(menu_row_base + menu_lx),
                 menu_hit.eq(
                     (menu_lx >= 0) & (menu_lx < MENU_W) &
                     (menu_ly >= 0) & (menu_ly < MENU_H)),
                 self.menu_raddr.eq(menu_bit_addr >> 5),
-                menu_bit.eq(self.menu_rdata.bit_select(menu_bit_addr[0:5], 1)),
-                black_px.color.eq(0),
-                black_px.intensity.eq(0),
-                overlay_pixel.eq(self.i.pixel),
             ]
-            with m.If(self.i.de & menu_hit):
-                with m.If(menu_bit != 0):
-                    m.d.comb += overlay_pixel.eq(menu_px_dvi)
-                with m.Else():
-                    m.d.comb += overlay_pixel.eq(black_px)
-                m.d.comb += self.o.pixel.eq(overlay_pixel)
+
+            # BRAM read is registered; align bit index and hit with ``self.o``.
+            m.d.dvi += [
+                menu_bit_idx.eq(menu_bit_addr[0:5]),
+                menu_hit_r.eq(menu_hit),
+                menu_en_r.eq(1),
+            ]
+        with m.Else():
+            m.d.dvi += [
+                menu_bit_idx.eq(0),
+                menu_hit_r.eq(0),
+                menu_en_r.eq(0),
+            ]
+
+        m.d.comb += menu_bit.eq(self.menu_rdata.bit_select(menu_bit_idx, 1))
+
+        with m.If(self.o.de & menu_en_r & menu_hit_r):
+            with m.If(menu_bit != 0):
+                m.d.comb += overlay_pixel.eq(menu_px_dvi)
+            with m.Else():
+                m.d.comb += overlay_pixel.eq(black_px)
+            m.d.dvi += self.o.pixel.eq(overlay_pixel)
 
         return m
 

@@ -11,4 +11,5 @@ hal::impl_scope! {
 }
 
 pub mod handlers;
+pub mod menu_draw;
 pub mod options;

@@ -1,7 +1,6 @@
 use opts::*;
 use strum_macros::{EnumIter, IntoStaticStr};
 use tiliqua_lib::palette::ColorPalette;
-pub use tiliqua_lib::scope::VScale;
 use tiliqua_hal::dma_framebuffer::Rotate;
 use serde_derive::{Serialize, Deserialize};
 
@@ -56,14 +55,54 @@ impl ScopeTimebase {
     }
 }
 
+/// SCOPE bitstream volts/div menu.  Kept separate from ``tiliqua_lib::scope::VScale``
+/// so SCOPE can use Eurorack-friendly steps without affecting other bitstreams.
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
-#[strum(serialize_all = "SCREAMING-KEBAB-CASE")]
+#[strum(serialize_all = "kebab-case")]
+pub enum ScopeVScale {
+    #[strum(serialize = "100mV/d")]
+    Scale100mV,
+    #[strum(serialize = "250mV/d")]
+    Scale250mV,
+    #[strum(serialize = "500mV/d")]
+    Scale500mV,
+    #[default]
+    #[strum(serialize = "1V/d")]
+    Scale1V,
+    #[strum(serialize = "2.5V/d")]
+    Scale2p5V,
+    #[strum(serialize = "5V/d")]
+    Scale5V,
+}
+
+impl ScopeVScale {
+    /// Hardware LUT index written to ``yscaleN`` CSRs (see ``scope_capture.YSCALE_LUT``).
+    pub fn to_hw_index(self) -> u8 {
+        match self {
+            ScopeVScale::Scale100mV => 0,
+            ScopeVScale::Scale250mV => 1,
+            ScopeVScale::Scale500mV => 2,
+            ScopeVScale::Scale1V    => 3,
+            ScopeVScale::Scale2p5V  => 4,
+            ScopeVScale::Scale5V    => 5,
+        }
+    }
+}
+
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 pub enum Page {
     #[default]
-    Scope1,
-    Scope2,
-    Display,
+    #[strum(serialize = "CH 1-2")]
+    Chan12,
+    #[strum(serialize = "CH 3-4")]
+    Chan34,
+    #[strum(serialize = "SCOPE")]
+    Scope,
+    #[strum(serialize = "MENU")]
+    Menu,
+    #[strum(serialize = "MISC")]
     Misc,
+    #[strum(serialize = "HELP")]
     Help,
 }
 
@@ -101,15 +140,17 @@ pub enum CcHighlight {
 }
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
-#[strum(serialize_all = "kebab-case")]
 pub enum ChannelVis {
     #[default]
+    #[strum(serialize = "Yes")]
     On,
+    #[strum(serialize = "No")]
     Off,
 }
 
 int_params!(IntensityParams<u8>   { step: 1, min: 0, max: 15 });
 int_params!(HueParams<u8>         { step: 1, min: 0, max: 15 });
+int_params!(HideParams<u8>        { step: 1, min: 2, max: 16, format: IntFormat::Scaled { divisor: 2, precision: 1, suffix: "s" } });
 int_params!(TriggerLvlParams<i16> { step: 500, min: -16000, max: 16000, format: IntFormat::Scaled { divisor: 4000, precision: 2, suffix: "V" } });
 int_params!(PosParams<i16>       { step: 1, min: -40, max: 40, format: IntFormat::Scaled { divisor: 4, precision: 2, suffix: "d" } });
 int_params!(ScrollParams<u8>      { step: 1, min: 0, max: 125 });
@@ -123,15 +164,18 @@ pub struct HelpOpts {
 }
 
 #[derive(OptionPage, Clone)]
-pub struct DisplayOpts {
+pub struct MenuOpts {
     #[option(10)]
     pub ui_hue: IntOption<HueParams>,
     #[option]
     pub palette: EnumOption<ColorPalette>,
-    #[option]
-    pub grid: EnumOption<GridOverlay>,
-    #[option(4)]
-    pub grid_i: IntOption<IntensityParams>,
+    #[option(5)]
+    pub hide: IntOption<HideParams>,
+}
+
+/// Convert ``Hide`` menu value (0.5 s steps) to milliseconds for the UI fade timer.
+pub fn menu_hide_ms(hide: u8) -> u32 {
+    hide as u32 * 500
 }
 
 #[derive(OptionPage, Clone)]
@@ -143,47 +187,55 @@ pub struct MiscOpts {
     #[option]
     pub cc_highlight: EnumOption<CcHighlight>,
     #[option(false)]
-    pub save_opts: ButtonOption<OneShotButtonParams>,
+    pub save_settings: ButtonOption<OneShotButtonParams>,
     #[option(false)]
-    pub wipe_opts: ButtonOption<OneShotButtonParams>,
+    pub reset_settings: ButtonOption<OneShotButtonParams>,
 }
 
 #[derive(OptionPage, Clone)]
-pub struct ScopeOpts1 {
-    #[option(-14)]
-    pub ypos0: IntOption<PosParams>,
-    #[option(-5)]
-    pub ypos1: IntOption<PosParams>,
-    #[option(5)]
-    pub ypos2: IntOption<PosParams>,
-    #[option(14)]
-    pub ypos3: IntOption<PosParams>,
-    #[option(VScale::Scale4V)]
-    pub yscale0: EnumOption<VScale>,
-    #[option(VScale::Scale4V)]
-    pub yscale1: EnumOption<VScale>,
-    #[option(VScale::Scale4V)]
-    pub yscale2: EnumOption<VScale>,
-    #[option(VScale::Scale4V)]
-    pub yscale3: EnumOption<VScale>,
+pub struct Chan12Opts {
+    #[option(0)]
+    pub ch1_y_offset: IntOption<PosParams>,
+    #[option(ScopeVScale::Scale1V)]
+    pub ch1_scale: EnumOption<ScopeVScale>,
     #[option]
-    pub vis0: EnumOption<ChannelVis>,
+    pub ch1_enabled: EnumOption<ChannelVis>,
+    #[option(0)]
+    pub ch2_y_offset: IntOption<PosParams>,
+    #[option(ScopeVScale::Scale1V)]
+    pub ch2_scale: EnumOption<ScopeVScale>,
     #[option]
-    pub vis1: EnumOption<ChannelVis>,
-    #[option]
-    pub vis2: EnumOption<ChannelVis>,
-    #[option]
-    pub vis3: EnumOption<ChannelVis>,
+    pub ch2_enabled: EnumOption<ChannelVis>,
 }
 
 #[derive(OptionPage, Clone)]
-pub struct ScopeOpts2 {
+pub struct Chan34Opts {
+    #[option(0)]
+    pub ch3_y_offset: IntOption<PosParams>,
+    #[option(ScopeVScale::Scale1V)]
+    pub ch3_scale: EnumOption<ScopeVScale>,
+    #[option]
+    pub ch3_enabled: EnumOption<ChannelVis>,
+    #[option(0)]
+    pub ch4_y_offset: IntOption<PosParams>,
+    #[option(ScopeVScale::Scale1V)]
+    pub ch4_scale: EnumOption<ScopeVScale>,
+    #[option]
+    pub ch4_enabled: EnumOption<ChannelVis>,
+}
+
+#[derive(OptionPage, Clone)]
+pub struct ScopeOpts {
     #[option]
     pub timebase: EnumOption<ScopeTimebase>,
     #[option]
-    pub trig_mode: EnumOption<TriggerMode>,
+    pub trigger: EnumOption<TriggerMode>,
     #[option]
     pub trig_lvl: IntOption<TriggerLvlParams>,
+    #[option]
+    pub grid: EnumOption<GridOverlay>,
+    #[option(4)]
+    pub grid_i: IntOption<IntensityParams>,
     #[option(8)]
     pub intensity: IntOption<IntensityParams>,
     #[option(10)]
@@ -195,21 +247,24 @@ pub struct Opts {
     pub tracker: ScreenTracker<Page>,
     #[page(Page::Help)]
     pub help: HelpOpts,
-    #[page(Page::Display)]
-    pub display: DisplayOpts,
+    #[page(Page::Chan12)]
+    pub chan12: Chan12Opts,
+    #[page(Page::Chan34)]
+    pub chan34: Chan34Opts,
+    #[page(Page::Scope)]
+    pub scope: ScopeOpts,
+    #[page(Page::Menu)]
+    pub menu: MenuOpts,
     #[page(Page::Misc)]
     pub misc: MiscOpts,
-    #[page(Page::Scope1)]
-    pub scope1: ScopeOpts1,
-    #[page(Page::Scope2)]
-    pub scope2: ScopeOpts2,
 }
 
 /// Pages shown when turning the encoder at the page title (no wrap).
-pub const MENU_PAGES: [Page; 4] = [
-    Page::Scope1,
-    Page::Scope2,
-    Page::Display,
+pub const MENU_PAGES: [Page; 5] = [
+    Page::Chan12,
+    Page::Chan34,
+    Page::Scope,
+    Page::Menu,
     Page::Misc,
 ];
 

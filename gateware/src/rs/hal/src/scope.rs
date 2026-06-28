@@ -44,6 +44,17 @@ macro_rules! impl_scope {
                 };
             }
 
+            /// Eurorack-friendly V/div LUT index (SCOPE ``DigitalScope`` capture path only).
+            pub fn set_yscale_index(&mut self, ch: usize, index: u8) {
+                match ch {
+                    0 => self.registers.yscale0().write(|w| unsafe { w.yscale().bits(index) }),
+                    1 => self.registers.yscale1().write(|w| unsafe { w.yscale().bits(index) }),
+                    2 => self.registers.yscale2().write(|w| unsafe { w.yscale().bits(index) }),
+                    3 => self.registers.yscale3().write(|w| unsafe { w.yscale().bits(index) }),
+                    _ => return,
+                };
+            }
+
             pub fn set_channel_mask(&mut self, visible: [bool; 4]) {
                 self.registers.channel_en().write(|w| {
                     w.ch0().bit(visible[0]);
