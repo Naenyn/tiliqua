@@ -278,7 +278,7 @@ class DigitalScopePeripheral(wiring.Component):
 
         m.submodules.irep2 = irep2 = dsp.Split(2, replicate=True, source=self.isplit4.o[0], shape=PSQ)
 
-        m.submodules.trig = trig = dsp.Trigger(shape=PSQ, tap=True)
+        m.submodules.trig = trig = dsp.Trigger(shape=PSQ)
         m.d.comb += trig.falling.eq(trigger_falling)
         m.submodules.ramp = ramp = dsp.Ramp(shape=PSQ)
         timebase = Signal(shape=dsp.Ramp.TIMEBASE_SQ)
@@ -314,10 +314,9 @@ class DigitalScopePeripheral(wiring.Component):
         with m.Elif(trig_seen & ~trigger_always & ~ramp_at_top & ~pending_trig):
             m.d.sync += pending_trig.eq(1)
 
-        m.d.comb += [
-            trig.i.valid.eq(self.isplit4.o[0].valid),
-            trig.i.payload.threshold.eq(trigger_lvl),
-        ]
+        dsp.connect_remap(m, irep2.o[0], trig.i, lambda o, i: [
+            i.payload.threshold.eq(trigger_lvl),
+        ])
         with m.Switch(trigger_ch):
             for ch in range(self.n_channels):
                 with m.Case(ch):
