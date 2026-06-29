@@ -39,7 +39,8 @@ SCOPE does **not** plot consecutive `(x, y)` sample pairs as connected segments
 1. **Capture** walks the horizontal ramp and, for each screen column `x`, stores
    only **ymin** and **ymax** — the vertical span of all samples that landed in
    that column during the sweep.
-2. **Render** reads each finished column and draws a **vertical bar** from ymin
+2. A compact back buffer holds the entire completed sweep.
+3. **Render** reads the frozen sweep and draws each **vertical bar** from ymin
    to ymax at that `x` (via the line plotter as a 1-pixel-wide strip).
 
 A steep edge is really a **segment** between two points. The envelope model
@@ -61,18 +62,19 @@ that column**. The sample that crossed into the **new** column carried the other
 end of the vertical jump, but that Y value was **not** included in the old
 column’s flush.
 
-### 2. Progressive erase-then-draw
+### 2. Erase-then-draw
 
-Columns are rendered **live**, left to right, as the ramp sweeps:
+The renderer updates columns left to right after a complete sweep:
 
 1. Read what was previously shown for this column (`shown_mem`).
 2. **Erase** the old vertical span (black segment).
 3. **Draw** the new vertical span.
 
-Even with correct envelopes this produces **temporal** flicker:
+Compact completed-sweep buffering prevents partially acquired traces from
+reaching the renderer. Some short-lived pixel flicker can remain because:
 
-- During the sweep, columns to the right are still being painted.
-- On each new triggered sweep, columns are erase+redrawn again.
+- During the render pass, columns are still updated sequentially.
+- On each new triggered sweep, changed columns are erased and redrawn again.
 - If the envelope shifts by even one pixel between sweeps, erase removes pixels
   before draw replaces them.
 
@@ -96,7 +98,7 @@ Large `|Δy|` **within** a single column is already handled by expanding
 
 - Adjacent columns where both have partial envelopes but the bridge threshold
   (`VERTICAL_DY_THRESH = 2`) is not met.
-- **Sweep-to-sweep** erase/redraw flicker from progressive rendering.
+- **Sweep-to-sweep** erase/redraw flicker inside the completed render pass.
 - **Skipped columns** when X advances faster than one column per sample.
 - Diagonal continuity between columns (envelopes are vertical bars only, not
   sloped segments).
@@ -139,7 +141,7 @@ Implementation: `scope_capture.py` — `flush_ymin` / `flush_ymax` derived from
 | **Same-column `vertical_jump`** (like `trace.py`) | Connect when large Δy without column change | Mostly covered by min/max already |
 | **Segment mode for steep steps** | On steep boundary, emit a **line segment** (x0,y0)→(x1,y1) instead of a column bar | Renderer path similar to `trace.py` / `LineStripCmd` |
 | **Sample-to-sample line plotter** | Plot consecutive (x,y) with line strips; no column envelope | Best continuity; abandons column-envelope capture |
-| **Full-sweep buffer, draw once** | Capture all columns, render entire trace after sweep (no progressive erase) | Removes much sweep-to-sweep erase flicker; adds latency |
+| **Full-sweep buffer, draw once** | Implemented by `CompletedSweepBuffer`; capture all columns, then render | Removes partial-sweep painting; adds one acquire/render cycle of latency |
 | **Union erase** (draw new without erasing old first, or erase union of old+new) | Reduces flicker when envelope jitters | Earlier experiments caused layering/partial-waveform regressions — needs careful design |
 
 ---
@@ -156,9 +158,9 @@ If spatial gaps remain after `e808670`:
    diagonal `LineStripCmd` through the existing per-channel line plotter (as
    `trace.py` does for continuous diagonals and verticals).
 
-If **flicker** (temporal) dominates over **gaps** (spatial):
+If residual **flicker** (temporal) dominates over **gaps** (spatial):
 
-- Revisit progressive erase/draw policy (e.g. only erase when disjoint from new
+- Revisit the per-column erase/draw policy (e.g. only erase when disjoint from new
   envelope, or defer erase until draw completes).
 - Avoid naive “union erase” or per-sweep full clears without regression tests —
   those paths previously caused partial waveforms and layering.
@@ -170,8 +172,8 @@ If **flicker** (temporal) dominates over **gaps** (spatial):
 - **Dashed vertical lines** are primarily a **representation** issue: independent
   column bars plus Y values lost at column boundaries — not trigger lock or
   sample rate.
-- **Flicker** is largely **progressive rendering** (erase then draw per column,
-  every sweep).
+- Compact completed-sweep buffering removes live partial-sweep painting; the
+  remaining flicker is the framebuffer's per-column erase/draw interval.
 - **Peak wiggle** at saw resets was addressed by **linear** plot upsampling
   instead of FIR (`ab785f1`).
 - **Boundary gaps** are partially addressed by the **steep envelope bridge**

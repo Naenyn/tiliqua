@@ -17,6 +17,7 @@ from .line import LineCmd, _LinePlotter
 from .plot import OffsetMode, PlotRequest
 from .plot_clip import PlotClip
 from .scope_capture import MAX_CAPTURE_COLS, ENVELOPE_SENTINEL, ColumnCapture
+from .scope_buffer import CompletedSweepBuffer
 from .scope_render import ColumnRenderer
 
 
@@ -347,29 +348,28 @@ class DigitalScopePeripheral(wiring.Component):
             dsp.connect_peek(m, merge.o, tap.i, always_ready=True)
 
         m.submodules.capture = capture = ColumnCapture()
+        m.submodules.sweep_buffer = sweep_buffer = CompletedSweepBuffer()
         m.submodules.renderer = renderer = ColumnRenderer()
 
-        # Progressive rendering: each column finished by the capture is pushed
-        # into this FIFO and drawn immediately by the renderer, so the trace
-        # paints live left-to-right as the ramp sweeps instead of waiting for a
-        # whole acquire-then-render cycle.  Flushes are dropped if the FIFO is
-        # full, which only happens at very fast timebases.
-        flush_layout = data.StructLayout({
-            "col": range(MAX_CAPTURE_COLS),
-            "word": unsigned(128),
-        })
-        m.submodules.flush_fifo = flush_fifo = stream_util.SyncFIFOBuffered(
-            shape=flush_layout, depth=256)
-
-        # Capture runs continuously while enabled (after the power-on clear); it
-        # rides the ramp and the internal ``armed`` gate restricts accumulation
-        # to clean, complete, trigger-aligned sweeps.
+        # Capture and display use compact front/back envelope buffers.  Capture
+        # writes a complete frozen sweep before the renderer sees any column;
+        # the existing shown_mem is the front sweep and sweep_buffer is the back.
         capturing = Signal()
-        m.d.comb += capturing.eq(self.soc_en & ~region_clear.busy)
+        rendering = Signal()
+        m.d.comb += [
+            sweep_buffer.enable.eq(self.soc_en & ~region_clear.busy),
+            sweep_buffer.ncols.eq(ncols),
+            sweep_buffer.flush_valid.eq(capture.flush_valid),
+            sweep_buffer.flush_col.eq(capture.flush_col),
+            sweep_buffer.flush_word.eq(capture.flush_word),
+            sweep_buffer.sweep_done.eq(capture.sweep_done),
+            capturing.eq(sweep_buffer.capture_active),
+            rendering.eq(sweep_buffer.rendering | renderer.busy),
+        ]
 
         m.d.comb += [
             capture.active.eq(capturing),
-            capture.clear.eq(enable_clear),
+            capture.clear.eq(enable_clear | sweep_buffer.capture_clear),
             capture.plot_x_lo.eq(plot_x_lo),
             capture.plot_x_hi.eq(plot_x_hi),
             capture.scale_x.eq(scale_x),
@@ -380,13 +380,10 @@ class DigitalScopePeripheral(wiring.Component):
             capture.audio[1].eq(ch_merges[1].o.payload[1]),
             capture.audio[2].eq(ch_merges[2].o.payload[1]),
             capture.audio[3].eq(ch_merges[3].o.payload[1]),
-            flush_fifo.i.valid.eq(capture.flush_valid),
-            flush_fifo.i.payload.col.eq(capture.flush_col),
-            flush_fifo.i.payload.word.eq(capture.flush_word),
-            renderer.col_valid.eq(flush_fifo.o.valid),
-            renderer.col.eq(flush_fifo.o.payload.col),
-            renderer.word.eq(flush_fifo.o.payload.word),
-            flush_fifo.o.ready.eq(renderer.col_ready),
+            renderer.col_valid.eq(sweep_buffer.col_valid),
+            renderer.col.eq(sweep_buffer.col),
+            renderer.word.eq(sweep_buffer.word),
+            sweep_buffer.col_ready.eq(renderer.col_ready),
             shown_rd.en.eq(renderer.s_en),
             shown_rd.addr.eq(renderer.s_addr),
             renderer.s_data.eq(shown_rd.data),
@@ -411,38 +408,29 @@ class DigitalScopePeripheral(wiring.Component):
             ]
             wiring.connect(m, renderer.line_o[ch], line_fifos[ch].i)
 
-        rendering = Signal()
-        m.d.comb += rendering.eq(renderer.busy)
         fsm_state = Signal(2)
         m.d.comb += fsm_state.eq(Cat(capturing, rendering))
 
         capture_done_cnt = Signal(8)
-        # Per-sweep debug bytes (reset on each ``capture.sweep_done``):
-        #   trigger_edges (top byte of ``ct``): column flushes dropped this sweep
-        #   col_writes: column flushes emitted this sweep
-        #   render_done: column flushes accepted by the renderer this sweep
-        # Comparing drop vs flush counts shows render headroom; disabling channels
-        # should lower both flush and drop counts at render-bound timebases.
-        drop_sweep_cnt = Signal(8)
+        # Per-sweep debug bytes (reset on each ``capture.sweep_done``).  The
+        # compact back buffer cannot drop column flushes; the legacy drop field
+        # remains in the CSR layout for firmware compatibility and reads zero.
         flush_sweep_cnt = Signal(8)
         render_sweep_cnt = Signal(8)
         trig_sweep_cnt = Signal(8)
         ramp_restart_sweep_cnt = Signal(8)
         pen_lift_sweep_cnt = Signal(8)
         end_reached_sweep_cnt = Signal(8)
-        flush_drop = Signal()
         flush_accept = Signal()
         trig_pulse = Signal()
         m.d.comb += [
-            flush_drop.eq(capture.flush_valid & ~flush_fifo.i.ready),
-            flush_accept.eq(flush_fifo.o.valid & renderer.col_ready),
+            flush_accept.eq(sweep_buffer.col_valid & renderer.col_ready),
             trig_pulse.eq(norm_fire),
         ]
 
         with m.If(capture.sweep_done):
             m.d.sync += [
                 capture_done_cnt.eq(capture_done_cnt + 1),
-                drop_sweep_cnt.eq(0),
                 flush_sweep_cnt.eq(0),
                 render_sweep_cnt.eq(0),
                 trig_sweep_cnt.eq(0),
@@ -450,8 +438,6 @@ class DigitalScopePeripheral(wiring.Component):
                 pen_lift_sweep_cnt.eq(0),
                 end_reached_sweep_cnt.eq(0),
             ]
-        with m.If(flush_drop):
-            m.d.sync += drop_sweep_cnt.eq(drop_sweep_cnt + 1)
         with m.If(capture.flush_valid):
             m.d.sync += flush_sweep_cnt.eq(flush_sweep_cnt + 1)
         with m.If(flush_accept):
@@ -518,7 +504,7 @@ class DigitalScopePeripheral(wiring.Component):
             self._debug_count.f.capture_done.r_data.eq(capture_done_cnt),
             self._debug_count.f.render_done.r_data.eq(render_sweep_cnt),
             self._debug_count.f.col_writes.r_data.eq(flush_sweep_cnt),
-            self._debug_count.f.flush_drops.r_data.eq(drop_sweep_cnt),
+            self._debug_count.f.flush_drops.r_data.eq(0),
             self._debug_trig.f.trig_edges.r_data.eq(trig_sweep_cnt),
             self._debug_trig.f.ramp_restarts.r_data.eq(ramp_restart_sweep_cnt),
             self._debug_trig.f.pen_lifts.r_data.eq(pen_lift_sweep_cnt),
