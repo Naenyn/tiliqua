@@ -10,7 +10,7 @@ from amaranth.sim import *
 from amaranth.lib import wiring
 
 from tiliqua.test import wishbone, stream, csr as csr_util
-from tiliqua.raster import persist, stroke, plot, blit, line
+from tiliqua.raster import persist, stroke, plot, blit, line, scope_capture
 from tiliqua.video import framebuffer, modeline, palette
 
 from amaranth_soc import csr
@@ -344,3 +344,94 @@ class RasterTests(unittest.TestCase):
         sim.add_testbench(test_response)
         with sim.write_vcd(vcd_file=open("test_line_peripheral.vcd", "w")):
             sim.run()
+
+
+class ColumnCaptureTests(unittest.TestCase):
+
+    def _unpack_ch0(self, word):
+        ymin = word & 0xffff
+        ymax = (word >> 16) & 0xffff
+        if ymin >= 0x8000:
+            ymin -= 0x10000
+        if ymax >= 0x8000:
+            ymax -= 0x10000
+        return ymin, ymax
+
+    def test_pen_lift_flush_is_not_bridged(self):
+        """Sweep wrap must not treat end-of-sweep Y as a steep edge into the new sweep."""
+        from amaranth_future import fixed
+        from tiliqua.raster import PSQ
+
+        m = Module()
+        dut = scope_capture.ColumnCapture()
+        m.submodules.dut = dut
+
+        plot_x_lo = 100
+
+        async def sample(ctx, ramp_val, audio_val):
+            ctx.set(dut.ramp, fixed.Const(ramp_val, shape=PSQ))
+            ctx.set(dut.audio[0], fixed.Const(audio_val, shape=PSQ))
+            ctx.set(dut.sample_valid, 1)
+            await ctx.delay(0.5e-6)
+            flush = ctx.get(dut.flush_valid)
+            word = ctx.get(dut.flush_word) if flush else 0
+            col = ctx.get(dut.flush_col) if flush else 0
+            pen = ctx.get(dut.dbg_pen_lift)
+            await ctx.delay(0.5e-6)
+            ctx.set(dut.sample_valid, 0)
+            return flush, col, word, pen
+
+        async def testbench(ctx):
+            ctx.set(dut.active, 1)
+            ctx.set(dut.plot_x_lo, plot_x_lo)
+            ctx.set(dut.plot_x_hi, 900)
+            ctx.set(dut.scale_x, 6)
+            ctx.set(dut.x_offset, plot_x_lo)
+            ctx.set(dut.scale_y[0], 3)
+            ctx.set(dut.y_offset[0], 360)
+            ctx.set(dut.visible[0], 1)
+            for ch in range(1, 4):
+                ctx.set(dut.visible[ch], 0)
+
+            ctx.set(dut.clear, 1)
+            await ctx.tick()
+            ctx.set(dut.clear, 0)
+            await ctx.tick()
+
+            # Leave the ramp top to arm a fresh sweep, then advance monotonically.
+            await sample(ctx, 0.99, 0.0)
+            await sample(ctx, 0.50, 0.0)
+
+            for ramp in (0.52, 0.54, 0.56, 0.58):
+                await sample(ctx, ramp, -0.5)
+            steep_flush = await sample(ctx, 0.60, 0.5)
+
+            flushes = []
+            for ramp in (0.62, 0.64, 0.66, 0.68, 0.70, 0.72, 0.74, 0.76):
+                flush, col, word, _pen = await sample(ctx, ramp, 0.5)
+                if flush:
+                    ymin, ymax = self._unpack_ch0(word)
+                    flushes.append((col, ymin, ymax))
+
+            self.assertTrue(flushes, "expected column flushes during sweep")
+            self.assertTrue(steep_flush[0], "expected flush on steep edge")
+            ymin, ymax = self._unpack_ch0(steep_flush[2])
+            self.assertGreater(ymax - ymin, 10,
+                               "steep edge should bridge the vertical jump")
+
+            # Wrap the ramp: pen lifts and the sweep ends at the previous column.
+            wrap_flush, _col, word, pen = await sample(ctx, -0.90, -0.5)
+            self.assertEqual(pen, 1)
+            self.assertTrue(wrap_flush, "expected one final flush on pen lift")
+            ymin, ymax = self._unpack_ch0(word)
+            self.assertLessEqual(ymax - ymin, 2,
+                                 f"wrap flush must not bridge Y levels: ymin={ymin} ymax={ymax}")
+
+            # New sweep starts without a spurious left-column flush.
+            restart_flush, _, _, _ = await sample(ctx, 0.50, 0.5)
+            self.assertFalse(restart_flush)
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()

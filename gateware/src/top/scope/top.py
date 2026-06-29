@@ -201,11 +201,10 @@ class ScopeSoc(TiliquaSoc):
         m.submodules.up_split4 = up_split4 = dsp.Split(n_channels=4, source=plot_fifo.o, shape=PSQ)
         m.submodules.up_merge4 = up_merge4 = dsp.Merge(n_channels=4, shape=PSQ)
         for ch in range(4):
-            # SCOPE needs a shape-preserving interpolator: the band-limited FIR
-            # resampler rings around discontinuities and draws overshoot spikes
-            # on saw/square edges. Linear interpolation stays within the two
-            # source samples while remaining dense enough for smooth plotting.
-            r = dsp.LinearResample(n_up=self.n_upsample, shape=PSQ)
+            # Zero-order hold: repeat each audio sample n_up times.  Linear
+            # interpolation chamfers square/saw corners into ramps; ZOH keeps
+            # discontinuities sharp (FIR overshoot is avoided as well).
+            r = dsp.HoldResample(n_up=self.n_upsample, shape=PSQ)
             setattr(m.submodules, f"resample{ch}", r)
             wiring.connect(m, up_split4.o[ch], r.i)
             wiring.connect(m, r.o, up_merge4.i[ch])

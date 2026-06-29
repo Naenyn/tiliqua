@@ -7,7 +7,7 @@ from amaranth.lib import stream, wiring
 from amaranth.lib.wiring import In, Out
 
 from .line import LineCmd, LineStripCmd
-from .scope_capture import MAX_CAPTURE_COLS, ENVELOPE_SENTINEL
+from .scope_capture import MAX_CAPTURE_COLS, ENVELOPE_SENTINEL, VERTICAL_DY_THRESH
 
 
 class ColumnRenderer(wiring.Component):
@@ -63,11 +63,17 @@ class ColumnRenderer(wiring.Component):
         render_col = Signal(range(MAX_CAPTURE_COLS))
         new_word = Signal(unsigned(128))
         shown_word = Signal(unsigned(128))
+        prev_shown_word = Signal(unsigned(128))
+        have_prev_shown = Signal()
 
         new_ymin = Array(Signal(signed(16)) for _ in range(self.n_channels))
         new_ymax = Array(Signal(signed(16)) for _ in range(self.n_channels))
         shown_ymin = Array(Signal(signed(16)) for _ in range(self.n_channels))
         shown_ymax = Array(Signal(signed(16)) for _ in range(self.n_channels))
+        prev_ymin = Array(Signal(signed(16)) for _ in range(self.n_channels))
+        prev_ymax = Array(Signal(signed(16)) for _ in range(self.n_channels))
+        horiz_corner = Array(Signal() for _ in range(self.n_channels))
+        horiz_y = Array(Signal(signed(11)) for _ in range(self.n_channels))
         for ch in range(self.n_channels):
             lo = 32 * ch
             m.d.comb += [
@@ -75,12 +81,32 @@ class ColumnRenderer(wiring.Component):
                 new_ymax[ch].eq(new_word[lo+16:lo+32].as_signed()),
                 shown_ymin[ch].eq(shown_word[lo:lo+16].as_signed()),
                 shown_ymax[ch].eq(shown_word[lo+16:lo+32].as_signed()),
+                prev_ymin[ch].eq(prev_shown_word[lo:lo+16].as_signed()),
+                prev_ymax[ch].eq(prev_shown_word[lo+16:lo+32].as_signed()),
+            ]
+            prev_span = Signal(signed(17), name=f"prev_span{ch}")
+            flat_new = Signal(name=f"flat_new{ch}")
+            m.d.comb += [
+                prev_span.eq(prev_ymax[ch] - prev_ymin[ch]),
+                flat_new.eq(new_ymin[ch] == new_ymax[ch]),
+                horiz_corner[ch].eq(
+                    have_prev_shown &
+                    self.visible[ch] &
+                    (self.intensity[ch] > 0) &
+                    flat_new &
+                    (prev_span >= VERTICAL_DY_THRESH) &
+                    ((new_ymin[ch] == prev_ymax[ch]) |
+                     (new_ymin[ch] == prev_ymin[ch]))
+                ),
+                horiz_y[ch].eq(new_ymin[ch]),
             ]
 
         draw_ch = Signal(range(self.n_channels + 1))
         latched_x = Signal(signed(12))
         pending = Signal()
         erase_phase = Signal()
+        horiz_phase = Signal()
+        horiz_done = Array(Signal() for _ in range(self.n_channels))
         render_state = Signal(3)
 
         # Per-channel selection of the current stroke parameters.
@@ -134,18 +160,22 @@ class ColumnRenderer(wiring.Component):
         # span in the channel colour.
         seg_y0 = Signal(signed(11))
         seg_y1 = Signal(signed(11))
+        seg_x0 = Signal(signed(12))
+        seg_x1 = Signal(signed(12))
         seg_color = Signal(unsigned(4))
         seg_inten = Signal(unsigned(4))
         m.d.comb += [
-            seg_y0.eq(Mux(erase_phase, cur_shown_lo, cur_new_lo)),
-            seg_y1.eq(Mux(erase_phase, shown_hi_clamped, new_hi_clamped)),
+            seg_x0.eq(Mux(horiz_phase, latched_x - 1, latched_x)),
+            seg_x1.eq(latched_x),
+            seg_y0.eq(Mux(horiz_phase, horiz_y[draw_ch], Mux(erase_phase, cur_shown_lo, cur_new_lo))),
+            seg_y1.eq(Mux(horiz_phase, horiz_y[draw_ch], Mux(erase_phase, shown_hi_clamped, new_hi_clamped))),
             seg_color.eq(Mux(erase_phase, 0, cur_hue)),
             seg_inten.eq(Mux(erase_phase, 0, cur_inten)),
         ]
         for ch in range(self.n_channels):
             m.d.comb += [
-                self.line_o[ch].payload.x.eq(latched_x),
-                self.line_o[ch].payload.x0.eq(latched_x),
+                self.line_o[ch].payload.x.eq(seg_x1),
+                self.line_o[ch].payload.x0.eq(seg_x0),
                 self.line_o[ch].payload.y0.eq(seg_y0),
                 self.line_o[ch].payload.y.eq(seg_y1),
                 self.line_o[ch].payload.use_seg.eq(1),
@@ -192,16 +222,34 @@ class ColumnRenderer(wiring.Component):
             with m.State("WAIT"):
                 m.d.comb += [self.col_ready.eq(1), render_state.eq(0)]
                 with m.If(self.col_valid):
-                    m.d.comb += [self.s_en.eq(1), self.s_addr.eq(self.col)]
+                    m.d.comb += self.s_en.eq(1)
                     m.d.sync += [
                         render_col.eq(self.col),
                         new_word.eq(self.word),
                         latched_x.eq(self.plot_x_lo + self.col),
                         draw_ch.eq(0),
                         erase_phase.eq(1),
+                        horiz_phase.eq(0),
                         pending.eq(0),
+                        have_prev_shown.eq(self.col > 0),
                     ]
-                    m.next = "READ_WAIT"
+                    for ch in range(self.n_channels):
+                        m.d.sync += horiz_done[ch].eq(0)
+                    with m.If(self.col > 0):
+                        m.d.comb += self.s_addr.eq(self.col - 1)
+                        m.next = "PREV_READ_WAIT"
+                    with m.Else():
+                        m.d.comb += self.s_addr.eq(self.col)
+                        m.next = "READ_WAIT"
+
+            with m.State("PREV_READ_WAIT"):
+                m.d.comb += [self.busy.eq(1), render_state.eq(1)]
+                m.d.sync += prev_shown_word.eq(self.s_data)
+                m.d.comb += [
+                    self.s_en.eq(1),
+                    self.s_addr.eq(render_col),
+                ]
+                m.next = "READ_WAIT"
 
             with m.State("READ_WAIT"):
                 m.d.comb += [self.busy.eq(1), render_state.eq(1)]
@@ -240,11 +288,29 @@ class ColumnRenderer(wiring.Component):
                     m.next = "WRITE_SHOWN"
                 with m.Elif(ch_unchanged):
                     m.d.sync += draw_ch.eq(draw_ch + 1)
+                with m.Elif(horiz_corner[draw_ch] & ~horiz_done[draw_ch]):
+                    m.d.sync += [horiz_phase.eq(1), pending.eq(1)]
+                    m.next = "HORIZ_EMIT"
                 with m.Elif(draw_valid):
                     m.d.sync += pending.eq(1)
                     m.next = "DRAW_EMIT"
                 with m.Else():
                     m.d.sync += draw_ch.eq(draw_ch + 1)
+
+            with m.State("HORIZ_EMIT"):
+                m.d.comb += [self.busy.eq(1), render_state.eq(6)]
+                with m.If(pending & line_ready):
+                    m.d.sync += [
+                        pending.eq(0),
+                        horiz_phase.eq(0),
+                        horiz_done[draw_ch].eq(1),
+                    ]
+                    with m.If(draw_valid):
+                        m.d.sync += pending.eq(1)
+                        m.next = "DRAW_EMIT"
+                    with m.Else():
+                        m.d.sync += draw_ch.eq(draw_ch + 1)
+                        m.next = "DRAW"
 
             with m.State("DRAW_EMIT"):
                 m.d.comb += [self.busy.eq(1), render_state.eq(6)]

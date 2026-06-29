@@ -197,6 +197,31 @@ class DSPTests(unittest.TestCase):
         self.assertAlmostEqual(rising[-1], 0.75, places=3)
         self.assertAlmostEqual(falling[-1], -0.5, places=3)
 
+    def test_hold_resample_preserves_discontinuities(self):
+        m = Module()
+        m.submodules.dut = dut = dsp.HoldResample(n_up=8, shape=ASQ)
+        outputs = []
+
+        async def stimulus(ctx):
+            for sample in (-0.75, 0.75):
+                await stream.put(ctx, dut.i, fixed.Const(sample, shape=ASQ))
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            while len(outputs) < 16:
+                if ctx.get(dut.o.valid & dut.o.ready):
+                    outputs.append(ctx.get(dut.o.payload).as_float())
+                await ctx.tick()
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        self.assertEqual(outputs[:8], [-0.75] * 8)
+        self.assertEqual(outputs[8:], [0.75] * 8)
+
     @parameterized.expand([
         ["mux_mac", mac.MuxMAC],
         ["ring_mac", mac.RingMAC],

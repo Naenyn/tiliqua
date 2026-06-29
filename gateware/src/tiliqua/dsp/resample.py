@@ -197,3 +197,49 @@ class LinearResample(wiring.Component):
                 ]
 
         return m
+
+
+class HoldResample(wiring.Component):
+
+    """Repeat each input sample ``n_up`` times (zero-order hold).
+
+    Unlike :class:`LinearResample`, discontinuities are not softened into
+    ramps, so square and saw edges stay sharp at the source sample grid.
+    """
+
+    def __init__(self, *, n_up, shape=ASQ):
+        assert n_up >= 1 and (n_up & (n_up - 1)) == 0
+        self.n_up = n_up
+        self.shape = shape
+        super().__init__({
+            "i": In(stream.Signature(shape)),
+            "o": Out(stream.Signature(shape)),
+        })
+
+    def elaborate(self, platform):
+        m = Module()
+
+        hold = Signal(self.shape)
+        active = Signal()
+        phase = Signal(range(self.n_up))
+
+        m.d.comb += [
+            self.i.ready.eq(~active),
+            self.o.valid.eq(active),
+            self.o.payload.eq(hold),
+        ]
+
+        with m.If(~active & self.i.valid):
+            m.d.sync += [
+                hold.eq(self.i.payload),
+                phase.eq(0),
+                active.eq(1),
+            ]
+
+        with m.If(active & self.o.ready):
+            with m.If(phase == self.n_up - 1):
+                m.d.sync += active.eq(0)
+            with m.Else():
+                m.d.sync += phase.eq(phase + 1)
+
+        return m

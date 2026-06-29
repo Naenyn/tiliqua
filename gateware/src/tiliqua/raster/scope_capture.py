@@ -15,7 +15,7 @@ MAX_CAPTURE_COLS = 1280
 RAMP_END = fixed.Const(0.985, shape=PSQ)
 
 # Extend a column envelope across steep sample steps (matches trace.py).
-VERTICAL_DY_THRESH = 2
+VERTICAL_DY_THRESH = 1
 
 # Eurorack-friendly V/div LUT for ``yscale_idx`` (must match ``ScopeVScale`` in scope FW).
 # Maps sample deflection: in_y = ((-av * mul) >> rshift) + y_offset, where ``av`` is
@@ -152,6 +152,15 @@ class ColumnCapture(wiring.Component):
         armed = Signal()
 
         col_index = Signal(range(MAX_CAPTURE_COLS))
+        pen_lift = Signal()
+        m.d.comb += pen_lift.eq(
+            self.sample_valid &
+            self.active &
+            has_prev_x &
+            has_col &
+            (in_x < prev_x)
+        )
+
         in_plot = Signal()
         m.d.comb += [
             col_index.eq(in_x - self.plot_x_lo),
@@ -159,36 +168,39 @@ class ColumnCapture(wiring.Component):
                 self.sample_valid &
                 self.active &
                 armed &
+                ~pen_lift &
                 (in_x >= self.plot_x_lo) &
                 (in_x < self.plot_x_hi) &
                 (col_index < MAX_CAPTURE_COLS)
             ),
         ]
 
-        m.d.comb += col_changing.eq(has_col & (col_index != latched_col))
+        m.d.comb += col_changing.eq(
+            in_plot & has_col & (col_index != latched_col)
+        )
+        steep_step = Array(Signal(name=f"steep_step{ch}") for ch in range(self.n_channels))
+        bridge_lo = Array(Signal(signed(16), name=f"bridge_lo{ch}") for ch in range(self.n_channels))
+        bridge_hi = Array(Signal(signed(16), name=f"bridge_hi{ch}") for ch in range(self.n_channels))
         for ch in range(self.n_channels):
             dy_step = Signal(signed(17), name=f"dy_step{ch}")
-            steep_step = Signal(name=f"steep_step{ch}")
-            bridge_lo = Signal(signed(16), name=f"bridge_lo{ch}")
-            bridge_hi = Signal(signed(16), name=f"bridge_hi{ch}")
             m.d.comb += [
                 dy_step.eq(in_y[ch] - prev_in_y[ch]),
-                steep_step.eq(
+                steep_step[ch].eq(
                     self.visible[ch] & col_changing & (
                         (dy_step >= VERTICAL_DY_THRESH) |
                         (dy_step <= -VERTICAL_DY_THRESH)
                     )
                 ),
-                bridge_lo.eq(Mux(in_y[ch] < prev_in_y[ch], in_y[ch], prev_in_y[ch])),
-                bridge_hi.eq(Mux(in_y[ch] > prev_in_y[ch], in_y[ch], prev_in_y[ch])),
+                bridge_lo[ch].eq(Mux(in_y[ch] < prev_in_y[ch], in_y[ch], prev_in_y[ch])),
+                bridge_hi[ch].eq(Mux(in_y[ch] > prev_in_y[ch], in_y[ch], prev_in_y[ch])),
                 flush_ymin[ch].eq(
-                    Mux(steep_step,
-                        Mux(bridge_lo < col_ymin[ch], bridge_lo, col_ymin[ch]),
+                    Mux(steep_step[ch],
+                        Mux(bridge_lo[ch] < col_ymin[ch], bridge_lo[ch], col_ymin[ch]),
                         col_ymin[ch])
                 ),
                 flush_ymax[ch].eq(
-                    Mux(steep_step,
-                        Mux(bridge_hi > col_ymax[ch], bridge_hi, col_ymax[ch]),
+                    Mux(steep_step[ch],
+                        Mux(bridge_hi[ch] > col_ymax[ch], bridge_hi[ch], col_ymax[ch]),
                         col_ymax[ch])
                 ),
             ]
@@ -203,15 +215,6 @@ class ColumnCapture(wiring.Component):
         sweeping = Signal()
         m.d.sync += active_prev.eq(self.active)
         m.d.comb += active_rise.eq(self.active & ~active_prev)
-
-        pen_lift = Signal()
-        m.d.comb += pen_lift.eq(
-            self.sample_valid &
-            self.active &
-            has_prev_x &
-            has_col &
-            (in_x < prev_x)
-        )
 
         end_reached = Signal()
         m.d.comb += end_reached.eq(
@@ -291,7 +294,7 @@ class ColumnCapture(wiring.Component):
                             col_ymin[ch].eq(0),
                             col_ymax[ch].eq(-1),
                         ]
-            with m.Elif(col_index != latched_col):
+            with m.If(col_changing):
                 m.d.comb += [
                     do_flush.eq(1),
                     flush_col.eq(latched_col),
@@ -308,7 +311,7 @@ class ColumnCapture(wiring.Component):
                             col_ymin[ch].eq(0),
                             col_ymax[ch].eq(-1),
                         ]
-            with m.Else():
+            with m.Elif(has_col & ~col_changing):
                 for ch in range(self.n_channels):
                     with m.If(self.visible[ch]):
                         with m.If(in_y[ch] < col_ymin[ch]):
