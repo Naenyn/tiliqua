@@ -308,7 +308,9 @@ fn main() -> ! {
     let boot_ui_hue = opts.menu.ui_hue.value;
     let app = Mutex::new(RefCell::new(App::new(opts)));
     critical_section::with(|cs| {
-        app.borrow_ref_mut(cs).ui.clear_draw();
+        let mut app = app.borrow_ref_mut(cs);
+        app.ui.clear_draw();
+        app.ui.set_menu_visible(false);
     });
 
     handler!(timer0 = || timer0_handler(&app));
@@ -383,13 +385,6 @@ fn main() -> ! {
             }
 
             if draw_options || on_help_page {
-                if !menu_shown {
-                    critical_section::with(|cs| {
-                        let mut app = app.borrow_ref_mut(cs);
-                        app.ui.opts.set_selected(None);
-                        app.ui.opts.modify_mut(false);
-                    });
-                }
                 let page_changed = opts.tracker.page.value != last_menu_page;
                 if menu_dirty || !menu_shown || page_changed {
                     redraw_ui_menu(
@@ -422,6 +417,10 @@ fn main() -> ! {
                 clear_ui_menu(&mut ui_menu, &ui_port);
             }
             overlay_active = want_overlay;
+
+            critical_section::with(|cs| {
+                app.borrow_ref_mut(cs).ui.set_menu_visible(menu_shown);
+            });
 
             if on_help_page {
                 draw::draw_help_page(

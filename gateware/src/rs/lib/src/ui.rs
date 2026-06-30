@@ -30,6 +30,7 @@ where
     touch_led_mask: u8,
     draw: bool,
     menu_dirty: bool,
+    menu_visible: bool,
 }
 
 impl<EncoderT: Encoder,
@@ -59,11 +60,21 @@ impl<EncoderT: Encoder,
             touch_led_mask: 0u8,
             draw: true,
             menu_dirty: false,
+            // Existing users of UI have permanently visible menus. Bitstreams
+            // with a timed overlay explicitly update this state.
+            menu_visible: true,
         }
     }
 
     pub fn set_encoder_fade_ms(&mut self, ms: u32) {
         self.encoder_fade_ms = ms;
+    }
+
+    /// Tell the encoder handler whether its menu is currently visible.
+    /// A button press while hidden wakes the menu but must not also toggle its
+    /// edit state; rotation remains active so a timed-out edit can resume.
+    pub fn set_menu_visible(&mut self, visible: bool) {
+        self.menu_visible = visible;
     }
 
     /// True when the encoder turned or was pressed since the last call.
@@ -130,7 +141,14 @@ impl<EncoderT: Encoder,
             self.menu_dirty = true;
         }
         if self.encoder.poke_btn() {
-            self.opts.toggle_modify();
+            if self.menu_visible {
+                self.opts.toggle_modify();
+            } else {
+                // A hidden-menu click is a navigation wake-up, not an edit
+                // action. Keep the selected item but leave value editing so
+                // the reopened menu starts in item-selection mode.
+                self.opts.modify_mut(false);
+            }
             self.time_since_encoder_touched = 0;
             self.menu_dirty = true;
         }
