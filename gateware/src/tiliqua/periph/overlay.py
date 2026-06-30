@@ -18,8 +18,9 @@ from . import ui_overlay
 class OverlayPipeline(wiring.Component):
     """Grid overlay followed by optional menu UI layer."""
 
-    def __init__(self, *, enable_ui: bool = False):
+    def __init__(self, *, enable_ui: bool = False, trace=None):
         self.enable_ui = enable_ui
+        self.trace = trace
         self.grid = GridOverlay()
         if enable_ui:
             self.ui = ui_overlay.UiMenuOverlay()
@@ -32,7 +33,14 @@ class OverlayPipeline(wiring.Component):
         m = Module()
 
         m.submodules.grid = self.grid
-        m.d.comb += self.grid.i.eq(self.i)
+        if self.trace is not None:
+            m.submodules.trace = self.trace
+            m.d.comb += [
+                self.trace.i.eq(self.i),
+                self.grid.i.eq(self.trace.o),
+            ]
+        else:
+            m.d.comb += self.grid.i.eq(self.i)
         if self.enable_ui:
             m.submodules.ui = self.ui
             m.d.comb += [
@@ -235,9 +243,9 @@ class Peripheral(wiring.Component):
     class UiMemData(csr.Register, access="w"):
         data: csr.Field(csr.action.W, unsigned(32))
 
-    def __init__(self, *, enable_ui: bool = False):
+    def __init__(self, *, enable_ui: bool = False, trace=None):
         self.enable_ui = enable_ui
-        self.overlay = OverlayPipeline(enable_ui=enable_ui)
+        self.overlay = OverlayPipeline(enable_ui=enable_ui, trace=trace)
 
         regs = csr.Builder(addr_width=6 if enable_ui else 5, data_width=8)
         self._flags        = regs.add("flags",        self.Flags(),       offset=0x0)

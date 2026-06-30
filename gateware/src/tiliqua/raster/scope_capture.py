@@ -14,8 +14,10 @@ from . import PSQ, PSQ_BASE_FBITS
 MAX_CAPTURE_COLS = 1280
 RAMP_END = fixed.Const(0.985, shape=PSQ)
 
-# Extend a column envelope across steep sample steps (matches trace.py).
-VERTICAL_DY_THRESH = 1
+# Bridge only genuine display discontinuities across a column boundary.  The
+# previous one-pixel threshold widened every ordinary slope and turned codec
+# settling at square/saw transitions into visible hooks and rounded shoulders.
+VERTICAL_DY_THRESH = 12
 
 # Eurorack-friendly V/div LUT for ``yscale_idx`` (must match ``ScopeVScale`` in scope FW).
 # Maps sample deflection: in_y = ((-av * mul) >> rshift) + y_offset, where ``av`` is

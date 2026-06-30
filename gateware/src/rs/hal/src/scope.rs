@@ -33,6 +33,12 @@ macro_rules! impl_scope {
                 self.set_timebase_us(tb.t_div_us());
             }
 
+            pub fn set_progressive(&mut self, progressive: bool) {
+                self.registers.display_mode().write(|w| {
+                    w.progressive().bit(progressive)
+                });
+            }
+
             pub fn set_yscale_ch(&mut self, ch: usize, vs: tiliqua_lib::scope::VScale) {
                 let bits = vs.to_scale_bits();
                 match ch {

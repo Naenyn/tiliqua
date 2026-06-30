@@ -59,7 +59,7 @@ from tiliqua.periph import overlay
 from tiliqua.periph import ui_overlay
 from tiliqua.raster import PSQ
 from tiliqua.raster.digital_scope import DigitalScopePeripheral
-from tiliqua.raster.plot import FramebufferPlotter
+from tiliqua.raster.scope_overlay import ScopeTraceOverlay
 from tiliqua.tiliqua_soc import TiliquaSoc
 
 
@@ -112,7 +112,9 @@ class ScopeSoc(TiliquaSoc):
 
     def __init__(self, **kwargs):
 
-        self.overlay_periph = overlay.Peripheral(enable_ui=True)
+        self.scope_trace = ScopeTraceOverlay()
+        self.overlay_periph = overlay.Peripheral(
+            enable_ui=True, trace=self.scope_trace)
         self.overlay_ui_mem_base = 0xc1000000
 
         super().__init__(finalize_csr_bridge=False,
@@ -143,10 +145,6 @@ class ScopeSoc(TiliquaSoc):
         self.add_rust_constant(
             f"pub const OVERLAY_UI_MENU_WORDS: usize = {ui_overlay.MENU_WORDS};")
 
-        self.plotter = FramebufferPlotter(
-            bus_signature=self.psram_periph.bus.signature.flip(), n_ports=5)
-        self.psram_periph.add_master(self.plotter.bus)
-
         self.n_upsample = 8 if self.clock_settings.audio_clock.is_192khz() else 32
 
         self.scope_periph = DigitalScopePeripheral(
@@ -164,19 +162,35 @@ class ScopeSoc(TiliquaSoc):
 
         m = Module()
 
-        m.submodules.plotter = self.plotter
         m.submodules.scope_periph = self.scope_periph
         m.submodules.scope_ctrl = self.scope_ctrl
         m.submodules.overlay_periph = self.overlay_periph
 
-        for n in range(4):
-            wiring.connect(m, self.scope_periph.o[n], self.plotter.i[n])
-        wiring.connect(m, self.scope_periph.clear_o, self.plotter.i[4])
-
-        m.d.comb += self.scope_periph.dbg_plotter.eq(self.plotter.dbg)
-
-        wiring.connect(m, wiring.flipped(self.fb.fbp), self.plotter.fbp)
-        wiring.connect(m, wiring.flipped(self.fb.fbp), self.scope_periph.fbp)
+        m.d.comb += [
+            self.scope_trace.enable.eq(self.scope_periph.soc_en),
+            self.scope_trace.flush_valid.eq(self.scope_periph.flush_valid),
+            self.scope_trace.flush_col.eq(self.scope_periph.flush_col),
+            self.scope_trace.flush_word.eq(self.scope_periph.flush_word),
+            self.scope_trace.sweep_done.eq(self.scope_periph.sweep_done),
+            self.scope_trace.progressive.eq(self.scope_periph.progressive_o),
+            self.scope_trace.capture_max_col.eq(
+                self.scope_periph.capture_max_col_o),
+            self.scope_trace.capture_progress_valid.eq(
+                self.scope_periph.capture_progress_valid_o),
+            self.scope_periph.capture_active.eq(self.scope_trace.capture_active),
+            self.scope_periph.capture_clear.eq(self.scope_trace.capture_clear),
+            self.scope_periph.swap_done.eq(self.scope_trace.swap_done),
+            self.scope_trace.plot_x_lo.eq(self.scope_periph.plot_x_lo_o),
+            self.scope_trace.h_active.eq(self.fb.fbp.timings.h_active),
+            self.scope_trace.v_active.eq(self.fb.fbp.timings.v_active),
+            self.scope_trace.rotation.eq(self.fb.fbp.rotation),
+        ]
+        for ch in range(4):
+            m.d.comb += [
+                self.scope_trace.hue[ch].eq(self.scope_periph.hue_o[ch]),
+                self.scope_trace.intensity[ch].eq(
+                    self.scope_periph.intensity_o[ch]),
+            ]
 
         m.submodules += super().elaborate(platform)
 
@@ -201,12 +215,18 @@ class ScopeSoc(TiliquaSoc):
         m.submodules.up_split4 = up_split4 = dsp.Split(n_channels=4, source=plot_fifo.o, shape=PSQ)
         m.submodules.up_merge4 = up_merge4 = dsp.Merge(n_channels=4, shape=PSQ)
         for ch in range(4):
+            # The codec can settle for a few samples around a discontinuity.
+            # Reconstruct only neighborhoods whose step dwarfs the local slope;
+            # smooth sine/ramp samples pass through exactly.
+            edge = dsp.DiscontinuityReconstruct(shape=PSQ)
             # Zero-order hold: repeat each audio sample n_up times.  Linear
             # interpolation chamfers square/saw corners into ramps; ZOH keeps
             # discontinuities sharp (FIR overshoot is avoided as well).
             r = dsp.HoldResample(n_up=self.n_upsample, shape=PSQ)
+            setattr(m.submodules, f"edge_reconstruct{ch}", edge)
             setattr(m.submodules, f"resample{ch}", r)
-            wiring.connect(m, up_split4.o[ch], r.i)
+            wiring.connect(m, up_split4.o[ch], edge.i)
+            wiring.connect(m, edge.o, r.i)
             wiring.connect(m, r.o, up_merge4.i[ch])
 
         wiring.connect(m, up_merge4.o, self.scope_periph.i)

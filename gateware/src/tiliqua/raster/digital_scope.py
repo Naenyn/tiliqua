@@ -3,22 +3,14 @@
 # SPDX-License-Identifier: CERN-OHL-S-2.0
 
 from amaranth import *
-from amaranth.lib import data, memory, stream, wiring
+from amaranth.lib import data, stream, wiring
 from amaranth.lib.wiring import In, Out
 from amaranth_soc import csr
 from amaranth_future import fixed
 
 from .. import dsp
-from ..dsp import stream_util
-from ..video.framebuffer import DMAFramebuffer
 from . import PSQ, PSQ_BASE_FBITS, psq_from_volts
-from .clear import RegionClear
-from .line import LineCmd, _LinePlotter
-from .plot import OffsetMode, PlotRequest
-from .plot_clip import PlotClip
-from .scope_capture import MAX_CAPTURE_COLS, ENVELOPE_SENTINEL, ColumnCapture
-from .scope_buffer import CompletedSweepBuffer
-from .scope_render import ColumnRenderer
+from .scope_capture import MAX_CAPTURE_COLS, ColumnCapture
 
 
 class _SampleTap(wiring.Component):
@@ -37,11 +29,11 @@ class _SampleTap(wiring.Component):
 class DigitalScopePeripheral(wiring.Component):
 
     """
-    Four-channel digital oscilloscope with acquire-then-render column envelopes.
+    Four-channel digital oscilloscope capture engine.
 
-    Capture accumulates per-column min/max while the ramp sweeps; a separate
-    render pass walks left-to-right and redraws one column at a time through
-    the line plotter path.  NORM mode waits for a trigger edge before capture.
+    Capture accumulates per-column min/max while the ramp sweeps. Completed
+    envelopes are handed to a scanout overlay, which swaps them atomically at
+    vertical blank. NORM mode waits for a trigger edge before capture.
     """
 
     class Flags(csr.Register, access="w"):
@@ -133,6 +125,9 @@ class DigitalScopePeripheral(wiring.Component):
     class Fs(csr.Register, access="r"):
         fs: csr.Field(csr.action.R, unsigned(32))
 
+    class DisplayMode(csr.Register, access="w"):
+        progressive: csr.Field(csr.action.W, unsigned(1))
+
     def __init__(self, n_channels=4, fs=48000):
 
         self.fs = fs
@@ -165,16 +160,26 @@ class DigitalScopePeripheral(wiring.Component):
         self._debug_ctl       = regs.add("debug_ctl",     self.DebugCtl(),       offset=0x68)
         self._debug_timebase  = regs.add("debug_timebase", self.DebugTimebase(), offset=0x6C)
         self._debug_trig      = regs.add("debug_trig",    self.DebugTrig(),      offset=0x70)
+        self._display_mode    = regs.add("display_mode",   self.DisplayMode(),     offset=0x74)
 
         self._bridge = csr.Bridge(regs.as_memory_map())
         super().__init__({
             "i": In(stream.Signature(data.ArrayLayout(PSQ, self.n_channels))),
             "bus": In(csr.Signature(addr_width=7, data_width=8)),
-            "fbp": In(DMAFramebuffer.Properties()),
-            "o": Out(stream.Signature(PlotRequest)).array(self.n_channels),
-            "clear_o": Out(stream.Signature(PlotRequest)),
             "soc_en": Out(unsigned(1), init=1),
-            "dbg_plotter": In(unsigned(16)),
+            "capture_active": In(1),
+            "capture_clear": In(1),
+            "swap_done": In(1),
+            "flush_valid": Out(1),
+            "flush_col": Out(range(MAX_CAPTURE_COLS)),
+            "flush_word": Out(unsigned(128)),
+            "sweep_done": Out(1),
+            "plot_x_lo_o": Out(signed(16)),
+            "progressive_o": Out(1),
+            "capture_max_col_o": Out(range(MAX_CAPTURE_COLS)),
+            "capture_progress_valid_o": Out(1),
+            "hue_o": Out(unsigned(4)).array(self.n_channels),
+            "intensity_o": Out(unsigned(4)).array(self.n_channels),
         })
         self.bus.memory_map = self._bridge.bus.memory_map
 
@@ -193,6 +198,8 @@ class DigitalScopePeripheral(wiring.Component):
         hue = Array(Signal(unsigned(4)) for _ in range(self.n_channels))
         intensity = Array(Signal(unsigned(4)) for _ in range(self.n_channels))
         visible = Array(Signal() for _ in range(self.n_channels))
+        progressive = Signal()
+        capture_progress_valid = Signal()
 
         plot_x_lo = Signal(signed(16))
         plot_x_hi = Signal(signed(16))
@@ -216,65 +223,6 @@ class DigitalScopePeripheral(wiring.Component):
         m.d.comb += self._pixels_per_volt.f.pixels_per_volt.r_data.eq(
             psq_from_volts(1).reshape(PSQ_BASE_FBITS))
         m.d.comb += self._fs.f.fs.r_data.eq(self.fs)
-
-        # "Shown" envelope: what each column currently has on screen, so the
-        # renderer can erase only the previously-drawn span.  Init to the
-        # sentinel so the very first pass erases nothing.
-        shown_mem = memory.Memory(
-            data=memory.MemoryData(
-                shape=unsigned(128),
-                depth=MAX_CAPTURE_COLS,
-                init=[ENVELOPE_SENTINEL] * MAX_CAPTURE_COLS,
-            )
-        )
-        m.submodules.shown_mem = shown_mem
-        shown_wr = shown_mem.write_port()
-        shown_rd = shown_mem.read_port()
-
-        line_fifos = []
-        line_plotters = []
-        for n in range(self.n_channels):
-            line_fifo = stream_util.SyncFIFOBuffered(shape=LineCmd, depth=256)
-            line_plotter = _LinePlotter(offset=OffsetMode.CENTER)
-            clip = PlotClip()
-            setattr(m.submodules, f"line_fifo{n}", line_fifo)
-            setattr(m.submodules, f"line_plotter{n}", line_plotter)
-            setattr(m.submodules, f"plot_clip{n}", clip)
-            line_fifos.append(line_fifo)
-            line_plotters.append(line_plotter)
-            m.d.comb += [
-                clip.x_lo.eq(plot_x_lo),
-                clip.x_hi.eq(plot_x_hi),
-                clip.y_lo.eq(plot_y_lo),
-                clip.y_hi.eq(plot_y_hi),
-            ]
-            wiring.connect(m, line_fifo.o, line_plotter.i)
-            wiring.connect(m, line_plotter.o, clip.i)
-            wiring.connect(m, clip.o, wiring.flipped(self.o[n]))
-
-        enable_prev = Signal()
-        enable_clear = Signal()
-        m.d.comb += enable_clear.eq(self.soc_en & ~enable_prev)
-        m.d.sync += enable_prev.eq(self.soc_en)
-
-        # One-time full-rectangle clear at enable so the plot area starts blank.
-        # After this the renderer erases incrementally per column (no per-frame
-        # full-screen clear, hence no flicker).
-        m.submodules.region_clear = region_clear = RegionClear()
-        m.submodules.clear_clip = clear_clip = PlotClip()
-        wiring.connect(m, region_clear.o, clear_clip.i)
-        wiring.connect(m, clear_clip.o, wiring.flipped(self.clear_o))
-        m.d.comb += [
-            region_clear.start.eq(enable_clear),
-            region_clear.x_lo.eq(plot_x_lo),
-            region_clear.x_hi.eq(plot_x_hi),
-            region_clear.y_lo.eq(plot_y_lo),
-            region_clear.y_hi.eq(plot_y_hi),
-            clear_clip.x_lo.eq(plot_x_lo),
-            clear_clip.x_hi.eq(plot_x_hi),
-            clear_clip.y_lo.eq(plot_y_lo),
-            clear_clip.y_hi.eq(plot_y_hi),
-        ]
 
         m.submodules.isplit4 = self.isplit4
 
@@ -306,7 +254,12 @@ class DigitalScopePeripheral(wiring.Component):
             ramp_restarted.eq(prev_ramp_at_top & ~ramp_at_top),
             trig_seen.eq(trig.o.payload & trig.i.valid & trig.o.ready),
             norm_fire.eq(trig_seen & ramp_at_top & ~trigger_always),
-            ramp_fire.eq(trigger_always | norm_fire),
+            # The buffer controller briefly drops capture_active while a
+            # completed sweep is swapped/cleared. Keep Ramp parked at top
+            # during that interval; otherwise it can restart unseen and the
+            # next capture misses an entire slow sweep.
+            ramp_fire.eq((trigger_always | norm_fire) &
+                         self.capture_active & self.soc_en),
         ]
         m.d.sync += prev_ramp_at_top.eq(ramp_at_top)
 
@@ -348,28 +301,9 @@ class DigitalScopePeripheral(wiring.Component):
             dsp.connect_peek(m, merge.o, tap.i, always_ready=True)
 
         m.submodules.capture = capture = ColumnCapture()
-        m.submodules.sweep_buffer = sweep_buffer = CompletedSweepBuffer()
-        m.submodules.renderer = renderer = ColumnRenderer()
-
-        # Capture and display use compact front/back envelope buffers.  Capture
-        # writes a complete frozen sweep before the renderer sees any column;
-        # the existing shown_mem is the front sweep and sweep_buffer is the back.
-        capturing = Signal()
-        rendering = Signal()
         m.d.comb += [
-            sweep_buffer.enable.eq(self.soc_en & ~region_clear.busy),
-            sweep_buffer.ncols.eq(ncols),
-            sweep_buffer.flush_valid.eq(capture.flush_valid),
-            sweep_buffer.flush_col.eq(capture.flush_col),
-            sweep_buffer.flush_word.eq(capture.flush_word),
-            sweep_buffer.sweep_done.eq(capture.sweep_done),
-            capturing.eq(sweep_buffer.capture_active),
-            rendering.eq(sweep_buffer.rendering | renderer.busy),
-        ]
-
-        m.d.comb += [
-            capture.active.eq(capturing),
-            capture.clear.eq(enable_clear | sweep_buffer.capture_clear),
+            capture.active.eq(self.capture_active & self.soc_en),
+            capture.clear.eq(self.capture_clear),
             capture.plot_x_lo.eq(plot_x_lo),
             capture.plot_x_hi.eq(plot_x_hi),
             capture.scale_x.eq(scale_x),
@@ -380,53 +314,47 @@ class DigitalScopePeripheral(wiring.Component):
             capture.audio[1].eq(ch_merges[1].o.payload[1]),
             capture.audio[2].eq(ch_merges[2].o.payload[1]),
             capture.audio[3].eq(ch_merges[3].o.payload[1]),
-            renderer.col_valid.eq(sweep_buffer.col_valid),
-            renderer.col.eq(sweep_buffer.col),
-            renderer.word.eq(sweep_buffer.word),
-            sweep_buffer.col_ready.eq(renderer.col_ready),
-            shown_rd.en.eq(renderer.s_en),
-            shown_rd.addr.eq(renderer.s_addr),
-            renderer.s_data.eq(shown_rd.data),
-            shown_wr.en.eq(renderer.sw_en),
-            shown_wr.addr.eq(renderer.sw_addr),
-            shown_wr.data.eq(renderer.sw_data),
+            self.flush_valid.eq(capture.flush_valid),
+            self.flush_col.eq(capture.flush_col),
+            self.flush_word.eq(capture.flush_word),
+            self.sweep_done.eq(capture.sweep_done),
+            self.plot_x_lo_o.eq(plot_x_lo),
+            self.progressive_o.eq(progressive),
+            self.capture_max_col_o.eq(capture.max_col),
+            self.capture_progress_valid_o.eq(capture_progress_valid),
         ]
+
+        with m.If(self.capture_clear | self.swap_done):
+            m.d.sync += capture_progress_valid.eq(0)
+        with m.Elif(capture.flush_valid):
+            m.d.sync += capture_progress_valid.eq(1)
         for ch in range(self.n_channels):
             m.d.comb += [
                 capture.scale_y[ch].eq(scale_y[ch]),
                 capture.y_offset[ch].eq(y_offset[ch]),
                 capture.visible[ch].eq(visible[ch]),
+                self.hue_o[ch].eq(hue[ch]),
+                self.intensity_o[ch].eq(Mux(visible[ch], intensity[ch], 0)),
             ]
 
-
-        m.d.comb += renderer.plot_x_lo.eq(plot_x_lo)
-        for ch in range(self.n_channels):
-            m.d.comb += [
-                renderer.hue[ch].eq(hue[ch]),
-                renderer.intensity[ch].eq(intensity[ch]),
-                renderer.visible[ch].eq(visible[ch]),
-            ]
-            wiring.connect(m, renderer.line_o[ch], line_fifos[ch].i)
-
+        capturing = Signal()
+        rendering = Signal()
         fsm_state = Signal(2)
-        m.d.comb += fsm_state.eq(Cat(capturing, rendering))
+        m.d.comb += [
+            capturing.eq(self.capture_active & self.soc_en),
+            rendering.eq(self.soc_en & ~self.capture_active),
+            fsm_state.eq(Cat(capturing, rendering)),
+        ]
 
         capture_done_cnt = Signal(8)
-        # Per-sweep debug bytes (reset on each ``capture.sweep_done``).  The
-        # compact back buffer cannot drop column flushes; the legacy drop field
-        # remains in the CSR layout for firmware compatibility and reads zero.
         flush_sweep_cnt = Signal(8)
         render_sweep_cnt = Signal(8)
         trig_sweep_cnt = Signal(8)
         ramp_restart_sweep_cnt = Signal(8)
         pen_lift_sweep_cnt = Signal(8)
         end_reached_sweep_cnt = Signal(8)
-        flush_accept = Signal()
         trig_pulse = Signal()
-        m.d.comb += [
-            flush_accept.eq(sweep_buffer.col_valid & renderer.col_ready),
-            trig_pulse.eq(norm_fire),
-        ]
+        m.d.comb += trig_pulse.eq(norm_fire)
 
         with m.If(capture.sweep_done):
             m.d.sync += [
@@ -440,7 +368,7 @@ class DigitalScopePeripheral(wiring.Component):
             ]
         with m.If(capture.flush_valid):
             m.d.sync += flush_sweep_cnt.eq(flush_sweep_cnt + 1)
-        with m.If(flush_accept):
+        with m.If(self.swap_done):
             m.d.sync += render_sweep_cnt.eq(render_sweep_cnt + 1)
         with m.If(trig_pulse):
             m.d.sync += trig_sweep_cnt.eq(trig_sweep_cnt + 1)
@@ -450,38 +378,6 @@ class DigitalScopePeripheral(wiring.Component):
             m.d.sync += pen_lift_sweep_cnt.eq(pen_lift_sweep_cnt + 1)
         with m.If(capture.dbg_end_reached):
             m.d.sync += end_reached_sweep_cnt.eq(end_reached_sweep_cnt + 1)
-
-        # Render-path diagnostics: select the per-channel handshake signals for
-        # whichever channel the renderer is currently drawing, and pack them into
-        # a single word that we surface through the debug probe during render.
-        sel_fifo_valid = Signal()
-        sel_fifo_ready = Signal()
-        sel_plotter_iready = Signal()
-        sel_o_valid = Signal()
-        sel_o_ready = Signal()
-        with m.Switch(renderer.dbg_draw_ch):
-            for ch in range(self.n_channels):
-                with m.Case(ch):
-                    m.d.comb += [
-                        sel_fifo_valid.eq(line_fifos[ch].o.valid),
-                        sel_fifo_ready.eq(line_fifos[ch].i.ready),
-                        sel_plotter_iready.eq(line_plotters[ch].i.ready),
-                        sel_o_valid.eq(self.o[ch].valid),
-                        sel_o_ready.eq(self.o[ch].ready),
-                    ]
-
-        dbg_render_word = Signal(16)
-        m.d.comb += dbg_render_word.eq(Cat(
-            renderer.dbg_state,        # bits  2:0  render FSM state
-            renderer.dbg_draw_ch,      # bits  4:3  channel being drawn
-            renderer.dbg_pending,      # bit   5    LineCmd pending to emit
-            sel_fifo_valid,            # bit   6    line FIFO has output
-            sel_fifo_ready,            # bit   7    line FIFO accepts input
-            sel_plotter_iready,        # bit   8    line plotter idle/ready
-            sel_o_valid,               # bit   9    plotter port o.valid
-            sel_o_ready,               # bit  10    plotter port o.ready (arbiter grant)
-            renderer.dbg_pending,      # bit  11    renderer pending/erasing
-        ))
 
         m.d.comb += [
             self._debug_status.f.fsm.r_data.eq(fsm_state),
@@ -493,8 +389,8 @@ class DigitalScopePeripheral(wiring.Component):
             self._debug_status.f.sweeping.r_data.eq(capture.dbg_sweeping),
             self._debug_status.f.has_col.r_data.eq(capture.dbg_has_col),
             self._debug_status.f.sweep_end.r_data.eq(capture.dbg_sweep_end),
-            self._debug_status.f.renderer_busy.r_data.eq(renderer.busy),
-            self._debug_status.f.renderer_done.r_data.eq(~renderer.busy),
+            self._debug_status.f.renderer_busy.r_data.eq(rendering),
+            self._debug_status.f.renderer_done.r_data.eq(~rendering),
             self._debug_status.f.ramp_at_top.r_data.eq(ramp_at_top),
             self._debug_status.f.armed.r_data.eq(capture.dbg_armed),
             self._debug_status.f.pending_trig.r_data.eq(0),
@@ -509,15 +405,9 @@ class DigitalScopePeripheral(wiring.Component):
             self._debug_trig.f.ramp_restarts.r_data.eq(ramp_restart_sweep_cnt),
             self._debug_trig.f.pen_lifts.r_data.eq(pen_lift_sweep_cnt),
             self._debug_trig.f.end_reached.r_data.eq(end_reached_sweep_cnt),
-            self._debug_probe.f.in_x.r_data.eq(
-                Mux(rendering, renderer.dbg_col, capture.dbg_in_x)
-            ),
-            self._debug_probe.f.in_y0.r_data.eq(
-                Mux(rendering, dbg_render_word.as_signed(), capture.dbg_in_y0)
-            ),
-            self._debug_ncols.f.ncols.r_data.eq(
-                Mux(rendering, self.dbg_plotter, ncols)
-            ),
+            self._debug_probe.f.in_x.r_data.eq(capture.dbg_in_x),
+            self._debug_probe.f.in_y0.r_data.eq(capture.dbg_in_y0),
+            self._debug_ncols.f.ncols.r_data.eq(ncols),
             self._debug_timebase.f.td.r_data.eq(timebase.as_value()),
         ]
 
@@ -538,6 +428,9 @@ class DigitalScopePeripheral(wiring.Component):
 
         with m.If(self._timebase.f.timebase.w_stb):
             m.d.sync += timebase.as_value().eq(self._timebase.f.timebase.w_data)
+
+        with m.If(self._display_mode.f.progressive.w_stb):
+            m.d.sync += progressive.eq(self._display_mode.f.progressive.w_data)
 
         with m.If(self._xscale.f.xscale.w_stb):
             m.d.sync += scale_x.eq(self._xscale.f.xscale.w_data)

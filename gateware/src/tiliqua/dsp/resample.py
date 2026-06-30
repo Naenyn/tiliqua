@@ -243,3 +243,104 @@ class HoldResample(wiring.Component):
                 m.d.sync += phase.eq(phase + 1)
 
         return m
+
+
+class DiscontinuityReconstruct(wiring.Component):
+
+    """Sharpen hard display edges without modifying smooth waveforms.
+
+    The center of a seventeen-sample window is replaced by its nearer endpoint only
+    when the endpoint separation is much larger than the local motion at both
+    ends. This removes short codec settling/overshoot around square and saw
+    transitions, while a sine or ramp fails the 32:1 step-to-slope test and is
+    passed through unchanged. The visual path gains eight input samples of
+    latency; sample rate and throughput are unchanged.
+    """
+
+    def __init__(self, *, shape=ASQ, min_step=0.02):
+        self.shape = shape
+        self.min_step = int(min_step * (1 << shape.f_bits))
+        super().__init__({
+            "i": In(stream.Signature(shape)),
+            "o": Out(stream.Signature(shape)),
+        })
+
+    def elaborate(self, platform):
+        m = Module()
+
+        width = self.shape.width
+        history = Array(Signal(self.shape, name=f"history{n}")
+                        for n in range(16))
+        fill = Signal(range(17))
+        pending = Signal()
+        result = Signal(self.shape)
+
+        def extended(value):
+            raw = value.as_value()
+            return Cat(raw, raw[-1]).as_signed()
+
+        left = extended(history[0])
+        left_next = extended(history[1])
+        center = extended(history[8])
+        right_prev = extended(history[15])
+        right = extended(self.i.payload)
+
+        left_delta = Signal(signed(width + 2))
+        right_delta = Signal(signed(width + 2))
+        step_delta = Signal(signed(width + 2))
+        center_left_delta = Signal(signed(width + 2))
+        center_right_delta = Signal(signed(width + 2))
+        left_motion = Signal(unsigned(width + 2))
+        right_motion = Signal(unsigned(width + 2))
+        step = Signal(unsigned(width + 2))
+        center_left = Signal(unsigned(width + 2))
+        center_right = Signal(unsigned(width + 2))
+
+        m.d.comb += [
+            left_delta.eq(left_next - left),
+            right_delta.eq(right - right_prev),
+            step_delta.eq(right - left),
+            center_left_delta.eq(center - left),
+            center_right_delta.eq(center - right),
+            left_motion.eq(Mux(left_delta < 0, -left_delta, left_delta)),
+            right_motion.eq(Mux(right_delta < 0, -right_delta, right_delta)),
+            step.eq(Mux(step_delta < 0, -step_delta, step_delta)),
+            center_left.eq(Mux(center_left_delta < 0,
+                               -center_left_delta, center_left_delta)),
+            center_right.eq(Mux(center_right_delta < 0,
+                                -center_right_delta, center_right_delta)),
+            self.i.ready.eq(~pending | self.o.ready),
+            self.o.valid.eq(pending),
+            self.o.payload.eq(result),
+        ]
+
+        reconstruct = Signal()
+        m.d.comb += reconstruct.eq(
+            (step >= self.min_step) &
+            ((left_motion << 5) < step) &
+            ((right_motion << 5) < step)
+        )
+
+        accept = Signal()
+        m.d.comb += accept.eq(self.i.valid & self.i.ready)
+        with m.If(accept):
+            for n in range(15):
+                m.d.sync += history[n].eq(history[n + 1])
+            m.d.sync += history[15].eq(self.i.payload)
+
+            with m.If(fill < 16):
+                m.d.sync += [
+                    fill.eq(fill + 1),
+                    pending.eq(0),
+                ]
+            with m.Else():
+                with m.If(reconstruct):
+                    m.d.sync += result.as_value().eq(
+                        Mux(center_left <= center_right, left, right))
+                with m.Else():
+                    m.d.sync += result.eq(history[8])
+                m.d.sync += pending.eq(1)
+        with m.Elif(pending & self.o.ready):
+            m.d.sync += pending.eq(0)
+
+        return m

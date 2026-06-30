@@ -222,6 +222,60 @@ class DSPTests(unittest.TestCase):
         self.assertEqual(outputs[:8], [-0.75] * 8)
         self.assertEqual(outputs[8:], [0.75] * 8)
 
+    def test_discontinuity_reconstruct_sharpens_settling_edge(self):
+        m = Module()
+        m.submodules.dut = dut = dsp.DiscontinuityReconstruct(shape=ASQ)
+        samples = ([-0.5] * 20 +
+                   [-0.25, 0.10, 0.40, 0.60, 0.45] +
+                   [0.5] * 20)
+        outputs = []
+
+        async def stimulus(ctx):
+            for sample in samples:
+                await stream.put(ctx, dut.i, fixed.Const(sample, shape=ASQ))
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            while len(outputs) < len(samples) - 16:
+                if ctx.get(dut.o.valid & dut.o.ready):
+                    outputs.append(ctx.get(dut.o.payload).as_float())
+                await ctx.tick()
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        self.assertEqual(set(outputs), {-0.5, 0.5})
+
+    def test_discontinuity_reconstruct_preserves_smooth_signal(self):
+        m = Module()
+        m.submodules.dut = dut = dsp.DiscontinuityReconstruct(shape=ASQ)
+        samples = [0.6 * math.sin(2 * math.pi * n / 48) for n in range(96)]
+        expected = [fixed.Const(v, shape=ASQ).as_value().value
+                    for v in samples[8:-8]]
+        outputs = []
+
+        async def stimulus(ctx):
+            for sample in samples:
+                await stream.put(ctx, dut.i, fixed.Const(sample, shape=ASQ))
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            while len(outputs) < len(expected):
+                if ctx.get(dut.o.valid & dut.o.ready):
+                    outputs.append(ctx.get(dut.o.payload).as_value().value)
+                await ctx.tick()
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        self.assertEqual(outputs, expected)
+
     @parameterized.expand([
         ["mux_mac", mac.MuxMAC],
         ["ring_mac", mac.RingMAC],
@@ -537,6 +591,7 @@ class _NormScopeTrigger(wiring.Component):
             }))),
             "trigger_always": In(1),
             "falling": In(1),
+            "capture_active": In(1, init=1),
             "o": Out(amaranth_stream.Signature(shape)),
             "dbg_restarts": Out(unsigned(16)),
             "dbg_norm_fire": Out(1),
@@ -566,7 +621,8 @@ class _NormScopeTrigger(wiring.Component):
             ramp_restarted.eq(prev_ramp_at_top & ~ramp_at_top),
             trig_seen.eq(trig.o.payload & trig.i.valid & trig.o.ready),
             norm_fire.eq(trig_seen & ramp_at_top & ~self.trigger_always),
-            ramp_fire.eq(self.trigger_always | norm_fire),
+            ramp_fire.eq((self.trigger_always | norm_fire) &
+                         self.capture_active),
             self.dbg_norm_fire.eq(norm_fire),
             self.dbg_ramp_at_top.eq(ramp_at_top),
         ]
@@ -712,6 +768,35 @@ class NormTriggerTests(unittest.TestCase):
             for n in range(2000):
                 await self._put(ctx, dut, 0.9)
             self.assertGreater(ctx.get(dut.dbg_restarts), 2)
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()
+
+    def test_ramp_waits_at_top_while_capture_is_inactive(self):
+        """A bank swap must not consume a whole unseen ramp sweep."""
+        m, dut = self._make_dut(trigger_always=True)
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            ctx.set(dut.capture_active, 0)
+
+            for _ in range(500):
+                await self._put(ctx, dut, 0.0)
+                if ctx.get(dut.dbg_ramp_at_top):
+                    break
+            self.assertTrue(ctx.get(dut.dbg_ramp_at_top))
+
+            for _ in range(40):
+                await self._put(ctx, dut, 0.0)
+            self.assertEqual(ctx.get(dut.dbg_restarts), 0)
+            self.assertTrue(ctx.get(dut.dbg_ramp_at_top))
+
+            ctx.set(dut.capture_active, 1)
+            await self._put(ctx, dut, 0.0)
+            await self._put(ctx, dut, 0.0)
+            self.assertGreater(ctx.get(dut.dbg_restarts), 0)
 
         sim = Simulator(m)
         sim.add_clock(1e-6)
