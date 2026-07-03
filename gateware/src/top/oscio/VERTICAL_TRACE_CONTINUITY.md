@@ -1,7 +1,7 @@
-# SCOPE vertical trace gaps and flicker
+# OSCIO vertical trace gaps and flicker
 
 This note documents why steep edges (saw resets, square fronts) can appear as
-dashed vertical lines or flicker on the Tiliqua SCOPE bitstream, what has already
+dashed vertical lines or flicker on the Tiliqua OSCIO bitstream, what has already
 been tried, and what could be done next.
 
 Related gateware:
@@ -9,9 +9,9 @@ Related gateware:
 - Capture: `tiliqua/raster/scope_capture.py` (`ColumnCapture`)
 - Render: `tiliqua/raster/scope_render.py` (`ColumnRenderer`)
 - Reference line plotter: `tiliqua/raster/trace.py`
-- Plot upsampling: `tiliqua/dsp/resample.py` (`LinearResample` in `top/scope/top.py`)
+- Plot upsampling: `tiliqua/dsp/resample.py` (`LinearResample` in `top/oscio/top.py`)
 
-Build at **192 kHz** (`pdm run scope build --fs-192khz`) so `n_upsample = 8` and
+Build at **192 kHz** (`pdm run oscio build --fs-192khz`) so `n_upsample = 8` and
 the scope sample rate matches the intended plot density.
 
 ---
@@ -33,7 +33,7 @@ saw reset (where the vertical meets the ramp) was a separate issue; see
 
 ## Architecture: column envelopes, not line segments
 
-SCOPE does **not** plot consecutive `(x, y)` sample pairs as connected segments
+OSCIO does **not** plot consecutive `(x, y)` sample pairs as connected segments
 (like `trace.py`). Instead:
 
 1. **Capture** walks the horizontal ramp and, for each screen column `x`, stores
@@ -112,7 +112,7 @@ observed when the plot path used the **band-limited FIR resampler**
 (`dsp.Resample`). A hard discontinuity plus a low-pass filter produces Gibbs
 overshoot — this is not necessarily AK4619 codec ringing.
 
-**Mitigation (commit `ab785f1`):** replace FIR upsampling on the SCOPE plot path
+**Mitigation (commit `ab785f1`):** replace FIR upsampling on the OSCIO plot path
 with **`LinearResample`**, which stays within the two source samples and cannot
 overshoot a saw reset. Still build at 192 kHz.
 

@@ -4,8 +4,8 @@ use tiliqua_lib::palette::ColorPalette;
 use tiliqua_hal::dma_framebuffer::Rotate;
 use serde_derive::{Serialize, Deserialize};
 
-/// SCOPE bitstream time/div menu.  Kept separate from ``tiliqua_lib::scope::Timebase``
-/// so SCOPE can trim or extend its range without affecting other bitstreams.
+/// OSCIO bitstream time/div menu. Kept separate from ``tiliqua_lib::scope::Timebase``
+/// so OSCIO can trim or extend its range without affecting other bitstreams.
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 #[strum(serialize_all = "kebab-case")]
 pub enum ScopeTimebase {
@@ -55,8 +55,8 @@ impl ScopeTimebase {
     }
 }
 
-/// SCOPE bitstream volts/div menu.  Kept separate from ``tiliqua_lib::scope::VScale``
-/// so SCOPE can use Eurorack-friendly steps without affecting other bitstreams.
+/// OSCIO bitstream volts/div menu. Kept separate from ``tiliqua_lib::scope::VScale``
+/// so OSCIO can use Eurorack-friendly steps without affecting other bitstreams.
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 #[strum(serialize_all = "kebab-case")]
 pub enum ScopeVScale {
@@ -96,7 +96,7 @@ pub enum Page {
     Chan12,
     #[strum(serialize = "CH 3-4")]
     Chan34,
-    #[strum(serialize = "SCOPE")]
+    #[strum(serialize = "OSCIO")]
     Scope,
     #[strum(serialize = "MENU")]
     Menu,

@@ -325,7 +325,7 @@ fn main() -> ! {
 
     tiliqua_fw::handlers::logger_init(serial);
 
-    info!("Hello from Tiliqua SCOPE!");
+    info!("Hello from Tiliqua OSCIO!");
 
     let bootinfo = unsafe { bootinfo::BootInfo::from_addr(BOOTINFO_BASE) }.unwrap();
     let modeline = bootinfo.modeline.maybe_override_fixed(

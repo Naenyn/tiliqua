@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: CERN-OHL-S-2.0
 
 """
-SCOPE is a four-channel digital oscilloscope for Eurorack signals.
+OSCIO is a four-channel digital oscilloscope for Eurorack signals.
 
 All four analog inputs are displayed together. Each input is also passed
 straight through to the matching output with no USB or delay-line processing.
@@ -24,7 +24,7 @@ the current edit, while pressing reopens it in navigation mode.
 CHANNEL 1-2 and CHANNEL 3-4 set each trace's vertical offset, volts per
 division, and visibility.
 
-SCOPE sets time per division, trigger mode, trigger source, trigger level,
+OSCIO sets time per division, trigger mode, trigger source, trigger level,
 grid style, trace intensity, and trace hue. Rising and falling modes lock the
 sweep to the selected trigger channel. Free mode continuously retriggers.
 

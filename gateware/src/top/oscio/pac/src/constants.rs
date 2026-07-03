@@ -1,5 +1,5 @@
-pub const UI_NAME: &str = "SCOPE";
-pub const UI_TAG: &str = "ab785f1-";
+pub const UI_NAME: &str = "OSCIO";
+pub const UI_TAG: &str = "959cd08-";
 pub const HW_REV_MAJOR: u32 = 5;
 pub const USE_EXTERNAL_PLL: bool = true;
 pub const CLOCK_SYNC_HZ: u32 = 60000000;
@@ -20,7 +20,7 @@ pub const BLIT_MEM_BASE: usize = 0xc0000000;
 pub const AUDIO_FS: u32 = 192000;
 // Extra constants specified by an SoC subclass:
 pub const MODULE_DOCSTRING: &str = r###"
-SCOPE is a four-channel digital oscilloscope for Eurorack signals.
+OSCIO is a four-channel digital oscilloscope for Eurorack signals.
 
 All four analog inputs are displayed together. Each input is also passed
 straight through to the matching output with no USB or delay-line processing.
@@ -41,7 +41,7 @@ the current edit, while pressing reopens it in navigation mode.
 CHANNEL 1-2 and CHANNEL 3-4 set each trace's vertical offset, volts per
 division, and visibility.
 
-SCOPE sets time per division, trigger mode, trigger source, trigger level,
+OSCIO sets time per division, trigger mode, trigger source, trigger level,
 grid style, trace intensity, and trace hue. Rising and falling modes lock the
 sweep to the selected trigger channel. Free mode continuously retriggers.
 
