@@ -20,43 +20,37 @@ pub const BLIT_MEM_BASE: usize = 0xc0000000;
 pub const AUDIO_FS: u32 = 192000;
 // Extra constants specified by an SoC subclass:
 pub const MODULE_DOCSTRING: &str = r###"
-Four-channel digital oscilloscope with crisp vector traces.
+SCOPE is a four-channel digital oscilloscope for Eurorack signals.
 
-All four analog inputs are plotted simultaneously with adjustable timebase,
-trigger, and per-channel vertical position.  Audio is passed straight through
-to the outputs (no USB or delay lines).
-
-The following options are tweakable in the menu.  TRS MIDI CCs mirror the
-scope and display pages:
+All four analog inputs are displayed together. Each input is also passed
+straight through to the matching output with no USB or delay-line processing.
 
     .. code-block:: text
 
-        Page    Parameter     CC  Description
-        ────    ─────────     ──  ───────────
-        HELP    scroll         -  scroll help text up/down
+        in1 ───────────────────────► out1
+        in2 ───────────────────────► out2
+        in3 ───────────────────────► out3
+        in4 ───────────────────────► out4
 
-        DISPLAY ui-hue        42  menu and grid overlay hue
-        DISPLAY palette       43  color palette
-        DISPLAY grid          44  grid overlay style
-        DISPLAY grid-i        45  grid overlay intensity
+        trigger source: selectable from in1, in2, in3, or in4
 
-        MISC    rotation      52  screen rotation
-        MISC    help           -  show/hide help page
-        MISC    save-opts      -  save all options to flash
-        MISC    wipe-opts      -  reset all options to defaults
+Turn the encoder to move through the menu. Press it to select a page or
+parameter, then turn to edit. The menu hides automatically; turning resumes
+the current edit, while pressing reopens it in navigation mode.
 
-        SCOPE1  ypos0         60  channel 0 vertical position
-        SCOPE1  ypos1         61  channel 1 vertical position
-        SCOPE1  ypos2         62  channel 2 vertical position
-        SCOPE1  ypos3         63  channel 3 vertical position
-        SCOPE1  yscale0       70  channel 0 volts/div (CC mirror)
-        SCOPE1  vis0-3         -  per-channel visibility
+CHANNEL 1-2 and CHANNEL 3-4 set each trace's vertical offset, volts per
+division, and visibility.
 
-        SCOPE2  timebase      71  horizontal time/div
-        SCOPE2  trig-mode     73  trigger mode
-        SCOPE2  trig-lvl      74  trigger level
-        SCOPE2  intensity     75  trace intensity
-        SCOPE2  hue           76  trace color
+SCOPE sets time per division, trigger mode, trigger source, trigger level,
+grid style, trace intensity, and trace hue. Rising and falling modes lock the
+sweep to the selected trigger channel. Free mode continuously retriggers.
+
+MENU changes the overlay hue, palette, and automatic hide delay. MISC contains
+screen rotation, this help page, MIDI highlighting, diagnostics, and settings
+save/reset actions.
+
+On this page, turn the encoder to scroll. Press once to leave scroll editing,
+select Back, and press again to return to the oscilloscope.
 "###;
 pub const OVERLAY_UI_SCRATCH_BASE: usize = 0x20f00000;
 pub const OVERLAY_UI_MEM_BASE: usize = 0xc1000000;

@@ -77,15 +77,73 @@ fn waveform_plot_bounds(h_active: u32, v_active: u32) -> (i16, i16, i16, i16) {
     (-hx + margin_x, hx - margin_x, -hy + margin_y, hy - margin_y)
 }
 
+const CLEAR_TILE_W: u32 = 128;
+const CLEAR_TILE_H: u32 = 128;
+const CLEAR_TILE_KEY: u32 = 0x5343_4c52; // "SCLR"
+static CLEAR_TILE: [u8; (CLEAR_TILE_W * CLEAR_TILE_H / 8) as usize] =
+    [0xff; (CLEAR_TILE_W * CLEAR_TILE_H / 8) as usize];
+
+/// Fill a rectangle with a small all-ones 1bpp tile drawn in black.
+///
+/// A regular embedded-graphics rectangle falls back to one CSR plot command
+/// per pixel on this target. Tiling through the hardware blitter reduces a
+/// 1280x720 clear from 921,600 plot commands to only 60 blit commands.
+fn clear_region<D>(display: &mut D, region: Rectangle)
+where
+    D: DrawTarget<Color = HI8> + OriginDimensions,
+{
+    let top_left = region.top_left;
+    let size = region.size;
+    if display.upload_spritesheet(
+        CLEAR_TILE_KEY,
+        &CLEAR_TILE,
+        CLEAR_TILE_W,
+        CLEAR_TILE_H,
+        1,
+    ) {
+        let mut y = 0;
+        while y < size.height {
+            let tile_h = (size.height - y).min(CLEAR_TILE_H);
+            let mut x = 0;
+            while x < size.width {
+                let tile_w = (size.width - x).min(CLEAR_TILE_W);
+                display.blit_sprite(
+                    CLEAR_TILE_KEY,
+                    0,
+                    0,
+                    tile_w,
+                    tile_h,
+                    top_left.x + x as i32,
+                    top_left.y + y as i32,
+                    HI8::new(0, 0),
+                );
+                x += CLEAR_TILE_W;
+            }
+            y += CLEAR_TILE_H;
+        }
+    } else {
+        region
+            .into_styled(PrimitiveStyle::with_fill(HI8::new(0, 0)))
+            .draw(display)
+            .ok();
+    }
+}
+
 fn clear_framebuffer<D>(display: &mut D)
 where
     D: DrawTarget<Color = HI8> + OriginDimensions,
 {
     let size = display.size();
-    Rectangle::new(Point::new(0, 0), size)
-        .into_styled(PrimitiveStyle::with_fill(HI8::new(0, 0)))
-        .draw(display)
-        .ok();
+    clear_region(display, Rectangle::new(Point::new(0, 0), size));
+}
+
+/// Rectangle occupied by the scrolling help text and its scroll indicators.
+/// The connector diagram above it is static and deliberately excluded.
+fn help_text_region(h_active: u32, v_active: u32) -> Rectangle {
+    let x = (h_active / 2).saturating_sub(280);
+    let text_y = (v_active / 2).saturating_sub(150);
+    let y = text_y.saturating_sub(14);
+    Rectangle::new(Point::new(x as i32, y as i32), Size::new(560, 380))
 }
 
 struct OverlayUiPort<'a> {
@@ -113,9 +171,13 @@ const MENU_MARGIN_X: u32 = 16;
 
 const MENU_DRAW_Y: u32 = 18;
 
-fn ui_menu_origin(h_active: u32, v_active: u32) -> (u32, u32) {
+fn ui_menu_origin(h_active: u32, v_active: u32, help_page: bool) -> (u32, u32) {
     let menu_x = h_active.saturating_sub(MENU_MARGIN_X + OVERLAY_UI_MENU_W as u32);
-    let menu_y = (v_active / 2).saturating_sub(MENU_DRAW_Y);
+    let menu_y = if help_page {
+        v_active.saturating_sub(MENU_MARGIN_X + OVERLAY_UI_MENU_H as u32)
+    } else {
+        (v_active / 2).saturating_sub(MENU_DRAW_Y)
+    };
     (menu_x, menu_y)
 }
 
@@ -131,12 +193,8 @@ fn redraw_ui_menu(
     menu: &mut UiLayer<OVERLAY_UI_MENU_WORDS>,
     port: &impl UiLayerPort,
     opts: &Opts,
-    h_active: u32,
-    v_active: u32,
     hue: u8,
 ) {
-    let (menu_x, menu_y) = ui_menu_origin(h_active, v_active);
-
     menu.clear();
     Rectangle::new(
         Point::new(0, 0),
@@ -163,12 +221,13 @@ fn sync_ui_overlay_csrs(
     v_active: u32,
     rotation: Rotate,
     menu_shown: bool,
+    help_page: bool,
     debug_hud: bool,
     hue: u8,
 ) {
     let (origin_x, origin_y, transparent) = if menu_shown {
-        let (x, y) = ui_menu_origin(h_active, v_active);
-        (x, y, false)
+        let (x, y) = ui_menu_origin(h_active, v_active, help_page);
+        (x, y, help_page)
     } else if debug_hud {
         (DEBUG_HUD_MARGIN, DEBUG_HUD_MARGIN, true)
     } else {
@@ -249,10 +308,6 @@ fn timer0_handler(app: &Mutex<RefCell<App>>) {
             }
         }
 
-        if app.ui.opts.misc.help.value == HelpPage::Off
-            && app.ui.opts.tracker.page.value == Page::Help {
-            app.ui.opts.tracker.page.value = Page::Chan12;
-        }
     });
 }
 
@@ -338,6 +393,8 @@ fn main() -> ! {
         let mut last_menu_page = Page::Chan12;
         let mut debug_frame: u32 = 0;
         let mut overlay_active = false;
+        let mut was_help_page = false;
+        let mut last_help_scroll = 0u8;
 
         let dvi_w = modeline.h_active as u32;
         let dvi_h = modeline.v_active as u32;
@@ -352,6 +409,7 @@ fn main() -> ! {
             modeline.rotate.clone(),
             false,
             false,
+            false,
             boot_ui_hue,
         );
 
@@ -362,6 +420,19 @@ fn main() -> ! {
 
             let (opts, draw_options, menu_dirty, save_opts, wipe_opts) = critical_section::with(|cs| {
                 let mut app = app.borrow_ref_mut(cs);
+                let open_help = app.ui.opts.misc.help.poll();
+                let close_help = app.ui.opts.help.back.poll();
+                if open_help {
+                    app.ui.opts.tracker.page.value = Page::Help;
+                    app.ui.opts.set_selected(Some(0));
+                    app.ui.opts.modify_mut(true);
+                    app.ui.external_modify();
+                } else if close_help {
+                    app.ui.opts.tracker.page.value = Page::Misc;
+                    app.ui.opts.set_selected(Some(1));
+                    app.ui.opts.modify_mut(false);
+                    app.ui.external_modify();
+                }
                 let save_opts = app.ui.opts.misc.save_settings.poll();
                 let wipe_opts = app.ui.opts.misc.reset_settings.poll();
                 let menu_dirty = app.ui.take_menu_dirty();
@@ -370,6 +441,18 @@ fn main() -> ! {
 
             let on_help_page = opts.tracker.page.value == Page::Help;
             let debug_hud = opts.misc.debug.value == DebugHud::On && !on_help_page;
+            let entering_help = on_help_page && !was_help_page;
+            let help_scrolled = on_help_page
+                && was_help_page
+                && opts.help.scroll.value != last_help_scroll;
+
+            if on_help_page != was_help_page {
+                clear_framebuffer(&mut display);
+            } else if help_scrolled {
+                // Keep the static connector diagram; only refresh the text
+                // viewport whose contents actually change when scrolling.
+                clear_region(&mut display, help_text_region(h_active, v_active));
+            }
 
             if opts.menu.palette.value != last_palette || first {
                 opts.menu.palette.value.write_to_hardware(&mut display);
@@ -391,8 +474,6 @@ fn main() -> ! {
                         &mut ui_menu,
                         &ui_port,
                         &opts,
-                        h_active,
-                        v_active,
                         opts.menu.ui_hue.value,
                     );
                     last_menu_page = opts.tracker.page.value;
@@ -422,7 +503,7 @@ fn main() -> ! {
                 app.borrow_ref_mut(cs).ui.set_menu_visible(menu_shown);
             });
 
-            if on_help_page {
+            if entering_help {
                 draw::draw_help_page(
                     &mut display,
                     MODULE_DOCSTRING,
@@ -430,6 +511,16 @@ fn main() -> ! {
                     h_active,
                     v_active,
                     opts.help.scroll.value,
+                    opts.menu.ui_hue.value,
+                )
+                .ok();
+            } else if help_scrolled {
+                draw::draw_help(
+                    &mut display,
+                    (h_active / 2).saturating_sub(280),
+                    (v_active / 2).saturating_sub(150),
+                    opts.help.scroll.value,
+                    MODULE_DOCSTRING,
                     opts.menu.ui_hue.value,
                 )
                 .ok();
@@ -441,6 +532,7 @@ fn main() -> ! {
                 v_active,
                 opts.misc.rotation.value.clone(),
                 menu_shown,
+                on_help_page,
                 debug_hud && !menu_shown,
                 opts.menu.ui_hue.value,
             );
@@ -531,7 +623,7 @@ fn main() -> ! {
                 GridOverlay::Cross => 2,
             };
             overlay_periph.flags().write(|w| unsafe {
-                w.grid_style().bits(grid_style);
+                w.grid_style().bits(if on_help_page { 0 } else { grid_style });
                 w.grid_pixel().bits(((opts.scope.grid_i.value as u8) << 4) | opts.menu.ui_hue.value)
             });
 
@@ -539,7 +631,7 @@ fn main() -> ! {
 
             let trigger = opts.scope.trigger.value;
             scope.set_trigger(
-                true,
+                !on_help_page,
                 trigger == TriggerMode::Free,
                 trigger == TriggerMode::Falling,
                 opts.scope.trigger_ch.value.hw_index(),
@@ -552,6 +644,8 @@ fn main() -> ! {
                 }
             }
 
+            last_help_scroll = opts.help.scroll.value;
+            was_help_page = on_help_page;
             first = false;
         }
     })

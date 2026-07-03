@@ -142,14 +142,6 @@ impl TriggerChannel {
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 #[strum(serialize_all = "kebab-case")]
-pub enum HelpPage {
-    #[default]
-    Off,
-    On,
-}
-
-#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
-#[strum(serialize_all = "kebab-case")]
 pub enum GridOverlay {
     Off,
     Grid,
@@ -196,6 +188,8 @@ button_params!(OneShotButtonParams { mode: ButtonMode::OneShot });
 pub struct HelpOpts {
     #[option(0)]
     pub scroll: IntOption<ScrollParams>,
+    #[option(false)]
+    pub back: ButtonOption<OneShotButtonParams>,
 }
 
 #[derive(OptionPage, Clone)]
@@ -217,8 +211,8 @@ pub fn menu_hide_ms(hide: u8) -> u32 {
 pub struct MiscOpts {
     #[option]
     pub rotation: EnumOption<Rotate>,
-    #[option]
-    pub help: EnumOption<HelpPage>,
+    #[option(false)]
+    pub help: ButtonOption<OneShotButtonParams>,
     #[option]
     pub cc_highlight: EnumOption<CcHighlight>,
     #[option]

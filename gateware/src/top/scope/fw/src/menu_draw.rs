@@ -81,6 +81,7 @@ const MISC_ROWS: &[MenuRow] = &[
 
 const HELP_ROWS: &[MenuRow] = &[
     MenuRow::Opt(0, "Scroll"),
+    MenuRow::Opt(1, "Back"),
 ];
 
 fn rows_for_page(page: Page) -> &'static [MenuRow] {
