@@ -95,6 +95,63 @@ fn write_specto_palette(palette: ColorPalette, video: &mut impl DMAFramebuffer) 
     }
 }
 
+/// Integer sine/cosine for the 15-degree camera steps, in Q8 format.
+fn sin_cos_q8(angle: i8) -> (i32, i32) {
+    let (sin, cos) = match angle.abs() {
+        0 => (0, 256),
+        15 => (66, 247),
+        30 => (128, 222),
+        45 => (181, 181),
+        60 => (222, 128),
+        75 => (247, 66),
+        _ => (256, 0),
+    };
+    (if angle < 0 { -sin } else { sin }, cos)
+}
+
+fn mul_q8(a: i32, b: i32) -> i32 {
+    (a * b) >> 8
+}
+
+/// Build two rows of an Euler-rotated orthographic camera matrix. The base
+/// projection keeps frequency horizontal, amplitude vertical and sends time
+/// away from the viewer toward the upper-right of the display.
+fn projection_matrix(rot_x: i8, rot_y: i8, rot_z: i8) -> ([i16; 3], [i16; 3]) {
+    let (sx, cx) = sin_cos_q8(rot_x);
+    let (sy, cy) = sin_cos_q8(rot_y);
+    let (sz, cz) = sin_cos_q8(rot_z);
+
+    // R = Rz * Ry * Rx, Q8 throughout.
+    let rotation = [
+        [
+            mul_q8(cz, cy),
+            mul_q8(mul_q8(cz, sy), sx) - mul_q8(sz, cx),
+            mul_q8(mul_q8(cz, sy), cx) + mul_q8(sz, sx),
+        ],
+        [
+            mul_q8(sz, cy),
+            mul_q8(mul_q8(sz, sy), sx) + mul_q8(cz, cx),
+            mul_q8(mul_q8(sz, sy), cx) - mul_q8(cz, sx),
+        ],
+        [-sy, mul_q8(cy, sx), mul_q8(cy, cx)],
+    ];
+    let base_x = [384, 0, 90];
+    let base_y = [0, -320, -96];
+    let mut out_x = [0i16; 3];
+    let mut out_y = [0i16; 3];
+    for column in 0..3 {
+        let mut x = 0;
+        let mut y = 0;
+        for row in 0..3 {
+            x += mul_q8(base_x[row], rotation[row][column]);
+            y += mul_q8(base_y[row], rotation[row][column]);
+        }
+        out_x[column] = x as i16;
+        out_y[column] = y as i16;
+    }
+    (out_x, out_y)
+}
+
 struct App {
     ui: ui::UI<Encoder0, EurorackPmod0, I2c0, Opts>,
 }
@@ -178,7 +235,12 @@ fn main() -> ! {
                 let mut app = app.borrow_ref_mut(cs);
                 let save_opts = app.ui.opts.misc.save_opts.poll();
                 let wipe_opts = app.ui.opts.misc.wipe_opts.poll();
-                (app.ui.opts.clone(), app.ui.draw(), save_opts, wipe_opts)
+                (
+                    app.ui.opts.clone(),
+                    app.ui.draw(),
+                    save_opts,
+                    wipe_opts,
+                )
             });
             let on_help_page = opts.tracker.page.value == Page::Help;
 
@@ -237,10 +299,16 @@ fn main() -> ! {
 
             spectro.flags().write(|w| unsafe {
                 w.enable().bit(!on_help_page);
-                w.phosphor()
-                    .bit(opts.spectro.style.value == RenderStyle::Phosphor);
+                // Explicit history already provides the temporal dimension in
+                // 3D. Keep its analyzer response stable and reserve phosphor
+                // smoothing/persistence as a user-selectable 2D treatment.
+                w.phosphor().bit(
+                    opts.spectro.view.value == ViewMode::TwoD
+                        && opts.spectro.style.value == RenderStyle::Phosphor,
+                );
                 w.axes().bit(opts.display.axes.value == OnOff::On);
-                w.input_ch().bits(opts.spectro.input.value.hw_index())
+                w.input_ch().bits(opts.spectro.input.value.hw_index());
+                w.view_3d().bit(opts.spectro.view.value == ViewMode::ThreeD)
             });
             spectro
                 .gain()
@@ -261,6 +329,21 @@ fn main() -> ! {
                 w.h_active().bits(h_active as u16);
                 w.v_active().bits(v_active as u16)
             });
+            let (projection_x, projection_y) = projection_matrix(
+                opts.view_3d.rot_x.value,
+                opts.view_3d.rot_y.value,
+                opts.view_3d.rot_z.value,
+            );
+            spectro.projection_x().write(|w| unsafe {
+                w.frequency().bits(projection_x[0] as u16);
+                w.amplitude().bits(projection_x[1] as u16);
+                w.time().bits(projection_x[2] as u16)
+            });
+            spectro.projection_y().write(|w| unsafe {
+                w.frequency().bits(projection_y[0] as u16);
+                w.amplitude().bits(projection_y[1] as u16);
+                w.time().bits(projection_y[2] as u16)
+            });
 
             // SPECTO draws its own plot axes. Keep the general-purpose XBEAM
             // grid disabled for the MVP so the analytical display stays clean.
@@ -269,9 +352,16 @@ fn main() -> ! {
                 w.grid_pixel().bits(0)
             });
 
-            // Persistence still clears transient framebuffer UI text. Spectral
-            // history and its phosphor falloff live in the beam-raced overlay.
-            persist.set_persistence(if on_help_page { 64 } else { 24 });
+            // Projected 3D lines share the framebuffer with transient UI.
+            // Deterministic short decay erases geometry displaced by the next
+            // surface without adding a second, misleading persistence mode.
+            persist.set_persistence(if on_help_page {
+                64
+            } else if opts.spectro.view.value == ViewMode::ThreeD {
+                16
+            } else {
+                24
+            });
             display.rotate(&opts.misc.rotation.value);
             first = false;
         }

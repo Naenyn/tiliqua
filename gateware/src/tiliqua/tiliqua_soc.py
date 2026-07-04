@@ -64,7 +64,7 @@ class TiliquaSoc(Component):
     def __init__(self, *, firmware_bin_path, ui_name, ui_tag, platform_class, clock_settings,
                  touch=False, finalize_csr_bridge=True, poke_outputs=False, mainram_size=0x4000,
                  fw_location=None, fw_offset=None, cpu_variant="tiliqua_rv32im",
-                 extra_cpu_regions=[], fb_overlay=None):
+                 extra_cpu_regions=[], fb_overlay=None, extra_plot_ports=0):
 
         super().__init__({})
 
@@ -239,7 +239,8 @@ class TiliquaSoc(Component):
 
         # Pixel plotting, blending, rotation backend (no CSR interface)
         self.framebuffer_plotter = plot.FramebufferPlotter(
-            bus_signature=self.psram_periph.bus.signature.flip(), n_ports=3)
+            bus_signature=self.psram_periph.bus.signature.flip(),
+            n_ports=3 + extra_plot_ports)
         self.psram_periph.add_master(self.framebuffer_plotter.bus)
 
         # Pixel plotter CSR interface

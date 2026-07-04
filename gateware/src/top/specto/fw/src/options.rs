@@ -9,9 +9,20 @@ use tiliqua_lib::palette::ColorPalette;
 pub enum Page {
     #[default]
     Spectro,
+    #[strum(serialize = "3D")]
+    View3d,
     Display,
     Misc,
     Help,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
+pub enum ViewMode {
+    #[default]
+    #[strum(serialize = "2D")]
+    TwoD,
+    #[strum(serialize = "3D")]
+    ThreeD,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
@@ -114,6 +125,15 @@ impl Persistence {
             Self::VeryLong => 3,
         }
     }
+
+    pub fn framebuffer_value(self) -> u8 {
+        match self {
+            Self::Short => 20,
+            Self::Medium => 28,
+            Self::Long => 36,
+            Self::VeryLong => 48,
+        }
+    }
 }
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
@@ -126,6 +146,7 @@ pub enum OnOff {
 
 int_params!(GainParams<u8>   { step: 1, min: 0, max: 12 });
 int_params!(HueParams<u8>    { step: 1, min: 0, max: 15 });
+int_params!(AngleParams<i8>  { step: 15, min: -90, max: 90 });
 int_params!(ScrollParams<u8> { step: 1, min: 0, max: 125 });
 button_params!(OneShotButtonParams {
     mode: ButtonMode::OneShot
@@ -136,9 +157,12 @@ pub struct SpectroOpts {
     #[option]
     pub input: EnumOption<InputChannel>,
     #[option]
+    pub view: EnumOption<ViewMode>,
+    #[option]
+    #[option_if(self.view.value == ViewMode::TwoD)]
     pub style: EnumOption<RenderStyle>,
     #[option]
-    #[option_if(self.style.value == RenderStyle::Phosphor)]
+    #[option_if(self.view.value == ViewMode::TwoD && self.style.value == RenderStyle::Phosphor)]
     pub persist: EnumOption<Persistence>,
     #[option(0)]
     pub gain: IntOption<GainParams>,
@@ -146,6 +170,16 @@ pub struct SpectroOpts {
     pub range: EnumOption<FrequencyRange>,
     #[option]
     pub rate: EnumOption<ScrollRate>,
+}
+
+#[derive(OptionPage, Clone)]
+pub struct View3dOpts {
+    #[option(0)]
+    pub rot_x: IntOption<AngleParams>,
+    #[option(0)]
+    pub rot_y: IntOption<AngleParams>,
+    #[option(0)]
+    pub rot_z: IntOption<AngleParams>,
 }
 
 #[derive(OptionPage, Clone)]
@@ -181,6 +215,8 @@ pub struct Opts {
     pub tracker: ScreenTracker<Page>,
     #[page(Page::Spectro)]
     pub spectro: SpectroOpts,
+    #[page(Page::View3d)]
+    pub view_3d: View3dOpts,
     #[page(Page::Display)]
     pub display: DisplayOpts,
     #[page(Page::Misc)]
