@@ -50,6 +50,10 @@ pub trait OptionTrait {
 pub trait OptionPage {
     fn options(&self) -> OptionVec<'_>;
     fn options_mut(&mut self) -> OptionVecMut<'_>;
+    /// All options, including any that are conditionally hidden from the UI.
+    /// Persistence and stable global option indexing use these accessors.
+    fn all_options(&self) -> OptionVec<'_> { self.options() }
+    fn all_options_mut(&mut self) -> OptionVecMut<'_> { self.options_mut() }
     fn set_parent_key(&mut self, parent_key: u32);
 }
 
@@ -154,4 +158,3 @@ where
         }
     }
 }
-

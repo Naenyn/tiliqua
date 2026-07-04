@@ -174,6 +174,9 @@ class SpectralEnvelope(wiring.Component):
         """
         self.shape = shape
         self.sz    = sz
+        self.rect_to_polar = block.WrapCore(cordic.RectToPolarCordic(
+                self.shape, magnitude_correction=False))
+        self.block_lpf = BlockLPF(self.shape, self.sz)
         super().__init__({
             "i": In(stream.Signature(Block(CQ(self.shape)))),
             "o": Out(stream.Signature(Block(self.shape))),
@@ -181,10 +184,8 @@ class SpectralEnvelope(wiring.Component):
 
     def elaborate(self, platform) -> Module:
         m = Module()
-        m.submodules.rect_to_polar = rect_to_polar = block.WrapCore(cordic.RectToPolarCordic(
-                self.shape, magnitude_correction=False))
-        m.submodules.block_lpf = block_lpf = BlockLPF(
-                self.shape, self.sz)
+        m.submodules.rect_to_polar = rect_to_polar = self.rect_to_polar
+        m.submodules.block_lpf = block_lpf = self.block_lpf
         wiring.connect(m, wiring.flipped(self.i), rect_to_polar.i)
         connect_magnitude_to_sq(m, rect_to_polar.o, block_lpf.i)
         wiring.connect(m, block_lpf.o, wiring.flipped(self.o))

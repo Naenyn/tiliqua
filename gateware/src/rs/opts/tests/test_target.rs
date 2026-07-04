@@ -41,6 +41,9 @@ mod tests {
         pub xscale: IntOption<ScaleParams>,
         #[option]
         pub enumo: EnumOption<TestEnum>,
+        #[option]
+        #[option_if(self.enumo.value == TestEnum::EnumValue1)]
+        pub conditional: EnumOption<TestEnum>,
         #[option("hello")]
         pub stro: StringOption,
         #[option]
@@ -71,6 +74,11 @@ mod tests {
         env_logger::init();
 
         let mut opts = Opts::default();
+        assert_eq!(opts.scope.options().len(), 7);
+        assert_eq!(opts.scope.all_options().len(), 8);
+        opts.scope.enumo.value = TestEnum::EnumValue1;
+        assert_eq!(opts.scope.options().len(), 8);
+        opts.scope.enumo.value = TestEnum::EnumValue2;
         for opt in opts.all_mut() {
             let mut buf: [u8; 8] = [0u8; 8];
             let n = opt.encode(&mut buf);

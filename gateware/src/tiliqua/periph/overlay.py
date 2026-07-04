@@ -13,6 +13,32 @@ from amaranth_soc import csr
 from ..video.types import Pixel, ScanPixel
 
 
+class OverlayPipeline(wiring.Component):
+    """Optional trace overlay followed by the standard grid overlay."""
+
+    def __init__(self, *, trace=None):
+        self.trace = trace
+        self.grid = GridOverlay()
+        super().__init__({
+            "i": In(ScanPixel),
+            "o": Out(ScanPixel),
+        })
+
+    def elaborate(self, platform):
+        m = Module()
+        m.submodules.grid = self.grid
+        if self.trace is None:
+            m.d.comb += self.grid.i.eq(self.i)
+        else:
+            m.submodules.trace = self.trace
+            m.d.comb += [
+                self.trace.i.eq(self.i),
+                self.grid.i.eq(self.trace.o),
+            ]
+        m.d.comb += self.o.eq(self.grid.o)
+        return m
+
+
 class GridOverlay(wiring.Component):
 
     """
@@ -181,8 +207,8 @@ class Peripheral(wiring.Component):
         offset_x: csr.Field(csr.action.W, unsigned(12))
         offset_y: csr.Field(csr.action.W, unsigned(12))
 
-    def __init__(self):
-        self.overlay = GridOverlay()
+    def __init__(self, *, trace=None):
+        self.overlay = OverlayPipeline(trace=trace)
 
         regs = csr.Builder(addr_width=5, data_width=8)
         self._flags        = regs.add("flags",        self.Flags(),       offset=0x0)
@@ -205,21 +231,21 @@ class Peripheral(wiring.Component):
         wiring.connect(m, wiring.flipped(self.bus), self._bridge.bus)
 
         with m.If(self._flags.f.grid_style.w_stb):
-            m.d.sync += self.overlay.style.eq(self._flags.f.grid_style.w_data)
+            m.d.sync += self.overlay.grid.style.eq(self._flags.f.grid_style.w_data)
 
         with m.If(self._flags.f.grid_pixel.w_stb):
-            m.d.sync += self.overlay.pixel.eq(self._flags.f.grid_pixel.w_data)
+            m.d.sync += self.overlay.grid.pixel.eq(self._flags.f.grid_pixel.w_data)
 
         with m.If(self._grid_spacing.element.w_stb):
-            m.d.sync += self.overlay.spacing_x.eq(self._grid_spacing.f.spacing_x.w_data)
-            m.d.sync += self.overlay.spacing_y.eq(self._grid_spacing.f.spacing_y.w_data)
+            m.d.sync += self.overlay.grid.spacing_x.eq(self._grid_spacing.f.spacing_x.w_data)
+            m.d.sync += self.overlay.grid.spacing_y.eq(self._grid_spacing.f.spacing_y.w_data)
 
         with m.If(self._grid_start.element.w_stb):
-            m.d.sync += self.overlay.start_x.eq(self._grid_start.f.start_x.w_data)
-            m.d.sync += self.overlay.start_y.eq(self._grid_start.f.start_y.w_data)
+            m.d.sync += self.overlay.grid.start_x.eq(self._grid_start.f.start_x.w_data)
+            m.d.sync += self.overlay.grid.start_y.eq(self._grid_start.f.start_y.w_data)
 
         with m.If(self._grid_offset.element.w_stb):
-            m.d.sync += self.overlay.offset_x.eq(self._grid_offset.f.offset_x.w_data)
-            m.d.sync += self.overlay.offset_y.eq(self._grid_offset.f.offset_y.w_data)
+            m.d.sync += self.overlay.grid.offset_x.eq(self._grid_offset.f.offset_x.w_data)
+            m.d.sync += self.overlay.grid.offset_y.eq(self._grid_offset.f.offset_y.w_data)
 
         return m
