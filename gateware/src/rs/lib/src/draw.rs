@@ -20,8 +20,30 @@ where
     D: DrawTarget<Color = HI8>,
     O: Options
 {
-    let font_small_white = MonoTextStyle::new(&FONT_9X15_BOLD, HI8::new(hue, 15));
-    let font_small_grey = MonoTextStyle::new(&FONT_9X15, HI8::new(hue, 10));
+    draw_options_with_intensity(d, opts, pos_x, pos_y, hue, 15, 10)
+}
+
+/// Erase precisely the pixels occupied by a previously rendered options menu.
+/// Text and lines still use the hardware-accelerated drawing paths, avoiding a
+/// large filled rectangle and its thousands of individual pixel requests.
+pub fn erase_options<D, O>(d: &mut D, opts: &O,
+                        pos_x: u32, pos_y: u32) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = HI8>,
+    O: Options
+{
+    draw_options_with_intensity(d, opts, pos_x, pos_y, 0, 0, 0)
+}
+
+fn draw_options_with_intensity<D, O>(d: &mut D, opts: &O,
+                                  pos_x: u32, pos_y: u32, hue: u8,
+                                  bright: u8, dim: u8) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = HI8>,
+    O: Options
+{
+    let font_small_white = MonoTextStyle::new(&FONT_9X15_BOLD, HI8::new(hue, bright));
+    let font_small_grey = MonoTextStyle::new(&FONT_9X15, HI8::new(hue, dim));
 
     let opts_view = opts.view().options();
 
@@ -83,7 +105,7 @@ where
     }
 
     let stroke = PrimitiveStyleBuilder::new()
-        .stroke_color(HI8::new(hue, 10))
+        .stroke_color(HI8::new(hue, dim))
         .stroke_width(1)
         .build();
     Line::new(Point::new(vx-3, vy as i32 - 10),

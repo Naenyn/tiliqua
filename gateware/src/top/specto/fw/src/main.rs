@@ -8,6 +8,7 @@ use log::{info, warn};
 use riscv_rt::entry;
 
 use opts::persistence::*;
+use opts::Options;
 use tiliqua_fw::*;
 use tiliqua_hal::dma_framebuffer::DMAFramebuffer;
 use tiliqua_hal::embedded_graphics::prelude::*;
@@ -39,6 +40,32 @@ const INFERNO_16: [(u8, u8, u8); 16] = [
     (252, 252, 139),
     (252, 255, 164),
 ];
+
+fn hash_menu_bytes(mut hash: u32, bytes: &[u8]) -> u32 {
+    for byte in bytes {
+        hash ^= *byte as u32;
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    hash
+}
+
+/// Compact identity for exactly what draw_options renders. This avoids
+/// flooding the shared framebuffer plotter with identical menu redraws while
+/// the encoder visibility timer remains active.
+fn menu_fingerprint(opts: &Opts) -> u32 {
+    let mut hash = 0x811c_9dc5;
+    hash = hash_menu_bytes(hash, opts.page().value().as_bytes());
+    hash = hash_menu_bytes(hash, &[opts.modify() as u8]);
+    hash = hash_menu_bytes(
+        hash,
+        &[opts.selected().map(|index| index as u8).unwrap_or(0xff)],
+    );
+    for option in opts.view().options() {
+        hash = hash_menu_bytes(hash, option.name().as_bytes());
+        hash = hash_menu_bytes(hash, option.value().as_bytes());
+    }
+    hash
+}
 
 /// Rotate an RGB color around the HSV hue wheel in one of sixteen steps.
 fn rotate_rgb_hue((r, g, b): (u8, u8, u8), shift: u8) -> (u8, u8, u8) {
@@ -247,6 +274,12 @@ fn main() -> ! {
         let overlay = peripherals.OVERLAY_PERIPH;
         let mut first = true;
         let mut current_fb_base = PSRAM_FB_BASE as u32;
+        // Each physical framebuffer retains UI independently. Remember the
+        // exact menu last drawn into each one so changed values, selection
+        // markers, and timeout hiding can be erased without clearing a large
+        // rectangle through the pixel plotter.
+        let mut menu_fb0: Option<(Opts, u32, u32, u32)> = None;
+        let mut menu_fb1: Option<(Opts, u32, u32, u32)> = None;
 
         loop {
             let h_active = display.size().width;
@@ -290,13 +323,48 @@ fn main() -> ! {
                 last_palette = opts.display.palette.value;
             }
 
-            if draw_options || on_help_page || first {
-                let (x, y) = if on_help_page {
-                    (h_active / 2 - 30, v_active - 100)
-                } else {
-                    (h_active - 200, v_active / 2)
-                };
-                draw::draw_options(&mut display, &opts, x, y, ui_hue).ok();
+            let (menu_x, menu_y) = if on_help_page {
+                (h_active / 2 - 30, v_active - 100)
+            } else {
+                (h_active - 200, v_active / 2)
+            };
+            let menu_visible = draw_options || on_help_page || first;
+            let menu_hash = menu_fingerprint(&opts);
+            let menu_slot = if display_buffer {
+                &mut menu_fb1
+            } else {
+                &mut menu_fb0
+            };
+            let menu_changed = menu_slot.as_ref().map(
+                |(_, old_x, old_y, old_hash)| {
+                    *old_x != menu_x || *old_y != menu_y ||
+                        *old_hash != menu_hash
+                }).unwrap_or(menu_visible);
+            // A swap alone is not a reason to redraw: each physical buffer
+            // retains its own menu snapshot. Repainting on every completed 3D
+            // surface consumed the entire UI visibility interval and made the
+            // freshly opened menu appear to clear immediately.
+            let menu_visibility_changed =
+                menu_visible != menu_slot.is_some();
+            if first || menu_changed || menu_visibility_changed {
+                if let Some((old_opts, old_x, old_y, _)) = menu_slot.take() {
+                    draw::erase_options(
+                        &mut display, &old_opts, old_x, old_y).ok();
+                }
+                if menu_visible {
+                    draw::draw_options(
+                        &mut display, &opts, menu_x, menu_y, ui_hue).ok();
+                    *menu_slot = Some((
+                        opts.clone(), menu_x, menu_y, menu_hash));
+                }
+            } else if menu_visible && !view_3d {
+                // In the beam-raced 2D modes, framebuffer persistence also
+                // decays untagged UI pixels. Refresh the unchanged visible
+                // menu as the original renderer did; unlike a state change,
+                // this needs no erase pass. In 3D, tagged-only cleanup already
+                // preserves UI, so redundant refresh traffic remains disabled.
+                draw::draw_options(
+                    &mut display, &opts, menu_x, menu_y, ui_hue).ok();
             }
             if draw_options || on_help_page || first || framebuffer_swapped {
                 draw::draw_name(
