@@ -195,10 +195,17 @@ fn main() -> ! {
     // ordinary (untagged) UI pixels. Clear both regions before enabling video
     // so random power-on contents cannot flash as the buffers are exchanged.
     // Firmware begins at +0x200000, immediately after these two regions.
-    unsafe {
-        core::ptr::write_bytes(PSRAM_FB_BASE as *mut u8, 0, 0x0020_0000);
+    // Use ordinary RV32 stores rather than the legacy VexRiscv cache-flush
+    // custom instruction: SPECTO runs on VexiiRiscv, where that instruction
+    // traps before the framebuffer/DVI peripheral can be enabled. Sequential
+    // volatile writes naturally evict the visible portions of both buffers;
+    // any final dirty cache lines lie in the unused padding after buffer 1.
+    let framebuffer_words = PSRAM_FB_BASE as *mut u32;
+    for offset in 0..(0x0020_0000 / core::mem::size_of::<u32>()) {
+        unsafe {
+            core::ptr::write_volatile(framebuffer_words.add(offset), 0);
+        }
     }
-    pac::cpu::vexriscv::flush_dcache();
     riscv::asm::fence();
 
     let mut display = DMAFramebuffer0::new(
