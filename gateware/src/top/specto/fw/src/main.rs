@@ -261,6 +261,12 @@ fn main() -> ! {
             warn!("No option storage region: disable persistent storage");
             None
         };
+    // Low quality is no longer exposed because it loses too much spectral
+    // structure. Migrate a previously saved Low selection to Medium while
+    // preserving the enum discriminants used by existing saved High values.
+    if opts.view_3d.quality.value == Quality3d::Low {
+        opts.view_3d.quality.value = Quality3d::Medium;
+    }
 
     let mut last_palette = opts.display.palette.value;
     let app = Mutex::new(RefCell::new(App::new(opts)));
@@ -457,6 +463,9 @@ fn main() -> ! {
                 w.frequency().bits(projection_y[0] as u16);
                 w.amplitude().bits(projection_y[1] as u16);
                 w.time().bits(projection_y[2] as u16)
+            });
+            spectro.config_3d().write(|w| unsafe {
+                w.quality().bits(opts.view_3d.quality.value.hw_index())
             });
 
             // SPECTO draws its own plot axes. Keep the general-purpose XBEAM

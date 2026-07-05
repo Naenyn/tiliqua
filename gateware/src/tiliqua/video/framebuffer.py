@@ -73,6 +73,9 @@ class DMAFramebuffer(wiring.Component):
             # Backing store
             "bus":  Out(wishbone.Signature(addr_width=addr_width, data_width=32, granularity=8,
                                            features={"cti", "bte"})),
+            # Assert while scanout is consuming its reserve and the PSRAM DMA
+            # should take precedence over non-real-time framebuffer writers.
+            "scanout_urgent": Out(1),
             # Dynamic timing / modeline information shared with other cores.
             "fbp": In(self.Properties()),
             # Enough information to plot the output of this core to images
@@ -88,6 +91,8 @@ class DMAFramebuffer(wiring.Component):
 
         m.submodules.fifo = fifo = AsyncFIFOBuffered(
                 width=32, depth=self.fifo_depth, r_domain='dvi', w_domain='sync')
+        m.d.comb += self.scanout_urgent.eq(
+            fifo.w_level < self.fifo_depth - self.burst_threshold_words)
 
         m.submodules.dvi_tgen = dvi_tgen = dvi.DVITimingGen()
 

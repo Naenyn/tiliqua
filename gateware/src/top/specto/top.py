@@ -121,8 +121,20 @@ class SpectoSoc(TiliquaSoc):
             self.persist_periph.persist.protect_color_b.eq(
                 self.spectrogram.protect_drawing),
         ]
-        wiring.connect(
-            m, self.waterfall_line_plotter.o, self.framebuffer_plotter.i[3])
+        # Video scanout is the only hard real-time PSRAM client. Backpressure
+        # the exact line renderer whenever its FIFO reserve is being refilled;
+        # this changes completion latency, not geometry, and prevents complex
+        # spectra from starving the visible framebuffer DMA.
+        waterfall_pixels = self.waterfall_line_plotter.o
+        waterfall_plot = self.framebuffer_plotter.i[3]
+        m.d.comb += [
+            waterfall_plot.payload.eq(waterfall_pixels.payload),
+            waterfall_plot.valid.eq(
+                waterfall_pixels.valid & ~self.fb.scanout_urgent),
+            waterfall_pixels.ready.eq(
+                waterfall_plot.ready & ~self.fb.scanout_urgent),
+            self.persist_periph.persist.pause.eq(self.fb.scanout_urgent),
+        ]
 
         # A full-cache fence turns "last pixel accepted" into "all pixels are
         # committed to PSRAM" before firmware swaps the displayed base.

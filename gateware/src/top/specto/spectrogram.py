@@ -95,6 +95,9 @@ class Spectrogram(wiring.Component):
         display_buffer: csr.Field(csr.action.R, unsigned(1))
         surface_valid: csr.Field(csr.action.R, unsigned(1))
 
+    class Config3d(csr.Register, access="w"):
+        quality: csr.Field(csr.action.W, unsigned(2))
+
     class ProjectionX(csr.Register, access="w"):
         frequency: csr.Field(csr.action.W, signed(10))
         amplitude: csr.Field(csr.action.W, signed(10))
@@ -121,6 +124,8 @@ class Spectrogram(wiring.Component):
             "projection_x", self.ProjectionX(), offset=0x20)
         self._projection_y = regs.add(
             "projection_y", self.ProjectionY(), offset=0x24)
+        self._config_3d = regs.add(
+            "config_3d", self.Config3d(), offset=0x28)
         self._bridge = csr.Bridge(regs.as_memory_map())
 
         super().__init__({
@@ -155,6 +160,7 @@ class Spectrogram(wiring.Component):
         rate_sel = Signal(2, init=1)
         persistence = Signal(2, init=2)
         hue = Signal(4, init=5)
+        quality_3d = Signal(2, init=1)
         h_active = Signal(12, init=720)
         v_active = Signal(12, init=720)
         projection_x = [Signal(signed(10), init=value) for value in (384, 0, 90)]
@@ -197,6 +203,8 @@ class Spectrogram(wiring.Component):
                 projection_y[1].eq(self._projection_y.f.amplitude.w_data),
                 projection_y[2].eq(self._projection_y.f.time.w_data),
             ]
+        with m.If(self._config_3d.element.w_stb):
+            m.d.sync += quality_3d.eq(self._config_3d.f.quality.w_data)
 
         # ---- audio analysis -------------------------------------------------
         # Build both a wide 48kHz feed and a fine 24kHz feed. The 24kHz range
@@ -405,6 +413,7 @@ class Spectrogram(wiring.Component):
         view_3d_dvi = Signal()
         spectrum_mode_dvi = Signal()
         display_ack_dvi = Signal()
+        quality_3d_dvi = Signal(2)
         range_dvi = Signal(2)
         rate_dvi = Signal(2)
         persistence_dvi = Signal(2)
@@ -424,6 +433,7 @@ class Spectrogram(wiring.Component):
             ("view_3d", view_3d, view_3d_dvi),
             ("spectrum_mode", spectrum_mode, spectrum_mode_dvi),
             ("display_ack", display_ack, display_ack_dvi),
+            ("quality_3d", quality_3d, quality_3d_dvi),
             ("range", range_sel, range_dvi),
             ("rate", rate_sel, rate_dvi),
             ("persistence", persistence, persistence_dvi),
@@ -456,15 +466,13 @@ class Spectrogram(wiring.Component):
 
         # ---- projected 3D waterfall ---------------------------------------
         # Sixteen frequency ridges are drawn oldest-to-newest so the near
-        # spectra naturally overwrite the distant ones. Every ridge contains
-        # 64 peak-pooled vertices. The pool spans four bins at 24/12kHz, two
-        # at 6kHz and one at 3kHz, preserving narrow peaks while bounding the
-        # number of line segments and smoothing content-dependent workload.
+        # spectra naturally overwrite the distant ones. Quality selects 64 or
+        # up to 128 peak-pooled vertices without changing history depth.
         scan_slice = Signal(4)
-        scan_point = Signal(6)
-        scan_group_index = Signal(2)
+        scan_point = Signal(7)
+        scan_group_index = Signal(3)
         scan_group_base = Signal(8)
-        scan_group_last = Signal(2)
+        scan_group_last = Signal(3)
         scan_peak = Signal(6)
         scan_peak_next = Signal(6)
         scan_history_age = Signal(4)
@@ -477,6 +485,7 @@ class Spectrogram(wiring.Component):
         sweep_rate = Signal(2)
         sweep_hue = Signal(4)
         sweep_phosphor = Signal()
+        sweep_quality_3d = Signal(2)
         sweep_projection_x = [Signal(signed(10)) for _ in range(3)]
         sweep_projection_y = [Signal(signed(10)) for _ in range(3)]
         visible_generation = Signal(3)
@@ -534,21 +543,36 @@ class Spectrogram(wiring.Component):
         center_x = Signal(signed(13))
         baseline_y = Signal(signed(13))
         line_word = Signal(LineCmd)
+        effective_quality = Signal(2)
+        scan_point_last = Signal(7)
+        scan_group_shift = Signal(2)
+        frequency_coordinate = Signal(9)
 
         m.d.comb += [
+            # High quality is naturally capped at 64 vertices for the 3kHz
+            # range, which contains only 64 distinct FFT bins.
+            effective_quality.eq(Mux(
+                (sweep_quality_3d == 2) & (sweep_range != 3), 2, 1)),
+            scan_point_last.eq(Mux(
+                effective_quality == 1, 63, 127)),
+            scan_group_shift.eq(Mux(
+                effective_quality == 1,
+                    Mux(sweep_range <= 1, 2,
+                        Mux(sweep_range == 2, 1, 0)),
+                    Mux(sweep_range <= 1, 1, 0),
+            )),
+            frequency_coordinate.eq(Mux(
+                effective_quality == 1,
+                scan_point << 2,
+                scan_point << 1)),
             scan_history_age.eq(Const(15, 4) - scan_slice),
             # Consecutive captures are spread across the full visual Z depth.
             scan_depth.eq(scan_history_age << 4),
-            scan_group_base.eq(Mux(
-                sweep_range <= 1,
-                scan_point << 2,
-                Mux(sweep_range == 2, scan_point << 1, scan_point),
-            )),
+            scan_group_base.eq(scan_point << scan_group_shift),
             scan_group_last.eq(Mux(
-                sweep_range <= 1,
-                3,
-                Mux(sweep_range == 2, 1, 0),
-            )),
+                scan_group_shift == 0, 0,
+                Mux(scan_group_shift == 1, 1,
+                    Mux(scan_group_shift == 2, 3, 7)))),
             scan_history_bin.eq(scan_group_base + scan_group_index),
             scan_peak_next.eq(Mux(
                 history_r.data > scan_peak,
@@ -600,6 +624,7 @@ class Spectrogram(wiring.Component):
                         sweep_rate.eq(rate_dvi),
                         sweep_hue.eq(hue_dvi),
                         sweep_phosphor.eq(phosphor_dvi),
+                        sweep_quality_3d.eq(quality_3d_dvi),
                         draw_generation.eq(visible_generation + 1),
                         render_activity_seen.eq(0),
                     ]
@@ -633,11 +658,10 @@ class Spectrogram(wiring.Component):
 
             with m.State("LOAD_HISTORY_POINT"):
                 m.d.dvi += [
-                    # Spread 64 pooled vertices across the same 256-unit
+                    # Spread pooled vertices across the same 256-unit
                     # frequency coordinate used by the axes and projection.
                     point_frequency_base.eq(
-                        Cat(Const(0, 2), scan_point, Const(0, 1)).as_signed()
-                        - 128),
+                        frequency_coordinate.as_signed() - 128),
                     point_amplitude.eq(scan_peak << 2),
                     point_time.eq(scan_depth),
                     point_pixel.intensity.eq(Mux(
@@ -650,10 +674,8 @@ class Spectrogram(wiring.Component):
                     point_pixel.color.eq(
                         Cat(draw_generation, Const(1, 1))),
                     point_cmd.eq(Mux(
-                        scan_point == 63,
-                        LineStripCmd.END,
-                        LineStripCmd.CONTINUE,
-                    )),
+                        scan_point == scan_point_last,
+                        LineStripCmd.END, LineStripCmd.CONTINUE)),
                     point_next.eq(0),
                 ]
                 m.next = "MULTIPLY_POINT"
@@ -679,7 +701,7 @@ class Spectrogram(wiring.Component):
                 with m.If(line_fifo.w_rdy):
                     with m.Switch(point_next):
                         with m.Case(0):
-                            with m.If(scan_point == 63):
+                            with m.If(scan_point == scan_point_last):
                                 m.d.dvi += scan_point.eq(0)
                                 with m.If(scan_slice == 15):
                                     with m.If(axes_dvi):
@@ -1183,26 +1205,35 @@ class Spectrogram(wiring.Component):
 
         m.d.dvi += self.o.eq(base_o)
         with m.If(view_3d_dvi & base_o.de & tagged_3d_pixel):
-            with m.If(base_o.pixel.color[:3] != visible_generation):
+            with m.If((base_o.pixel.color[:3] != visible_generation) &
+                      (base_o.pixel.color[:3] != completed_generation)):
                 # Keep the next complete surface hidden until the line FIFO and
-                # Bresenham plotter have both drained, then reveal it at once.
+                # Bresenham plotter have both drained. Accepting the completed
+                # generation as well as the visible one closes the short CDC
+                # window where the DMA has applied the new base but the local
+                # VSync-qualified generation handoff has not arrived yet.
                 m.d.dvi += self.o.pixel.intensity.eq(0)
             with m.Else():
                 # Generation tags replace framebuffer hue. Restore the chosen
                 # plot hue here; reserved axis intensities retain three colors.
+                display_hue = Mux(
+                    base_o.pixel.color[:3] == completed_generation,
+                    completed_hue,
+                    visible_hue,
+                )
                 with m.Switch(base_o.pixel.intensity):
                     with m.Case(14):
                         m.d.dvi += [
                             self.o.pixel.intensity.eq(13),
-                            self.o.pixel.color.eq(visible_hue + 5),
+                            self.o.pixel.color.eq(display_hue + 5),
                         ]
                     with m.Case(15):
                         m.d.dvi += [
                             self.o.pixel.intensity.eq(13),
-                            self.o.pixel.color.eq(visible_hue + 10),
+                            self.o.pixel.color.eq(display_hue + 10),
                         ]
                     with m.Default():
-                        m.d.dvi += self.o.pixel.color.eq(visible_hue)
+                        m.d.dvi += self.o.pixel.color.eq(display_hue)
         with m.Elif(enable_dvi & axes_dvi & label_hit):
             m.d.dvi += [
                 self.o.pixel.intensity.eq(10),

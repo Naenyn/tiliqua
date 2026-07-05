@@ -33,6 +33,10 @@ class Persistance(wiring.Component):
             "holdoff": In(16, init=holdoff_default),
             "decay": In(4, init=1),
             "skip": In(8, init=0),
+            # Let real-time scanout postpone the next cleanup burst. An active
+            # burst still completes normally, keeping Wishbone transactions
+            # well formed and bounding the remaining contention.
+            "pause": In(1, init=0),
             # Optional protection for two tagged framebuffer generations.
             # SPECTO uses color[3] as the tag marker and color[:3] as the
             # generation, allowing old surfaces to decay while the visible and
@@ -218,7 +222,7 @@ class Persistance(wiring.Component):
             with m.State('HOLDOFF'):
                 m.d.sync += any_nonzero_reads.eq(0)
                 m.d.sync += holdoff_count.eq(holdoff_count + 1)
-                with m.If(holdoff_count > self.holdoff):
+                with m.If((holdoff_count > self.holdoff) & ~self.pause):
                     m.next = 'BURST-IN'
 
         return ResetInserter({'sync': ~self.fbp.enable})(m)

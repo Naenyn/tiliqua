@@ -27,6 +27,28 @@ pub enum ViewMode {
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 #[strum(serialize_all = "kebab-case")]
+pub enum Quality3d {
+    // Retain the old serialized discriminant so saved High values remain
+    // compatible, but omit Low from the encoder's EnumIter choices.
+    #[strum(disabled)]
+    Low,
+    #[default]
+    Medium,
+    High,
+}
+
+impl Quality3d {
+    pub fn hw_index(self) -> u8 {
+        match self {
+            Self::Low => 1,
+            Self::Medium => 1,
+            Self::High => 2,
+        }
+    }
+}
+
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
+#[strum(serialize_all = "kebab-case")]
 pub enum DisplayMode {
     Spectrum,
     #[default]
@@ -186,6 +208,8 @@ pub struct SpectroOpts {
 
 #[derive(OptionPage, Clone)]
 pub struct View3dOpts {
+    #[option]
+    pub quality: EnumOption<Quality3d>,
     #[option(-15)]
     pub rot_x: IntOption<AngleParams>,
     #[option(15)]
