@@ -238,6 +238,7 @@ class Peripheral(wiring.Component):
             self.o.payload.pixel.eq(current_pixel),
             self.o.payload.blend.eq(BlendMode.REPLACE),
             self.o.payload.offset.eq(OffsetMode.ABSOLUTE),
+            self.o.payload.alternate.eq(0),
         ]
 
         m.d.comb += sprite_r_port.addr.eq(sprite_memory_addr)

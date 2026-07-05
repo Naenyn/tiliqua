@@ -189,6 +189,18 @@ fn main() -> ! {
     let modeline = bootinfo
         .modeline
         .maybe_override_fixed(FIXED_MODELINE, CLOCK_DVI_HZ);
+
+    // The 3D renderer alternates between two 1 MiB framebuffer regions. PSRAM
+    // is not initialized at boot, and tagged cleanup deliberately preserves
+    // ordinary (untagged) UI pixels. Clear both regions before enabling video
+    // so random power-on contents cannot flash as the buffers are exchanged.
+    // Firmware begins at +0x200000, immediately after these two regions.
+    unsafe {
+        core::ptr::write_bytes(PSRAM_FB_BASE as *mut u8, 0, 0x0020_0000);
+    }
+    pac::cpu::vexriscv::flush_dcache();
+    riscv::asm::fence();
+
     let mut display = DMAFramebuffer0::new(
         peripherals.FRAMEBUFFER_PERIPH,
         peripherals.PALETTE_PERIPH,
@@ -227,6 +239,7 @@ fn main() -> ! {
         let spectro = peripherals.SPECTROGRAM_PERIPH;
         let overlay = peripherals.OVERLAY_PERIPH;
         let mut first = true;
+        let mut current_fb_base = PSRAM_FB_BASE as u32;
 
         loop {
             let h_active = display.size().width;
@@ -243,6 +256,27 @@ fn main() -> ! {
                 )
             });
             let on_help_page = opts.tracker.page.value == Page::Help;
+            let spectrum_mode = opts.spectro.mode.value == DisplayMode::Spectrum;
+            let view_3d = !spectrum_mode && opts.spectro.view.value == ViewMode::ThreeD;
+            // 3D reserves framebuffer hue columns 8..15 for generation tags.
+            // Keep transient UI in the untagged half; the visual hue remains
+            // user-selectable at eight evenly spaced positions.
+            let ui_hue = if view_3d {
+                opts.display.ui_hue.value & 7
+            } else {
+                opts.display.ui_hue.value
+            };
+            let surface_status = spectro.status().read();
+            let display_buffer = view_3d
+                && surface_status.surface_valid().bit()
+                && surface_status.display_buffer().bit();
+            let desired_fb_base = PSRAM_FB_BASE as u32
+                + if display_buffer { 0x0010_0000 } else { 0 };
+            let framebuffer_swapped = desired_fb_base != current_fb_base;
+            if framebuffer_swapped {
+                display.update_fb_base(desired_fb_base);
+                current_fb_base = desired_fb_base;
+            }
 
             if opts.display.palette.value != last_palette || first {
                 write_specto_palette(opts.display.palette.value, &mut display);
@@ -255,12 +289,14 @@ fn main() -> ! {
                 } else {
                     (h_active - 200, v_active / 2)
                 };
-                draw::draw_options(&mut display, &opts, x, y, opts.display.ui_hue.value).ok();
+                draw::draw_options(&mut display, &opts, x, y, ui_hue).ok();
+            }
+            if draw_options || on_help_page || first || framebuffer_swapped {
                 draw::draw_name(
                     &mut display,
                     h_active / 2,
                     v_active - 50,
-                    opts.display.ui_hue.value,
+                    ui_hue,
                     &bootinfo.manifest.name,
                     &bootinfo.manifest.tag,
                     &modeline,
@@ -276,7 +312,7 @@ fn main() -> ! {
                     h_active,
                     v_active,
                     opts.help.scroll.value,
-                    opts.display.ui_hue.value,
+                    ui_hue,
                 )
                 .ok();
             }
@@ -303,12 +339,15 @@ fn main() -> ! {
                 // 3D. Keep its analyzer response stable and reserve phosphor
                 // smoothing/persistence as a user-selectable 2D treatment.
                 w.phosphor().bit(
-                    opts.spectro.view.value == ViewMode::TwoD
+                    !spectrum_mode
+                        && opts.spectro.view.value == ViewMode::TwoD
                         && opts.spectro.style.value == RenderStyle::Phosphor,
                 );
                 w.axes().bit(opts.display.axes.value == OnOff::On);
                 w.input_ch().bits(opts.spectro.input.value.hw_index());
-                w.view_3d().bit(opts.spectro.view.value == ViewMode::ThreeD)
+                w.view_3d().bit(view_3d);
+                w.spectrum_mode().bit(spectrum_mode);
+                w.display_ack().bit(display_buffer)
             });
             spectro
                 .gain()
@@ -355,13 +394,13 @@ fn main() -> ! {
             // Projected 3D lines share the framebuffer with transient UI.
             // Deterministic short decay erases geometry displaced by the next
             // surface without adding a second, misleading persistence mode.
-            persist.set_persistence(if on_help_page {
-                64
-            } else if opts.spectro.view.value == ViewMode::ThreeD {
-                16
+            if view_3d {
+                // The 3D view uses tagged atomic surfaces, not visual fade.
+                // Scan less often and erase stale generations in one visit.
+                persist.set_cleanup();
             } else {
-                24
-            });
+                persist.set_persistence(if on_help_page { 64 } else { 24 });
+            }
             display.rotate(&opts.misc.rotation.value);
             first = false;
         }

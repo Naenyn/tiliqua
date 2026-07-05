@@ -66,6 +66,10 @@ class WishboneL2Cache(wiring.Component):
                                             data_width=data_width,
                                             granularity=granularity,
                                             features={"cti", "bte"})),
+            # Manual full-cache write-back/invalidate fence. Completion is a
+            # level held until ``flush`` is released, for CDC-safe handshakes.
+            "flush": In(1),
+            "flush_done": Out(1),
         })
 
     def elaborate(self, platform):
@@ -157,7 +161,12 @@ class WishboneL2Cache(wiring.Component):
 
         if self.autoflush:
             flush_wait = Signal(10, init=1)
-            adr_line_flush = Signal.like(adr_line)
+        adr_line_flush = Signal.like(adr_line)
+        manual_flush = Signal()
+        flush_done = Signal()
+        m.d.comb += self.flush_done.eq(flush_done)
+        with m.If(~self.flush):
+            m.d.sync += flush_done.eq(0)
 
         with m.FSM() as fsm:
 
@@ -166,10 +175,20 @@ class WishboneL2Cache(wiring.Component):
                 with m.If(master.cyc & master.stb):
                     m.next = "TEST_HIT"
 
+                with m.Elif(self.flush & ~flush_done):
+                    m.d.sync += [
+                        adr_line_flush.eq(0),
+                        manual_flush.eq(1),
+                    ]
+                    m.next = "TEST_FLUSH"
+
                 if self.autoflush:
                     m.d.sync += flush_wait.eq(flush_wait+1)
-                    with m.If(flush_wait == 0):
+                    with m.If((flush_wait == 0) &
+                              ~(master.cyc & master.stb) &
+                              ~(self.flush & ~flush_done)):
                         m.d.comb += adr_line.eq(adr_line_flush)
+                        m.d.sync += manual_flush.eq(0)
                         m.next = "TEST_FLUSH"
 
             with m.State("WAIT"):
@@ -242,34 +261,53 @@ class WishboneL2Cache(wiring.Component):
                     with m.If(burst_offset == (self.burst_len - 1)):
                         m.next = "TEST_HIT"
 
-            if self.autoflush:
-                with m.State("TEST_FLUSH"):
-                    m.d.comb += adr_line.eq(adr_line_flush)
-                    with m.If(tag_do.valid & tag_do.dirty):
-                        m.next = "FLUSH_LINE"
+            with m.State("TEST_FLUSH"):
+                m.d.comb += adr_line.eq(adr_line_flush)
+                with m.If(tag_do.valid & tag_do.dirty):
+                    m.next = "FLUSH_LINE"
+                with m.Elif(manual_flush):
+                    with m.If(adr_line_flush == (2**linebits - 1)):
+                        m.d.sync += [
+                            manual_flush.eq(0),
+                            flush_done.eq(1),
+                        ]
+                        m.next = "IDLE"
                     with m.Else():
                         m.d.sync += adr_line_flush.eq(adr_line_flush+1)
-                        m.next = "IDLE"
+                with m.Else():
+                    m.d.sync += adr_line_flush.eq(adr_line_flush+1)
+                    m.next = "IDLE"
 
-                with m.State("FLUSH_LINE"):
-                    m.d.comb += [
-                        adr_line.eq(adr_line_flush),
-                        slave.stb.eq(1),
-                        slave.cyc.eq(1),
-                        slave.we.eq(1),
-                        slave.cti.eq(wishbone.CycleType.INCR_BURST),
-                        rd_port.addr.eq(Cat(burst_offset_lookahead, adr_line)),
-                    ]
+            with m.State("FLUSH_LINE"):
+                m.d.comb += [
+                    adr_line.eq(adr_line_flush),
+                    slave.stb.eq(1),
+                    slave.cyc.eq(1),
+                    slave.we.eq(1),
+                    slave.cti.eq(wishbone.CycleType.INCR_BURST),
+                    rd_port.addr.eq(Cat(burst_offset_lookahead, adr_line)),
+                ]
+                with m.If(burst_offset == (self.burst_len - 1)):
+                    m.d.comb += slave.cti.eq(wishbone.CycleType.END_OF_BURST)
+                with m.If(slave.ack):
+                    m.d.comb += burst_offset_lookahead.eq(burst_offset+1)
+                    m.d.sync += burst_offset.eq(burst_offset + 1)
                     with m.If(burst_offset == (self.burst_len - 1)):
-                        m.d.comb += slave.cti.eq(wishbone.CycleType.END_OF_BURST)
-                    with m.If(slave.ack):
-                        m.d.comb += burst_offset_lookahead.eq(burst_offset+1)
-                        m.d.sync += burst_offset.eq(burst_offset + 1)
-                        with m.If(burst_offset == (self.burst_len - 1)):
-                            m.d.comb += [
-                                tag_di.valid.eq(0),
-                                tag_wr_port.en.eq(1)
-                            ]
+                        m.d.comb += [
+                            tag_di.valid.eq(0),
+                            tag_wr_port.en.eq(1)
+                        ]
+                        with m.If(manual_flush):
+                            with m.If(adr_line_flush == (2**linebits - 1)):
+                                m.d.sync += [
+                                    manual_flush.eq(0),
+                                    flush_done.eq(1),
+                                ]
+                                m.next = "IDLE"
+                            with m.Else():
+                                m.d.sync += adr_line_flush.eq(adr_line_flush+1)
+                                m.next = "TEST_FLUSH"
+                        with m.Else():
                             m.d.sync += adr_line_flush.eq(adr_line_flush+1)
                             m.next = "IDLE"
 

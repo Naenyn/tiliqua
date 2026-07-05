@@ -21,9 +21,11 @@ All four analog inputs pass directly to their matching outputs:
         in3 ───────────────────────► out3
         in4 ───────────────────────► out4
 
-SPECTRO options select the input, 2D heatmap or 3D waterfall view, input
-sensitivity, maximum displayed frequency, and history speed. The 2D view also
-offers analytical or phosphor rendering and adjustable phosphor persistence.
+SPECTRO options select a live spectrum analyzer or historical spectrograph,
+input, sensitivity, and maximum displayed frequency. Spectrum mode plots the
+newest FFT with frequency on X and magnitude on Y. Spectrograph mode adds 2D
+heatmap or 3D waterfall views and history speed; its 2D view also offers
+analytical or phosphor rendering and adjustable phosphor persistence.
 
 Analytical rendering emphasizes stable, crisp frequency bins. Phosphor
 rendering adds temporal smoothing, brighter highlights, and an age-dependent
@@ -46,8 +48,9 @@ MISC contains display rotation and settings save/reset actions.
 import os
 import sys
 
-from amaranth import Module
+from amaranth import Module, Signal
 from amaranth.lib import wiring
+from amaranth.lib.cdc import FFSynchronizer
 
 from tiliqua import dsp
 from tiliqua.build.cli import top_level_cli
@@ -105,8 +108,33 @@ class SpectoSoc(TiliquaSoc):
 
         wiring.connect(
             m, self.spectrogram.line_o, self.waterfall_line_plotter.i)
+        m.d.comb += self.spectrogram.line_busy.eq(
+            self.waterfall_line_plotter.busy)
+        m.d.comb += self.waterfall_line_plotter.alternate.eq(1)
+        m.d.comb += [
+            self.persist_periph.persist.protect_enable.eq(
+                self.spectrogram.protect_enable),
+            self.persist_periph.persist.tagged_only.eq(
+                self.spectrogram.protect_enable),
+            self.persist_periph.persist.protect_color_a.eq(
+                self.spectrogram.protect_visible),
+            self.persist_periph.persist.protect_color_b.eq(
+                self.spectrogram.protect_drawing),
+        ]
         wiring.connect(
             m, self.waterfall_line_plotter.o, self.framebuffer_plotter.i[3])
+
+        # A full-cache fence turns "last pixel accepted" into "all pixels are
+        # committed to PSRAM" before firmware swaps the displayed base.
+        flush_request_sync = Signal()
+        m.submodules.flush_request_ff = FFSynchronizer(
+            self.spectrogram.flush_request, flush_request_sync,
+            o_domain="sync")
+        m.d.comb += [
+            self.framebuffer_plotter.flush.eq(flush_request_sync),
+            self.spectrogram.flush_done.eq(
+                self.framebuffer_plotter.flush_done),
+        ]
 
         pmod0 = self.pmod0_periph.pmod
 

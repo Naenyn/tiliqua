@@ -33,6 +33,16 @@ class Persistance(wiring.Component):
             "holdoff": In(16, init=holdoff_default),
             "decay": In(4, init=1),
             "skip": In(8, init=0),
+            # Optional protection for two tagged framebuffer generations.
+            # SPECTO uses color[3] as the tag marker and color[:3] as the
+            # generation, allowing old surfaces to decay while the visible and
+            # in-progress surfaces remain unchanged.
+            "protect_enable": In(1, init=0),
+            # In tagged-surface cleanup mode, leave ordinary framebuffer UI
+            # pixels untouched and decay only obsolete tagged generations.
+            "tagged_only": In(1, init=0),
+            "protect_color_a": In(3, init=0),
+            "protect_color_b": In(3, init=0),
             # DMA bus / fb
             "bus":  Out(bus_signature),
             "fbp": In(DMAFramebuffer.Properties()),
@@ -90,15 +100,23 @@ class Persistance(wiring.Component):
 
         m.d.comb += self.fifo.w_data.eq(bus.dat_r)
 
-        # Used for fastpath when all pixels are zero
+        # Used for the no-write fastpath when every pixel is either zero or a
+        # protected SPECTO generation. Avoiding writes of unchanged protected
+        # pixels materially reduces 3D PSRAM traffic.
         any_nonzero_reads = Signal()
         pixels_peek = Signal(data.ArrayLayout(Pixel, 4))
         m.d.comb += pixels_peek.eq(self.fifo.w_data)
         with m.If(self.fifo.w_en):
-            with m.If((pixels_peek[0].intensity != 0) |
-                      (pixels_peek[1].intensity != 0) |
-                      (pixels_peek[2].intensity != 0) |
-                      (pixels_peek[3].intensity != 0)):
+            decay_candidates = []
+            for n in range(4):
+                protected = (
+                    (self.tagged_only & ~pixels_peek[n].color[3]) |
+                    (self.protect_enable & pixels_peek[n].color[3] &
+                     ((pixels_peek[n].color[:3] == self.protect_color_a) |
+                      (pixels_peek[n].color[:3] == self.protect_color_b))))
+                decay_candidates.append(
+                    (pixels_peek[n].intensity != 0) & ~protected)
+            with m.If(Cat(*decay_candidates).any()):
                 m.d.sync += any_nonzero_reads.eq(1)
 
         with m.FSM() as fsm:
@@ -157,9 +175,15 @@ class Persistance(wiring.Component):
                 pixels_w = Signal(data.ArrayLayout(Pixel, 4))
                 for n in range(4):
                     skip_this = Signal(name=f"skip_{n}")
+                    protect_this = Signal(name=f"protect_{n}")
                     m.d.comb += skip_this.eq(lfsr_beat[n*8:(n*8)+8] < skip_latch)
+                    m.d.comb += protect_this.eq(
+                        (self.tagged_only & ~pixels_r[n].color[3]) |
+                        (self.protect_enable & pixels_r[n].color[3] &
+                         ((pixels_r[n].color[:3] == self.protect_color_a) |
+                          (pixels_r[n].color[:3] == self.protect_color_b))))
                     m.d.comb += pixels_w[n].color.eq(pixels_r[n].color)
-                    with m.If(skip_this):
+                    with m.If(protect_this | skip_this):
                         m.d.comb += pixels_w[n].intensity.eq(pixels_r[n].intensity)
                     with m.Elif(pixels_r[n].intensity >= decay_latch):
                         m.d.comb += pixels_w[n].intensity.eq(pixels_r[n].intensity - decay_latch)

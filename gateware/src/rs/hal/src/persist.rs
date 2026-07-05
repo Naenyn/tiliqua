@@ -6,6 +6,9 @@
 ///   65-80: decay=1, holdoff ramps 32->256, skip continues ramping
 pub trait Persist {
     fn set_persistence(&mut self, value: u8);
+    /// Low-duty-cycle cleanup for tagged double-buffered surfaces. Protected
+    /// pixels are retained; stale pixels are removed in a single visit.
+    fn set_cleanup(&mut self);
 }
 
 #[macro_export]
@@ -55,6 +58,12 @@ macro_rules! impl_persist {
                             self.set_holdoff(core::cmp::min(32 + (h << 5), 256) as u16);
                         }
                     }
+                }
+
+                fn set_cleanup(&mut self) {
+                    self.set_decay(15);
+                    self.set_holdoff(256);
+                    self.set_skip(0);
                 }
             }
         )+

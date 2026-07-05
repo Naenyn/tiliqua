@@ -26,6 +26,14 @@ pub enum ViewMode {
 }
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
+#[strum(serialize_all = "kebab-case")]
+pub enum DisplayMode {
+    Spectrum,
+    #[default]
+    Spectrograph,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 pub enum InputChannel {
     #[default]
     #[strum(serialize = "IN1")]
@@ -157,26 +165,30 @@ pub struct SpectroOpts {
     #[option]
     pub input: EnumOption<InputChannel>,
     #[option]
+    pub mode: EnumOption<DisplayMode>,
+    #[option]
+    #[option_if(self.mode.value == DisplayMode::Spectrograph)]
     pub view: EnumOption<ViewMode>,
     #[option]
-    #[option_if(self.view.value == ViewMode::TwoD)]
+    #[option_if(self.mode.value == DisplayMode::Spectrograph && self.view.value == ViewMode::TwoD)]
     pub style: EnumOption<RenderStyle>,
     #[option]
-    #[option_if(self.view.value == ViewMode::TwoD && self.style.value == RenderStyle::Phosphor)]
+    #[option_if(self.mode.value == DisplayMode::Spectrograph && self.view.value == ViewMode::TwoD && self.style.value == RenderStyle::Phosphor)]
     pub persist: EnumOption<Persistence>,
     #[option(0)]
     pub gain: IntOption<GainParams>,
     #[option]
     pub range: EnumOption<FrequencyRange>,
     #[option]
+    #[option_if(self.mode.value == DisplayMode::Spectrograph)]
     pub rate: EnumOption<ScrollRate>,
 }
 
 #[derive(OptionPage, Clone)]
 pub struct View3dOpts {
-    #[option(0)]
+    #[option(-15)]
     pub rot_x: IntOption<AngleParams>,
-    #[option(0)]
+    #[option(15)]
     pub rot_y: IntOption<AngleParams>,
     #[option(0)]
     pub rot_z: IntOption<AngleParams>,
