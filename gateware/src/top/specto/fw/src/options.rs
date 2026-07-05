@@ -56,6 +56,87 @@ pub enum DisplayMode {
 }
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
+#[strum(serialize_all = "kebab-case")]
+pub enum SpectrumStyle {
+    #[default]
+    Bars,
+    Curve,
+}
+
+impl SpectrumStyle {
+    pub fn hw_index(self) -> u8 {
+        match self {
+            Self::Bars => 0,
+            Self::Curve => 1,
+        }
+    }
+}
+
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
+pub enum SpectrumBands {
+    #[strum(serialize = "32")]
+    Bands32,
+    #[default]
+    #[strum(serialize = "64")]
+    Bands64,
+    #[strum(serialize = "128")]
+    Bands128,
+    #[strum(serialize = "256")]
+    Bands256,
+}
+
+impl SpectrumBands {
+    pub fn hw_index(self) -> u8 {
+        match self {
+            Self::Bands32 => 0,
+            Self::Bands64 => 1,
+            Self::Bands128 => 2,
+            Self::Bands256 => 3,
+        }
+    }
+}
+
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
+#[strum(serialize_all = "kebab-case")]
+pub enum SpectrumFill {
+    Off,
+    Solid,
+    #[default]
+    Gradient,
+}
+
+impl SpectrumFill {
+    pub fn hw_index(self) -> u8 {
+        match self {
+            Self::Off => 0,
+            Self::Solid => 1,
+            Self::Gradient => 2,
+        }
+    }
+}
+
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
+#[strum(serialize_all = "kebab-case")]
+pub enum SpectrumPeaks {
+    Off,
+    Fast,
+    #[default]
+    Medium,
+    Slow,
+}
+
+impl SpectrumPeaks {
+    pub fn hw_index(self) -> u8 {
+        match self {
+            Self::Off => 0,
+            Self::Fast => 1,
+            Self::Medium => 2,
+            Self::Slow => 3,
+        }
+    }
+}
+
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 pub enum InputChannel {
     #[default]
     #[strum(serialize = "IN1")]
@@ -189,6 +270,19 @@ pub struct SpectroOpts {
     #[option]
     pub mode: EnumOption<DisplayMode>,
     #[option]
+    #[option_name("style")]
+    #[option_if(self.mode.value == DisplayMode::Spectrum)]
+    pub spectrum_style: EnumOption<SpectrumStyle>,
+    #[option]
+    #[option_if(self.mode.value == DisplayMode::Spectrum)]
+    pub bands: EnumOption<SpectrumBands>,
+    #[option]
+    #[option_if(self.mode.value == DisplayMode::Spectrum)]
+    pub fill: EnumOption<SpectrumFill>,
+    #[option]
+    #[option_if(self.mode.value == DisplayMode::Spectrum)]
+    pub peaks: EnumOption<SpectrumPeaks>,
+    #[option]
     #[option_if(self.mode.value == DisplayMode::Spectrograph)]
     pub view: EnumOption<ViewMode>,
     #[option]
@@ -202,7 +296,6 @@ pub struct SpectroOpts {
     #[option]
     pub range: EnumOption<FrequencyRange>,
     #[option]
-    #[option_if(self.mode.value == DisplayMode::Spectrograph)]
     pub rate: EnumOption<ScrollRate>,
 }
 

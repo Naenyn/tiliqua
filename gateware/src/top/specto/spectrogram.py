@@ -27,6 +27,7 @@ HISTORY_COLS = 256
 # five-pixel row; characters occupy an 8x8 cell to make addressing shift-only.
 FONT_5X7 = {
     " ": ("00000", "00000", "00000", "00000", "00000", "00000", "00000"),
+    "-": ("00000", "00000", "00000", "11111", "00000", "00000", "00000"),
     "(": ("00100", "01000", "10000", "10000", "10000", "01000", "00100"),
     ")": ("00100", "00010", "00001", "00001", "00001", "00010", "00100"),
     ".": ("00000", "00000", "00000", "00000", "00000", "00110", "00110"),
@@ -41,12 +42,19 @@ FONT_5X7 = {
     "8": ("01110", "10001", "10001", "01110", "10001", "10001", "01110"),
     "9": ("01110", "10001", "10001", "01111", "00001", "00001", "01110"),
     "A": ("01110", "10001", "10001", "11111", "10001", "10001", "10001"),
+    "B": ("11110", "10001", "10001", "11110", "10001", "10001", "11110"),
     "E": ("11111", "10000", "10000", "11110", "10000", "10000", "11111"),
     "F": ("11111", "10000", "10000", "11110", "10000", "10000", "10000"),
     "G": ("01110", "10001", "10000", "10111", "10001", "10001", "01110"),
     "H": ("10001", "10001", "10001", "11111", "10001", "10001", "10001"),
+    "L": ("10000", "10000", "10000", "10000", "10000", "10000", "11111"),
+    "M": ("10001", "11011", "10101", "10101", "10001", "10001", "10001"),
+    "P": ("11110", "10001", "10001", "11110", "10000", "10000", "10000"),
     "Q": ("01110", "10001", "10001", "10001", "10101", "10010", "01101"),
     "R": ("11110", "10001", "10001", "11110", "10100", "10010", "10001"),
+    "S": ("01111", "10000", "10000", "01110", "00001", "00001", "11110"),
+    "V": ("10001", "10001", "10001", "10001", "10001", "01010", "00100"),
+    "d": ("00001", "00001", "01111", "10001", "10001", "10011", "01101"),
     "k": ("10000", "10010", "10100", "11000", "10100", "10010", "10001"),
     "s": ("00000", "01111", "10000", "01110", "00001", "11110", "00000"),
     "z": ("00000", "11111", "00010", "00100", "01000", "11111", "00000"),
@@ -98,6 +106,12 @@ class Spectrogram(wiring.Component):
     class Config3d(csr.Register, access="w"):
         quality: csr.Field(csr.action.W, unsigned(2))
 
+    class SpectrumConfig(csr.Register, access="w"):
+        style: csr.Field(csr.action.W, unsigned(1))
+        bands: csr.Field(csr.action.W, unsigned(2))
+        fill: csr.Field(csr.action.W, unsigned(2))
+        peaks: csr.Field(csr.action.W, unsigned(2))
+
     class ProjectionX(csr.Register, access="w"):
         frequency: csr.Field(csr.action.W, signed(10))
         amplitude: csr.Field(csr.action.W, signed(10))
@@ -126,6 +140,8 @@ class Spectrogram(wiring.Component):
             "projection_y", self.ProjectionY(), offset=0x24)
         self._config_3d = regs.add(
             "config_3d", self.Config3d(), offset=0x28)
+        self._spectrum_config = regs.add(
+            "spectrum_config", self.SpectrumConfig(), offset=0x2c)
         self._bridge = csr.Bridge(regs.as_memory_map())
 
         super().__init__({
@@ -161,6 +177,10 @@ class Spectrogram(wiring.Component):
         persistence = Signal(2, init=2)
         hue = Signal(4, init=5)
         quality_3d = Signal(2, init=1)
+        spectrum_style = Signal()
+        spectrum_bands = Signal(2, init=1)
+        spectrum_fill = Signal(2, init=2)
+        spectrum_peaks = Signal(2, init=2)
         h_active = Signal(12, init=720)
         v_active = Signal(12, init=720)
         projection_x = [Signal(signed(10), init=value) for value in (384, 0, 90)]
@@ -205,6 +225,13 @@ class Spectrogram(wiring.Component):
             ]
         with m.If(self._config_3d.element.w_stb):
             m.d.sync += quality_3d.eq(self._config_3d.f.quality.w_data)
+        with m.If(self._spectrum_config.element.w_stb):
+            m.d.sync += [
+                spectrum_style.eq(self._spectrum_config.f.style.w_data),
+                spectrum_bands.eq(self._spectrum_config.f.bands.w_data),
+                spectrum_fill.eq(self._spectrum_config.f.fill.w_data),
+                spectrum_peaks.eq(self._spectrum_config.f.peaks.w_data),
+            ]
 
         # ---- audio analysis -------------------------------------------------
         # Build both a wide 48kHz feed and a fine 24kHz feed. The 24kHz range
@@ -272,12 +299,32 @@ class Spectrogram(wiring.Component):
         wiring.connect(m, analyzer.o, envelope.i)
         wiring.connect(m, envelope.o, log.i)
 
-        # Analytical mode responds quickly; phosphor mode deliberately blends
-        # adjacent analysis frames before they enter the history.
+        # In spectrogram mode this retains the established analytical/phosphor
+        # response. In spectrum mode Rate becomes response smoothing: all FFT
+        # frames still render, but fast bar-to-bar jitter is progressively
+        # damped instead of producing a lower-rate, choppy animation.
+        spectrum_beta = Signal(ASQ)
+        with m.Switch(rate_sel):
+            with m.Case(0):
+                m.d.comb += spectrum_beta.eq(
+                    fixed.Const(0.25, shape=ASQ))
+            with m.Case(1):
+                m.d.comb += spectrum_beta.eq(
+                    fixed.Const(0.75, shape=ASQ))
+            with m.Case(2):
+                m.d.comb += spectrum_beta.eq(
+                    fixed.Const(0.94, shape=ASQ))
+            with m.Default():
+                m.d.comb += spectrum_beta.eq(
+                    fixed.Const(0.985, shape=ASQ))
         m.d.comb += envelope.block_lpf.beta.eq(Mux(
-            phosphor,
-            fixed.Const(0.82, shape=ASQ),
-            fixed.Const(0.25, shape=ASQ),
+            spectrum_mode,
+            spectrum_beta,
+            Mux(
+                phosphor,
+                fixed.Const(0.82, shape=ASQ),
+                fixed.Const(0.25, shape=ASQ),
+            ),
         ))
 
         history = memory.Memory(
@@ -294,6 +341,32 @@ class Spectrogram(wiring.Component):
         m.submodules.history = history
         history_w = history.write_port(domain="sync")
         history_r = history.read_port(domain="dvi")
+
+        # Spectrum mode uses a compact, independently prepared band table.
+        # Pooling happens once as FFT bins arrive, so the video path still
+        # needs only one lookup per pixel regardless of the selected count.
+        spectrum_levels = memory.Memory(
+            data=memory.MemoryData(
+                shape=unsigned(6), depth=N_BINS,
+                init=[0] * N_BINS,
+            )
+        )
+        m.submodules.spectrum_levels = spectrum_levels
+        spectrum_levels_w = spectrum_levels.write_port(domain="sync")
+        spectrum_levels_r = spectrum_levels.read_port(domain="dvi")
+
+        # Peak level plus a five-bit hold timer. This memory lives entirely in
+        # the video domain; each band is updated once near the start of a frame
+        # and then read while its marker is beam-raced later in that frame.
+        spectrum_peak_state = memory.Memory(
+            data=memory.MemoryData(
+                shape=unsigned(11), depth=N_BINS,
+                init=[0] * N_BINS,
+            )
+        )
+        m.submodules.spectrum_peak_state = spectrum_peak_state
+        spectrum_peak_r = spectrum_peak_state.read_port(domain="dvi")
+        spectrum_peak_w = spectrum_peak_state.write_port(domain="dvi")
 
         # The 3D renderer scans the same history RAM used by the beam-raced
         # heatmap, then crosses projected line-strip commands into the system
@@ -376,6 +449,15 @@ class Spectrogram(wiring.Component):
         raw_level = Signal(6)
         boosted_level = Signal(7)
         stored_level = Signal(6)
+        spectrum_frequency_shift = Signal(2)
+        spectrum_desired_group_shift = Signal(2)
+        spectrum_group_shift = Signal(2)
+        spectrum_active_bin_last = Signal(8)
+        spectrum_group_first = Signal()
+        spectrum_group_last = Signal()
+        spectrum_group_peak = Signal(6)
+        spectrum_group_peak_next = Signal(6)
+        spectrum_band_index_sync = Signal(8)
         m.d.comb += [
             log.o.ready.eq(1),
             current_bin.eq(Mux(log.o.payload.first, 0, bin_index)),
@@ -383,12 +465,61 @@ class Spectrogram(wiring.Component):
             raw_level.eq(log.o.payload.sample.as_value()[ASQ.f_bits-6:ASQ.f_bits]),
             boosted_level.eq(raw_level + gain),
             stored_level.eq(Mux(boosted_level > 63, 63, boosted_level[:6])),
+            spectrum_frequency_shift.eq(Mux(
+                range_sel == 0, 0, range_sel - 1)),
+            spectrum_desired_group_shift.eq(3 - spectrum_bands),
+            spectrum_group_shift.eq(Mux(
+                spectrum_desired_group_shift > spectrum_frequency_shift,
+                spectrum_desired_group_shift - spectrum_frequency_shift,
+                0,
+            )),
+            spectrum_active_bin_last.eq(Mux(
+                spectrum_frequency_shift == 0, 255,
+                Mux(spectrum_frequency_shift == 1, 127, 63))),
+            spectrum_band_index_sync.eq(
+                current_bin[:8] >> spectrum_group_shift),
+            spectrum_group_peak_next.eq(Mux(
+                spectrum_group_first,
+                stored_level,
+                Mux(stored_level > spectrum_group_peak,
+                    stored_level, spectrum_group_peak),
+            )),
             history_w.en.eq(log.o.valid & do_write & (current_bin < N_BINS)),
             history_w.addr.eq((write_col << 8) | current_bin[:8]),
             history_w.data.eq(stored_level),
+            spectrum_levels_w.en.eq(
+                log.o.valid &
+                (current_bin <= spectrum_active_bin_last) &
+                spectrum_group_last),
+            spectrum_levels_w.addr.eq(spectrum_band_index_sync),
+            spectrum_levels_w.data.eq(spectrum_group_peak_next),
         ]
+        with m.Switch(spectrum_group_shift):
+            with m.Case(0):
+                m.d.comb += [
+                    spectrum_group_first.eq(1),
+                    spectrum_group_last.eq(1),
+                ]
+            with m.Case(1):
+                m.d.comb += [
+                    spectrum_group_first.eq(current_bin[0] == 0),
+                    spectrum_group_last.eq(current_bin[0] == 1),
+                ]
+            with m.Case(2):
+                m.d.comb += [
+                    spectrum_group_first.eq(current_bin[:2] == 0),
+                    spectrum_group_last.eq(current_bin[:2] == 3),
+                ]
+            with m.Default():
+                m.d.comb += [
+                    spectrum_group_first.eq(current_bin[:3] == 0),
+                    spectrum_group_last.eq(current_bin[:3] == 7),
+                ]
 
         with m.If(log.o.valid):
+            with m.If(current_bin <= spectrum_active_bin_last):
+                m.d.sync += spectrum_group_peak.eq(
+                    spectrum_group_peak_next)
             with m.If(log.o.payload.first):
                 m.d.sync += [
                     bin_index.eq(1),
@@ -414,6 +545,10 @@ class Spectrogram(wiring.Component):
         spectrum_mode_dvi = Signal()
         display_ack_dvi = Signal()
         quality_3d_dvi = Signal(2)
+        spectrum_style_dvi = Signal()
+        spectrum_bands_dvi = Signal(2)
+        spectrum_fill_dvi = Signal(2)
+        spectrum_peaks_dvi = Signal(2)
         range_dvi = Signal(2)
         rate_dvi = Signal(2)
         persistence_dvi = Signal(2)
@@ -434,6 +569,10 @@ class Spectrogram(wiring.Component):
             ("spectrum_mode", spectrum_mode, spectrum_mode_dvi),
             ("display_ack", display_ack, display_ack_dvi),
             ("quality_3d", quality_3d, quality_3d_dvi),
+            ("spectrum_style", spectrum_style, spectrum_style_dvi),
+            ("spectrum_bands", spectrum_bands, spectrum_bands_dvi),
+            ("spectrum_fill", spectrum_fill, spectrum_fill_dvi),
+            ("spectrum_peaks", spectrum_peaks, spectrum_peaks_dvi),
             ("range", range_sel, range_dvi),
             ("rate", rate_sel, rate_dvi),
             ("persistence", persistence, persistence_dvi),
@@ -874,6 +1013,11 @@ class Spectrogram(wiring.Component):
         bin_addr = Signal(8)
         spectrum_bin = Signal(8)
         frequency_shift = Signal(2)
+        spectrum_desired_group_shift_dvi = Signal(2)
+        spectrum_group_shift_dvi = Signal(2)
+        spectrum_band_pixel_shift = Signal(4)
+        spectrum_band_first = Signal()
+        spectrum_band_gap = Signal()
         in_plot = Signal()
         m.d.comb += [
             wide.eq(h_active_dvi >= 1024),
@@ -895,30 +1039,51 @@ class Spectrogram(wiring.Component):
             # Wide 24kHz mode uses all 256 bins. Fine mode also uses all bins
             # at 12kHz, then halves them for each smaller range.
             frequency_shift.eq(Mux(range_dvi == 0, 0, range_dvi - 1)),
+            spectrum_desired_group_shift_dvi.eq(3 - spectrum_bands_dvi),
+            spectrum_group_shift_dvi.eq(Mux(
+                spectrum_desired_group_shift_dvi > frequency_shift,
+                spectrum_desired_group_shift_dvi - frequency_shift,
+                0,
+            )),
+            spectrum_band_pixel_shift.eq(
+                x_scale_shift + frequency_shift +
+                spectrum_group_shift_dvi),
             bin_addr.eq(rev_y >> (y_scale_shift + frequency_shift)),
             spectrum_bin.eq(
-                rel_x.as_unsigned() >> (x_scale_shift + frequency_shift)),
+                rel_x.as_unsigned() >> spectrum_band_pixel_shift),
+            spectrum_band_first.eq(
+                rel_x.as_unsigned() ==
+                (spectrum_bin << spectrum_band_pixel_shift)),
+            spectrum_band_gap.eq(
+                (spectrum_band_pixel_shift != 0) &
+                (rel_x.as_unsigned() ==
+                 (((spectrum_bin + 1) << spectrum_band_pixel_shift) - 1))),
             in_plot.eq(self.i.de & (rel_x >= 0) & (rel_x < plot_w) &
                        (rel_y >= 0) & (rel_y < plot_h)),
             history_r.en.eq(Mux(view_3d_dvi, scan_read_en, in_plot)),
             history_r.addr.eq(Mux(
                 view_3d_dvi,
                 scan_read_addr,
-                Mux(
-                    spectrum_mode_dvi,
-                    (newest_dvi << 8) | spectrum_bin,
-                    ((newest_dvi + completed_age) << 8) | bin_addr,
-                ),
+                ((newest_dvi + completed_age) << 8) | bin_addr,
             )),
+            spectrum_levels_r.en.eq(in_plot & spectrum_mode_dvi),
+            spectrum_levels_r.addr.eq(spectrum_bin),
+            spectrum_peak_r.en.eq(in_plot & spectrum_mode_dvi),
+            spectrum_peak_r.addr.eq(spectrum_bin),
         ]
 
         # Align scan and styling information with the synchronous BRAM read.
         scan_d = Signal(ScanPixel)
         spectrogram_plot_d = Signal()
         spectrum_plot_d = Signal()
+        spectrum_band_d = Signal(8)
+        spectrum_band_first_d = Signal()
+        spectrum_band_gap_d = Signal()
         age_d = Signal(8)
         axes_hit_d = Signal()
         axes_hit = Signal()
+        spectrum_grid_hit = Signal()
+        spectrum_grid_hit_d = Signal()
         major_x = Signal()
         major_y = Signal()
         axis_pad = 3
@@ -941,14 +1106,21 @@ class Spectrogram(wiring.Component):
                           (rel_y < plot_h + axis_pad)) |
                          (major_y & (rel_y >= 0) & (rel_y < plot_h) &
                           (rel_x >= -axis_pad) & (rel_x < 0)))),
+            spectrum_grid_hit.eq(
+                in_plot & spectrum_mode_dvi & axes_dvi &
+                (major_x | major_y)),
         ]
         m.d.dvi += [
             scan_d.eq(self.i),
             spectrogram_plot_d.eq(
                 in_plot & ~view_3d_dvi & ~spectrum_mode_dvi),
             spectrum_plot_d.eq(in_plot & spectrum_mode_dvi),
+            spectrum_band_d.eq(spectrum_bin),
+            spectrum_band_first_d.eq(spectrum_band_first),
+            spectrum_band_gap_d.eq(spectrum_band_gap),
             age_d.eq(age),
             axes_hit_d.eq(axes_hit),
+            spectrum_grid_hit_d.eq(spectrum_grid_hit),
         ]
 
         # ---- persistent, dynamically scaled axis labels -------------------
@@ -1037,28 +1209,36 @@ class Spectrogram(wiring.Component):
         ]
         y_labels = [
             ["  24k", "  12k", "   6k", "   3k",
-             "   63", "   63", "   63", "   63"],
-            ["  18k", "   9k", " 4.5k", "2.25k",
-             "   48", "   48", "   48", "   48"],
-            ["  12k", "   6k", "   3k", " 1.5k",
-             "   32", "   32", "   32", "   32"],
-            ["   6k", "   3k", " 1.5k", "  750",
-             "   16", "   16", "   16", "   16"],
-            ["    0", "    0", "    0", "    0",
              "    0", "    0", "    0", "    0"],
+            ["  18k", "   9k", " 4.5k", "2.25k",
+             "  -24", "  -24", "  -24", "  -24"],
+            ["  12k", "   6k", "   3k", " 1.5k",
+             "  -48", "  -48", "  -48", "  -48"],
+            ["   6k", "   3k", " 1.5k", "  750",
+             "  -72", "  -72", "  -72", "  -72"],
+            ["    0", "    0", "    0", "    0",
+             "  -96", "  -96", "  -96", "  -96"],
         ]
         for variants, y_pos in zip(y_labels, y_tick_positions):
             place_text(variants, axis_y_selector, y_label_x, y_pos)
-        place_text(["FREQ (Hz)", "LEVEL    "], spectrum_mode_dvi,
+        place_text(["FREQ (Hz)", "AMP(dBFS)"], spectrum_mode_dvi,
                    plot_x0 - 72, plot_y0 - 20)
 
         # Spectrograph X labels show elapsed age; spectrum labels show the
-        # frequency represented at the midpoint and right edge.
+        # frequency represented at quarter intervals.
         place_text("0", None, plot_x0 - axis_pad,
+                   plot_y0 + plot_h + axis_pad + 5)
+        place_text(["0.68s", "1.36s", "2.73s", "5.45s",
+                    "  6k ", "  3k ", "1.5k ", " 750 "], axis_x_selector,
+                   plot_x0 + (plot_w >> 2) - 20,
                    plot_y0 + plot_h + axis_pad + 5)
         place_text(["1.37s", "2.73s", "5.46s", "10.9s",
                     " 12k ", "  6k ", "  3k ", "1.5k "], axis_x_selector,
                    plot_x0 + (plot_w >> 1) - 20,
+                   plot_y0 + plot_h + axis_pad + 5)
+        place_text(["2.04s", "4.08s", "8.18s", "16.4s",
+                    " 18k ", "  9k ", "4.5k ", "2.25k"], axis_x_selector,
+                   plot_x0 + plot_w - (plot_w >> 2) - 20,
                    plot_y0 + plot_h + axis_pad + 5)
         place_text(["2.72s", "5.44s", "10.9s", "21.8s",
                     " 24k ", " 12k ", "  6k ", "  3k "], axis_x_selector,
@@ -1151,25 +1331,222 @@ class Spectrogram(wiring.Component):
             )),
         ]
 
-        # Spectrum mode beam-races a frequency/amplitude trace from the newest
-        # completed FFT. A dim area fill keeps discontinuous bin steps legible
-        # without another history buffer or framebuffer rendering pass.
+        # Spectrum mode beam-races pooled FFT bands. Bars and curves share the
+        # same current-level table, smooth gradient fill, and falling peak
+        # markers without writing a single pixel to the framebuffer.
         spectrum_height = Signal(12)
         spectrum_y = Signal(signed(13))
         spectrum_scan_y = Signal(signed(13))
         spectrum_line_hit = Signal()
+        spectrum_curve_glow_hit = Signal()
+        spectrum_curve_glow_level = Signal(4)
         spectrum_fill_hit = Signal()
+        spectrum_peak_hit = Signal()
+        spectrum_peak_glow_hit = Signal()
+        spectrum_peak_glow_level = Signal(4)
+        spectrum_shape_pixel = Signal()
+        spectrum_peak_height = Signal(12)
+        spectrum_peak_y = Signal(signed(13))
+        spectrum_peak_level = Signal(6)
+        spectrum_peak_hold = Signal(5)
+        spectrum_peak_level_next = Signal(6)
+        spectrum_peak_hold_next = Signal(5)
+        spectrum_peak_hold_init = Signal(5)
+        spectrum_peak_decay_tick = Signal()
+        spectrum_peak_update = Signal()
+        spectrum_peak_frame = Signal(2)
+        spectrum_gradient_height = Signal(12)
+        spectrum_gradient_ext = Signal(9)
+        spectrum_gradient_clamped = Signal(8)
+        spectrum_gradient_base = Signal(4)
+        spectrum_gradient_frac = Signal(4)
+        spectrum_gradient_level = Signal(4)
+        spectrum_fill_level = Signal(4)
+        spectrum_curve_prev = Signal(6)
+        spectrum_curve_acc = Signal(signed(12))
+        spectrum_curve_step = Signal(signed(12))
+        spectrum_curve_delta = Signal(signed(8))
+        spectrum_curve_step_next = Signal(signed(12))
+        spectrum_curve_display_q4 = Signal(signed(12))
+        spectrum_curve_level = Signal(6)
+        spectrum_curve_peak_prev = Signal(6)
+        spectrum_curve_peak_acc = Signal(signed(12))
+        spectrum_curve_peak_step = Signal(signed(12))
+        spectrum_curve_peak_delta = Signal(signed(8))
+        spectrum_curve_peak_step_next = Signal(signed(12))
+        spectrum_curve_peak_display_q4 = Signal(signed(12))
+        spectrum_curve_peak_level = Signal(6)
+
+        with m.If(self.i.vsync & ~prev_vsync):
+            m.d.dvi += spectrum_peak_frame.eq(spectrum_peak_frame + 1)
+
+        # A tiny per-scanline DDA joins adjacent pooled bands. It performs no
+        # framebuffer drawing and needs no second spectrum-memory read port;
+        # the previous band endpoint is carried forward as raster X advances.
+        with m.If(spectrum_plot_d):
+            with m.If(spectrum_band_first_d):
+                with m.If(spectrum_band_d == 0):
+                    m.d.dvi += [
+                        spectrum_curve_prev.eq(spectrum_levels_r.data),
+                        spectrum_curve_acc.eq(spectrum_levels_r.data << 4),
+                        spectrum_curve_step.eq(0),
+                        spectrum_curve_peak_prev.eq(spectrum_peak_level),
+                        spectrum_curve_peak_acc.eq(spectrum_peak_level << 4),
+                        spectrum_curve_peak_step.eq(0),
+                    ]
+                with m.Else():
+                    m.d.dvi += [
+                        spectrum_curve_acc.eq(spectrum_curve_prev << 4),
+                        spectrum_curve_step.eq(spectrum_curve_step_next),
+                        spectrum_curve_prev.eq(spectrum_levels_r.data),
+                        spectrum_curve_peak_acc.eq(
+                            spectrum_curve_peak_prev << 4),
+                        spectrum_curve_peak_step.eq(
+                            spectrum_curve_peak_step_next),
+                        spectrum_curve_peak_prev.eq(spectrum_peak_level),
+                    ]
+            with m.Else():
+                m.d.dvi += [
+                    spectrum_curve_acc.eq(
+                        spectrum_curve_acc + spectrum_curve_step),
+                    spectrum_curve_peak_acc.eq(
+                        spectrum_curve_peak_acc +
+                        spectrum_curve_peak_step),
+                ]
+
         m.d.comb += [
+            spectrum_curve_delta.eq(
+                Cat(spectrum_levels_r.data, Const(0, 1)).as_signed() -
+                Cat(spectrum_curve_prev, Const(0, 1)).as_signed()),
+            spectrum_curve_step_next.eq(
+                (spectrum_curve_delta << 4) >>
+                spectrum_band_pixel_shift),
+            spectrum_curve_display_q4.eq(Mux(
+                spectrum_band_first_d,
+                Mux(spectrum_band_d == 0,
+                    spectrum_levels_r.data << 4,
+                    spectrum_curve_prev << 4),
+                spectrum_curve_acc + spectrum_curve_step)),
+            spectrum_curve_level.eq(spectrum_curve_display_q4[4:10]),
+            spectrum_curve_peak_delta.eq(
+                Cat(spectrum_peak_level, Const(0, 1)).as_signed() -
+                Cat(spectrum_curve_peak_prev, Const(0, 1)).as_signed()),
+            spectrum_curve_peak_step_next.eq(
+                (spectrum_curve_peak_delta << 4) >>
+                spectrum_band_pixel_shift),
+            spectrum_curve_peak_display_q4.eq(Mux(
+                spectrum_band_first_d,
+                Mux(spectrum_band_d == 0,
+                    spectrum_peak_level << 4,
+                    spectrum_curve_peak_prev << 4),
+                spectrum_curve_peak_acc + spectrum_curve_peak_step)),
+            spectrum_curve_peak_level.eq(
+                spectrum_curve_peak_display_q4[4:10]),
             spectrum_height.eq(
-                history_r.data << (y_scale_shift + 2)),
+                Mux(spectrum_style_dvi,
+                    spectrum_curve_level,
+                    spectrum_levels_r.data) << (y_scale_shift + 2)),
             spectrum_y.eq(plot_h - 1 - spectrum_height),
             spectrum_scan_y.eq(scan_d.y - plot_y0),
+            spectrum_shape_pixel.eq(
+                spectrum_style_dvi |
+                ~spectrum_band_gap_d),
             spectrum_line_hit.eq(
-                spectrum_plot_d &
+                spectrum_plot_d & spectrum_shape_pixel &
                 (spectrum_scan_y >= spectrum_y - 1) &
                 (spectrum_scan_y <= spectrum_y + 1)),
+            spectrum_curve_glow_hit.eq(
+                spectrum_plot_d & spectrum_style_dvi &
+                (spectrum_scan_y >= spectrum_y - 5) &
+                (spectrum_scan_y <= spectrum_y + 5)),
+            spectrum_curve_glow_level.eq(Mux(
+                (spectrum_scan_y >= spectrum_y - 3) &
+                (spectrum_scan_y <= spectrum_y + 3),
+                9,
+                4)),
             spectrum_fill_hit.eq(
-                spectrum_plot_d & (spectrum_scan_y > spectrum_y)),
+                spectrum_plot_d & spectrum_shape_pixel &
+                (spectrum_fill_dvi != 0) &
+                (spectrum_scan_y > spectrum_y)),
+            spectrum_peak_level.eq(spectrum_peak_r.data[:6]),
+            spectrum_peak_hold.eq(spectrum_peak_r.data[6:11]),
+            spectrum_peak_height.eq(
+                Mux(spectrum_style_dvi,
+                    spectrum_curve_peak_level,
+                    spectrum_peak_level) << (y_scale_shift + 2)),
+            spectrum_peak_y.eq(plot_h - 1 - spectrum_peak_height),
+            spectrum_peak_hit.eq(
+                spectrum_plot_d & spectrum_shape_pixel &
+                (spectrum_peaks_dvi != 0) &
+                (spectrum_peak_level != 0) &
+                (spectrum_scan_y >= spectrum_peak_y - 1) &
+                (spectrum_scan_y <= spectrum_peak_y)),
+            spectrum_peak_glow_hit.eq(
+                spectrum_plot_d & spectrum_style_dvi &
+                (spectrum_peaks_dvi != 0) &
+                (spectrum_peak_level != 0) &
+                (spectrum_scan_y >= spectrum_peak_y - 4) &
+                (spectrum_scan_y <= spectrum_peak_y + 4)),
+            spectrum_peak_glow_level.eq(Mux(
+                (spectrum_scan_y >= spectrum_peak_y - 2) &
+                (spectrum_scan_y <= spectrum_peak_y + 2),
+                8,
+                3)),
+            spectrum_peak_update.eq(
+                spectrum_plot_d & spectrum_band_first_d &
+                (spectrum_scan_y == 0)),
+            spectrum_peak_hold_init.eq(Mux(
+                spectrum_peaks_dvi == 1, 4,
+                Mux(spectrum_peaks_dvi == 2, 12, 24))),
+            spectrum_peak_decay_tick.eq(Mux(
+                spectrum_peaks_dvi == 1, 1,
+                Mux(spectrum_peaks_dvi == 2,
+                    spectrum_peak_frame[0] == 0,
+                    spectrum_peak_frame == 0))),
+            spectrum_gradient_height.eq(plot_h - spectrum_scan_y),
+            # Normalize both 256- and 512-pixel plot heights into a common
+            # fixed-point 2..11 intensity ramp.
+            spectrum_gradient_ext.eq(
+                32 + (spectrum_gradient_height >> y_scale_shift)),
+            spectrum_gradient_clamped.eq(Mux(
+                spectrum_gradient_ext > 176,
+                176,
+                spectrum_gradient_ext[:8])),
+            spectrum_gradient_base.eq(spectrum_gradient_clamped[4:8]),
+            spectrum_gradient_frac.eq(spectrum_gradient_clamped[:4]),
+            spectrum_gradient_level.eq(Mux(
+                (spectrum_gradient_frac > dither_threshold) &
+                (spectrum_gradient_base < 15),
+                spectrum_gradient_base + 1,
+                spectrum_gradient_base)),
+            spectrum_fill_level.eq(Mux(
+                spectrum_fill_dvi == 1,
+                4,
+                spectrum_gradient_level)),
+            spectrum_peak_level_next.eq(Mux(
+                spectrum_peaks_dvi == 0,
+                spectrum_levels_r.data,
+                Mux(spectrum_levels_r.data >= spectrum_peak_level,
+                    spectrum_levels_r.data,
+                    Mux(spectrum_peak_hold != 0,
+                        spectrum_peak_level,
+                        Mux(spectrum_peak_decay_tick &
+                            (spectrum_peak_level != 0),
+                            spectrum_peak_level - 1,
+                            spectrum_peak_level))))),
+            spectrum_peak_hold_next.eq(Mux(
+                spectrum_peaks_dvi == 0,
+                0,
+                Mux(spectrum_levels_r.data >= spectrum_peak_level,
+                    spectrum_peak_hold_init,
+                    Mux(spectrum_peak_hold != 0,
+                        spectrum_peak_hold - 1,
+                        0)))),
+            spectrum_peak_w.en.eq(spectrum_peak_update),
+            spectrum_peak_w.addr.eq(spectrum_band_d),
+            spectrum_peak_w.data.eq(Cat(
+                spectrum_peak_level_next,
+                spectrum_peak_hold_next)),
         ]
 
         # Register the spectrum/axis-line result separately from axis glyphs.
@@ -1183,15 +1560,36 @@ class Spectrogram(wiring.Component):
                     base_o.pixel.intensity.eq(display_level),
                     base_o.pixel.color.eq(hue_dvi),
                 ]
+        with m.Elif(enable_dvi & spectrum_peak_hit):
+            m.d.dvi += [
+                base_o.pixel.intensity.eq(15),
+                base_o.pixel.color.eq(hue_dvi),
+            ]
         with m.Elif(enable_dvi & spectrum_line_hit):
             m.d.dvi += [
                 base_o.pixel.intensity.eq(15),
                 base_o.pixel.color.eq(hue_dvi),
             ]
+        with m.Elif(enable_dvi & spectrum_peak_glow_hit):
+            m.d.dvi += [
+                base_o.pixel.intensity.eq(spectrum_peak_glow_level),
+                base_o.pixel.color.eq(hue_dvi),
+            ]
+        with m.Elif(enable_dvi & spectrum_curve_glow_hit):
+            m.d.dvi += [
+                base_o.pixel.intensity.eq(spectrum_curve_glow_level),
+                base_o.pixel.color.eq(hue_dvi),
+            ]
         with m.Elif(enable_dvi & spectrum_fill_hit):
-            with m.If(scan_d.pixel.intensity < 3):
+            with m.If(scan_d.pixel.intensity < spectrum_fill_level):
                 m.d.dvi += [
-                    base_o.pixel.intensity.eq(3),
+                    base_o.pixel.intensity.eq(spectrum_fill_level),
+                    base_o.pixel.color.eq(hue_dvi),
+                ]
+        with m.Elif(enable_dvi & spectrum_grid_hit_d):
+            with m.If(scan_d.pixel.intensity < 2):
+                m.d.dvi += [
+                    base_o.pixel.intensity.eq(2),
                     base_o.pixel.color.eq(hue_dvi),
                 ]
         with m.Elif(enable_dvi & axes_dvi & axes_hit_d):

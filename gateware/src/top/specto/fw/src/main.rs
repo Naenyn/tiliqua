@@ -467,6 +467,12 @@ fn main() -> ! {
             spectro.config_3d().write(|w| unsafe {
                 w.quality().bits(opts.view_3d.quality.value.hw_index())
             });
+            spectro.spectrum_config().write(|w| unsafe {
+                w.style().bit(opts.spectro.spectrum_style.value.hw_index() != 0);
+                w.bands().bits(opts.spectro.bands.value.hw_index());
+                w.fill().bits(opts.spectro.fill.value.hw_index());
+                w.peaks().bits(opts.spectro.peaks.value.hw_index())
+            });
 
             // SPECTO draws its own plot axes. Keep the general-purpose XBEAM
             // grid disabled for the MVP so the analytical display stays clean.

@@ -4,7 +4,7 @@ use syn::{parse_macro_input, DeriveInput, Data, Fields, Type, Expr, Meta};
 use hash32::{FnvHasher, Hasher as _};
 use core::hash::Hash;
 
-#[proc_macro_derive(OptionPage, attributes(option, option_if))]
+#[proc_macro_derive(OptionPage, attributes(option, option_if, option_name))]
 pub fn derive_option(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
@@ -48,13 +48,20 @@ pub fn derive_option(input: TokenStream) -> TokenStream {
         };
 
         let page_str: &str = &input.ident.to_string();
-        let field_name_str: &str = &field_name.as_ref().unwrap().to_string().replace("_","-");
+        let field_key_name =
+            field_name.as_ref().unwrap().to_string().replace("_", "-");
+        let field_name_str = field.attrs.iter()
+            .find(|attr| attr.path().is_ident("option_name"))
+            .map(|attr| attr.parse_args::<syn::LitStr>()
+                .expect("option_name requires a string literal")
+                .value())
+            .unwrap_or_else(|| field_key_name.clone());
         let type_name_str: &str = &quote!(#field_type).to_string();
 
         // Generate a unique key used for identifying the option when it is stored.
         let mut fnv: FnvHasher = Default::default();
         page_str.hash(&mut fnv);
-        field_name_str.hash(&mut fnv);
+        field_key_name.hash(&mut fnv);
         type_name_str.hash(&mut fnv);
         let field_key = fnv.finish32();
 
