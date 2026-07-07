@@ -19,6 +19,9 @@ pub enum ColorPalette {
     InvGray,
     Inferno,
     Hueswap,
+    Magma,
+    Plasma,
+    Viridis,
 }
 
 const fn hue2rgb(p: f64, q: f64, mut t: f64) -> f64 {
@@ -150,19 +153,42 @@ const fn gen_inv_gray() -> [(u8, u8, u8); PALETTE_LEN] {
     lut
 }
 
-const fn gen_inferno() -> [(u8, u8, u8); PALETTE_LEN] {
-    const INFERNO_16: [(u8, u8, u8); 16] = [
-        (0, 0, 4), (10, 7, 34), (32, 12, 74), (60, 9, 101),
-        (87, 16, 110), (114, 25, 110), (140, 41, 99), (165, 62, 79),
-        (187, 86, 57), (206, 114, 36), (222, 143, 17), (234, 176, 5),
-        (242, 210, 37), (248, 238, 85), (252, 252, 139), (252, 255, 164),
-    ];
+const INFERNO_16: [(u8, u8, u8); 16] = [
+    (0, 0, 4), (10, 7, 34), (32, 12, 74), (60, 9, 101),
+    (87, 16, 110), (114, 25, 110), (140, 41, 99), (165, 62, 79),
+    (187, 86, 57), (206, 114, 36), (222, 143, 17), (234, 176, 5),
+    (242, 210, 37), (248, 238, 85), (252, 252, 139), (252, 255, 164),
+];
+
+const MAGMA_16: [(u8, u8, u8); 16] = [
+    (0, 0, 4), (11, 8, 30), (28, 16, 68), (51, 16, 96),
+    (75, 19, 109), (101, 21, 110), (126, 30, 108), (151, 43, 101),
+    (176, 58, 91), (199, 75, 81), (218, 95, 73), (234, 120, 75),
+    (246, 150, 92), (252, 183, 119), (254, 218, 157), (252, 253, 191),
+];
+
+const PLASMA_16: [(u8, u8, u8); 16] = [
+    (13, 8, 135), (47, 5, 150), (76, 2, 161), (103, 0, 167),
+    (130, 5, 167), (156, 23, 158), (181, 42, 145), (204, 62, 129),
+    (222, 81, 110), (237, 100, 90), (247, 123, 67), (252, 149, 48),
+    (252, 177, 36), (245, 207, 58), (227, 235, 86), (240, 249, 33),
+];
+
+const VIRIDIS_16: [(u8, u8, u8); 16] = [
+    (68, 1, 84), (72, 24, 106), (72, 44, 122), (65, 63, 131),
+    (56, 82, 139), (48, 100, 141), (42, 118, 142), (35, 136, 142),
+    (31, 153, 138), (34, 168, 132), (53, 183, 121), (84, 197, 104),
+    (122, 209, 81), (165, 219, 54), (210, 226, 27), (253, 231, 37),
+];
+
+const fn gen_heatmap(colors: [(u8, u8, u8); 16])
+        -> [(u8, u8, u8); PALETTE_LEN] {
     let mut lut = [(0u8, 0u8, 0u8); PALETTE_LEN];
     let mut i = 0;
     while i < PX_INTENSITY_MAX {
         let mut h = 0;
         while h < PX_HUE_MAX {
-            lut[i * PX_HUE_MAX + h] = INFERNO_16[i];
+            lut[i * PX_HUE_MAX + h] = colors[i];
             h += 1;
         }
         i += 1;
@@ -195,8 +221,11 @@ static PALETTE_LINEAR:   [(u8, u8, u8); PALETTE_LEN] = gen_linear();
 static PALETTE_DIM:      [(u8, u8, u8); PALETTE_LEN] = gen_dim();
 static PALETTE_GRAY:     [(u8, u8, u8); PALETTE_LEN] = gen_gray();
 static PALETTE_INV_GRAY: [(u8, u8, u8); PALETTE_LEN] = gen_inv_gray();
-static PALETTE_INFERNO:  [(u8, u8, u8); PALETTE_LEN] = gen_inferno();
+static PALETTE_INFERNO:  [(u8, u8, u8); PALETTE_LEN] = gen_heatmap(INFERNO_16);
 static PALETTE_HUESWAP:  [(u8, u8, u8); PALETTE_LEN] = gen_hueswap();
+static PALETTE_MAGMA:    [(u8, u8, u8); PALETTE_LEN] = gen_heatmap(MAGMA_16);
+static PALETTE_PLASMA:   [(u8, u8, u8); PALETTE_LEN] = gen_heatmap(PLASMA_16);
+static PALETTE_VIRIDIS:  [(u8, u8, u8); PALETTE_LEN] = gen_heatmap(VIRIDIS_16);
 
 impl ColorPalette {
     fn lut(&self) -> &'static [(u8, u8, u8); PALETTE_LEN] {
@@ -208,6 +237,23 @@ impl ColorPalette {
             ColorPalette::InvGray  => &PALETTE_INV_GRAY,
             ColorPalette::Inferno  => &PALETTE_INFERNO,
             ColorPalette::Hueswap  => &PALETTE_HUESWAP,
+            ColorPalette::Magma    => &PALETTE_MAGMA,
+            ColorPalette::Plasma   => &PALETTE_PLASMA,
+            ColorPalette::Viridis  => &PALETTE_VIRIDIS,
+        }
+    }
+
+    /// Return the scalar heat-map color for one four-bit intensity. SPECTO
+    /// uses this to populate hue-rotated columns while ordinary users can
+    /// continue programming the palette through `write_to_hardware`.
+    pub fn heatmap_color(&self, intensity: u8) -> Option<(u8, u8, u8)> {
+        let index = (intensity & 0x0f) as usize;
+        match self {
+            ColorPalette::Inferno => Some(INFERNO_16[index]),
+            ColorPalette::Magma => Some(MAGMA_16[index]),
+            ColorPalette::Plasma => Some(PLASMA_16[index]),
+            ColorPalette::Viridis => Some(VIRIDIS_16[index]),
+            _ => None,
         }
     }
 

@@ -22,25 +22,6 @@ use pac::constants::*;
 
 pub const TIMER0_ISR_PERIOD_MS: u32 = 5;
 
-const INFERNO_16: [(u8, u8, u8); 16] = [
-    (0, 0, 4),
-    (10, 7, 34),
-    (32, 12, 74),
-    (60, 9, 101),
-    (87, 16, 110),
-    (114, 25, 110),
-    (140, 41, 99),
-    (165, 62, 79),
-    (187, 86, 57),
-    (206, 114, 36),
-    (222, 143, 17),
-    (234, 176, 5),
-    (242, 210, 37),
-    (248, 238, 85),
-    (252, 252, 139),
-    (252, 255, 164),
-];
-
 fn hash_menu_bytes(mut hash: u32, bytes: &[u8]) -> u32 {
     for byte in bytes {
         hash ^= *byte as u32;
@@ -107,16 +88,17 @@ fn rotate_rgb_hue((r, g, b): (u8, u8, u8), shift: u8) -> (u8, u8, u8) {
     (rr as u8, gg as u8, bb as u8)
 }
 
-/// Program SPECTO's palette. Inferno uses each hardware hue column for a
-/// rotated version of the heatmap, making the plot hue control meaningful.
+/// Program SPECTO's palette. Scalar heat maps use each hardware hue column
+/// for a rotated version, keeping the plot hue control meaningful.
 fn write_specto_palette(palette: ColorPalette, video: &mut impl DMAFramebuffer) {
-    if palette != ColorPalette::Inferno {
+    if palette.heatmap_color(0).is_none() {
         palette.write_to_hardware(video);
         return;
     }
     for intensity in 0..16u8 {
         for hue in 0..16u8 {
-            let (r, g, b) = rotate_rgb_hue(INFERNO_16[intensity as usize], hue);
+            let (r, g, b) = rotate_rgb_hue(
+                palette.heatmap_color(intensity).unwrap(), hue);
             video.set_palette_rgb(intensity, hue, r, g, b);
         }
     }
@@ -447,7 +429,8 @@ fn main() -> ! {
                 .write(|w| unsafe { w.value().bits(opts.display.hue.value) });
             spectro.timings().write(|w| unsafe {
                 w.h_active().bits(h_active as u16);
-                w.v_active().bits(v_active as u16)
+                w.v_active().bits(v_active as u16);
+                w.menu_visible().bit(menu_visible)
             });
             let (projection_x, projection_y) = projection_matrix(
                 opts.view_3d.rot_x.value,
@@ -471,7 +454,9 @@ fn main() -> ! {
                 w.style().bit(opts.spectro.spectrum_style.value.hw_index() != 0);
                 w.bands().bits(opts.spectro.bands.value.hw_index());
                 w.fill().bits(opts.spectro.fill.value.hw_index());
-                w.peaks().bits(opts.spectro.peaks.value.hw_index())
+                w.peaks().bits(opts.spectro.peaks.value.hw_index());
+                w.smoothing().bits(opts.spectro.smoothing.value.hw_index());
+                w.scale().bit(opts.spectro.scale.value.hw_index() != 0)
             });
 
             // SPECTO draws its own plot axes. Keep the general-purpose XBEAM

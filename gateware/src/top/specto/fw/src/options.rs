@@ -50,16 +50,16 @@ impl Quality3d {
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 #[strum(serialize_all = "kebab-case")]
 pub enum DisplayMode {
-    Spectrum,
     #[default]
+    Spectrum,
     Spectrograph,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 #[strum(serialize_all = "kebab-case")]
 pub enum SpectrumStyle {
-    #[default]
     Bars,
+    #[default]
     Curve,
 }
 
@@ -68,6 +68,42 @@ impl SpectrumStyle {
         match self {
             Self::Bars => 0,
             Self::Curve => 1,
+        }
+    }
+}
+
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
+#[strum(serialize_all = "kebab-case")]
+pub enum SpectrumScale {
+    Linear,
+    #[default]
+    Log,
+}
+
+impl SpectrumScale {
+    pub fn hw_index(self) -> u8 {
+        match self {
+            Self::Linear => 0,
+            Self::Log => 1,
+        }
+    }
+}
+
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
+#[strum(serialize_all = "kebab-case")]
+pub enum SpectrumSmoothing {
+    #[default]
+    Off,
+    Light,
+    Strong,
+}
+
+impl SpectrumSmoothing {
+    pub fn hw_index(self) -> u8 {
+        match self {
+            Self::Off => 0,
+            Self::Light => 1,
+            Self::Strong => 2,
         }
     }
 }
@@ -101,8 +137,9 @@ impl SpectrumBands {
 pub enum SpectrumFill {
     Off,
     Solid,
-    #[default]
     Gradient,
+    #[default]
+    Amplitude,
 }
 
 impl SpectrumFill {
@@ -111,6 +148,7 @@ impl SpectrumFill {
             Self::Off => 0,
             Self::Solid => 1,
             Self::Gradient => 2,
+            Self::Amplitude => 3,
         }
     }
 }
@@ -120,9 +158,12 @@ impl SpectrumFill {
 pub enum SpectrumPeaks {
     Off,
     Fast,
-    #[default]
     Medium,
     Slow,
+    #[strum(serialize = "very-slow")]
+    VerySlow,
+    #[default]
+    Sustain,
 }
 
 impl SpectrumPeaks {
@@ -132,6 +173,8 @@ impl SpectrumPeaks {
             Self::Fast => 1,
             Self::Medium => 2,
             Self::Slow => 3,
+            Self::VerySlow => 4,
+            Self::Sustain => 5,
         }
     }
 }
@@ -174,9 +217,9 @@ pub enum FrequencyRange {
     Range3k,
     #[strum(serialize = "6kHz")]
     Range6k,
-    #[default]
     #[strum(serialize = "12kHz")]
     Range12k,
+    #[default]
     #[strum(serialize = "24kHz")]
     Range24k,
 }
@@ -196,9 +239,9 @@ impl FrequencyRange {
 pub enum ScrollRate {
     #[strum(serialize = "fast")]
     Fast,
-    #[default]
     #[strum(serialize = "medium")]
     Medium,
+    #[default]
     #[strum(serialize = "slow")]
     Slow,
     #[strum(serialize = "very-slow")]
@@ -274,7 +317,13 @@ pub struct SpectroOpts {
     #[option_if(self.mode.value == DisplayMode::Spectrum)]
     pub spectrum_style: EnumOption<SpectrumStyle>,
     #[option]
-    #[option_if(self.mode.value == DisplayMode::Spectrum)]
+    #[option_if(self.mode.value == DisplayMode::Spectrum && self.spectrum_style.value == SpectrumStyle::Curve)]
+    pub scale: EnumOption<SpectrumScale>,
+    #[option]
+    #[option_if(self.mode.value == DisplayMode::Spectrum && self.spectrum_style.value == SpectrumStyle::Curve)]
+    pub smoothing: EnumOption<SpectrumSmoothing>,
+    #[option]
+    #[option_if(self.mode.value == DisplayMode::Spectrum && self.spectrum_style.value == SpectrumStyle::Bars)]
     pub bands: EnumOption<SpectrumBands>,
     #[option]
     #[option_if(self.mode.value == DisplayMode::Spectrum)]
