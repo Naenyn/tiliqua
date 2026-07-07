@@ -1603,14 +1603,6 @@ class Spectrogram(wiring.Component):
         spectrum_curve_display_q4 = Signal(signed(13))
         spectrum_curve_level = Signal(6)
         spectrum_curve_height = Signal(12)
-        spectrum_curve_prev_x_y = Signal(signed(13))
-        spectrum_curve_prev_x_y_effective = Signal(signed(13))
-        spectrum_curve_segment_top = Signal(signed(13))
-        spectrum_curve_segment_bottom = Signal(signed(13))
-        spectrum_curve_peak_prev_x_y = Signal(signed(13))
-        spectrum_curve_peak_prev_x_y_effective = Signal(signed(13))
-        spectrum_curve_peak_segment_top = Signal(signed(13))
-        spectrum_curve_peak_segment_bottom = Signal(signed(13))
         spectrum_peak_raw_prev = Signal(6)
         spectrum_peak_curve_start = Signal(6)
         spectrum_peak_curve_end = Signal(6)
@@ -1625,12 +1617,8 @@ class Spectrogram(wiring.Component):
         spectrum_render_style = Signal()
         spectrum_render_shape = Signal()
         spectrum_render_y = Signal(signed(13))
-        spectrum_render_curve_top = Signal(signed(13))
-        spectrum_render_curve_bottom = Signal(signed(13))
         spectrum_render_peak_enabled = Signal()
         spectrum_render_peak_y = Signal(signed(13))
-        spectrum_render_peak_top = Signal(signed(13))
-        spectrum_render_peak_bottom = Signal(signed(13))
         spectrum_render_peak_level = Signal(4)
         spectrum_render_fill_enabled = Signal()
         spectrum_render_fill_level = Signal(4)
@@ -1654,10 +1642,6 @@ class Spectrogram(wiring.Component):
                 spectrum_peak_curve_end.eq(spectrum_peak_level),
             ]
         with m.Elif(spectrum_plot_d):
-            m.d.dvi += [
-                spectrum_curve_prev_x_y.eq(spectrum_y),
-                spectrum_curve_peak_prev_x_y.eq(spectrum_peak_display_y),
-            ]
             with m.If(spectrum_band_first_d):
                 m.d.dvi += [
                     spectrum_curve_raw_prev.eq(spectrum_levels_r.data),
@@ -1708,14 +1692,9 @@ class Spectrogram(wiring.Component):
             spectrum_render_style.eq(spectrum_style_dvi),
             spectrum_render_shape.eq(spectrum_shape_pixel),
             spectrum_render_y.eq(spectrum_y),
-            spectrum_render_curve_top.eq(spectrum_curve_segment_top),
-            spectrum_render_curve_bottom.eq(spectrum_curve_segment_bottom),
             spectrum_render_peak_enabled.eq(
                 (spectrum_peaks_dvi != 0) & (spectrum_peak_level != 0)),
             spectrum_render_peak_y.eq(spectrum_peak_display_y),
-            spectrum_render_peak_top.eq(spectrum_curve_peak_segment_top),
-            spectrum_render_peak_bottom.eq(
-                spectrum_curve_peak_segment_bottom),
             spectrum_render_peak_level.eq(spectrum_peak_display_level),
             spectrum_render_fill_enabled.eq(spectrum_fill_dvi != 0),
             spectrum_render_fill_level.eq(spectrum_fill_level),
@@ -1782,18 +1761,6 @@ class Spectrogram(wiring.Component):
                     spectrum_levels_r.data << (y_scale_shift + 2))),
             spectrum_y.eq(plot_h - 1 - spectrum_height),
             spectrum_scan_y.eq(scan_d.y - plot_y0),
-            spectrum_curve_prev_x_y_effective.eq(Mux(
-                scan_d.x == plot_x0,
-                spectrum_y,
-                spectrum_curve_prev_x_y)),
-            spectrum_curve_segment_top.eq(Mux(
-                spectrum_y < spectrum_curve_prev_x_y_effective,
-                spectrum_y,
-                spectrum_curve_prev_x_y_effective)),
-            spectrum_curve_segment_bottom.eq(Mux(
-                spectrum_y < spectrum_curve_prev_x_y_effective,
-                spectrum_curve_prev_x_y_effective,
-                spectrum_y)),
             spectrum_shape_pixel.eq(
                 spectrum_style_dvi |
                 ~spectrum_band_gap_d),
@@ -1838,20 +1805,6 @@ class Spectrogram(wiring.Component):
                 spectrum_style_dvi,
                 plot_h - 1 - spectrum_peak_curve_height,
                 spectrum_peak_y)),
-            spectrum_curve_peak_prev_x_y_effective.eq(Mux(
-                scan_d.x == plot_x0,
-                spectrum_peak_display_y,
-                spectrum_curve_peak_prev_x_y)),
-            spectrum_curve_peak_segment_top.eq(Mux(
-                spectrum_peak_display_y <
-                spectrum_curve_peak_prev_x_y_effective,
-                spectrum_peak_display_y,
-                spectrum_curve_peak_prev_x_y_effective)),
-            spectrum_curve_peak_segment_bottom.eq(Mux(
-                spectrum_peak_display_y <
-                spectrum_curve_peak_prev_x_y_effective,
-                spectrum_curve_peak_prev_x_y_effective,
-                spectrum_peak_display_y)),
             spectrum_peak_hit.eq(
                 spectrum_render_plot & spectrum_plot_d &
                 spectrum_render_peak_enabled &
