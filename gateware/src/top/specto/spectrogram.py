@@ -151,6 +151,7 @@ class Spectrogram(wiring.Component):
 
     class Config3d(csr.Register, access="w"):
         quality: csr.Field(csr.action.W, unsigned(2))
+        static_surface: csr.Field(csr.action.W, unsigned(1))
 
     class SpectrumConfig(csr.Register, access="w"):
         style: csr.Field(csr.action.W, unsigned(1))
@@ -204,6 +205,8 @@ class Spectrogram(wiring.Component):
             "protect_drawing": Out(3),
             "flush_request": Out(1),
             "flush_done": In(1),
+            "clear_request": Out(1),
+            "clear_done": In(1),
         })
         self.bus.memory_map = self._bridge.bus.memory_map
 
@@ -225,6 +228,7 @@ class Spectrogram(wiring.Component):
         persistence = Signal(2, init=2)
         hue = Signal(4, init=5)
         quality_3d = Signal(2, init=1)
+        static_surface_3d = Signal()
         spectrum_style = Signal(init=1)
         spectrum_bands = Signal(2, init=1)
         spectrum_fill = Signal(2, init=3)
@@ -276,7 +280,11 @@ class Spectrogram(wiring.Component):
                 projection_y[2].eq(self._projection_y.f.time.w_data),
             ]
         with m.If(self._config_3d.element.w_stb):
-            m.d.sync += quality_3d.eq(self._config_3d.f.quality.w_data)
+            m.d.sync += [
+                quality_3d.eq(self._config_3d.f.quality.w_data),
+                static_surface_3d.eq(
+                    self._config_3d.f.static_surface.w_data),
+            ]
         with m.If(self._spectrum_config.element.w_stb):
             m.d.sync += [
                 spectrum_style.eq(self._spectrum_config.f.style.w_data),
@@ -449,10 +457,13 @@ class Spectrogram(wiring.Component):
         ]
         line_busy_dvi = Signal()
         flush_done_dvi = Signal()
+        clear_done_dvi = Signal()
         m.submodules.line_busy_ff = FFSynchronizer(
             self.line_busy, line_busy_dvi, o_domain="dvi")
         m.submodules.flush_done_ff = FFSynchronizer(
             self.flush_done, flush_done_dvi, o_domain="dvi")
+        m.submodules.clear_done_ff = FFSynchronizer(
+            self.clear_done, clear_done_dvi, o_domain="dvi")
 
         write_col = Signal(8)
         newest_col = Signal(8)
@@ -609,6 +620,7 @@ class Spectrogram(wiring.Component):
         spectrum_mode_dvi = Signal()
         display_ack_dvi = Signal()
         quality_3d_dvi = Signal(2)
+        static_surface_3d_dvi = Signal()
         spectrum_style_dvi = Signal()
         spectrum_bands_dvi = Signal(2)
         spectrum_fill_dvi = Signal(2)
@@ -636,6 +648,7 @@ class Spectrogram(wiring.Component):
             ("spectrum_mode", spectrum_mode, spectrum_mode_dvi),
             ("display_ack", display_ack, display_ack_dvi),
             ("quality_3d", quality_3d, quality_3d_dvi),
+            ("static_surface_3d", static_surface_3d, static_surface_3d_dvi),
             ("spectrum_style", spectrum_style, spectrum_style_dvi),
             ("spectrum_bands", spectrum_bands, spectrum_bands_dvi),
             ("spectrum_fill", spectrum_fill, spectrum_fill_dvi),
@@ -704,6 +717,7 @@ class Spectrogram(wiring.Component):
         completed_generation = Signal(3)
         completed_hue = Signal(4)
         render_activity_seen = Signal()
+        clear_request = Signal()
         flush_request = Signal()
         visible_generation_sync = Signal(3)
         draw_generation_sync = Signal(3)
@@ -722,6 +736,7 @@ class Spectrogram(wiring.Component):
             self.protect_enable.eq(view_3d),
             self.protect_visible.eq(visible_generation_sync),
             self.protect_drawing.eq(draw_generation_sync),
+            self.clear_request.eq(clear_request),
             self.flush_request.eq(flush_request),
             self._status.f.display_buffer.r_data.eq(
                 completed_generation_sync[0]),
@@ -757,6 +772,15 @@ class Spectrogram(wiring.Component):
         scan_point_last = Signal(7)
         scan_group_shift = Signal(2)
         frequency_coordinate = Signal(9)
+        static_delta_a = Signal(7)
+        static_delta_b = Signal(7)
+        static_peak_a = Signal(6)
+        static_peak_b = Signal(6)
+        static_peak = Signal(6)
+        sweep_static_surface = Signal()
+        sweep_hue_limited = Signal(3)
+        sweep_axis_hue_a = Signal(3)
+        sweep_axis_hue_b = Signal(3)
 
         m.d.comb += [
             # High quality is naturally capped at 64 vertices for the 3kHz
@@ -775,6 +799,29 @@ class Spectrogram(wiring.Component):
                 effective_quality == 1,
                 scan_point << 2,
                 scan_point << 1)),
+            # Static diagnostic: two fixed triangular peaks across all history
+            # slices. This is deliberately boring and legible so framebuffer
+            # clear/swap problems stand out as missing or duplicated ridges.
+            static_delta_a.eq(Mux(
+                scan_point > 38,
+                scan_point - 38,
+                38 - scan_point)),
+            static_delta_b.eq(Mux(
+                scan_point > 92,
+                scan_point - 92,
+                92 - scan_point)),
+            static_peak_a.eq(Mux(
+                static_delta_a < 16,
+                60 - (static_delta_a << 2),
+                6)),
+            static_peak_b.eq(Mux(
+                static_delta_b < 12,
+                42 - (static_delta_b << 2),
+                6)),
+            static_peak.eq(Mux(
+                static_peak_a > static_peak_b,
+                static_peak_a,
+                static_peak_b)),
             scan_history_age.eq(Const(15, 4) - scan_slice),
             # Consecutive captures are spread across the full visual Z depth.
             scan_depth.eq(scan_history_age << 4),
@@ -785,9 +832,11 @@ class Spectrogram(wiring.Component):
                     Mux(scan_group_shift == 2, 3, 7)))),
             scan_history_bin.eq(scan_group_base + scan_group_index),
             scan_peak_next.eq(Mux(
-                history_r.data > scan_peak,
-                history_r.data,
-                scan_peak,
+                sweep_static_surface,
+                static_peak,
+                Mux(history_r.data > scan_peak,
+                    history_r.data,
+                    scan_peak),
             )),
             scan_read_en.eq(0),
             scan_read_addr.eq(
@@ -808,6 +857,9 @@ class Spectrogram(wiring.Component):
             line_word.cmd.eq(point_cmd),
             line_fifo.w_en.eq(0),
             line_fifo.w_data.eq(line_word),
+            sweep_hue_limited.eq(sweep_hue[:3]),
+            sweep_axis_hue_a.eq(sweep_hue_limited + 2),
+            sweep_axis_hue_b.eq(sweep_hue_limited + 4),
         ]
         with m.Switch(sweep_rate):
             with m.Case(0):
@@ -821,7 +873,10 @@ class Spectrogram(wiring.Component):
 
         with m.FSM(domain="dvi", name="waterfall_3d"):
             with m.State("IDLE"):
-                m.d.dvi += flush_request.eq(0)
+                m.d.dvi += [
+                    clear_request.eq(0),
+                    flush_request.eq(0),
+                ]
                 with m.If(enable_dvi & view_3d_dvi):
                     m.d.dvi += [
                         scan_slice.eq(0),
@@ -835,17 +890,31 @@ class Spectrogram(wiring.Component):
                         sweep_hue.eq(hue_dvi),
                         sweep_phosphor.eq(phosphor_dvi),
                         sweep_quality_3d.eq(quality_3d_dvi),
+                        sweep_static_surface.eq(static_surface_3d_dvi),
                         draw_generation.eq(visible_generation + 1),
                         render_activity_seen.eq(0),
+                        clear_request.eq(1),
                     ]
                     for index in range(3):
                         m.d.dvi += [
                             sweep_projection_x[index].eq(projection_x_dvi[index]),
                             sweep_projection_y[index].eq(projection_y_dvi[index]),
                         ]
-                    m.next = "START_BIN_GROUP"
+                    m.next = "WAIT_CLEAR"
                 with m.Elif(~view_3d_dvi):
                     m.d.dvi += surface_valid.eq(0)
+
+            with m.State("WAIT_CLEAR"):
+                # The inactive physical framebuffer is cleared before every
+                # 3D surface. After this point all pixels are literal display
+                # pixels; no generation-tag reveal or persistence cleanup is
+                # involved in the image shown to the user.
+                with m.If(~view_3d_dvi):
+                    m.d.dvi += clear_request.eq(0)
+                    m.next = "IDLE"
+                with m.Elif(clear_done_dvi):
+                    m.d.dvi += clear_request.eq(0)
+                    m.next = "START_BIN_GROUP"
 
             with m.State("START_BIN_GROUP"):
                 m.d.dvi += [
@@ -879,10 +948,7 @@ class Spectrogram(wiring.Component):
                         5 + scan_peak[3:6],
                         8 + scan_peak[4:6],
                     )),
-                    # Bit 3 identifies a 3D pixel; the lower bits identify the
-                    # hidden framebuffer generation being constructed.
-                    point_pixel.color.eq(
-                        Cat(draw_generation, Const(1, 1))),
+                    point_pixel.color.eq(sweep_hue_limited),
                     point_cmd.eq(Mux(
                         scan_point == scan_point_last,
                         LineStripCmd.END, LineStripCmd.CONTINUE)),
@@ -996,8 +1062,7 @@ class Spectrogram(wiring.Component):
                     point_amplitude.eq(0),
                     point_time.eq(0),
                     point_pixel.intensity.eq(13),
-                    point_pixel.color.eq(
-                        Cat(draw_generation, Const(1, 1))),
+                    point_pixel.color.eq(sweep_hue_limited),
                     point_cmd.eq(LineStripCmd.CONTINUE),
                     point_next.eq(1),
                 ]
@@ -1009,8 +1074,7 @@ class Spectrogram(wiring.Component):
                     point_amplitude.eq(0),
                     point_time.eq(0),
                     point_pixel.intensity.eq(13),
-                    point_pixel.color.eq(
-                        Cat(draw_generation, Const(1, 1))),
+                    point_pixel.color.eq(sweep_hue_limited),
                     point_cmd.eq(LineStripCmd.END),
                     point_next.eq(2),
                 ]
@@ -1022,8 +1086,7 @@ class Spectrogram(wiring.Component):
                     point_amplitude.eq(0),
                     point_time.eq(0),
                     point_pixel.intensity.eq(14),
-                    point_pixel.color.eq(
-                        Cat(draw_generation, Const(1, 1))),
+                    point_pixel.color.eq(sweep_axis_hue_a),
                     point_cmd.eq(LineStripCmd.CONTINUE),
                     point_next.eq(3),
                 ]
@@ -1035,8 +1098,7 @@ class Spectrogram(wiring.Component):
                     point_amplitude.eq(252),
                     point_time.eq(0),
                     point_pixel.intensity.eq(14),
-                    point_pixel.color.eq(
-                        Cat(draw_generation, Const(1, 1))),
+                    point_pixel.color.eq(sweep_axis_hue_a),
                     point_cmd.eq(LineStripCmd.END),
                     point_next.eq(4),
                 ]
@@ -1048,8 +1110,7 @@ class Spectrogram(wiring.Component):
                     point_amplitude.eq(0),
                     point_time.eq(0),
                     point_pixel.intensity.eq(15),
-                    point_pixel.color.eq(
-                        Cat(draw_generation, Const(1, 1))),
+                    point_pixel.color.eq(sweep_axis_hue_b),
                     point_cmd.eq(LineStripCmd.CONTINUE),
                     point_next.eq(5),
                 ]
@@ -1061,8 +1122,7 @@ class Spectrogram(wiring.Component):
                     point_amplitude.eq(0),
                     point_time.eq(240),
                     point_pixel.intensity.eq(15),
-                    point_pixel.color.eq(
-                        Cat(draw_generation, Const(1, 1))),
+                    point_pixel.color.eq(sweep_axis_hue_b),
                     point_cmd.eq(LineStripCmd.END),
                     point_next.eq(6),
                 ]
@@ -1958,41 +2018,8 @@ class Spectrogram(wiring.Component):
                 base_o.pixel.color.eq(hue_dvi),
             ]
 
-        tagged_3d_pixel = Signal()
-        m.d.comb += tagged_3d_pixel.eq(base_o.pixel.color[3])
-
         m.d.dvi += self.o.eq(base_o)
-        with m.If(view_3d_dvi & base_o.de & tagged_3d_pixel):
-            with m.If((base_o.pixel.color[:3] != visible_generation) &
-                      (base_o.pixel.color[:3] != completed_generation)):
-                # Keep the next complete surface hidden until the line FIFO and
-                # Bresenham plotter have both drained. Accepting the completed
-                # generation as well as the visible one closes the short CDC
-                # window where the DMA has applied the new base but the local
-                # VSync-qualified generation handoff has not arrived yet.
-                m.d.dvi += self.o.pixel.intensity.eq(0)
-            with m.Else():
-                # Generation tags replace framebuffer hue. Restore the chosen
-                # plot hue here; reserved axis intensities retain three colors.
-                display_hue = Mux(
-                    base_o.pixel.color[:3] == completed_generation,
-                    completed_hue,
-                    visible_hue,
-                )
-                with m.Switch(base_o.pixel.intensity):
-                    with m.Case(14):
-                        m.d.dvi += [
-                            self.o.pixel.intensity.eq(13),
-                            self.o.pixel.color.eq(display_hue + 5),
-                        ]
-                    with m.Case(15):
-                        m.d.dvi += [
-                            self.o.pixel.intensity.eq(13),
-                            self.o.pixel.color.eq(display_hue + 10),
-                        ]
-                    with m.Default():
-                        m.d.dvi += self.o.pixel.color.eq(display_hue)
-        with m.Elif(enable_dvi & ui_clear & axes_dvi & label_hit):
+        with m.If(enable_dvi & ui_clear & axes_dvi & label_hit):
             m.d.dvi += [
                 self.o.pixel.intensity.eq(10),
                 self.o.pixel.color.eq(hue_dvi),

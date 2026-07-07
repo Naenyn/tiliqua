@@ -12,8 +12,10 @@ use opts::Options;
 use tiliqua_fw::*;
 use tiliqua_hal::dma_framebuffer::DMAFramebuffer;
 use tiliqua_hal::embedded_graphics::prelude::*;
+use tiliqua_hal::embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
 use tiliqua_hal::persist::Persist;
 use tiliqua_lib::calibration::*;
+use tiliqua_lib::color::HI8;
 use tiliqua_lib::palette::ColorPalette;
 use tiliqua_lib::*;
 
@@ -21,6 +23,40 @@ use options::*;
 use pac::constants::*;
 
 pub const TIMER0_ISR_PERIOD_MS: u32 = 5;
+const FRAMEBUFFER_REGION_BYTES: usize = 0x0010_0000;
+
+fn clear_framebuffer_region(base: usize) {
+    let framebuffer_words = base as *mut u32;
+    for offset in 0..(FRAMEBUFFER_REGION_BYTES / core::mem::size_of::<u32>()) {
+        unsafe {
+            core::ptr::write_volatile(framebuffer_words.add(offset), 0);
+        }
+    }
+    riscv::asm::fence();
+}
+
+fn clear_3d_framebuffers() {
+    clear_framebuffer_region(PSRAM_FB_BASE);
+    clear_framebuffer_region(PSRAM_FB_BASE + FRAMEBUFFER_REGION_BYTES);
+}
+
+fn clear_help_text_window<D>(
+    display: &mut D,
+    h_active: u32,
+    v_active: u32,
+) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = HI8>,
+{
+    let x = h_active / 2 - 292;
+    let y = v_active / 2 - 172;
+    Rectangle::new(
+        Point::new(x as i32, y as i32),
+        Size::new(584, 390),
+    )
+    .into_styled(PrimitiveStyle::with_fill(HI8::BLACK))
+    .draw(display)
+}
 
 fn hash_menu_bytes(mut hash: u32, bytes: &[u8]) -> u32 {
     for byte in bytes {
@@ -200,22 +236,15 @@ fn main() -> ! {
         .maybe_override_fixed(FIXED_MODELINE, CLOCK_DVI_HZ);
 
     // The 3D renderer alternates between two 1 MiB framebuffer regions. PSRAM
-    // is not initialized at boot, and tagged cleanup deliberately preserves
-    // ordinary (untagged) UI pixels. Clear both regions before enabling video
-    // so random power-on contents cannot flash as the buffers are exchanged.
+    // is not initialized at boot. Clear both regions before enabling video so
+    // random power-on contents cannot flash as the buffers are exchanged.
     // Firmware begins at +0x200000, immediately after these two regions.
     // Use ordinary RV32 stores rather than the legacy VexRiscv cache-flush
     // custom instruction: SPECTO runs on VexiiRiscv, where that instruction
     // traps before the framebuffer/DVI peripheral can be enabled. Sequential
     // volatile writes naturally evict the visible portions of both buffers;
     // any final dirty cache lines lie in the unused padding after buffer 1.
-    let framebuffer_words = PSRAM_FB_BASE as *mut u32;
-    for offset in 0..(0x0020_0000 / core::mem::size_of::<u32>()) {
-        unsafe {
-            core::ptr::write_volatile(framebuffer_words.add(offset), 0);
-        }
-    }
-    riscv::asm::fence();
+    clear_3d_framebuffers();
 
     let mut display = DMAFramebuffer0::new(
         peripherals.FRAMEBUFFER_PERIPH,
@@ -249,6 +278,12 @@ fn main() -> ! {
     if opts.view_3d.quality.value == Quality3d::Low {
         opts.view_3d.quality.value = Quality3d::Medium;
     }
+    // 3D renderer work should boot directly into the live 3D view regardless
+    // of older saved SPECTO settings. Static remains available from the 3D
+    // menu as a deterministic framebuffer diagnostic.
+    opts.spectro.mode.value = DisplayMode::Spectrograph;
+    opts.spectro.view.value = ViewMode::ThreeD;
+    opts.view_3d.source.value = Source3d::Live;
 
     let mut last_palette = opts.display.palette.value;
     let app = Mutex::new(RefCell::new(App::new(opts)));
@@ -262,6 +297,9 @@ fn main() -> ! {
         let overlay = peripherals.OVERLAY_PERIPH;
         let mut first = true;
         let mut current_fb_base = PSRAM_FB_BASE as u32;
+        let mut last_on_help_page = false;
+        let mut last_view_3d = false;
+        let mut last_help_scroll = 0;
         // Each physical framebuffer retains UI independently. Remember the
         // exact menu last drawn into each one so changed values, selection
         // markers, and timeout hiding can be erased without clearing a large
@@ -286,9 +324,11 @@ fn main() -> ! {
             let on_help_page = opts.tracker.page.value == Page::Help;
             let spectrum_mode = opts.spectro.mode.value == DisplayMode::Spectrum;
             let view_3d = !spectrum_mode && opts.spectro.view.value == ViewMode::ThreeD;
-            // 3D reserves framebuffer hue columns 8..15 for generation tags.
-            // Keep transient UI in the untagged half; the visual hue remains
-            // user-selectable at eight evenly spaced positions.
+            let help_scroll = opts.help.scroll.value;
+            let help_page_entered = on_help_page && !last_on_help_page;
+            // In 3D, keep transient UI in the lower half of the palette. The
+            // literal back-buffer renderer also uses low plot hues so the
+            // legacy tagged cleanup path never touches visible 3D pixels.
             let ui_hue = if view_3d {
                 opts.display.ui_hue.value & 7
             } else {
@@ -305,6 +345,29 @@ fn main() -> ! {
                 display.update_fb_base(desired_fb_base);
                 current_fb_base = desired_fb_base;
             }
+
+            // Help text and the 3D view are full-screen framebuffer layers.
+            // Clear both physical buffers at mode boundaries, but do not do a
+            // full clear for help scrolling; only the text viewport changes.
+            let help_scroll_changed =
+                on_help_page && (!last_on_help_page || help_scroll != last_help_scroll);
+            let fullscreen_layer_changed =
+                first || (view_3d != last_view_3d) ||
+                (on_help_page != last_on_help_page);
+            if fullscreen_layer_changed {
+                if view_3d || last_view_3d || on_help_page || last_on_help_page {
+                    clear_3d_framebuffers();
+                    menu_fb0 = None;
+                    menu_fb1 = None;
+                    if current_fb_base != desired_fb_base {
+                        display.update_fb_base(desired_fb_base);
+                        current_fb_base = desired_fb_base;
+                    }
+                }
+            }
+            last_on_help_page = on_help_page;
+            last_view_3d = view_3d;
+            last_help_scroll = help_scroll;
 
             if opts.display.palette.value != last_palette || first {
                 write_specto_palette(opts.display.palette.value, &mut display);
@@ -328,13 +391,17 @@ fn main() -> ! {
                     *old_x != menu_x || *old_y != menu_y ||
                         *old_hash != menu_hash
                 }).unwrap_or(menu_visible);
-            // A swap alone is not a reason to redraw: each physical buffer
-            // retains its own menu snapshot. Repainting on every completed 3D
-            // surface consumed the entire UI visibility interval and made the
-            // freshly opened menu appear to clear immediately.
+            // In 3D, each completed surface starts by clearing the back
+            // buffer. After the swap, the current physical buffer may no
+            // longer contain the cached menu even if its fingerprint matches.
+            // Redraw visible menus on 3D swaps, but avoid the old unconditional
+            // erase/redraw loop when no menu is visible.
+            let menu_invalidated_by_3d_swap =
+                view_3d && framebuffer_swapped && menu_visible;
             let menu_visibility_changed =
                 menu_visible != menu_slot.is_some();
-            if first || menu_changed || menu_visibility_changed {
+            if first || menu_changed || menu_visibility_changed ||
+                    menu_invalidated_by_3d_swap {
                 if let Some((old_opts, old_x, old_y, _)) = menu_slot.take() {
                     draw::erase_options(
                         &mut display, &old_opts, old_x, old_y).ok();
@@ -347,10 +414,10 @@ fn main() -> ! {
                 }
             } else if menu_visible && !view_3d {
                 // In the beam-raced 2D modes, framebuffer persistence also
-                // decays untagged UI pixels. Refresh the unchanged visible
-                // menu as the original renderer did; unlike a state change,
-                // this needs no erase pass. In 3D, tagged-only cleanup already
-                // preserves UI, so redundant refresh traffic remains disabled.
+                // decays UI pixels. Refresh the unchanged visible menu as the
+                // original renderer did; unlike a state change, this needs no
+                // erase pass. In 3D, the menu is stable in the front buffer,
+                // so redundant refresh traffic remains disabled.
                 draw::draw_options(
                     &mut display, &opts, menu_x, menu_y, ui_hue).ok();
             }
@@ -368,16 +435,36 @@ fn main() -> ! {
             }
 
             if on_help_page {
-                draw::draw_help_page(
-                    &mut display,
-                    MODULE_DOCSTRING,
-                    bootinfo.manifest.help.as_ref(),
-                    h_active,
-                    v_active,
-                    opts.help.scroll.value,
-                    ui_hue,
-                )
-                .ok();
+                if help_page_entered || help_scroll_changed || first {
+                    clear_help_text_window(
+                        &mut display,
+                        h_active,
+                        v_active,
+                    )
+                    .ok();
+                    draw::draw_help(
+                        &mut display,
+                        h_active / 2 - 280,
+                        v_active / 2 - 150,
+                        opts.help.scroll.value,
+                        MODULE_DOCSTRING,
+                        ui_hue,
+                    )
+                    .ok();
+                }
+                if help_page_entered || first {
+                    if let Some(help) = bootinfo.manifest.help.as_ref() {
+                        draw::draw_tiliqua(
+                            &mut display,
+                            (h_active / 2 - 80) as i32,
+                            (v_active / 2) as i32 - 330,
+                            ui_hue,
+                            help.io_left.each_ref().map(|s| s.as_str()),
+                            help.io_right.each_ref().map(|s| s.as_str()),
+                        )
+                        .ok();
+                    }
+                }
             }
 
             if save_opts {
@@ -448,7 +535,9 @@ fn main() -> ! {
                 w.time().bits(projection_y[2] as u16)
             });
             spectro.config_3d().write(|w| unsafe {
-                w.quality().bits(opts.view_3d.quality.value.hw_index())
+                w.quality().bits(opts.view_3d.quality.value.hw_index());
+                w.static_surface().bit(
+                    opts.view_3d.source.value.hw_index() != 0)
             });
             spectro.spectrum_config().write(|w| unsafe {
                 w.style().bit(opts.spectro.spectrum_style.value.hw_index() != 0);
@@ -466,12 +555,10 @@ fn main() -> ! {
                 w.grid_pixel().bits(0)
             });
 
-            // Projected 3D lines share the framebuffer with transient UI.
-            // Deterministic short decay erases geometry displaced by the next
-            // surface without adding a second, misleading persistence mode.
             if view_3d {
-                // The 3D view uses tagged atomic surfaces, not visual fade.
-                // Scan less often and erase stale generations in one visit.
+                // The 3D view uses explicit double-buffered surfaces. The
+                // gateware pauses persistence in 3D; this write is kept benign
+                // in case that pause is ever relaxed while debugging.
                 persist.set_cleanup();
             } else {
                 persist.set_persistence(if on_help_page { 64 } else { 24 });

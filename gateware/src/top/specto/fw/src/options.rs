@@ -18,11 +18,28 @@ pub enum Page {
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 pub enum ViewMode {
-    #[default]
     #[strum(serialize = "2D")]
     TwoD,
+    #[default]
     #[strum(serialize = "3D")]
     ThreeD,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
+#[strum(serialize_all = "kebab-case")]
+pub enum Source3d {
+    #[default]
+    Live,
+    Static,
+}
+
+impl Source3d {
+    pub fn hw_index(self) -> u8 {
+        match self {
+            Self::Live => 0,
+            Self::Static => 1,
+        }
+    }
 }
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
@@ -50,8 +67,8 @@ impl Quality3d {
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 #[strum(serialize_all = "kebab-case")]
 pub enum DisplayMode {
-    #[default]
     Spectrum,
+    #[default]
     Spectrograph,
 }
 
@@ -350,6 +367,8 @@ pub struct SpectroOpts {
 
 #[derive(OptionPage, Clone)]
 pub struct View3dOpts {
+    #[option]
+    pub source: EnumOption<Source3d>,
     #[option]
     pub quality: EnumOption<Quality3d>,
     #[option(-15)]
