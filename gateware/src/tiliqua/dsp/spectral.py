@@ -21,11 +21,11 @@ class BlockLPF(wiring.Component):
 
     """Block-based (point-wise) one-pole low-pass filter array.
 
-    This is an array (size `sz`) of one-pole low-pass filters with a single
-    adjustable smoothing constant `beta`. That is, an independent filter is
-    tracked for every element in each block. The :class:`Block` ``payload.first``
-    flags are used to track which filter memory should be addressed for each
-    sample, without requiring separate streams for each channel.
+    This is an array (size `sz`) of one-pole low-pass filters with adjustable
+    smoothing constants. That is, an independent filter is tracked for every
+    element in each block. The :class:`Block` ``payload.first`` flags are used
+    to track which filter memory should be addressed for each sample, without
+    requiring separate streams for each channel.
 
     For each element, we compute:
 
@@ -33,8 +33,9 @@ class BlockLPF(wiring.Component):
 
         self.y[n] = self.y[n]*self.beta + self.x[n]*(1-self.beta)
 
-    This is useful for morphing between blocks of real spectral envelopes, but could
-    also be used for other purposes.
+    If ``attack_beta`` differs from ``beta``, rising values use
+    ``attack_beta`` and falling values use ``beta``. Leaving them equal keeps
+    the original symmetric one-pole response.
 
     Members
     -------
@@ -65,6 +66,8 @@ class BlockLPF(wiring.Component):
         self.macp = macp or mac.MAC.default()
         super().__init__({
             "beta": In(self.shape, init=fixed.Const(beta, shape=self.shape)),
+            "attack_beta": In(
+                self.shape, init=fixed.Const(beta, shape=self.shape)),
             # Blockwise sets of signals to filter.
             "i": In(stream.Signature(Block(self.shape))),
             "o": Out(stream.Signature(Block(self.shape))),
@@ -101,6 +104,10 @@ class BlockLPF(wiring.Component):
         #
 
         acc = Signal(mac.SQRNative)
+        beta = Signal(self.shape)
+        one_minus_beta = Signal(self.shape)
+        m.d.comb += one_minus_beta.eq(
+            fixed.Const(1.0, shape=self.shape, clamp=True) - beta)
 
         with m.FSM():
             with m.State("IDLE"):
@@ -114,15 +121,19 @@ class BlockLPF(wiring.Component):
                     m.next = "READ"
 
             with m.State("READ"):
+                m.d.sync += beta.eq(Mux(
+                    l_in > mem_rd.data,
+                    self.attack_beta,
+                    self.beta))
                 m.next = "MAC1"
 
             with m.State("MAC1"):
-                with mp.Multiply(m, a=mem_rd.data, b=self.beta):
+                with mp.Multiply(m, a=mem_rd.data, b=beta):
                     m.d.sync += acc.eq(mp.result.z)
                     m.next = "MAC2"
 
             with m.State("MAC2"):
-                with mp.Multiply(m, a=l_in, b=(fixed.Const(1.0, shape=self.shape, clamp=True)-self.beta)):
+                with mp.Multiply(m, a=l_in, b=one_minus_beta):
                     m.d.sync += acc.eq(acc + mp.result.z)
                     m.next = "UPDATE"
 

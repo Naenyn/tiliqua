@@ -355,32 +355,40 @@ class Spectrogram(wiring.Component):
         wiring.connect(m, envelope.o, log.i)
 
         # In spectrogram mode this retains the established analytical/phosphor
-        # response. In spectrum mode Rate becomes response smoothing: all FFT
-        # frames still render, but fast bar-to-bar jitter is progressively
-        # damped instead of producing a lower-rate, choppy animation.
-        spectrum_beta = Signal(ASQ)
+        # response. In spectrum mode Rate becomes envelope release smoothing:
+        # all FFT frames still render and rising bins attack immediately, but
+        # falling bins decay more gently so plucks keep their captured peak
+        # instead of disappearing between slow display updates.
+        spectrum_release_beta = Signal(ASQ)
         with m.Switch(rate_sel):
             with m.Case(0):
-                m.d.comb += spectrum_beta.eq(
-                    fixed.Const(0.25, shape=ASQ))
+                m.d.comb += spectrum_release_beta.eq(
+                    fixed.Const(0.82, shape=ASQ))
             with m.Case(1):
-                m.d.comb += spectrum_beta.eq(
-                    fixed.Const(0.75, shape=ASQ))
+                m.d.comb += spectrum_release_beta.eq(
+                    fixed.Const(0.92, shape=ASQ))
             with m.Case(2):
-                m.d.comb += spectrum_beta.eq(
-                    fixed.Const(0.94, shape=ASQ))
+                m.d.comb += spectrum_release_beta.eq(
+                    fixed.Const(0.97, shape=ASQ))
             with m.Default():
-                m.d.comb += spectrum_beta.eq(
-                    fixed.Const(0.985, shape=ASQ))
-        m.d.comb += envelope.block_lpf.beta.eq(Mux(
-            spectrum_mode,
-            spectrum_beta,
-            Mux(
-                phosphor,
-                fixed.Const(0.82, shape=ASQ),
-                fixed.Const(0.25, shape=ASQ),
-            ),
-        ))
+                m.d.comb += spectrum_release_beta.eq(
+                    fixed.Const(0.99, shape=ASQ))
+        m.d.comb += [
+            envelope.block_lpf.beta.eq(Mux(
+                spectrum_mode,
+                spectrum_release_beta,
+                Mux(
+                    phosphor,
+                    fixed.Const(0.82, shape=ASQ),
+                    fixed.Const(0.25, shape=ASQ),
+                ),
+            )),
+            envelope.block_lpf.attack_beta.eq(Mux(
+                spectrum_mode,
+                fixed.Const(0.0, shape=ASQ),
+                envelope.block_lpf.beta,
+            )),
+        ]
 
         history = memory.Memory(
             data=memory.MemoryData(
