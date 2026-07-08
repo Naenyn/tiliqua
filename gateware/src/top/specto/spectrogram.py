@@ -160,6 +160,8 @@ class Spectrogram(wiring.Component):
         peaks: csr.Field(csr.action.W, unsigned(3))
         smoothing: csr.Field(csr.action.W, unsigned(2))
         scale: csr.Field(csr.action.W, unsigned(1))
+        tilt: csr.Field(csr.action.W, unsigned(2))
+        highlight: csr.Field(csr.action.W, unsigned(1))
 
     class ProjectionX(csr.Register, access="w"):
         frequency: csr.Field(csr.action.W, signed(10))
@@ -235,6 +237,8 @@ class Spectrogram(wiring.Component):
         spectrum_peaks = Signal(3, init=5)
         spectrum_smoothing = Signal(2)
         spectrum_scale = Signal(init=1)
+        spectrum_tilt = Signal(2)
+        spectrum_highlight = Signal()
         h_active = Signal(12, init=720)
         v_active = Signal(12, init=720)
         menu_visible = Signal()
@@ -294,6 +298,9 @@ class Spectrogram(wiring.Component):
                 spectrum_smoothing.eq(
                     self._spectrum_config.f.smoothing.w_data),
                 spectrum_scale.eq(self._spectrum_config.f.scale.w_data),
+                spectrum_tilt.eq(self._spectrum_config.f.tilt.w_data),
+                spectrum_highlight.eq(
+                    self._spectrum_config.f.highlight.w_data),
             ]
 
         # ---- audio analysis -------------------------------------------------
@@ -426,6 +433,19 @@ class Spectrogram(wiring.Component):
         spectrum_levels_w = spectrum_levels.write_port(domain="sync")
         spectrum_levels_r = spectrum_levels.read_port(domain="dvi")
 
+        # Per-band highlight intensity for spectrum peak-focus mode. This is
+        # prepared as FFT bins arrive so the DVI renderer only performs one
+        # small lookup instead of recomputing harmonic distances per pixel.
+        spectrum_focus_levels = memory.Memory(
+            data=memory.MemoryData(
+                shape=unsigned(4), depth=N_BINS,
+                init=[0] * N_BINS,
+            )
+        )
+        m.submodules.spectrum_focus_levels = spectrum_focus_levels
+        spectrum_focus_w = spectrum_focus_levels.write_port(domain="sync")
+        spectrum_focus_r = spectrum_focus_levels.read_port(domain="dvi")
+
         # Peak level, five-bit hold timer, and one session epoch bit. This
         # memory lives entirely in the video domain; the epoch invalidates all
         # old peaks instantly whenever spectrum mode is entered again.
@@ -521,7 +541,10 @@ class Spectrogram(wiring.Component):
         current_bin = Signal(9)
         do_write = Signal()
         raw_level = Signal(6)
-        boosted_level = Signal(7)
+        spectrum_octave = Signal(4)
+        spectrum_tilt_step = Signal(4)
+        spectrum_tilt_boost = Signal(5)
+        boosted_level = Signal(8)
         stored_level = Signal(6)
         spectrum_frequency_shift = Signal(2)
         spectrum_desired_group_shift = Signal(2)
@@ -532,12 +555,99 @@ class Spectrogram(wiring.Component):
         spectrum_group_peak = Signal(6)
         spectrum_group_peak_next = Signal(6)
         spectrum_band_index_sync = Signal(8)
+        spectrum_peak_candidate_bin = Signal(8)
+        spectrum_peak_candidate_level = Signal(6)
+        spectrum_fundamental_bin = Signal(8)
+        spectrum_focus_level_sync = Signal(4)
+        spectrum_focus_exact_sync = Signal()
+        spectrum_focus_near_sync = Signal()
+        spectrum_focus_mid_sync = Signal()
+        spectrum_focus_far_sync = Signal()
+        spectrum_focus_found_bin = Signal(8)
+        spectrum_focus_centers = [
+            Signal(8, name=f"spectrum_focus_{harmonic}_center")
+            for harmonic in range(1, 9)
+        ]
+        spectrum_focus_valids = [
+            Signal(name=f"spectrum_focus_{harmonic}_valid")
+            for harmonic in range(1, 9)
+        ]
+        spectrum_focus_lo1 = [
+            Signal(8, name=f"spectrum_focus_{harmonic}_lo1")
+            for harmonic in range(1, 9)
+        ]
+        spectrum_focus_hi1 = [
+            Signal(8, name=f"spectrum_focus_{harmonic}_hi1")
+            for harmonic in range(1, 9)
+        ]
+        spectrum_focus_lo3 = [
+            Signal(8, name=f"spectrum_focus_{harmonic}_lo3")
+            for harmonic in range(1, 9)
+        ]
+        spectrum_focus_hi3 = [
+            Signal(8, name=f"spectrum_focus_{harmonic}_hi3")
+            for harmonic in range(1, 9)
+        ]
+        spectrum_focus_lo7 = [
+            Signal(8, name=f"spectrum_focus_{harmonic}_lo7")
+            for harmonic in range(1, 9)
+        ]
+        spectrum_focus_hi7 = [
+            Signal(8, name=f"spectrum_focus_{harmonic}_hi7")
+            for harmonic in range(1, 9)
+        ]
+        spectrum_focus_center_calc = [
+            Signal(12, name=f"spectrum_focus_{harmonic}_center_calc")
+            for harmonic in range(1, 9)
+        ]
+        m.d.comb += spectrum_focus_found_bin.eq(Mux(
+            spectrum_peak_candidate_level >= 8,
+            spectrum_peak_candidate_bin,
+            0))
+        exact_hits = []
+        near_hits = []
+        mid_hits = []
+        far_hits = []
+        for harmonic in range(1, 9):
+            index = harmonic - 1
+            valid = spectrum_focus_valids[index]
+            center_calc = spectrum_focus_center_calc[index]
+            m.d.comb += center_calc.eq(spectrum_focus_found_bin * harmonic)
+            exact_hits.append(valid & (current_bin[:8] ==
+                                       spectrum_focus_centers[index]))
+            near_hits.append(valid &
+                             (current_bin[:8] >= spectrum_focus_lo1[index]) &
+                             (current_bin[:8] <= spectrum_focus_hi1[index]))
+            mid_hits.append(valid &
+                            (current_bin[:8] >= spectrum_focus_lo3[index]) &
+                            (current_bin[:8] <= spectrum_focus_hi3[index]))
+            far_hits.append(valid &
+                            (current_bin[:8] >= spectrum_focus_lo7[index]) &
+                            (current_bin[:8] <= spectrum_focus_hi7[index]))
+        m.d.comb += [
+            spectrum_focus_exact_sync.eq(Cat(*exact_hits).any()),
+            spectrum_focus_near_sync.eq(Cat(*near_hits).any()),
+            spectrum_focus_mid_sync.eq(Cat(*mid_hits).any()),
+            spectrum_focus_far_sync.eq(Cat(*far_hits).any()),
+            spectrum_focus_level_sync.eq(Mux(
+                spectrum_focus_exact_sync,
+                15,
+                Mux(spectrum_focus_near_sync,
+                    12,
+                    Mux(spectrum_focus_mid_sync,
+                        9,
+                        Mux(spectrum_focus_far_sync, 6, 0))))),
+        ]
         m.d.comb += [
             log.o.ready.eq(1),
             current_bin.eq(Mux(log.o.payload.first, 0, bin_index)),
             do_write.eq(Mux(log.o.payload.first, accept_now, accept_latched)),
             raw_level.eq(log.o.payload.sample.as_value()[ASQ.f_bits-6:ASQ.f_bits]),
-            boosted_level.eq(raw_level + gain),
+            spectrum_tilt_step.eq(Mux(
+                spectrum_tilt == 1, 2,
+                Mux(spectrum_tilt == 2, 4, 0))),
+            spectrum_tilt_boost.eq(spectrum_octave * spectrum_tilt_step),
+            boosted_level.eq(raw_level + gain + spectrum_tilt_boost),
             stored_level.eq(Mux(boosted_level > 63, 63, boosted_level[:6])),
             spectrum_frequency_shift.eq(Mux(
                 range_sel == 0, 0, range_sel - 1)),
@@ -568,6 +678,12 @@ class Spectrogram(wiring.Component):
                 spectrum_group_last),
             spectrum_levels_w.addr.eq(spectrum_band_index_sync),
             spectrum_levels_w.data.eq(spectrum_group_peak_next),
+            spectrum_focus_w.en.eq(
+                log.o.valid &
+                (current_bin <= spectrum_active_bin_last) &
+                spectrum_group_last),
+            spectrum_focus_w.addr.eq(spectrum_band_index_sync),
+            spectrum_focus_w.data.eq(spectrum_focus_level_sync),
         ]
         with m.Switch(spectrum_group_shift):
             with m.Case(0):
@@ -591,7 +707,62 @@ class Spectrogram(wiring.Component):
                     spectrum_group_last.eq(current_bin[:3] == 7),
                 ]
 
+        with m.If(current_bin >= 128):
+            m.d.comb += spectrum_octave.eq(6)
+        with m.Elif(current_bin >= 64):
+            m.d.comb += spectrum_octave.eq(5)
+        with m.Elif(current_bin >= 32):
+            m.d.comb += spectrum_octave.eq(4)
+        with m.Elif(current_bin >= 16):
+            m.d.comb += spectrum_octave.eq(3)
+        with m.Elif(current_bin >= 8):
+            m.d.comb += spectrum_octave.eq(2)
+        with m.Elif(current_bin >= 4):
+            m.d.comb += spectrum_octave.eq(1)
+        with m.Else():
+            m.d.comb += spectrum_octave.eq(0)
+
         with m.If(log.o.valid):
+            with m.If(log.o.payload.first):
+                m.d.sync += [
+                    spectrum_fundamental_bin.eq(spectrum_focus_found_bin),
+                    spectrum_peak_candidate_bin.eq(0),
+                    spectrum_peak_candidate_level.eq(0),
+                ]
+                for harmonic in range(1, 9):
+                    index = harmonic - 1
+                    center_calc = spectrum_focus_center_calc[index]
+                    m.d.sync += [
+                        spectrum_focus_centers[index].eq(center_calc[:8]),
+                        spectrum_focus_valids[index].eq(
+                            (spectrum_focus_found_bin != 0) &
+                            (center_calc <= spectrum_active_bin_last)),
+                        spectrum_focus_lo1[index].eq(Mux(
+                            center_calc > 1, center_calc - 1, 0)),
+                        spectrum_focus_hi1[index].eq(Mux(
+                            center_calc + 1 > spectrum_active_bin_last,
+                            spectrum_active_bin_last,
+                            center_calc + 1)),
+                        spectrum_focus_lo3[index].eq(Mux(
+                            center_calc > 3, center_calc - 3, 0)),
+                        spectrum_focus_hi3[index].eq(Mux(
+                            center_calc + 3 > spectrum_active_bin_last,
+                            spectrum_active_bin_last,
+                            center_calc + 3)),
+                        spectrum_focus_lo7[index].eq(Mux(
+                            center_calc > 7, center_calc - 7, 0)),
+                        spectrum_focus_hi7[index].eq(Mux(
+                            center_calc + 7 > spectrum_active_bin_last,
+                            spectrum_active_bin_last,
+                            center_calc + 7)),
+                    ]
+            with m.Elif(do_write & (current_bin >= 2) &
+                        (current_bin <= spectrum_active_bin_last) &
+                        (stored_level > spectrum_peak_candidate_level)):
+                m.d.sync += [
+                    spectrum_peak_candidate_bin.eq(current_bin[:8]),
+                    spectrum_peak_candidate_level.eq(stored_level),
+                ]
             with m.If(current_bin <= spectrum_active_bin_last):
                 m.d.sync += spectrum_group_peak.eq(
                     spectrum_group_peak_next)
@@ -627,6 +798,8 @@ class Spectrogram(wiring.Component):
         spectrum_peaks_dvi = Signal(3)
         spectrum_smoothing_dvi = Signal(2)
         spectrum_scale_dvi = Signal()
+        spectrum_tilt_dvi = Signal(2)
+        spectrum_highlight_dvi = Signal()
         range_dvi = Signal(2)
         rate_dvi = Signal(2)
         persistence_dvi = Signal(2)
@@ -656,6 +829,9 @@ class Spectrogram(wiring.Component):
             ("spectrum_smoothing", spectrum_smoothing,
              spectrum_smoothing_dvi),
             ("spectrum_scale", spectrum_scale, spectrum_scale_dvi),
+            ("spectrum_tilt", spectrum_tilt, spectrum_tilt_dvi),
+            ("spectrum_highlight", spectrum_highlight,
+             spectrum_highlight_dvi),
             ("range", range_sel, range_dvi),
             ("rate", rate_sel, rate_dvi),
             ("persistence", persistence, persistence_dvi),
@@ -1295,6 +1471,8 @@ class Spectrogram(wiring.Component):
             )),
             spectrum_levels_r.en.eq(spectrum_read_en_r),
             spectrum_levels_r.addr.eq(spectrum_read_bin_r),
+            spectrum_focus_r.en.eq(spectrum_read_en_r),
+            spectrum_focus_r.addr.eq(spectrum_read_bin_r),
             spectrum_peak_r.en.eq(spectrum_read_en_r),
             spectrum_peak_r.addr.eq(spectrum_read_bin_r),
         ]
@@ -1670,6 +1848,11 @@ class Spectrogram(wiring.Component):
         spectrum_gradient_level = Signal(4)
         spectrum_amplitude_level = Signal(4)
         spectrum_fill_level = Signal(4)
+        spectrum_focus_peak = Signal()
+        spectrum_focus_dim = Signal()
+        spectrum_line_level = Signal(4)
+        spectrum_curve_glow_level_focused = Signal(4)
+        spectrum_fill_level_focused = Signal(4)
         spectrum_curve_raw_prev = Signal(6)
         spectrum_curve_target = Signal(6)
         spectrum_curve_light_ext = Signal(8)
@@ -1702,6 +1885,8 @@ class Spectrogram(wiring.Component):
         spectrum_render_peak_level = Signal(4)
         spectrum_render_fill_enabled = Signal()
         spectrum_render_fill_level = Signal(4)
+        spectrum_render_line_level = Signal(4)
+        spectrum_render_glow_level = Signal(4)
 
         with m.If(self.i.vsync & ~prev_vsync):
             m.d.dvi += spectrum_peak_frame.eq(spectrum_peak_frame + 1)
@@ -1777,7 +1962,9 @@ class Spectrogram(wiring.Component):
             spectrum_render_peak_y.eq(spectrum_peak_display_y),
             spectrum_render_peak_level.eq(spectrum_peak_display_level),
             spectrum_render_fill_enabled.eq(spectrum_fill_dvi != 0),
-            spectrum_render_fill_level.eq(spectrum_fill_level),
+            spectrum_render_fill_level.eq(spectrum_fill_level_focused),
+            spectrum_render_line_level.eq(spectrum_line_level),
+            spectrum_render_glow_level.eq(spectrum_curve_glow_level_focused),
         ]
 
         m.d.comb += [
@@ -1860,6 +2047,24 @@ class Spectrogram(wiring.Component):
                 spectrum_scan_y == spectrum_render_y,
                 6,
                 3)),
+            # Hi-lite mode emphasizes the strongest detected spectral peak and
+            # its integer multiples. The center bin stays bright, immediate
+            # neighbors glow slightly less, and bins farther from the detected
+            # fundamental/harmonics are dimmed.
+            spectrum_focus_peak.eq(~spectrum_highlight_dvi |
+                                   (spectrum_focus_r.data != 0)),
+            spectrum_focus_dim.eq(spectrum_highlight_dvi &
+                                  ~spectrum_focus_peak),
+            spectrum_line_level.eq(Mux(
+                spectrum_highlight_dvi,
+                spectrum_focus_r.data,
+                15)),
+            spectrum_curve_glow_level_focused.eq(Mux(
+                spectrum_focus_dim,
+                Mux(spectrum_curve_glow_level > 1,
+                    spectrum_curve_glow_level >> 1,
+                    spectrum_curve_glow_level),
+                spectrum_curve_glow_level)),
             spectrum_fill_hit.eq(
                 spectrum_render_plot & spectrum_plot_d &
                 spectrum_render_shape & spectrum_render_fill_enabled &
@@ -1942,6 +2147,13 @@ class Spectrogram(wiring.Component):
                 Mux(spectrum_fill_dvi == 2,
                     spectrum_gradient_level,
                     spectrum_amplitude_level))),
+            spectrum_fill_level_focused.eq(Mux(
+                spectrum_focus_dim,
+                spectrum_fill_level >> 1,
+                Mux(spectrum_highlight_dvi &
+                    (spectrum_fill_level < spectrum_focus_r.data),
+                    spectrum_focus_r.data,
+                    spectrum_fill_level))),
             spectrum_peak_level_next.eq(Mux(
                 spectrum_peaks_dvi == 0,
                 spectrum_levels_r.data,
@@ -2004,12 +2216,12 @@ class Spectrogram(wiring.Component):
             ]
         with m.Elif(enable_dvi & ui_clear & spectrum_line_hit):
             m.d.dvi += [
-                base_o.pixel.intensity.eq(15),
+                base_o.pixel.intensity.eq(spectrum_render_line_level),
                 base_o.pixel.color.eq(hue_dvi),
             ]
         with m.Elif(enable_dvi & ui_clear & spectrum_curve_glow_hit):
             m.d.dvi += [
-                base_o.pixel.intensity.eq(spectrum_curve_glow_level),
+                base_o.pixel.intensity.eq(spectrum_render_glow_level),
                 base_o.pixel.color.eq(hue_dvi),
             ]
         with m.Elif(enable_dvi & ui_clear & spectrum_fill_hit):

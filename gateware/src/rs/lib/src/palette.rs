@@ -22,6 +22,7 @@ pub enum ColorPalette {
     Magma,
     Plasma,
     Viridis,
+    Rainbow,
 }
 
 const fn hue2rgb(p: f64, q: f64, mut t: f64) -> f64 {
@@ -181,6 +182,13 @@ const VIRIDIS_16: [(u8, u8, u8); 16] = [
     (122, 209, 81), (165, 219, 54), (210, 226, 27), (253, 231, 37),
 ];
 
+const RAINBOW_16: [(u8, u8, u8); 16] = [
+    (18, 0, 38), (52, 0, 96), (80, 0, 160), (65, 32, 205),
+    (24, 96, 225), (0, 150, 210), (0, 195, 170), (0, 230, 95),
+    (42, 245, 35), (135, 240, 0), (220, 220, 0), (255, 175, 0),
+    (255, 110, 0), (255, 48, 0), (255, 0, 46), (255, 255, 255),
+];
+
 const fn gen_heatmap(colors: [(u8, u8, u8); 16])
         -> [(u8, u8, u8); PALETTE_LEN] {
     let mut lut = [(0u8, 0u8, 0u8); PALETTE_LEN];
@@ -226,6 +234,7 @@ static PALETTE_HUESWAP:  [(u8, u8, u8); PALETTE_LEN] = gen_hueswap();
 static PALETTE_MAGMA:    [(u8, u8, u8); PALETTE_LEN] = gen_heatmap(MAGMA_16);
 static PALETTE_PLASMA:   [(u8, u8, u8); PALETTE_LEN] = gen_heatmap(PLASMA_16);
 static PALETTE_VIRIDIS:  [(u8, u8, u8); PALETTE_LEN] = gen_heatmap(VIRIDIS_16);
+static PALETTE_RAINBOW:  [(u8, u8, u8); PALETTE_LEN] = gen_heatmap(RAINBOW_16);
 
 impl ColorPalette {
     fn lut(&self) -> &'static [(u8, u8, u8); PALETTE_LEN] {
@@ -240,6 +249,7 @@ impl ColorPalette {
             ColorPalette::Magma    => &PALETTE_MAGMA,
             ColorPalette::Plasma   => &PALETTE_PLASMA,
             ColorPalette::Viridis  => &PALETTE_VIRIDIS,
+            ColorPalette::Rainbow  => &PALETTE_RAINBOW,
         }
     }
 
@@ -253,6 +263,7 @@ impl ColorPalette {
             ColorPalette::Magma => Some(MAGMA_16[index]),
             ColorPalette::Plasma => Some(PLASMA_16[index]),
             ColorPalette::Viridis => Some(VIRIDIS_16[index]),
+            ColorPalette::Rainbow => Some(RAINBOW_16[index]),
             _ => None,
         }
     }

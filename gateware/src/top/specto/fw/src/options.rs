@@ -108,6 +108,44 @@ impl SpectrumScale {
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 #[strum(serialize_all = "kebab-case")]
+pub enum SpectrumTilt {
+    #[default]
+    Flat,
+    #[strum(serialize = "+3db/oct")]
+    Gentle,
+    #[strum(serialize = "+6db/oct")]
+    Strong,
+}
+
+impl SpectrumTilt {
+    pub fn hw_index(self) -> u8 {
+        match self {
+            Self::Flat => 0,
+            Self::Gentle => 1,
+            Self::Strong => 2,
+        }
+    }
+}
+
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
+#[strum(serialize_all = "kebab-case")]
+pub enum SpectrumHighlight {
+    #[default]
+    Off,
+    Peaks,
+}
+
+impl SpectrumHighlight {
+    pub fn hw_index(self) -> u8 {
+        match self {
+            Self::Off => 0,
+            Self::Peaks => 1,
+        }
+    }
+}
+
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
+#[strum(serialize_all = "kebab-case")]
 pub enum SpectrumSmoothing {
     #[default]
     Off,
@@ -336,6 +374,13 @@ pub struct SpectroOpts {
     #[option]
     #[option_if(self.mode.value == DisplayMode::Spectrum && self.spectrum_style.value == SpectrumStyle::Curve)]
     pub scale: EnumOption<SpectrumScale>,
+    #[option]
+    #[option_if(self.mode.value == DisplayMode::Spectrum)]
+    pub tilt: EnumOption<SpectrumTilt>,
+    #[option]
+    #[option_name("hi-lite")]
+    #[option_if(self.mode.value == DisplayMode::Spectrum)]
+    pub highlight: EnumOption<SpectrumHighlight>,
     #[option]
     #[option_if(self.mode.value == DisplayMode::Spectrum && self.spectrum_style.value == SpectrumStyle::Curve)]
     pub smoothing: EnumOption<SpectrumSmoothing>,

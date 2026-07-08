@@ -545,7 +545,10 @@ fn main() -> ! {
                 w.fill().bits(opts.spectro.fill.value.hw_index());
                 w.peaks().bits(opts.spectro.peaks.value.hw_index());
                 w.smoothing().bits(opts.spectro.smoothing.value.hw_index());
-                w.scale().bit(opts.spectro.scale.value.hw_index() != 0)
+                w.scale().bit(opts.spectro.scale.value.hw_index() != 0);
+                w.tilt().bits(opts.spectro.tilt.value.hw_index());
+                w.highlight().bit(
+                    opts.spectro.highlight.value.hw_index() != 0)
             });
 
             // SPECTO draws its own plot axes. Keep the general-purpose XBEAM
