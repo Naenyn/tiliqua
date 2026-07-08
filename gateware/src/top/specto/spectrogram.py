@@ -783,10 +783,18 @@ class Spectrogram(wiring.Component):
         sweep_axis_hue_b = Signal(3)
 
         m.d.comb += [
-            # High quality is naturally capped at 64 vertices for the 3kHz
-            # range, which contains only 64 distinct FFT bins.
+            # Medium 3D quality keeps the full 24kHz view at 64 vertices so
+            # it reads as the wide, coarser overview. The lower ranges are
+            # already using the fine 24kHz analysis feed, so promote 12kHz and
+            # 6kHz to the denser 128-vertex surface even at medium quality:
+            # this makes those ranges behave like true zoom/detail views.
+            # 3kHz is naturally capped at 64 vertices because it contains only
+            # 64 distinct FFT bins.
             effective_quality.eq(Mux(
-                (sweep_quality_3d == 2) & (sweep_range != 3), 2, 1)),
+                (sweep_range != 3) &
+                    ((sweep_quality_3d == 2) | (sweep_range != 0)),
+                2,
+                1)),
             scan_point_last.eq(Mux(
                 effective_quality == 1, 63, 127)),
             scan_group_shift.eq(Mux(
