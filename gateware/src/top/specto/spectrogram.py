@@ -858,7 +858,11 @@ class Spectrogram(wiring.Component):
             projection_sum_x.eq(products_x[0] + products_x[1] + products_x[2]),
             projection_sum_y.eq(products_y[0] + products_y[1] + products_y[2]),
             center_x.eq((h_active_dvi >> 1) - 50),
-            baseline_y.eq(v_active_dvi - 100),
+            # Anchor the 3D volume around screen center instead of pinning its
+            # baseline near the bottom. On 720p this places the projected
+            # frequency/time floor around y=545, centering the typical
+            # amplitude range much more naturally in the display.
+            baseline_y.eq((v_active_dvi >> 1) + 185),
             line_word.x.eq(projected_x),
             line_word.y.eq(projected_y),
             line_word.pixel.eq(point_pixel),
