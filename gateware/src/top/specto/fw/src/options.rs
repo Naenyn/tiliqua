@@ -132,6 +132,7 @@ impl SpectrumTilt {
 pub enum SpectrumHighlight {
     #[default]
     Off,
+    #[strum(serialize = "on")]
     Peaks,
 }
 
@@ -386,7 +387,7 @@ pub struct SpectroOpts {
     #[option_if(self.mode.value == DisplayMode::Spectrum)]
     pub tilt: EnumOption<SpectrumTilt>,
     #[option]
-    #[option_name("hi-lite")]
+    #[option_name("harmonics")]
     #[option_if(self.mode.value == DisplayMode::Spectrum)]
     pub highlight: EnumOption<SpectrumHighlight>,
     #[option]
