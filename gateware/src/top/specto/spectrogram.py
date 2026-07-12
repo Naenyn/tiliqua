@@ -156,7 +156,7 @@ class Spectrogram(wiring.Component):
     class SpectrumConfig(csr.Register, access="w"):
         style: csr.Field(csr.action.W, unsigned(1))
         bands: csr.Field(csr.action.W, unsigned(2))
-        fill: csr.Field(csr.action.W, unsigned(2))
+        fill: csr.Field(csr.action.W, unsigned(3))
         peaks: csr.Field(csr.action.W, unsigned(3))
         smoothing: csr.Field(csr.action.W, unsigned(2))
         scale: csr.Field(csr.action.W, unsigned(1))
@@ -233,7 +233,7 @@ class Spectrogram(wiring.Component):
         static_surface_3d = Signal()
         spectrum_style = Signal(init=1)
         spectrum_bands = Signal(2, init=1)
-        spectrum_fill = Signal(2, init=3)
+        spectrum_fill = Signal(3, init=3)
         spectrum_peaks = Signal(3, init=5)
         spectrum_smoothing = Signal(2)
         spectrum_scale = Signal(init=1)
@@ -794,7 +794,7 @@ class Spectrogram(wiring.Component):
         static_surface_3d_dvi = Signal()
         spectrum_style_dvi = Signal()
         spectrum_bands_dvi = Signal(2)
-        spectrum_fill_dvi = Signal(2)
+        spectrum_fill_dvi = Signal(3)
         spectrum_peaks_dvi = Signal(3)
         spectrum_smoothing_dvi = Signal(2)
         spectrum_scale_dvi = Signal()
@@ -1363,6 +1363,12 @@ class Spectrogram(wiring.Component):
         spectrum_read_prefetch_r = Signal()
         spectrum_read_plot_r = Signal()
         spectrum_read_frac_r = Signal(8)
+        spectrum_read_color_r = Signal(4)
+        spectrum_freq_color = Signal(4)
+        spectrum_freq_color_base = Signal(4)
+        spectrum_freq_color_frac = Signal(4)
+        dither_threshold = Signal(4)
+        dither_index = Signal(4)
         in_plot = Signal()
         m.d.dvi += [
             spectrum_prefetch_pipe.eq(spectrum_prefetch_calc),
@@ -1385,6 +1391,7 @@ class Spectrogram(wiring.Component):
             spectrum_read_plot_r.eq(spectrum_plot_pipe),
             spectrum_read_frac_r.eq(Mux(spectrum_log_curve_pipe,
                                         spectrum_log_frac, 0)),
+            spectrum_read_color_r.eq(spectrum_freq_color),
         ]
         spectrum_log_coord_luts = [
             Array(Const(coord, 16) for coord in lut)
@@ -1436,6 +1443,17 @@ class Spectrogram(wiring.Component):
                 (rel_x.as_unsigned() ==
                  (((spectrum_linear_bin + 1) <<
                     spectrum_band_pixel_shift) - 1))),
+            spectrum_freq_color_base.eq(
+                rel_x.as_unsigned() >> (x_scale_shift + 4)),
+            spectrum_freq_color_frac.eq(Mux(
+                wide,
+                rel_x.as_unsigned()[2:6],
+                rel_x.as_unsigned()[1:5])),
+            spectrum_freq_color.eq(Mux(
+                (spectrum_freq_color_frac > dither_threshold) &
+                (spectrum_freq_color_base < 15),
+                spectrum_freq_color_base + 1,
+                spectrum_freq_color_base)),
             # Curve mode follows a conventional analyzer-style logarithmic
             # frequency axis from 10 Hz to the selected range. Bars remain
             # linear and optionally pooled into fewer display bands.
@@ -1772,8 +1790,6 @@ class Spectrogram(wiring.Component):
         display_ext = Signal(8)
         display_base = Signal(4)
         display_frac = Signal(4)
-        dither_threshold = Signal(4)
-        dither_index = Signal(4)
         display_level = Signal(4)
         with m.Switch(persistence_dvi):
             with m.Case(0):
@@ -1846,6 +1862,7 @@ class Spectrogram(wiring.Component):
         spectrum_gradient_base = Signal(4)
         spectrum_gradient_frac = Signal(4)
         spectrum_gradient_level = Signal(4)
+        spectrum_gradient_fill_level = Signal(4)
         spectrum_amplitude_level = Signal(4)
         spectrum_fill_level = Signal(4)
         spectrum_focus_peak = Signal()
@@ -1887,6 +1904,16 @@ class Spectrogram(wiring.Component):
         spectrum_render_fill_level = Signal(4)
         spectrum_render_line_level = Signal(4)
         spectrum_render_glow_level = Signal(4)
+        spectrum_frequency_color = Signal(4)
+        spectrum_render_color = Signal(4)
+        spectrum_trace_color = Signal(4)
+        spectrum_grid_level = Signal(4)
+        spectrum_axis_level = Signal(4)
+        spectrum_axis_color = Signal(4)
+        spectrum_fill_is_gradient = Signal()
+        spectrum_fill_is_freq = Signal()
+        spectrum_fill_is_gradient_reverse = Signal()
+        spectrum_fill_is_freq_reverse = Signal()
 
         with m.If(self.i.vsync & ~prev_vsync):
             m.d.dvi += spectrum_peak_frame.eq(spectrum_peak_frame + 1)
@@ -1965,6 +1992,17 @@ class Spectrogram(wiring.Component):
             spectrum_render_fill_level.eq(spectrum_fill_level_focused),
             spectrum_render_line_level.eq(spectrum_line_level),
             spectrum_render_glow_level.eq(spectrum_curve_glow_level_focused),
+            spectrum_render_color.eq(Mux(
+                spectrum_fill_is_freq,
+                spectrum_frequency_color,
+                hue_dvi)),
+            spectrum_trace_color.eq(Mux(
+                spectrum_fill_is_freq,
+                spectrum_axis_color,
+                spectrum_render_color)),
+            spectrum_grid_level.eq(Mux(spectrum_fill_is_freq, 5, 2)),
+            spectrum_axis_level.eq(Mux(spectrum_fill_is_freq, 12, 10)),
+            spectrum_axis_color.eq(Mux(spectrum_fill_is_freq, 15, hue_dvi)),
         ]
 
         m.d.comb += [
@@ -2134,6 +2172,27 @@ class Spectrogram(wiring.Component):
                 (spectrum_gradient_base < 15),
                 spectrum_gradient_base + 1,
                 spectrum_gradient_base)),
+            spectrum_fill_is_gradient.eq(
+                (spectrum_fill_dvi == 2) |
+                (spectrum_fill_dvi == 4) |
+                (spectrum_fill_dvi == 5) |
+                (spectrum_fill_dvi == 6)),
+            spectrum_fill_is_freq.eq(
+                (spectrum_fill_dvi == 5) |
+                (spectrum_fill_dvi == 6)),
+            spectrum_fill_is_gradient_reverse.eq(spectrum_fill_dvi == 4),
+            spectrum_fill_is_freq_reverse.eq(spectrum_fill_dvi == 6),
+            spectrum_gradient_fill_level.eq(Mux(
+                spectrum_fill_is_gradient_reverse,
+                15 - spectrum_gradient_level,
+                spectrum_gradient_level)),
+            spectrum_frequency_color.eq(Mux(
+                spectrum_fill_is_freq_reverse,
+                15 - spectrum_read_color_r,
+                spectrum_read_color_r)),
+            # Non-frequency gradients vary brightness vertically but keep the
+            # selected palette's hue column stable. Frequency gradients vary
+            # hue/color by X position and use brightness for fill intensity.
             # Amplitude fill gives every bar/curve column one palette index
             # derived from its measured level. Heat-map palettes therefore
             # color low and high bands differently across their entire fill.
@@ -2144,8 +2203,8 @@ class Spectrogram(wiring.Component):
             spectrum_fill_level.eq(Mux(
                 spectrum_fill_dvi == 1,
                 4,
-                Mux(spectrum_fill_dvi == 2,
-                    spectrum_gradient_level,
+                Mux(spectrum_fill_is_gradient,
+                    spectrum_gradient_fill_level,
                     spectrum_amplitude_level))),
             spectrum_fill_level_focused.eq(Mux(
                 spectrum_focus_dim,
@@ -2212,41 +2271,43 @@ class Spectrogram(wiring.Component):
         with m.Elif(enable_dvi & ui_clear & spectrum_peak_hit):
             m.d.dvi += [
                 base_o.pixel.intensity.eq(spectrum_render_peak_level),
-                base_o.pixel.color.eq(hue_dvi + 8),
+                base_o.pixel.color.eq(Mux(
+                    spectrum_fill_is_freq,
+                    spectrum_trace_color,
+                    hue_dvi + 8)),
             ]
         with m.Elif(enable_dvi & ui_clear & spectrum_line_hit):
             m.d.dvi += [
                 base_o.pixel.intensity.eq(spectrum_render_line_level),
-                base_o.pixel.color.eq(hue_dvi),
+                base_o.pixel.color.eq(spectrum_trace_color),
             ]
         with m.Elif(enable_dvi & ui_clear & spectrum_curve_glow_hit):
             m.d.dvi += [
                 base_o.pixel.intensity.eq(spectrum_render_glow_level),
-                base_o.pixel.color.eq(hue_dvi),
+                base_o.pixel.color.eq(spectrum_trace_color),
+            ]
+        with m.Elif(enable_dvi & ~menu_protect & spectrum_grid_hit_d):
+            m.d.dvi += [
+                base_o.pixel.intensity.eq(spectrum_grid_level),
+                base_o.pixel.color.eq(spectrum_axis_color),
+            ]
+        with m.Elif(enable_dvi & ~menu_protect & axes_dvi & axes_hit_d):
+            m.d.dvi += [
+                base_o.pixel.intensity.eq(spectrum_axis_level),
+                base_o.pixel.color.eq(spectrum_axis_color),
             ]
         with m.Elif(enable_dvi & ui_clear & spectrum_fill_hit):
             with m.If(scan_d.pixel.intensity < spectrum_render_fill_level):
                 m.d.dvi += [
                     base_o.pixel.intensity.eq(spectrum_render_fill_level),
-                    base_o.pixel.color.eq(hue_dvi),
+                    base_o.pixel.color.eq(spectrum_render_color),
                 ]
-        with m.Elif(enable_dvi & ui_clear & spectrum_grid_hit_d):
-            with m.If(scan_d.pixel.intensity < 2):
-                m.d.dvi += [
-                    base_o.pixel.intensity.eq(2),
-                    base_o.pixel.color.eq(hue_dvi),
-                ]
-        with m.Elif(enable_dvi & ui_clear & axes_dvi & axes_hit_d):
-            m.d.dvi += [
-                base_o.pixel.intensity.eq(10),
-                base_o.pixel.color.eq(hue_dvi),
-            ]
 
         m.d.dvi += self.o.eq(base_o)
         with m.If(enable_dvi & ui_clear & axes_dvi & label_hit):
             m.d.dvi += [
-                self.o.pixel.intensity.eq(10),
-                self.o.pixel.color.eq(hue_dvi),
+                self.o.pixel.intensity.eq(spectrum_axis_level),
+                self.o.pixel.color.eq(spectrum_axis_color),
             ]
 
         return m

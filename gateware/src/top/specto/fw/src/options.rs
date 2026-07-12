@@ -195,6 +195,11 @@ pub enum SpectrumFill {
     Gradient,
     #[default]
     Amplitude,
+    #[strum(serialize = "grad-rev")]
+    GradientReverse,
+    Freq,
+    #[strum(serialize = "freq-rev")]
+    FreqReverse,
 }
 
 impl SpectrumFill {
@@ -204,6 +209,9 @@ impl SpectrumFill {
             Self::Solid => 1,
             Self::Gradient => 2,
             Self::Amplitude => 3,
+            Self::GradientReverse => 4,
+            Self::Freq => 5,
+            Self::FreqReverse => 6,
         }
     }
 }

@@ -124,9 +124,37 @@ fn rotate_rgb_hue((r, g, b): (u8, u8, u8), shift: u8) -> (u8, u8, u8) {
     (rr as u8, gg as u8, bb as u8)
 }
 
+fn scale_rgb_visible((r, g, b): (u8, u8, u8), intensity: u8) -> (u8, u8, u8) {
+    let scale = if intensity == 0 {
+        0
+    } else {
+        4 + ((intensity as u16 * 11) / 15)
+    };
+    (
+        ((r as u16 * scale) / 15) as u8,
+        ((g as u16 * scale) / 15) as u8,
+        ((b as u16 * scale) / 15) as u8,
+    )
+}
+
 /// Program SPECTO's palette. Scalar heat maps use each hardware hue column
 /// for a rotated version, keeping the plot hue control meaningful.
-fn write_specto_palette(palette: ColorPalette, video: &mut impl DMAFramebuffer) {
+fn write_specto_palette(
+    palette: ColorPalette,
+    video: &mut impl DMAFramebuffer,
+    frequency_ramp: bool,
+) {
+    if frequency_ramp {
+        for intensity in 0..16u8 {
+            for hue in 0..16u8 {
+                let (r, g, b) =
+                    scale_rgb_visible(palette.frequency_color(hue), intensity);
+                video.set_palette_rgb(intensity, hue, r, g, b);
+            }
+        }
+        return;
+    }
+
     if palette.heatmap_color(0).is_none() {
         palette.write_to_hardware(video);
         return;
@@ -286,6 +314,7 @@ fn main() -> ! {
     opts.view_3d.source.value = Source3d::Live;
 
     let mut last_palette = opts.display.palette.value;
+    let mut last_frequency_ramp_palette = false;
     let app = Mutex::new(RefCell::new(App::new(opts)));
     handler!(timer0 = || timer0_handler(&app));
 
@@ -369,9 +398,20 @@ fn main() -> ! {
             last_view_3d = view_3d;
             last_help_scroll = help_scroll;
 
-            if opts.display.palette.value != last_palette || first {
-                write_specto_palette(opts.display.palette.value, &mut display);
+            let frequency_ramp_palette =
+                spectrum_mode &&
+                (opts.spectro.fill.value == SpectrumFill::Freq ||
+                 opts.spectro.fill.value == SpectrumFill::FreqReverse);
+            if opts.display.palette.value != last_palette ||
+                    frequency_ramp_palette != last_frequency_ramp_palette ||
+                    first {
+                write_specto_palette(
+                    opts.display.palette.value,
+                    &mut display,
+                    frequency_ramp_palette,
+                );
                 last_palette = opts.display.palette.value;
+                last_frequency_ramp_palette = frequency_ramp_palette;
             }
 
             let (menu_x, menu_y) = if on_help_page {
@@ -564,7 +604,10 @@ fn main() -> ! {
                 // in case that pause is ever relaxed while debugging.
                 persist.set_cleanup();
             } else {
-                persist.set_persistence(if on_help_page { 64 } else { 24 });
+                // Help is a static framebuffer page. Keep decay as slow as
+                // the existing persistence controller allows so it remains
+                // readable until software clears/redraws it on scroll.
+                persist.set_persistence(if on_help_page { 80 } else { 24 });
             }
             display.rotate(&opts.misc.rotation.value);
             first = false;

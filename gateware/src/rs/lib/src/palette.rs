@@ -23,6 +23,8 @@ pub enum ColorPalette {
     Plasma,
     Viridis,
     Rainbow,
+    #[strum(serialize = "rainbow-freq")]
+    RainbowFreq,
 }
 
 const fn hue2rgb(p: f64, q: f64, mut t: f64) -> f64 {
@@ -204,6 +206,23 @@ const fn gen_heatmap(colors: [(u8, u8, u8); 16])
     lut
 }
 
+const fn gen_rainbow_frequency() -> [(u8, u8, u8); PALETTE_LEN] {
+    let mut lut = [(0u8, 0u8, 0u8); PALETTE_LEN];
+    let mut i = 0;
+    while i < PX_INTENSITY_MAX {
+        let lightness = i as f64 / (PX_INTENSITY_MAX - 1) as f64 * 0.5;
+        let mut h = 0;
+        while h < PX_HUE_MAX {
+            // Red at low frequencies through violet at high frequencies.
+            let hue = h as f64 / (PX_HUE_MAX - 1) as f64 * 0.78;
+            lut[i * PX_HUE_MAX + h] = hsl2rgb(hue, 1.0, lightness);
+            h += 1;
+        }
+        i += 1;
+    }
+    lut
+}
+
 const fn gen_hueswap() -> [(u8, u8, u8); PALETTE_LEN] {
     let mut lut = [(0u8, 0u8, 0u8); PALETTE_LEN];
     let mut i = 0;
@@ -235,6 +254,8 @@ static PALETTE_MAGMA:    [(u8, u8, u8); PALETTE_LEN] = gen_heatmap(MAGMA_16);
 static PALETTE_PLASMA:   [(u8, u8, u8); PALETTE_LEN] = gen_heatmap(PLASMA_16);
 static PALETTE_VIRIDIS:  [(u8, u8, u8); PALETTE_LEN] = gen_heatmap(VIRIDIS_16);
 static PALETTE_RAINBOW:  [(u8, u8, u8); PALETTE_LEN] = gen_heatmap(RAINBOW_16);
+static PALETTE_RAINBOW_FREQ: [(u8, u8, u8); PALETTE_LEN] =
+    gen_rainbow_frequency();
 
 impl ColorPalette {
     fn lut(&self) -> &'static [(u8, u8, u8); PALETTE_LEN] {
@@ -250,6 +271,7 @@ impl ColorPalette {
             ColorPalette::Plasma   => &PALETTE_PLASMA,
             ColorPalette::Viridis  => &PALETTE_VIRIDIS,
             ColorPalette::Rainbow  => &PALETTE_RAINBOW,
+            ColorPalette::RainbowFreq => &PALETTE_RAINBOW_FREQ,
         }
     }
 
@@ -265,6 +287,28 @@ impl ColorPalette {
             ColorPalette::Viridis => Some(VIRIDIS_16[index]),
             ColorPalette::Rainbow => Some(RAINBOW_16[index]),
             _ => None,
+        }
+    }
+
+    /// Return a color for a palette position when the palette is used as a
+    /// horizontal frequency ramp. The selected palette chooses hue/color while
+    /// the pixel intensity is free to represent amplitude.
+    pub fn frequency_color(&self, position: u8) -> (u8, u8, u8) {
+        let index = (position & 0x0f) as usize;
+        // For frequency ramps, the palette position is the user's only cue for
+        // where a band lives horizontally. Avoid the very darkest heat-map
+        // entries so low-frequency regions remain legible when amplitude
+        // brightness is applied separately.
+        let heatmap_index = 2 + ((index * 13 + 7) / 15);
+        match self {
+            ColorPalette::Inferno => INFERNO_16[heatmap_index],
+            ColorPalette::Magma => MAGMA_16[heatmap_index],
+            ColorPalette::Plasma => PLASMA_16[heatmap_index],
+            ColorPalette::Viridis => VIRIDIS_16[heatmap_index],
+            ColorPalette::Rainbow | ColorPalette::RainbowFreq => {
+                PALETTE_RAINBOW_FREQ[(PX_INTENSITY_MAX - 1) * PX_HUE_MAX + index]
+            }
+            _ => self.lut()[(PX_INTENSITY_MAX - 1) * PX_HUE_MAX + index],
         }
     }
 
