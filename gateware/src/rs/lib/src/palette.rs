@@ -23,7 +23,7 @@ pub enum ColorPalette {
     Plasma,
     Viridis,
     Rainbow,
-    #[strum(serialize = "rainbow-freq")]
+    #[strum(serialize = "r-freq")]
     RainbowFreq,
 }
 
@@ -198,7 +198,14 @@ const fn gen_heatmap(colors: [(u8, u8, u8); 16])
     while i < PX_INTENSITY_MAX {
         let mut h = 0;
         while h < PX_HUE_MAX {
-            lut[i * PX_HUE_MAX + h] = colors[i];
+            // Pixel intensity 0 must remain true black. Otherwise selecting
+            // palettes like plasma/viridis/rainbow recolors the framebuffer
+            // background itself, which makes menus and axes harder to read.
+            lut[i * PX_HUE_MAX + h] = if i == 0 {
+                (0, 0, 0)
+            } else {
+                colors[i]
+            };
             h += 1;
         }
         i += 1;
@@ -232,9 +239,12 @@ const fn gen_hueswap() -> [(u8, u8, u8); PALETTE_LEN] {
             lut[i * PX_HUE_MAX + h] = if i == 0 {
                 (0, 0, 0)
             } else {
+                let hue = ((i - 1 + h) % PX_INTENSITY_MAX) as f64 /
+                    PX_INTENSITY_MAX as f64;
+                let lightness = 0.12 + i as f64 /
+                    (PX_INTENSITY_MAX - 1) as f64 * 0.38;
                 hsl2rgb(
-                    i as f64 / PX_INTENSITY_MAX as f64, 0.9,
-                    h as f64 / PX_HUE_MAX as f64)
+                    hue, 0.9, lightness)
             };
             h += 1;
         }
@@ -271,7 +281,7 @@ impl ColorPalette {
             ColorPalette::Plasma   => &PALETTE_PLASMA,
             ColorPalette::Viridis  => &PALETTE_VIRIDIS,
             ColorPalette::Rainbow  => &PALETTE_RAINBOW,
-            ColorPalette::RainbowFreq => &PALETTE_RAINBOW_FREQ,
+            ColorPalette::RainbowFreq => &PALETTE_RAINBOW,
         }
     }
 
@@ -280,6 +290,16 @@ impl ColorPalette {
     /// continue programming the palette through `write_to_hardware`.
     pub fn heatmap_color(&self, intensity: u8) -> Option<(u8, u8, u8)> {
         let index = (intensity & 0x0f) as usize;
+        if index == 0 {
+            return match self {
+                ColorPalette::Inferno |
+                ColorPalette::Magma |
+                ColorPalette::Plasma |
+                ColorPalette::Viridis |
+                ColorPalette::Rainbow => Some((0, 0, 0)),
+                _ => None,
+            };
+        }
         match self {
             ColorPalette::Inferno => Some(INFERNO_16[index]),
             ColorPalette::Magma => Some(MAGMA_16[index]),

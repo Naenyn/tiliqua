@@ -384,10 +384,10 @@ class Spectrogram(wiring.Component):
                     fixed.Const(0.92, shape=ASQ))
             with m.Case(2):
                 m.d.comb += spectrum_release_beta.eq(
-                    fixed.Const(0.97, shape=ASQ))
+                    fixed.Const(0.99, shape=ASQ))
             with m.Default():
                 m.d.comb += spectrum_release_beta.eq(
-                    fixed.Const(0.99, shape=ASQ))
+                    fixed.Const(0.997, shape=ASQ))
         m.d.comb += [
             envelope.block_lpf.beta.eq(Mux(
                 spectrum_mode,
@@ -488,7 +488,7 @@ class Spectrogram(wiring.Component):
         write_col = Signal(8)
         newest_col = Signal(8)
         bin_index = Signal(9)
-        frame_seq = Signal(4)
+        frame_seq = Signal(6)
         accept_latched = Signal()
 
         # A 3D frame is accepted only after the renderer finishes a complete
@@ -506,6 +506,7 @@ class Spectrogram(wiring.Component):
         m.d.comb += render_slot_ready.eq(render_token_sync != render_ack_sync)
 
         accept_rate = Signal()
+        spectrum_accept_rate = Signal()
         accept_now = Signal()
         with m.Switch(rate_sel):
             with m.Case(0):
@@ -527,15 +528,24 @@ class Spectrogram(wiring.Component):
                 m.d.comb += accept_rate.eq(Mux(
                     fine_mode,
                     frame_seq[:3] == 0,
-                    frame_seq == 0,
+                    frame_seq[:4] == 0,
                 ))
+        with m.Switch(rate_sel):
+            with m.Case(0):
+                m.d.comb += spectrum_accept_rate.eq(1)
+            with m.Case(1):
+                m.d.comb += spectrum_accept_rate.eq(frame_seq[:2] == 0)
+            with m.Case(2):
+                m.d.comb += spectrum_accept_rate.eq(frame_seq[:4] == 0)
+            with m.Default():
+                m.d.comb += spectrum_accept_rate.eq(frame_seq[:5] == 0)
         # In 3D the renderer itself applies the selected sweep divider before
         # issuing a token. Do not divide again using the free-running analyzer
         # frame counter, which made the control nearly invisible in practice.
         m.d.comb += accept_now.eq(Mux(
             view_3d,
             render_slot_ready,
-            Mux(spectrum_mode, 1, accept_rate),
+            Mux(spectrum_mode, spectrum_accept_rate, accept_rate),
         ))
 
         current_bin = Signal(9)
@@ -674,12 +684,14 @@ class Spectrogram(wiring.Component):
             history_w.data.eq(stored_level),
             spectrum_levels_w.en.eq(
                 log.o.valid &
+                do_write &
                 (current_bin <= spectrum_active_bin_last) &
                 spectrum_group_last),
             spectrum_levels_w.addr.eq(spectrum_band_index_sync),
             spectrum_levels_w.data.eq(spectrum_group_peak_next),
             spectrum_focus_w.en.eq(
                 log.o.valid &
+                do_write &
                 (current_bin <= spectrum_active_bin_last) &
                 spectrum_group_last),
             spectrum_focus_w.addr.eq(spectrum_band_index_sync),
@@ -2095,7 +2107,7 @@ class Spectrogram(wiring.Component):
                                   ~spectrum_focus_peak),
             spectrum_line_level.eq(Mux(
                 spectrum_highlight_dvi,
-                spectrum_focus_r.data,
+                Mux(spectrum_focus_r.data != 0, spectrum_focus_r.data, 4),
                 15)),
             spectrum_curve_glow_level_focused.eq(Mux(
                 spectrum_focus_dim,
@@ -2206,13 +2218,7 @@ class Spectrogram(wiring.Component):
                 Mux(spectrum_fill_is_gradient,
                     spectrum_gradient_fill_level,
                     spectrum_amplitude_level))),
-            spectrum_fill_level_focused.eq(Mux(
-                spectrum_focus_dim,
-                spectrum_fill_level >> 1,
-                Mux(spectrum_highlight_dvi &
-                    (spectrum_fill_level < spectrum_focus_r.data),
-                    spectrum_focus_r.data,
-                    spectrum_fill_level))),
+            spectrum_fill_level_focused.eq(spectrum_fill_level),
             spectrum_peak_level_next.eq(Mux(
                 spectrum_peaks_dvi == 0,
                 spectrum_levels_r.data,
@@ -2254,10 +2260,10 @@ class Spectrogram(wiring.Component):
         m.d.comb += [
             menu_protect.eq(
                 menu_visible_dvi & scan_d.de &
-                (scan_d.x >= h_active_dvi - 230) &
-                (scan_d.x < h_active_dvi - 32) &
-                (scan_d.y >= (v_active_dvi >> 1) - 40) &
-                (scan_d.y < (v_active_dvi >> 1) + 220)),
+                (scan_d.x >= h_active_dvi - 284) &
+                (scan_d.x < h_active_dvi - 40) &
+                (scan_d.y >= (v_active_dvi >> 1) - 18) &
+                (scan_d.y < (v_active_dvi >> 1) + 224)),
             ui_clear.eq((scan_d.pixel.intensity == 0) & ~menu_protect),
         ]
         m.d.dvi += base_o.eq(scan_d)
