@@ -67,16 +67,16 @@ impl Quality3d {
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 #[strum(serialize_all = "kebab-case")]
 pub enum DisplayMode {
-    Spectrum,
     #[default]
+    Spectrum,
     Spectrograph,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 #[strum(serialize_all = "kebab-case")]
 pub enum SpectrumStyle {
-    Bars,
     #[default]
+    Bars,
     Curve,
 }
 
@@ -381,7 +381,7 @@ pub struct SpectroOpts {
     #[option_if(self.mode.value == DisplayMode::Spectrum)]
     pub spectrum_style: EnumOption<SpectrumStyle>,
     #[option]
-    #[option_if(self.mode.value == DisplayMode::Spectrum && self.spectrum_style.value == SpectrumStyle::Curve)]
+    #[option_if(self.mode.value == DisplayMode::Spectrum)]
     pub scale: EnumOption<SpectrumScale>,
     #[option]
     #[option_if(self.mode.value == DisplayMode::Spectrum)]

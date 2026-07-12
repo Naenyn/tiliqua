@@ -137,6 +137,38 @@ fn scale_rgb_visible((r, g, b): (u8, u8, u8), intensity: u8) -> (u8, u8, u8) {
     )
 }
 
+fn max3(a: u8, b: u8, c: u8) -> u8 {
+    let ab = if a > b { a } else { b };
+    if ab > c { ab } else { c }
+}
+
+fn scale_rgb_to_level(
+    (r, g, b): (u8, u8, u8),
+    target_level: u8,
+) -> (u8, u8, u8) {
+    let source_level = max3(r, g, b);
+    if target_level == 0 || source_level == 0 {
+        return (0, 0, 0);
+    }
+    (
+        ((r as u16 * target_level as u16) / source_level as u16) as u8,
+        ((g as u16 * target_level as u16) / source_level as u16) as u8,
+        ((b as u16 * target_level as u16) / source_level as u16) as u8,
+    )
+}
+
+fn scale_rgb_like_palette(
+    palette: ColorPalette,
+    rgb: (u8, u8, u8),
+    intensity: u8,
+) -> (u8, u8, u8) {
+    if let Some((r, g, b)) = palette.heatmap_color(intensity) {
+        scale_rgb_to_level(rgb, max3(r, g, b))
+    } else {
+        scale_rgb_visible(rgb, intensity)
+    }
+}
+
 /// Program SPECTO's palette. Scalar heat maps use each hardware hue column
 /// for a rotated version, keeping the plot hue control meaningful.
 fn write_specto_palette(
@@ -148,7 +180,8 @@ fn write_specto_palette(
         for intensity in 0..16u8 {
             for hue in 0..16u8 {
                 let (r, g, b) =
-                    scale_rgb_visible(palette.frequency_color(hue), intensity);
+                    scale_rgb_like_palette(
+                        palette, palette.frequency_color(hue), intensity);
                 video.set_palette_rgb(intensity, hue, r, g, b);
             }
         }
@@ -306,11 +339,12 @@ fn main() -> ! {
     if opts.view_3d.quality.value == Quality3d::Low {
         opts.view_3d.quality.value = Quality3d::Medium;
     }
-    // 3D renderer work should boot directly into the live 3D view regardless
-    // of older saved SPECTO settings. Static remains available from the 3D
-    // menu as a deterministic framebuffer diagnostic.
-    opts.spectro.mode.value = DisplayMode::Spectrograph;
-    opts.spectro.view.value = ViewMode::ThreeD;
+    // Boot into the analyzer view even when older saved SPECTO settings came
+    // from the 3D renderer work. The 3D spectrograph remains available from
+    // the mode/view menus.
+    opts.spectro.mode.value = DisplayMode::Spectrum;
+    opts.spectro.spectrum_style.value = SpectrumStyle::Bars;
+    opts.spectro.scale.value = SpectrumScale::Log;
     opts.view_3d.source.value = Source3d::Live;
 
     let mut last_palette = opts.display.palette.value;
