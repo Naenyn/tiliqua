@@ -194,16 +194,13 @@ class Spectrogram(wiring.Component):
 
     class Config3d(csr.Register, access="w"):
         quality: csr.Field(csr.action.W, unsigned(2))
-        static_surface: csr.Field(csr.action.W, unsigned(1))
 
     class SpectrumConfig(csr.Register, access="w"):
         style: csr.Field(csr.action.W, unsigned(1))
         bands: csr.Field(csr.action.W, unsigned(2))
         fill: csr.Field(csr.action.W, unsigned(3))
         peaks: csr.Field(csr.action.W, unsigned(3))
-        smoothing: csr.Field(csr.action.W, unsigned(2))
         scale: csr.Field(csr.action.W, unsigned(1))
-        tilt: csr.Field(csr.action.W, unsigned(2))
         highlight: csr.Field(csr.action.W, unsigned(1))
 
     class ProjectionX(csr.Register, access="w"):
@@ -273,14 +270,11 @@ class Spectrogram(wiring.Component):
         persistence = Signal(2, init=2)
         hue = Signal(4, init=5)
         quality_3d = Signal(2, init=1)
-        static_surface_3d = Signal()
         spectrum_style = Signal(init=1)
         spectrum_bands = Signal(2, init=1)
         spectrum_fill = Signal(3, init=3)
         spectrum_peaks = Signal(3, init=5)
-        spectrum_smoothing = Signal(2)
         spectrum_scale = Signal(init=1)
-        spectrum_tilt = Signal(2)
         spectrum_highlight = Signal()
         spectrum_log_bucket_generation = Signal(4)
         spectrum_log_config_dirty = Signal()
@@ -333,21 +327,14 @@ class Spectrogram(wiring.Component):
                 projection_y[2].eq(self._projection_y.f.time.w_data),
             ]
         with m.If(self._config_3d.element.w_stb):
-            m.d.sync += [
-                quality_3d.eq(self._config_3d.f.quality.w_data),
-                static_surface_3d.eq(
-                    self._config_3d.f.static_surface.w_data),
-            ]
+            m.d.sync += quality_3d.eq(self._config_3d.f.quality.w_data)
         with m.If(self._spectrum_config.element.w_stb):
             m.d.sync += [
                 spectrum_style.eq(self._spectrum_config.f.style.w_data),
                 spectrum_bands.eq(self._spectrum_config.f.bands.w_data),
                 spectrum_fill.eq(self._spectrum_config.f.fill.w_data),
                 spectrum_peaks.eq(self._spectrum_config.f.peaks.w_data),
-                spectrum_smoothing.eq(
-                    self._spectrum_config.f.smoothing.w_data),
                 spectrum_scale.eq(self._spectrum_config.f.scale.w_data),
-                spectrum_tilt.eq(self._spectrum_config.f.tilt.w_data),
                 spectrum_highlight.eq(
                     self._spectrum_config.f.highlight.w_data),
             ]
@@ -630,9 +617,6 @@ class Spectrogram(wiring.Component):
         current_bin = Signal(9)
         do_write = Signal()
         raw_level = Signal(6)
-        spectrum_octave = Signal(4)
-        spectrum_tilt_step = Signal(4)
-        spectrum_tilt_boost = Signal(5)
         boosted_level = Signal(8)
         stored_level = Signal(6)
         spectrum_frequency_shift = Signal(2)
@@ -859,11 +843,7 @@ class Spectrogram(wiring.Component):
             current_bin.eq(Mux(log.o.payload.first, 0, bin_index)),
             do_write.eq(Mux(log.o.payload.first, accept_now, accept_latched)),
             raw_level.eq(log.o.payload.sample.as_value()[ASQ.f_bits-6:ASQ.f_bits]),
-            spectrum_tilt_step.eq(Mux(
-                spectrum_tilt == 1, 2,
-                Mux(spectrum_tilt == 2, 4, 0))),
-            spectrum_tilt_boost.eq(spectrum_octave * spectrum_tilt_step),
-            boosted_level.eq(raw_level + gain + spectrum_tilt_boost),
+            boosted_level.eq(raw_level + gain),
             stored_level.eq(Mux(boosted_level > 63, 63, boosted_level[:6])),
             spectrum_frequency_shift.eq(Mux(
                 range_sel == 0, 0, range_sel - 1)),
@@ -982,21 +962,6 @@ class Spectrogram(wiring.Component):
                     spectrum_group_first.eq(current_bin[:3] == 0),
                     spectrum_group_last.eq(current_bin[:3] == 7),
                 ]
-
-        with m.If(current_bin >= 128):
-            m.d.comb += spectrum_octave.eq(6)
-        with m.Elif(current_bin >= 64):
-            m.d.comb += spectrum_octave.eq(5)
-        with m.Elif(current_bin >= 32):
-            m.d.comb += spectrum_octave.eq(4)
-        with m.Elif(current_bin >= 16):
-            m.d.comb += spectrum_octave.eq(3)
-        with m.Elif(current_bin >= 8):
-            m.d.comb += spectrum_octave.eq(2)
-        with m.Elif(current_bin >= 4):
-            m.d.comb += spectrum_octave.eq(1)
-        with m.Else():
-            m.d.comb += spectrum_octave.eq(0)
 
         with m.If(log.o.valid):
             with m.If(log.o.payload.first):
@@ -1129,14 +1094,11 @@ class Spectrogram(wiring.Component):
         spectrum_mode_dvi = Signal()
         display_ack_dvi = Signal()
         quality_3d_dvi = Signal(2)
-        static_surface_3d_dvi = Signal()
         spectrum_style_dvi = Signal()
         spectrum_bands_dvi = Signal(2)
         spectrum_fill_dvi = Signal(3)
         spectrum_peaks_dvi = Signal(3)
-        spectrum_smoothing_dvi = Signal(2)
         spectrum_scale_dvi = Signal()
-        spectrum_tilt_dvi = Signal(2)
         spectrum_highlight_dvi = Signal()
         spectrum_log_bucket_generation_dvi = Signal(4)
         range_dvi = Signal(2)
@@ -1160,15 +1122,11 @@ class Spectrogram(wiring.Component):
             ("spectrum_mode", spectrum_mode, spectrum_mode_dvi),
             ("display_ack", display_ack, display_ack_dvi),
             ("quality_3d", quality_3d, quality_3d_dvi),
-            ("static_surface_3d", static_surface_3d, static_surface_3d_dvi),
             ("spectrum_style", spectrum_style, spectrum_style_dvi),
             ("spectrum_bands", spectrum_bands, spectrum_bands_dvi),
             ("spectrum_fill", spectrum_fill, spectrum_fill_dvi),
             ("spectrum_peaks", spectrum_peaks, spectrum_peaks_dvi),
-            ("spectrum_smoothing", spectrum_smoothing,
-             spectrum_smoothing_dvi),
             ("spectrum_scale", spectrum_scale, spectrum_scale_dvi),
-            ("spectrum_tilt", spectrum_tilt, spectrum_tilt_dvi),
             ("spectrum_highlight", spectrum_highlight,
              spectrum_highlight_dvi),
             ("spectrum_log_bucket_generation", spectrum_log_bucket_generation,
@@ -1289,12 +1247,6 @@ class Spectrogram(wiring.Component):
         scan_point_last = Signal(7)
         scan_group_shift = Signal(2)
         frequency_coordinate = Signal(9)
-        static_delta_a = Signal(7)
-        static_delta_b = Signal(7)
-        static_peak_a = Signal(6)
-        static_peak_b = Signal(6)
-        static_peak = Signal(6)
-        sweep_static_surface = Signal()
         sweep_hue_limited = Signal(3)
         sweep_axis_hue_a = Signal(3)
         sweep_axis_hue_b = Signal(3)
@@ -1324,29 +1276,6 @@ class Spectrogram(wiring.Component):
                 effective_quality == 1,
                 scan_point << 2,
                 scan_point << 1)),
-            # Static diagnostic: two fixed triangular peaks across all history
-            # slices. This is deliberately boring and legible so framebuffer
-            # clear/swap problems stand out as missing or duplicated ridges.
-            static_delta_a.eq(Mux(
-                scan_point > 38,
-                scan_point - 38,
-                38 - scan_point)),
-            static_delta_b.eq(Mux(
-                scan_point > 92,
-                scan_point - 92,
-                92 - scan_point)),
-            static_peak_a.eq(Mux(
-                static_delta_a < 16,
-                60 - (static_delta_a << 2),
-                6)),
-            static_peak_b.eq(Mux(
-                static_delta_b < 12,
-                42 - (static_delta_b << 2),
-                6)),
-            static_peak.eq(Mux(
-                static_peak_a > static_peak_b,
-                static_peak_a,
-                static_peak_b)),
             scan_history_age.eq(Const(15, 4) - scan_slice),
             # Consecutive captures are spread across the full visual Z depth.
             scan_depth.eq(scan_history_age << 4),
@@ -1357,12 +1286,9 @@ class Spectrogram(wiring.Component):
                     Mux(scan_group_shift == 2, 3, 7)))),
             scan_history_bin.eq(scan_group_base + scan_group_index),
             scan_peak_next.eq(Mux(
-                sweep_static_surface,
-                static_peak,
-                Mux(history_r.data > scan_peak,
-                    history_r.data,
-                    scan_peak),
-            )),
+                history_r.data > scan_peak,
+                history_r.data,
+                scan_peak)),
             scan_read_en.eq(0),
             scan_read_addr.eq(
                 ((sweep_newest + scan_history_age) << 8) |
@@ -1419,7 +1345,6 @@ class Spectrogram(wiring.Component):
                         sweep_hue.eq(hue_dvi),
                         sweep_phosphor.eq(phosphor_dvi),
                         sweep_quality_3d.eq(quality_3d_dvi),
-                        sweep_static_surface.eq(static_surface_3d_dvi),
                         draw_generation.eq(visible_generation + 1),
                         render_activity_seen.eq(0),
                         clear_request.eq(1),
@@ -1692,6 +1617,8 @@ class Spectrogram(wiring.Component):
         spectrum_log_bar_shift = Signal(2)
         spectrum_log_bar_addr = Signal(8)
         spectrum_log_bucket_frac = Signal(8)
+        spectrum_log_gap_shift = Signal(3)
+        spectrum_log_gap = Signal()
         spectrum_log_frac = Signal(8)
         spectrum_log_underflow = Signal()
         spectrum_log_underflow_pipe = Signal()
@@ -1704,6 +1631,7 @@ class Spectrogram(wiring.Component):
         spectrum_linear_bin_pipe = Signal(8)
         spectrum_linear_first_pipe = Signal()
         spectrum_linear_gap_pipe = Signal()
+        spectrum_log_gap_pipe = Signal()
         spectrum_plot_pipe = Signal()
         spectrum_read_en_r = Signal()
         spectrum_read_bin_r = Signal(8)
@@ -1731,6 +1659,7 @@ class Spectrogram(wiring.Component):
             spectrum_linear_bin_pipe.eq(spectrum_linear_bin),
             spectrum_linear_first_pipe.eq(spectrum_linear_first),
             spectrum_linear_gap_pipe.eq(spectrum_linear_gap),
+            spectrum_log_gap_pipe.eq(spectrum_log_gap),
             spectrum_plot_pipe.eq(in_plot & spectrum_mode_dvi),
         ]
         with m.If(spectrum_read_region):
@@ -1838,6 +1767,20 @@ class Spectrogram(wiring.Component):
             spectrum_log_bar_shift.eq(3 - spectrum_bands_dvi),
             spectrum_log_bar_addr.eq(
                 spectrum_log_col >> spectrum_log_bar_shift),
+            spectrum_log_gap_shift.eq(
+                x_scale_shift + spectrum_log_bar_shift),
+            spectrum_log_gap.eq(Mux(
+                spectrum_log_gap_shift == 0,
+                0,
+                Mux(spectrum_log_gap_shift == 1,
+                    rel_x.as_unsigned()[0],
+                    Mux(spectrum_log_gap_shift == 2,
+                        rel_x.as_unsigned()[:2] == 0b11,
+                        Mux(spectrum_log_gap_shift == 3,
+                            rel_x.as_unsigned()[:3] == 0b111,
+                            Mux(spectrum_log_gap_shift == 4,
+                                rel_x.as_unsigned()[:4] == 0b1111,
+                                rel_x.as_unsigned()[:5] == 0b11111)))))),
             spectrum_log_bucket_frac.eq(Mux(
                 spectrum_log_bar_shift == 0,
                 0,
@@ -1869,8 +1812,10 @@ class Spectrogram(wiring.Component):
                     (spectrum_bin != spectrum_bin_prev),
                     spectrum_linear_first_pipe)),
             spectrum_band_gap.eq(
-                ~spectrum_style_pipe & ~spectrum_scale_pipe &
-                spectrum_linear_gap_pipe),
+                ~spectrum_style_pipe &
+                Mux(spectrum_scale_pipe,
+                    spectrum_log_gap_pipe,
+                    spectrum_linear_gap_pipe)),
             in_plot.eq(self.i.de & (rel_x >= 0) & (rel_x < plot_w) &
                        (rel_y >= 0) & (rel_y < plot_h)),
             history_r.en.eq(Mux(view_3d_dvi, scan_read_en, in_plot)),
@@ -2288,8 +2233,6 @@ class Spectrogram(wiring.Component):
         spectrum_focus_glow_ext = Signal(5)
         spectrum_curve_raw_prev = Signal(6)
         spectrum_curve_target = Signal(6)
-        spectrum_curve_light_ext = Signal(8)
-        spectrum_curve_strong_ext = Signal(7)
         spectrum_curve_log_start = Signal(6)
         spectrum_curve_log_end = Signal(6)
         spectrum_curve_log_start_effective = Signal(6)
@@ -2458,21 +2401,7 @@ class Spectrogram(wiring.Component):
                 spectrum_log_bar_d & spectrum_log_level_valid,
                 spectrum_log_focus_r.data,
                 spectrum_focus_r.data)),
-            # Optional spatial smoothing blends only adjacent frequency bands.
-            # Off retains the exact pooled analyzer values. Both filters use
-            # power-of-two weights so the video path needs no multiplier.
-            spectrum_curve_light_ext.eq(
-                spectrum_curve_raw_prev +
-                (spectrum_display_level << 1) +
-                spectrum_display_level + 2),
-            spectrum_curve_strong_ext.eq(
-                spectrum_curve_raw_prev + spectrum_display_level + 1),
-            spectrum_curve_target.eq(Mux(
-                spectrum_smoothing_dvi == 1,
-                spectrum_curve_light_ext >> 2,
-                Mux(spectrum_smoothing_dvi == 2,
-                    spectrum_curve_strong_ext >> 1,
-                    spectrum_display_level))),
+            spectrum_curve_target.eq(spectrum_display_level),
             spectrum_curve_log_start_effective.eq(Mux(
                 spectrum_band_first_d,
                 spectrum_curve_log_end,
@@ -2740,10 +2669,10 @@ class Spectrogram(wiring.Component):
         m.d.comb += [
             menu_protect.eq(
                 menu_visible_dvi & scan_d.de &
-                (scan_d.x >= h_active_dvi - 284) &
-                (scan_d.x < h_active_dvi - 40) &
+                (scan_d.x >= h_active_dvi - 292) &
+                (scan_d.x < h_active_dvi - 28) &
                 (scan_d.y >= (v_active_dvi >> 1) - 18) &
-                (scan_d.y < (v_active_dvi >> 1) + 224)),
+                (scan_d.y < (v_active_dvi >> 1) + 138)),
             ui_clear.eq((scan_d.pixel.intensity == 0) & ~menu_protect),
         ]
         m.d.dvi += base_o.eq(scan_d)
@@ -2772,6 +2701,12 @@ class Spectrogram(wiring.Component):
                 base_o.pixel.intensity.eq(spectrum_render_glow_level),
                 base_o.pixel.color.eq(spectrum_trace_color),
             ]
+        with m.Elif(enable_dvi & ui_clear & spectrum_fill_hit):
+            with m.If(scan_d.pixel.intensity < spectrum_render_fill_level):
+                m.d.dvi += [
+                    base_o.pixel.intensity.eq(spectrum_render_fill_level),
+                    base_o.pixel.color.eq(spectrum_render_color),
+                ]
         with m.Elif(enable_dvi & ~menu_protect & spectrum_grid_hit_d):
             m.d.dvi += [
                 base_o.pixel.intensity.eq(spectrum_grid_level),
@@ -2782,12 +2717,6 @@ class Spectrogram(wiring.Component):
                 base_o.pixel.intensity.eq(spectrum_axis_level),
                 base_o.pixel.color.eq(spectrum_axis_color),
             ]
-        with m.Elif(enable_dvi & ui_clear & spectrum_fill_hit):
-            with m.If(scan_d.pixel.intensity < spectrum_render_fill_level):
-                m.d.dvi += [
-                    base_o.pixel.intensity.eq(spectrum_render_fill_level),
-                    base_o.pixel.color.eq(spectrum_render_color),
-                ]
 
         m.d.dvi += self.o.eq(base_o)
         with m.If(enable_dvi & ui_clear & axes_dvi & label_hit):

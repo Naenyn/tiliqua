@@ -179,9 +179,18 @@ fn write_specto_palette(
     if frequency_ramp {
         for intensity in 0..16u8 {
             for hue in 0..16u8 {
+                // Frequency-ramp fills use hue for horizontal position, so the
+                // palette color itself must stay legible. Keep true black at
+                // intensity 0, but lift nonzero levels into the same bright
+                // range used by the normal gradient fills.
+                let bright_intensity = if intensity == 0 {
+                    0
+                } else {
+                    4 + ((intensity as u16 * 11) / 15) as u8
+                };
                 let (r, g, b) =
                     scale_rgb_like_palette(
-                        palette, palette.frequency_color(hue), intensity);
+                        palette, palette.frequency_color(hue), bright_intensity);
                 video.set_palette_rgb(intensity, hue, r, g, b);
             }
         }
@@ -256,6 +265,47 @@ fn projection_matrix(rot_x: i8, rot_y: i8, rot_z: i8) -> ([i16; 3], [i16; 3]) {
         out_y[column] = y as i16;
     }
     (out_x, out_y)
+}
+
+fn sanitize_options(opts: &mut Opts, last_valid_page: &mut Page) {
+    if opts.histo.quality.value == Quality3d::Low {
+        opts.histo.quality.value = Quality3d::Medium;
+    }
+
+    // SPECTRUM and HISTO are alternate detail pages. The options framework
+    // does not support conditional pages, so skip over the inactive page while
+    // preserving navigation direction:
+    //
+    //   SPECTO <--> SPECTRUM|HISTO <--> DISPLAY <--> MISC <--> HELP
+    //
+    // With the enum ordered as SPECTO, SPECTRUM, HISTO, DISPLAY..., the
+    // inactive page is an in-between sentinel. Use the last valid page to tell
+    // whether the user was moving left or right through that sentinel.
+    let mut page = opts.tracker.page.value;
+    match (opts.specto.mode.value, page) {
+        (DisplayMode::Spectrum, Page::Histo) => {
+            page = if *last_valid_page == Page::Spectrum {
+                Page::Display
+            } else {
+                Page::Spectrum
+            };
+        }
+        (DisplayMode::Spectrograph, Page::Spectrum) => {
+            page = if *last_valid_page == Page::Histo {
+                Page::Specto
+            } else {
+                Page::Histo
+            };
+        }
+        _ => {}
+    }
+    if page != opts.tracker.page.value {
+        opts.tracker.page.value = page;
+        opts.tracker.selected = None;
+        opts.tracker.modify = true;
+    }
+
+    *last_valid_page = page;
 }
 
 struct App {
@@ -333,19 +383,14 @@ fn main() -> ! {
             warn!("No option storage region: disable persistent storage");
             None
         };
-    // Low quality is no longer exposed because it loses too much spectral
-    // structure. Migrate a previously saved Low selection to Medium while
-    // preserving the enum discriminants used by existing saved High values.
-    if opts.view_3d.quality.value == Quality3d::Low {
-        opts.view_3d.quality.value = Quality3d::Medium;
-    }
     // Boot into the analyzer view even when older saved SPECTO settings came
     // from the 3D renderer work. The 3D spectrograph remains available from
     // the mode/view menus.
-    opts.spectro.mode.value = DisplayMode::Spectrum;
-    opts.spectro.spectrum_style.value = SpectrumStyle::Bars;
-    opts.spectro.scale.value = SpectrumScale::Log;
-    opts.view_3d.source.value = Source3d::Live;
+    opts.specto.mode.value = DisplayMode::Spectrum;
+    opts.spectrum.spectrum_style.value = SpectrumStyle::Bars;
+    opts.spectrum.scale.value = SpectrumScale::Log;
+    let mut last_valid_page = opts.tracker.page.value;
+    sanitize_options(&mut opts, &mut last_valid_page);
 
     let mut last_palette = opts.display.palette.value;
     let mut last_frequency_ramp_palette = false;
@@ -375,6 +420,7 @@ fn main() -> ! {
             let v_active = display.size().height;
             let (opts, draw_options, save_opts, wipe_opts) = critical_section::with(|cs| {
                 let mut app = app.borrow_ref_mut(cs);
+                sanitize_options(&mut app.ui.opts, &mut last_valid_page);
                 let save_opts = app.ui.opts.misc.save_opts.poll();
                 let wipe_opts = app.ui.opts.misc.wipe_opts.poll();
                 (
@@ -385,8 +431,8 @@ fn main() -> ! {
                 )
             });
             let on_help_page = opts.tracker.page.value == Page::Help;
-            let spectrum_mode = opts.spectro.mode.value == DisplayMode::Spectrum;
-            let view_3d = !spectrum_mode && opts.spectro.view.value == ViewMode::ThreeD;
+            let spectrum_mode = opts.specto.mode.value == DisplayMode::Spectrum;
+            let view_3d = !spectrum_mode && opts.histo.view.value == ViewMode::ThreeD;
             let help_scroll = opts.help.scroll.value;
             let help_page_entered = on_help_page && !last_on_help_page;
             // In 3D, keep transient UI in the lower half of the palette. The
@@ -434,8 +480,8 @@ fn main() -> ! {
 
             let frequency_ramp_palette =
                 spectrum_mode &&
-                (opts.spectro.fill.value == SpectrumFill::Freq ||
-                 opts.spectro.fill.value == SpectrumFill::FreqReverse);
+                (opts.spectrum.fill.value == SpectrumFill::Freq ||
+                 opts.spectrum.fill.value == SpectrumFill::FreqReverse);
             if opts.display.palette.value != last_palette ||
                     frequency_ramp_palette != last_frequency_ramp_palette ||
                     first {
@@ -551,6 +597,8 @@ fn main() -> ! {
                     let mut app = app.borrow_ref_mut(cs);
                     app.ui.opts = Opts::default();
                     app.ui.opts.misc.rotation.value = modeline.rotate.clone();
+                    last_valid_page = Page::Specto;
+                    sanitize_options(&mut app.ui.opts, &mut last_valid_page);
                     if let Some(ref mut flash_persist) = flash_persist_opt {
                         flash_persist.erase_all().unwrap();
                     }
@@ -564,27 +612,27 @@ fn main() -> ! {
                 // smoothing/persistence as a user-selectable 2D treatment.
                 w.phosphor().bit(
                     !spectrum_mode
-                        && opts.spectro.view.value == ViewMode::TwoD
-                        && opts.spectro.style.value == RenderStyle::Phosphor,
+                        && opts.histo.view.value == ViewMode::TwoD
+                        && opts.histo.style.value == RenderStyle::Phosphor,
                 );
                 w.axes().bit(opts.display.axes.value == OnOff::On);
-                w.input_ch().bits(opts.spectro.input.value.hw_index());
+                w.input_ch().bits(opts.specto.input.value.hw_index());
                 w.view_3d().bit(view_3d);
                 w.spectrum_mode().bit(spectrum_mode);
                 w.display_ack().bit(display_buffer)
             });
             spectro
                 .gain()
-                .write(|w| unsafe { w.value().bits(opts.spectro.gain.value) });
+                .write(|w| unsafe { w.value().bits(opts.specto.gain.value) });
             spectro
                 .range()
-                .write(|w| unsafe { w.value().bits(opts.spectro.range.value.hw_index()) });
+                .write(|w| unsafe { w.value().bits(opts.specto.range.value.hw_index()) });
             spectro
                 .rate()
-                .write(|w| unsafe { w.value().bits(opts.spectro.rate.value.hw_index()) });
+                .write(|w| unsafe { w.value().bits(opts.specto.rate.value.hw_index()) });
             spectro
                 .persistence()
-                .write(|w| unsafe { w.value().bits(opts.spectro.persist.value.hw_index()) });
+                .write(|w| unsafe { w.value().bits(opts.histo.persist.value.hw_index()) });
             spectro
                 .hue()
                 .write(|w| unsafe { w.value().bits(opts.display.hue.value) });
@@ -594,9 +642,9 @@ fn main() -> ! {
                 w.menu_visible().bit(menu_visible)
             });
             let (projection_x, projection_y) = projection_matrix(
-                opts.view_3d.rot_x.value,
-                opts.view_3d.rot_y.value,
-                opts.view_3d.rot_z.value,
+                opts.histo.rot_x.value,
+                opts.histo.rot_y.value,
+                opts.histo.rot_z.value,
             );
             spectro.projection_x().write(|w| unsafe {
                 w.frequency().bits(projection_x[0] as u16);
@@ -609,20 +657,16 @@ fn main() -> ! {
                 w.time().bits(projection_y[2] as u16)
             });
             spectro.config_3d().write(|w| unsafe {
-                w.quality().bits(opts.view_3d.quality.value.hw_index());
-                w.static_surface().bit(
-                    opts.view_3d.source.value.hw_index() != 0)
+                w.quality().bits(opts.histo.quality.value.hw_index())
             });
             spectro.spectrum_config().write(|w| unsafe {
-                w.style().bit(opts.spectro.spectrum_style.value.hw_index() != 0);
-                w.bands().bits(opts.spectro.bands.value.hw_index());
-                w.fill().bits(opts.spectro.fill.value.hw_index());
-                w.peaks().bits(opts.spectro.peaks.value.hw_index());
-                w.smoothing().bits(opts.spectro.smoothing.value.hw_index());
-                w.scale().bit(opts.spectro.scale.value.hw_index() != 0);
-                w.tilt().bits(opts.spectro.tilt.value.hw_index());
+                w.style().bit(opts.spectrum.spectrum_style.value.hw_index() != 0);
+                w.bands().bits(opts.spectrum.bands.value.hw_index());
+                w.fill().bits(opts.spectrum.fill.value.hw_index());
+                w.peaks().bits(opts.spectrum.peaks.value.hw_index());
+                w.scale().bit(opts.spectrum.scale.value.hw_index() != 0);
                 w.highlight().bit(
-                    opts.spectro.highlight.value.hw_index() != 0)
+                    opts.spectrum.highlight.value.hw_index() != 0)
             });
 
             // SPECTO draws its own plot axes. Keep the general-purpose XBEAM

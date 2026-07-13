@@ -21,7 +21,7 @@ All four analog inputs pass directly to their matching outputs:
         in3 ───────────────────────► out3
         in4 ───────────────────────► out4
 
-SPECTRO options select a live spectrum analyzer or historical spectrograph,
+SPECTO options select a live spectrum analyzer or historical spectrograph,
 input, sensitivity, and maximum displayed frequency. Spectrum mode plots the
 newest FFT with frequency on X and magnitude on Y. Spectrograph mode adds 2D
 heatmap or 3D waterfall views and history speed; its 2D view also offers

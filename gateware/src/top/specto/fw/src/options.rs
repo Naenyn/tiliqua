@@ -8,9 +8,9 @@ use tiliqua_lib::palette::ColorPalette;
 #[strum(serialize_all = "SCREAMING-KEBAB-CASE")]
 pub enum Page {
     #[default]
-    Spectro,
-    #[strum(serialize = "3D")]
-    View3d,
+    Specto,
+    Spectrum,
+    Histo,
     Display,
     Misc,
     Help,
@@ -18,28 +18,11 @@ pub enum Page {
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 pub enum ViewMode {
+    #[default]
     #[strum(serialize = "2D")]
     TwoD,
-    #[default]
     #[strum(serialize = "3D")]
     ThreeD,
-}
-
-#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
-#[strum(serialize_all = "kebab-case")]
-pub enum Source3d {
-    #[default]
-    Live,
-    Static,
-}
-
-impl Source3d {
-    pub fn hw_index(self) -> u8 {
-        match self {
-            Self::Live => 0,
-            Self::Static => 1,
-        }
-    }
 }
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
@@ -50,7 +33,9 @@ pub enum Quality3d {
     #[strum(disabled)]
     Low,
     #[default]
+    #[strum(serialize = "lower")]
     Medium,
+    #[strum(serialize = "higher")]
     High,
 }
 
@@ -108,27 +93,6 @@ impl SpectrumScale {
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 #[strum(serialize_all = "kebab-case")]
-pub enum SpectrumTilt {
-    #[default]
-    Flat,
-    #[strum(serialize = "+3db/oct")]
-    Gentle,
-    #[strum(serialize = "+6db/oct")]
-    Strong,
-}
-
-impl SpectrumTilt {
-    pub fn hw_index(self) -> u8 {
-        match self {
-            Self::Flat => 0,
-            Self::Gentle => 1,
-            Self::Strong => 2,
-        }
-    }
-}
-
-#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
-#[strum(serialize_all = "kebab-case")]
 pub enum SpectrumHighlight {
     #[default]
     Off,
@@ -141,25 +105,6 @@ impl SpectrumHighlight {
         match self {
             Self::Off => 0,
             Self::Peaks => 1,
-        }
-    }
-}
-
-#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
-#[strum(serialize_all = "kebab-case")]
-pub enum SpectrumSmoothing {
-    #[default]
-    Off,
-    Light,
-    Strong,
-}
-
-impl SpectrumSmoothing {
-    pub fn hw_index(self) -> u8 {
-        match self {
-            Self::Off => 0,
-            Self::Light => 1,
-            Self::Strong => 2,
         }
     }
 }
@@ -330,7 +275,7 @@ pub enum Persistence {
     Medium,
     #[default]
     Long,
-    #[strum(serialize = "long+")]
+    #[strum(serialize = "longer")]
     VeryLong,
 }
 
@@ -371,46 +316,11 @@ button_params!(OneShotButtonParams {
 });
 
 #[derive(OptionPage, Clone)]
-pub struct SpectroOpts {
+pub struct SpectoOpts {
     #[option]
     pub input: EnumOption<InputChannel>,
     #[option]
     pub mode: EnumOption<DisplayMode>,
-    #[option]
-    #[option_name("style")]
-    #[option_if(self.mode.value == DisplayMode::Spectrum)]
-    pub spectrum_style: EnumOption<SpectrumStyle>,
-    #[option]
-    #[option_if(self.mode.value == DisplayMode::Spectrum)]
-    pub scale: EnumOption<SpectrumScale>,
-    #[option]
-    #[option_if(self.mode.value == DisplayMode::Spectrum)]
-    pub tilt: EnumOption<SpectrumTilt>,
-    #[option]
-    #[option_name("harmonics")]
-    #[option_if(self.mode.value == DisplayMode::Spectrum)]
-    pub highlight: EnumOption<SpectrumHighlight>,
-    #[option]
-    #[option_if(self.mode.value == DisplayMode::Spectrum && self.spectrum_style.value == SpectrumStyle::Curve)]
-    pub smoothing: EnumOption<SpectrumSmoothing>,
-    #[option]
-    #[option_if(self.mode.value == DisplayMode::Spectrum)]
-    pub bands: EnumOption<SpectrumBands>,
-    #[option]
-    #[option_if(self.mode.value == DisplayMode::Spectrum)]
-    pub fill: EnumOption<SpectrumFill>,
-    #[option]
-    #[option_if(self.mode.value == DisplayMode::Spectrum)]
-    pub peaks: EnumOption<SpectrumPeaks>,
-    #[option]
-    #[option_if(self.mode.value == DisplayMode::Spectrograph)]
-    pub view: EnumOption<ViewMode>,
-    #[option]
-    #[option_if(self.mode.value == DisplayMode::Spectrograph && self.view.value == ViewMode::TwoD)]
-    pub style: EnumOption<RenderStyle>,
-    #[option]
-    #[option_if(self.mode.value == DisplayMode::Spectrograph && self.view.value == ViewMode::TwoD && self.style.value == RenderStyle::Phosphor)]
-    pub persist: EnumOption<Persistence>,
     #[option(0)]
     pub gain: IntOption<GainParams>,
     #[option]
@@ -420,16 +330,44 @@ pub struct SpectroOpts {
 }
 
 #[derive(OptionPage, Clone)]
-pub struct View3dOpts {
+pub struct SpectrumOpts {
     #[option]
-    pub source: EnumOption<Source3d>,
+    #[option_name("style")]
+    pub spectrum_style: EnumOption<SpectrumStyle>,
     #[option]
+    pub scale: EnumOption<SpectrumScale>,
+    #[option]
+    #[option_name("harmonics")]
+    pub highlight: EnumOption<SpectrumHighlight>,
+    #[option]
+    pub bands: EnumOption<SpectrumBands>,
+    #[option]
+    pub fill: EnumOption<SpectrumFill>,
+    #[option]
+    pub peaks: EnumOption<SpectrumPeaks>,
+}
+
+#[derive(OptionPage, Clone)]
+pub struct HistoOpts {
+    #[option]
+    pub view: EnumOption<ViewMode>,
+    #[option]
+    #[option_if(self.view.value == ViewMode::TwoD)]
+    pub style: EnumOption<RenderStyle>,
+    #[option]
+    #[option_if(self.view.value == ViewMode::TwoD && self.style.value == RenderStyle::Phosphor)]
+    pub persist: EnumOption<Persistence>,
+    #[option]
+    #[option_if(self.view.value == ViewMode::ThreeD)]
     pub quality: EnumOption<Quality3d>,
     #[option(-15)]
+    #[option_if(self.view.value == ViewMode::ThreeD)]
     pub rot_x: IntOption<AngleParams>,
     #[option(15)]
+    #[option_if(self.view.value == ViewMode::ThreeD)]
     pub rot_y: IntOption<AngleParams>,
     #[option(0)]
+    #[option_if(self.view.value == ViewMode::ThreeD)]
     pub rot_z: IntOption<AngleParams>,
 }
 
@@ -464,10 +402,12 @@ pub struct HelpOpts {
 #[derive(Options, Clone)]
 pub struct Opts {
     pub tracker: ScreenTracker<Page>,
-    #[page(Page::Spectro)]
-    pub spectro: SpectroOpts,
-    #[page(Page::View3d)]
-    pub view_3d: View3dOpts,
+    #[page(Page::Specto)]
+    pub specto: SpectoOpts,
+    #[page(Page::Spectrum)]
+    pub spectrum: SpectrumOpts,
+    #[page(Page::Histo)]
+    pub histo: HistoOpts,
     #[page(Page::Display)]
     pub display: DisplayOpts,
     #[page(Page::Misc)]
