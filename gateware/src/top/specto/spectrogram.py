@@ -42,11 +42,12 @@ def _spectrum_log_coord_lut(max_hz, bin_hz, max_bin):
     return lut
 
 
-def _spectrum_log_first_bin_column(max_hz, bin_hz):
+def _spectrum_log_first_bin_column(max_hz, bin_hz, min_bin=1):
     """First visible log column that corresponds to a resolvable FFT bin."""
     span = math.log10(max_hz / 10)
+    first_hz = max(10, min_bin * bin_hz)
     return max(0, min(255, math.ceil(
-        255 * math.log10(bin_hz / 10) / span)))
+        255 * math.log10(first_hz / 10) / span)))
 
 
 def _spectrum_bin_log_column_lut(max_hz, bin_hz, max_bin):
@@ -75,6 +76,13 @@ SPECTRUM_LOG_FIRST_BIN_COLUMNS = [
     _spectrum_log_first_bin_column(12000, 24000 / FFT_SIZE),
     _spectrum_log_first_bin_column(6000, 24000 / FFT_SIZE),
     _spectrum_log_first_bin_column(3000, 24000 / FFT_SIZE),
+]
+
+SPECTRUM_LOG_CURVE_FIRST_BIN_COLUMNS = [
+    _spectrum_log_first_bin_column(24000, 48000 / FFT_SIZE, min_bin=2),
+    _spectrum_log_first_bin_column(12000, 24000 / FFT_SIZE, min_bin=2),
+    _spectrum_log_first_bin_column(6000, 24000 / FFT_SIZE, min_bin=2),
+    _spectrum_log_first_bin_column(3000, 24000 / FFT_SIZE, min_bin=2),
 ]
 
 SPECTRUM_BIN_LOG_COLUMN_LUTS = [
@@ -1683,6 +1691,7 @@ class Spectrogram(wiring.Component):
         spectrum_log_bar_bin = Signal(8)
         spectrum_log_bar_shift = Signal(2)
         spectrum_log_bar_addr = Signal(8)
+        spectrum_log_bucket_frac = Signal(8)
         spectrum_log_frac = Signal(8)
         spectrum_log_underflow = Signal()
         spectrum_log_underflow_pipe = Signal()
@@ -1718,7 +1727,7 @@ class Spectrogram(wiring.Component):
             spectrum_scale_pipe.eq(spectrum_scale_dvi),
             spectrum_log_curve_pipe.eq(spectrum_style_dvi & spectrum_scale_dvi),
             spectrum_log_underflow_pipe.eq(spectrum_log_underflow),
-            spectrum_log_bar_pipe.eq(~spectrum_style_dvi & spectrum_scale_dvi),
+            spectrum_log_bar_pipe.eq(spectrum_scale_dvi),
             spectrum_linear_bin_pipe.eq(spectrum_linear_bin),
             spectrum_linear_first_pipe.eq(spectrum_linear_first),
             spectrum_linear_gap_pipe.eq(spectrum_linear_gap),
@@ -1734,7 +1743,7 @@ class Spectrogram(wiring.Component):
             spectrum_read_prefetch_r.eq(spectrum_prefetch),
             spectrum_read_plot_r.eq(spectrum_plot_pipe),
             spectrum_read_frac_r.eq(Mux(spectrum_log_curve_pipe,
-                                        spectrum_log_frac, 0)),
+                                        spectrum_log_bucket_frac, 0)),
             spectrum_read_color_r.eq(spectrum_freq_color),
             spectrum_read_underflow_r.eq(
                 spectrum_scale_pipe & spectrum_log_underflow_pipe &
@@ -1753,11 +1762,18 @@ class Spectrogram(wiring.Component):
         spectrum_log_first_bin_columns = [
             Const(column, 8) for column in SPECTRUM_LOG_FIRST_BIN_COLUMNS
         ]
+        spectrum_log_curve_first_bin_columns = [
+            Const(column, 8)
+            for column in SPECTRUM_LOG_CURVE_FIRST_BIN_COLUMNS
+        ]
         with m.Switch(range_dvi):
             for range_index, column in enumerate(spectrum_log_first_bin_columns):
                 with m.Case(range_index):
                     m.d.comb += spectrum_log_underflow.eq(
-                        spectrum_log_col < column)
+                        spectrum_log_col < Mux(
+                            spectrum_style_dvi,
+                            spectrum_log_curve_first_bin_columns[range_index],
+                            column))
         m.d.comb += [
             wide.eq(h_active_dvi >= 1024),
             short.eq(v_active_dvi < 600),
@@ -1822,6 +1838,14 @@ class Spectrogram(wiring.Component):
             spectrum_log_bar_shift.eq(3 - spectrum_bands_dvi),
             spectrum_log_bar_addr.eq(
                 spectrum_log_col >> spectrum_log_bar_shift),
+            spectrum_log_bucket_frac.eq(Mux(
+                spectrum_log_bar_shift == 0,
+                0,
+                Mux(spectrum_log_bar_shift == 1,
+                    Cat(Const(0, 7), spectrum_log_col[0]),
+                    Mux(spectrum_log_bar_shift == 2,
+                        Cat(Const(0, 6), spectrum_log_col[:2]),
+                        Cat(Const(0, 5), spectrum_log_col[:3]))))),
             spectrum_log_curve_bin.eq(Mux(
                 spectrum_log_coord_q8[8:16] == spectrum_active_bin_last_dvi,
                 spectrum_active_bin_last_dvi,
@@ -1835,11 +1859,9 @@ class Spectrogram(wiring.Component):
                 spectrum_plot_pipe | spectrum_prefetch),
             spectrum_bin.eq(Mux(
                 spectrum_prefetch,
-                Mux(spectrum_scale_pipe, 1, 0),
+                0,
                 Mux(spectrum_scale_pipe,
-                    Mux(spectrum_style_pipe,
-                        spectrum_log_curve_bin,
-                        spectrum_log_bar_addr),
+                    spectrum_log_bar_addr,
                     spectrum_linear_bin_pipe))),
             spectrum_band_first.eq(
                 Mux(spectrum_style_pipe | spectrum_scale_pipe,
@@ -2349,9 +2371,9 @@ class Spectrogram(wiring.Component):
         # between adjacent FFT bins with only one BRAM read port.
         with m.If(spectrum_prefetch_d):
             m.d.dvi += [
-                spectrum_curve_raw_prev.eq(spectrum_levels_r.data),
-                spectrum_curve_log_start.eq(spectrum_levels_r.data),
-                spectrum_curve_log_end.eq(spectrum_levels_r.data),
+                spectrum_curve_raw_prev.eq(spectrum_display_level),
+                spectrum_curve_log_start.eq(spectrum_display_level),
+                spectrum_curve_log_end.eq(spectrum_display_level),
                 spectrum_peak_raw_prev.eq(spectrum_peak_level),
                 spectrum_peak_curve_start.eq(spectrum_peak_level),
                 spectrum_peak_curve_end.eq(spectrum_peak_level),
@@ -2359,7 +2381,7 @@ class Spectrogram(wiring.Component):
         with m.Elif(spectrum_plot_d):
             with m.If(spectrum_band_first_d):
                 m.d.dvi += [
-                    spectrum_curve_raw_prev.eq(spectrum_levels_r.data),
+                    spectrum_curve_raw_prev.eq(spectrum_display_level),
                     spectrum_curve_log_start.eq(spectrum_curve_log_end),
                     spectrum_curve_log_end.eq(spectrum_curve_target),
                     spectrum_peak_raw_prev.eq(spectrum_peak_level),
@@ -2371,33 +2393,22 @@ class Spectrogram(wiring.Component):
         # of the log-axis coordinate. This preserves the analyzer-like log
         # scale without turning repeated low-frequency bins into flat-topped
         # rectangles.
-        with m.Switch(spectrum_log_frac_d[6:8]):
-            with m.Case(0):
-                m.d.comb += [
-                    spectrum_curve_product.eq(0),
-                    spectrum_peak_curve_product.eq(0),
-                ]
-            with m.Case(1):
-                m.d.comb += [
-                    spectrum_curve_product.eq(spectrum_curve_delta << 2),
-                    spectrum_peak_curve_product.eq(
-                        spectrum_peak_curve_delta << 2),
-                ]
-            with m.Case(2):
-                m.d.comb += [
-                    spectrum_curve_product.eq(spectrum_curve_delta << 3),
-                    spectrum_peak_curve_product.eq(
-                        spectrum_peak_curve_delta << 3),
-                ]
-            with m.Default():
-                m.d.comb += [
-                    spectrum_curve_product.eq(
-                        (spectrum_curve_delta << 3) +
-                        (spectrum_curve_delta << 2)),
-                    spectrum_peak_curve_product.eq(
-                        (spectrum_peak_curve_delta << 3) +
-                        (spectrum_peak_curve_delta << 2)),
-                ]
+        def _frac_product(delta, frac):
+            product = Const(0, signed(13))
+            for bit in range(4):
+                if frac & (1 << bit):
+                    product = product + (delta << bit)
+            return product
+
+        with m.Switch(spectrum_log_frac_d[4:8]):
+            for frac in range(16):
+                with m.Case(frac):
+                    m.d.comb += [
+                        spectrum_curve_product.eq(
+                            _frac_product(spectrum_curve_delta, frac)),
+                        spectrum_peak_curve_product.eq(
+                            _frac_product(spectrum_peak_curve_delta, frac)),
+                    ]
 
         # Split fixed-point curve generation from raster hit-testing. This
         # one-pixel pipeline boundary keeps BRAM, smoothing and interpolation
@@ -2452,16 +2463,16 @@ class Spectrogram(wiring.Component):
             # power-of-two weights so the video path needs no multiplier.
             spectrum_curve_light_ext.eq(
                 spectrum_curve_raw_prev +
-                (spectrum_levels_r.data << 1) +
-                spectrum_levels_r.data + 2),
+                (spectrum_display_level << 1) +
+                spectrum_display_level + 2),
             spectrum_curve_strong_ext.eq(
-                spectrum_curve_raw_prev + spectrum_levels_r.data + 1),
+                spectrum_curve_raw_prev + spectrum_display_level + 1),
             spectrum_curve_target.eq(Mux(
                 spectrum_smoothing_dvi == 1,
                 spectrum_curve_light_ext >> 2,
                 Mux(spectrum_smoothing_dvi == 2,
                     spectrum_curve_strong_ext >> 1,
-                    spectrum_levels_r.data))),
+                    spectrum_display_level))),
             spectrum_curve_log_start_effective.eq(Mux(
                 spectrum_band_first_d,
                 spectrum_curve_log_end,
@@ -2501,9 +2512,11 @@ class Spectrogram(wiring.Component):
             # Keep four fractional amplitude bits through the
             # screen-space conversion. At 720p this improves the vertical
             # granularity from eight pixels to half a pixel before rounding.
-            spectrum_curve_height.eq(
+            spectrum_curve_height.eq(Mux(
+                spectrum_log_underflow_d,
+                0,
                 (spectrum_curve_display_q4.as_unsigned() << y_scale_shift) >>
-                2),
+                2)),
             spectrum_height.eq(
                 Mux(spectrum_style_dvi,
                     spectrum_curve_height,
@@ -2525,12 +2538,8 @@ class Spectrogram(wiring.Component):
             spectrum_curve_glow_hit.eq(
                 spectrum_render_plot & spectrum_plot_d &
                 spectrum_render_style &
-                (spectrum_scan_y >= spectrum_render_y - 1) &
-                (spectrum_scan_y <= spectrum_render_y + 1)),
-            spectrum_curve_glow_level.eq(Mux(
-                spectrum_scan_y == spectrum_render_y,
-                6,
-                3)),
+                (spectrum_scan_y == spectrum_render_y + 1)),
+            spectrum_curve_glow_level.eq(2),
             # Hi-lite mode emphasizes the detected fundamental and harmonics
             # 2..5 consistently once the fundamental anchor is found. The
             # center bin is bright and +/-1 bins are dimmer so harmonics stay

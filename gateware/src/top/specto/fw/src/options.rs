@@ -394,7 +394,7 @@ pub struct SpectroOpts {
     #[option_if(self.mode.value == DisplayMode::Spectrum && self.spectrum_style.value == SpectrumStyle::Curve)]
     pub smoothing: EnumOption<SpectrumSmoothing>,
     #[option]
-    #[option_if(self.mode.value == DisplayMode::Spectrum && self.spectrum_style.value == SpectrumStyle::Bars)]
+    #[option_if(self.mode.value == DisplayMode::Spectrum)]
     pub bands: EnumOption<SpectrumBands>,
     #[option]
     #[option_if(self.mode.value == DisplayMode::Spectrum)]
