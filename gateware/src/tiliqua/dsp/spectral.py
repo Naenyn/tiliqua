@@ -155,12 +155,11 @@ class BlockLPF(wiring.Component):
 
 class SpectralEnvelope(wiring.Component):
 
-    """Compute a smoothed, real spectral envelope.
+    """Compute a real spectral envelope, with optional temporal smoothing.
 
     Given a block of complex frequency-domain spectra, extract the
-    magnitude from each point and filter each magnitude in the block
-    independently with a one-pole smoother, emitting a corresponding
-    block representing the evolving (smoothed)  spectral envelope.
+    magnitude from each point. Optionally filter each magnitude in the
+    block independently with a one-pole smoother.
 
     The rect-to-polar CORDIC is run without magnitude correction, which
     saves another multiplier at the cost of everything being multiplied
@@ -171,23 +170,29 @@ class SpectralEnvelope(wiring.Component):
     i : :py:`In(stream.Signature(Block(CQ(self.shape))))`
         Incoming stream of blocks of complex spectra.
     o : :py:`Out(stream.Signature(Block(self.shape)))`
-        Outgoing stream of blocks of real (smoothed) magnitude spectra.
+        Outgoing stream of blocks of real magnitude spectra.
     """
 
     def __init__(self,
                  shape: fixed.Shape,
-                 sz: int):
+                 sz: int,
+                 smooth: bool = True):
         """
         shape : Shape
             Shape of fixed-point number to use for streams.
         sz : int
             The size of each input block and outgoing spectral envelope blocks.
+        smooth : bool
+            Apply the historical per-bin one-pole temporal smoother. Disable
+            this when temporal response is owned by the downstream renderer.
         """
         self.shape = shape
         self.sz    = sz
+        self.smooth = smooth
         self.rect_to_polar = block.WrapCore(cordic.RectToPolarCordic(
                 self.shape, magnitude_correction=False))
-        self.block_lpf = BlockLPF(self.shape, self.sz)
+        if self.smooth:
+            self.block_lpf = BlockLPF(self.shape, self.sz)
         super().__init__({
             "i": In(stream.Signature(Block(CQ(self.shape)))),
             "o": Out(stream.Signature(Block(self.shape))),
@@ -196,10 +201,13 @@ class SpectralEnvelope(wiring.Component):
     def elaborate(self, platform) -> Module:
         m = Module()
         m.submodules.rect_to_polar = rect_to_polar = self.rect_to_polar
-        m.submodules.block_lpf = block_lpf = self.block_lpf
         wiring.connect(m, wiring.flipped(self.i), rect_to_polar.i)
-        connect_magnitude_to_sq(m, rect_to_polar.o, block_lpf.i)
-        wiring.connect(m, block_lpf.o, wiring.flipped(self.o))
+        if self.smooth:
+            m.submodules.block_lpf = block_lpf = self.block_lpf
+            connect_magnitude_to_sq(m, rect_to_polar.o, block_lpf.i)
+            wiring.connect(m, block_lpf.o, wiring.flipped(self.o))
+        else:
+            connect_magnitude_to_sq(m, rect_to_polar.o, wiring.flipped(self.o))
         return m
 
 

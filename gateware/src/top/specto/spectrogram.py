@@ -64,32 +64,31 @@ def _spectrum_bin_log_column_lut(max_hz, bin_hz, max_bin):
     return lut
 
 
+SPECTRUM_RANGE_ANALYSIS = [
+    (24000, 48000 / FFT_SIZE),
+    (12000, 24000 / FFT_SIZE),
+    (6000, 12000 / FFT_SIZE),
+    (3000, 6000 / FFT_SIZE),
+]
+
 SPECTRUM_LOG_COORD_LUTS = [
-    _spectrum_log_coord_lut(24000, 48000 / FFT_SIZE, 255),
-    _spectrum_log_coord_lut(12000, 24000 / FFT_SIZE, 255),
-    _spectrum_log_coord_lut(6000, 24000 / FFT_SIZE, 127),
-    _spectrum_log_coord_lut(3000, 24000 / FFT_SIZE, 63),
+    _spectrum_log_coord_lut(max_hz, bin_hz, 255)
+    for max_hz, bin_hz in SPECTRUM_RANGE_ANALYSIS
 ]
 
 SPECTRUM_LOG_FIRST_BIN_COLUMNS = [
-    _spectrum_log_first_bin_column(24000, 48000 / FFT_SIZE),
-    _spectrum_log_first_bin_column(12000, 24000 / FFT_SIZE),
-    _spectrum_log_first_bin_column(6000, 24000 / FFT_SIZE),
-    _spectrum_log_first_bin_column(3000, 24000 / FFT_SIZE),
+    _spectrum_log_first_bin_column(max_hz, bin_hz)
+    for max_hz, bin_hz in SPECTRUM_RANGE_ANALYSIS
 ]
 
 SPECTRUM_LOG_CURVE_FIRST_BIN_COLUMNS = [
-    _spectrum_log_first_bin_column(24000, 48000 / FFT_SIZE, min_bin=2),
-    _spectrum_log_first_bin_column(12000, 24000 / FFT_SIZE, min_bin=2),
-    _spectrum_log_first_bin_column(6000, 24000 / FFT_SIZE, min_bin=2),
-    _spectrum_log_first_bin_column(3000, 24000 / FFT_SIZE, min_bin=2),
+    _spectrum_log_first_bin_column(max_hz, bin_hz, min_bin=2)
+    for max_hz, bin_hz in SPECTRUM_RANGE_ANALYSIS
 ]
 
 SPECTRUM_BIN_LOG_COLUMN_LUTS = [
-    _spectrum_bin_log_column_lut(24000, 48000 / FFT_SIZE, 255),
-    _spectrum_bin_log_column_lut(12000, 24000 / FFT_SIZE, 255),
-    _spectrum_bin_log_column_lut(6000, 24000 / FFT_SIZE, 127),
-    _spectrum_bin_log_column_lut(3000, 24000 / FFT_SIZE, 63),
+    _spectrum_bin_log_column_lut(max_hz, bin_hz, 255)
+    for max_hz, bin_hz in SPECTRUM_RANGE_ANALYSIS
 ]
 
 
@@ -344,11 +343,15 @@ class Spectrogram(wiring.Component):
                        spectrum_scale)):
                 m.d.sync += spectrum_log_config_dirty.eq(1)
         # ---- audio analysis -------------------------------------------------
-        # Build both a wide 48kHz feed and a fine 24kHz feed. The 24kHz range
-        # uses the wide feed; all smaller display ranges automatically use the
-        # fine feed, restoring 46.875Hz FFT bins instead of the wide mode's
-        # 93.75Hz bins. The fine stage stays warm while wide mode is selected,
-        # so changing range does not start with stale FIR state.
+        # Match the analyzer sample rate to the selected frequency range. This
+        # keeps all 256 positive-frequency FFT bins useful at every range rather
+        # than truncating a higher-rate transform and pretending it has finer
+        # low-frequency resolution.
+        #
+        #   24kHz range: 48kHz analyzer, 93.750Hz/bin
+        #   12kHz range: 24kHz analyzer, 46.875Hz/bin
+        #    6kHz range: 12kHz analyzer, 23.438Hz/bin
+        #    3kHz range:  6kHz analyzer, 11.719Hz/bin
         wide_fs = min(self.fs, 48_000)
         assert self.fs % wide_fs == 0
         wide_downsample = self.fs // wide_fs
@@ -358,10 +361,19 @@ class Spectrogram(wiring.Component):
         m.submodules.resample_fine = resample_fine = dsp.Resample(
             fs_in=wide_fs, n_up=1, m_down=2,
             bw=11/24, order_mult=40, shape=ASQ)
+        m.submodules.resample_mid = resample_mid = dsp.Resample(
+            fs_in=wide_fs // 2, n_up=1, m_down=2,
+            bw=11/24, order_mult=24, shape=ASQ)
+        m.submodules.resample_low = resample_low = dsp.Resample(
+            fs_in=wide_fs // 4, n_up=1, m_down=2,
+            bw=11/24, order_mult=24, shape=ASQ)
         m.submodules.analyzer = analyzer = dsp.fft.STFTAnalyzer(
             shape=ASQ, sz=FFT_SIZE)
         m.submodules.envelope = envelope = dsp.spectral.SpectralEnvelope(
-            shape=ASQ, sz=FFT_SIZE)
+            shape=ASQ, sz=FFT_SIZE, smooth=False)
+        # Keep the shared spectrum frame-local. Spectrum rate/peaks and the
+        # spectrogram history/persistence own temporal response; smoothing
+        # individual FFT bins here leaves stale energy behind when a tone moves.
 
         def log_lut(x):
             max_v = 1 << ASQ.f_bits
@@ -375,75 +387,57 @@ class Spectrogram(wiring.Component):
             lut_function=log_lut, lut_size=512, continuous=False))
 
         selected_sample = Signal(ASQ)
-        fine_mode = Signal()
+        use_wide = Signal()
+        use_fine = Signal()
+        use_mid = Signal()
+        use_low = Signal()
+        range_decimated = Signal()
         with m.Switch(input_ch):
             for ch in range(4):
                 with m.Case(ch):
                     m.d.comb += selected_sample.eq(self.audio_i.payload[ch])
         m.d.comb += [
-            fine_mode.eq(range_sel != 0),
+            use_wide.eq(range_sel == 0),
+            use_fine.eq(range_sel == 1),
+            use_mid.eq(range_sel == 2),
+            use_low.eq(range_sel == 3),
+            range_decimated.eq(range_sel != 0),
             resample_wide.i.valid.eq(self.audio_i.valid),
             resample_wide.i.payload.eq(selected_sample),
             self.audio_i.ready.eq(resample_wide.i.ready),
 
-            # Always feed the fine decimator. In wide mode, synchronize its
-            # input handshake with the analyzer and discard its output.
-            resample_fine.i.valid.eq(
-                resample_wide.o.valid & (fine_mode | analyzer.i.ready)),
+            resample_fine.i.valid.eq(resample_wide.o.valid & ~use_wide),
             resample_fine.i.payload.eq(resample_wide.o.payload),
-            resample_wide.o.ready.eq(
-                resample_fine.i.ready & (fine_mode | analyzer.i.ready)),
-            resample_fine.o.ready.eq(Mux(fine_mode, analyzer.i.ready, 1)),
+            resample_wide.o.ready.eq(Mux(
+                use_wide, analyzer.i.ready, resample_fine.i.ready)),
+
+            resample_mid.i.valid.eq(
+                resample_fine.o.valid & (use_mid | use_low)),
+            resample_mid.i.payload.eq(resample_fine.o.payload),
+            resample_fine.o.ready.eq(Mux(
+                use_fine, analyzer.i.ready, resample_mid.i.ready)),
+
+            resample_low.i.valid.eq(resample_mid.o.valid & use_low),
+            resample_low.i.payload.eq(resample_mid.o.payload),
+            resample_mid.o.ready.eq(Mux(
+                use_mid, analyzer.i.ready, resample_low.i.ready)),
+            resample_low.o.ready.eq(analyzer.i.ready),
 
             analyzer.i.valid.eq(Mux(
-                fine_mode,
-                resample_fine.o.valid,
-                resample_wide.o.valid & resample_fine.i.ready,
+                use_wide, resample_wide.o.valid,
+                Mux(use_fine, resample_fine.o.valid,
+                    Mux(use_mid, resample_mid.o.valid,
+                        resample_low.o.valid)),
             )),
             analyzer.i.payload.eq(Mux(
-                fine_mode,
-                resample_fine.o.payload,
-                resample_wide.o.payload,
+                use_wide, resample_wide.o.payload,
+                Mux(use_fine, resample_fine.o.payload,
+                    Mux(use_mid, resample_mid.o.payload,
+                        resample_low.o.payload)),
             )),
         ]
         wiring.connect(m, analyzer.o, envelope.i)
         wiring.connect(m, envelope.o, log.i)
-
-        # In spectrogram mode this retains the established analytical/phosphor
-        # response. In spectrum mode Rate becomes envelope release smoothing:
-        # all FFT frames still render and rising bins attack immediately, but
-        # falling bins decay more gently so plucks keep their captured peak
-        # instead of disappearing between slow display updates.
-        spectrum_release_beta = Signal(ASQ)
-        with m.Switch(rate_sel):
-            with m.Case(0):
-                m.d.comb += spectrum_release_beta.eq(
-                    fixed.Const(0.82, shape=ASQ))
-            with m.Case(1):
-                m.d.comb += spectrum_release_beta.eq(
-                    fixed.Const(0.92, shape=ASQ))
-            with m.Case(2):
-                m.d.comb += spectrum_release_beta.eq(
-                    fixed.Const(0.99, shape=ASQ))
-            with m.Default():
-                m.d.comb += spectrum_release_beta.eq(
-                    fixed.Const(0.997, shape=ASQ))
-        m.d.comb += [
-            envelope.block_lpf.beta.eq(Mux(
-                spectrum_mode,
-                spectrum_release_beta,
-                Mux(
-                    phosphor,
-                    fixed.Const(0.82, shape=ASQ),
-                    fixed.Const(0.25, shape=ASQ),
-                ),
-            )),
-            envelope.block_lpf.attack_beta.eq(Mux(
-                spectrum_mode,
-                fixed.Const(0.0, shape=ASQ),
-                envelope.block_lpf.beta,
-            )),
-        ]
 
         history = memory.Memory(
             data=memory.MemoryData(
@@ -577,22 +571,22 @@ class Spectrogram(wiring.Component):
         with m.Switch(rate_sel):
             with m.Case(0):
                 m.d.comb += accept_rate.eq(
-                    Mux(fine_mode, 1, frame_seq[0] == 0))
+                    Mux(range_decimated, 1, frame_seq[0] == 0))
             with m.Case(1):
                 m.d.comb += accept_rate.eq(Mux(
-                    fine_mode,
+                    range_decimated,
                     frame_seq[0] == 0,
                     frame_seq[:2] == 0,
                 ))
             with m.Case(2):
                 m.d.comb += accept_rate.eq(Mux(
-                    fine_mode,
+                    range_decimated,
                     frame_seq[:2] == 0,
                     frame_seq[:3] == 0,
                 ))
             with m.Default():
                 m.d.comb += accept_rate.eq(Mux(
-                    fine_mode,
+                    range_decimated,
                     frame_seq[:3] == 0,
                     frame_seq[:4] == 0,
                 ))
@@ -844,19 +838,22 @@ class Spectrogram(wiring.Component):
             do_write.eq(Mux(log.o.payload.first, accept_now, accept_latched)),
             raw_level.eq(log.o.payload.sample.as_value()[ASQ.f_bits-6:ASQ.f_bits]),
             boosted_level.eq(raw_level + gain),
-            stored_level.eq(Mux(boosted_level > 63, 63, boosted_level[:6])),
-            spectrum_frequency_shift.eq(Mux(
-                range_sel == 0, 0, range_sel - 1)),
+            # Bin 0 is DC, not musical frequency content. Leaving it in the
+            # raw linear/history paths lets input offset dominate the left
+            # edge of spectrum mode and the floor of 2D/3D spectrograms,
+            # while the log analyzer path already starts at the first real
+            # bin. Suppress it once here so every view agrees.
+            stored_level.eq(Mux(
+                current_bin == 0,
+                0,
+                Mux(boosted_level > 63, 63, boosted_level[:6]))),
+            spectrum_frequency_shift.eq(0),
             spectrum_desired_group_shift.eq(3 - spectrum_bands),
             spectrum_group_shift.eq(Mux(
                 spectrum_style | spectrum_scale,
                 0,
-                Mux(spectrum_desired_group_shift > spectrum_frequency_shift,
-                    spectrum_desired_group_shift - spectrum_frequency_shift,
-                    0))),
-            spectrum_active_bin_last.eq(Mux(
-                spectrum_frequency_shift == 0, 255,
-                Mux(spectrum_frequency_shift == 1, 127, 63))),
+                spectrum_desired_group_shift)),
+            spectrum_active_bin_last.eq(255),
             spectrum_band_index_sync.eq(
                 current_bin[:8] >> spectrum_group_shift),
             spectrum_log_bucket_shift.eq(3 - spectrum_bands),
@@ -1720,23 +1717,18 @@ class Spectrogram(wiring.Component):
             # the adjacent completed column at the far edge so a partially
             # written spectrum cannot leak into the visible 2D history.
             completed_age.eq(Mux(age == 255, 254, age)),
-            # Wide 24kHz mode uses all 256 bins. Fine mode also uses all bins
-            # at 12kHz, then halves them for each smaller range.
-            frequency_shift.eq(Mux(range_dvi == 0, 0, range_dvi - 1)),
-            spectrum_active_bin_last_dvi.eq(Mux(
-                frequency_shift == 0, 255,
-                Mux(frequency_shift == 1, 127, 63))),
+            # Each range analyzes at a matching sample rate, so all four
+            # ranges use the complete 256-bin half-spectrum.
+            frequency_shift.eq(0),
+            spectrum_active_bin_last_dvi.eq(255),
             spectrum_desired_group_shift_dvi.eq(3 - spectrum_bands_dvi),
             spectrum_group_shift_dvi.eq(Mux(
                 spectrum_style_dvi,
                 0,
-                Mux(spectrum_desired_group_shift_dvi > frequency_shift,
-                    spectrum_desired_group_shift_dvi - frequency_shift,
-                    0))),
+                spectrum_desired_group_shift_dvi)),
             spectrum_band_pixel_shift.eq(
-                x_scale_shift + frequency_shift +
-                spectrum_group_shift_dvi),
-            bin_addr.eq(rev_y >> (y_scale_shift + frequency_shift)),
+                x_scale_shift + spectrum_group_shift_dvi),
+            bin_addr.eq(rev_y >> y_scale_shift),
             spectrum_linear_bin.eq(
                 rel_x.as_unsigned() >> spectrum_band_pixel_shift),
             spectrum_linear_first.eq(
@@ -2672,7 +2664,7 @@ class Spectrogram(wiring.Component):
                 (scan_d.x >= h_active_dvi - 292) &
                 (scan_d.x < h_active_dvi - 28) &
                 (scan_d.y >= (v_active_dvi >> 1) - 18) &
-                (scan_d.y < (v_active_dvi >> 1) + 138)),
+                (scan_d.y < (v_active_dvi >> 1) + 120)),
             ui_clear.eq((scan_d.pixel.intensity == 0) & ~menu_protect),
         ]
         m.d.dvi += base_o.eq(scan_d)
