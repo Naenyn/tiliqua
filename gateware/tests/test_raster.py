@@ -375,6 +375,7 @@ class ColumnCaptureTests(unittest.TestCase):
             await ctx.tick()
             ctx.set(dut.sample_valid, 0)
             await ctx.tick()
+            await ctx.tick()
             flush = ctx.get(dut.flush_valid)
             word = ctx.get(dut.flush_word) if flush else 0
             col = ctx.get(dut.flush_col) if flush else 0

@@ -94,13 +94,25 @@ class ColumnCapture(wiring.Component):
 
         raw_x = Signal(signed(16))
         raw_y = Array(Signal(signed(16), name=f"raw_y{i}") for i in range(self.n_channels))
+        scaled_x = Signal(signed(16))
         in_x = Signal(signed(16))
         in_y = Array(Signal(signed(16), name=f"in_y{i}") for i in range(self.n_channels))
+        scaled_valid = Signal()
+        scaled_active = Signal()
+        scaled_at_end = Signal()
         sample_valid = Signal()
         sample_active = Signal()
         sample_at_end = Signal()
         y_mul = Array(Signal(8, name=f"y_mul{i}") for i in range(self.n_channels))
         y_rshift = Array(Signal(5, name=f"y_rshift{i}") for i in range(self.n_channels))
+        y_rshift_scaled = Array(Signal(5, name=f"y_rshift_scaled{i}")
+                                for i in range(self.n_channels))
+        y_offset_scaled = Array(Signal(signed(16), name=f"y_offset_scaled{i}")
+                                for i in range(self.n_channels))
+        yprod = Array(Signal(signed(26), name=f"yprod{i}")
+                      for i in range(self.n_channels))
+        yprod_scaled = Array(Signal(signed(26), name=f"yprod_scaled{i}")
+                             for i in range(self.n_channels))
 
         m.d.comb += raw_x.eq(
             (self.ramp.reshape(PSQ_BASE_FBITS).as_value() >> self.scale_x) +
@@ -120,21 +132,36 @@ class ColumnCapture(wiring.Component):
                         y_rshift[ch].eq(YSCALE_LUT[3][1]),
                     ]
             av = self.audio[ch].reshape(PSQ_BASE_FBITS).as_value()
-            yprod = Signal(signed(26), name=f"yprod{ch}")
             m.d.comb += [
-                yprod.eq(-av * y_mul[ch]),
-                raw_y[ch].eq((yprod >> y_rshift[ch]) + self.y_offset[ch]),
+                yprod[ch].eq(-av * y_mul[ch]),
+                raw_y[ch].eq(
+                    (yprod_scaled[ch] >> y_rshift_scaled[ch]) +
+                    y_offset_scaled[ch]),
             ]
 
-        # Break the sample scaling path before the envelope accumulator. Audio
-        # samples arrive much more slowly than the sync clock, so this cycle of
-        # latency does not reduce capture throughput.
-        m.d.sync += sample_valid.eq(self.sample_valid)
+        # Split sample scaling at the multiplier output, then register the
+        # shifted/offset coordinate before envelope accumulation. Audio samples
+        # arrive much more slowly than sync, so neither stage reduces throughput.
+        m.d.sync += scaled_valid.eq(self.sample_valid)
         with m.If(self.sample_valid):
             m.d.sync += [
-                in_x.eq(raw_x),
-                sample_active.eq(self.active),
-                sample_at_end.eq(self.ramp > RAMP_END),
+                scaled_x.eq(raw_x),
+                scaled_active.eq(self.active),
+                scaled_at_end.eq(self.ramp > RAMP_END),
+            ]
+            for ch in range(self.n_channels):
+                m.d.sync += [
+                    yprod_scaled[ch].eq(yprod[ch]),
+                    y_rshift_scaled[ch].eq(y_rshift[ch]),
+                    y_offset_scaled[ch].eq(self.y_offset[ch]),
+                ]
+
+        m.d.sync += sample_valid.eq(scaled_valid)
+        with m.If(scaled_valid):
+            m.d.sync += [
+                in_x.eq(scaled_x),
+                sample_active.eq(scaled_active),
+                sample_at_end.eq(scaled_at_end),
             ]
             for ch in range(self.n_channels):
                 m.d.sync += in_y[ch].eq(raw_y[ch])

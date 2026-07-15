@@ -210,6 +210,10 @@ class ScopeSoc(TiliquaSoc):
         m.submodules.up_split4 = up_split4 = dsp.Split(n_channels=4, source=plot_fifo.o, shape=PSQ)
         m.submodules.up_merge4 = up_merge4 = dsp.Merge(n_channels=4, shape=PSQ)
         for ch in range(4):
+            # Register the FIFO output before the discontinuity detector's
+            # wide window arithmetic. This is an elastic stage, so it adds one
+            # sync clock of latency without reducing sample throughput.
+            edge_input = dsp.StreamBuffer(shape=PSQ)
             # The codec can settle for a few samples around a discontinuity.
             # Reconstruct only neighborhoods whose step dwarfs the local slope;
             # smooth sine/ramp samples pass through exactly.
@@ -218,9 +222,11 @@ class ScopeSoc(TiliquaSoc):
             # become visible stair steps at fast timebases, while retaining a
             # sample-and-hold transition for detected square/saw edges.
             r = dsp.EdgeAwareResample(n_up=self.n_upsample, shape=PSQ)
+            setattr(m.submodules, f"edge_input{ch}", edge_input)
             setattr(m.submodules, f"edge_reconstruct{ch}", edge)
             setattr(m.submodules, f"resample{ch}", r)
-            wiring.connect(m, up_split4.o[ch], edge.i)
+            wiring.connect(m, up_split4.o[ch], edge_input.i)
+            wiring.connect(m, edge_input.o, edge.i)
             wiring.connect(m, edge.o, r.i)
             wiring.connect(m, r.o, up_merge4.i[ch])
 
