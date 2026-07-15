@@ -11,10 +11,8 @@ use crate::options::Page;
 
 const VSPACE: i32 = 15;
 const BORDER: i32 = 1;
-/// Gap between the border stroke and the vertical separator.
-const SEP_GAP: i32 = 4;
-/// ``FONT_9X15`` baseline offset — top glyph row sits ``baseline`` px above the draw Y.
-const TEXT_BASELINE: i32 = FONT_9X15.baseline as i32;
+/// Align the first row with XBEAM/SPECTO's menu baseline at screen center.
+const CONTENT_Y0: i32 = 18;
 /// Left column wide enough for the longest page title (``CH 1-2``).
 const GUTTER_W: i32 = 64;
 const SEP_X: i32 = GUTTER_W - 3;
@@ -95,28 +93,7 @@ fn rows_for_page(page: Page) -> &'static [MenuRow] {
     }
 }
 
-fn inner_top() -> i32 {
-    BORDER + 1
-}
-
-fn inner_bottom(box_h: i32) -> i32 {
-    box_h - BORDER - 2
-}
-
-fn separator_y0(box_h: i32) -> i32 {
-    inner_top() + SEP_GAP
-}
-
-fn separator_y1(box_h: i32) -> i32 {
-    inner_bottom(box_h) - SEP_GAP
-}
-
-/// First-row baseline: top glyph row aligns with the separator top.
-fn content_y0(menu_h: u32) -> i32 {
-    separator_y0(menu_h as i32) + TEXT_BASELINE
-}
-
-/// Draw the scope menu with a 1px border sized to the page content.
+/// Draw the scope menu with an opaque bordered panel and a row-sized separator.
 pub fn draw_scope_menu<D, O>(
     d: &mut D,
     opts: &O,
@@ -139,8 +116,7 @@ where
         .build();
 
     let rows = rows_for_page(page);
-    let box_h = menu_h as i32;
-    let y0 = content_y0(menu_h);
+    let y0 = CONTENT_Y0;
     let value_x = menu_w as i32 - RIGHT_MARGIN;
     let marker_x = value_x - MARKER_GAP;
     let page_hl = matches!((opts.selected(), opts.modify()), (None, _));
@@ -154,9 +130,12 @@ where
     .draw(d)?;
 
     if !rows.is_empty() {
+        // Match draw_options(): the separator begins just above the first
+        // baseline and ends at the last visible row instead of spanning the
+        // fixed-size backing bitmap.
         Line::new(
-            Point::new(SEP_X, separator_y0(box_h)),
-            Point::new(SEP_X, separator_y1(box_h)),
+            Point::new(SEP_X, y0 - 10),
+            Point::new(SEP_X, y0 - 13 + VSPACE * rows.len() as i32),
         )
         .into_styled(stroke)
         .draw(d)?;

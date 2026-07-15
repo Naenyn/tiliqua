@@ -227,6 +227,8 @@ fn sync_ui_overlay_csrs(
 ) {
     let (origin_x, origin_y, transparent) = if menu_shown {
         let (x, y) = ui_menu_origin(h_active, v_active, help_page);
+        // Keep the normal options panel opaque for readability over scope
+        // traces, but do not cover the help content behind its small menu.
         (x, y, help_page)
     } else if debug_hud {
         (DEBUG_HUD_MARGIN, DEBUG_HUD_MARGIN, true)
