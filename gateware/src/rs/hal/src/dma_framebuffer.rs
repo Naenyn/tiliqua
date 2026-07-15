@@ -120,7 +120,9 @@ macro_rules! impl_dma_framebuffer {
                         w.enable().bit(false)
                     });
                     registers_fb.fb_base().write(|w| unsafe {
-                        w.fb_base().bits(fb_base as u32)
+                        // CPU framebuffer pointers are byte-addressed, while
+                        // the 32-bit Wishbone DMA master addresses words.
+                        w.fb_base().bits((fb_base as u32) >> 2)
                     });
                     registers_fb.h_timing().write(|w| unsafe {
                         w.h_active().bits(mode.h_active);
@@ -175,7 +177,7 @@ macro_rules! impl_dma_framebuffer {
             impl hal::dma_framebuffer::DMAFramebuffer for $DMA_FRAMEBUFFERX {
                 fn update_fb_base(&mut self, fb_base: u32) {
                     self.registers_fb.fb_base().write(|w| unsafe {
-                        w.fb_base().bits(fb_base)
+                        w.fb_base().bits(fb_base >> 2)
                     });
                     self.framebuffer_base = fb_base as *mut u32
                 }

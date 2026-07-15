@@ -67,6 +67,7 @@ class _LinePlotter(wiring.Component):
         current_y = Signal(signed(11))
         target_x = Signal(signed(12))
         target_y = Signal(signed(11))
+        target_pixel = Signal(Pixel)
         current_pixel = Signal(Pixel)
         end_strip = Signal()
 
@@ -100,6 +101,7 @@ class _LinePlotter(wiring.Component):
                             current_y.eq(prev_y),
                             target_x.eq(self.i.payload.x),
                             target_y.eq(self.i.payload.y),
+                            target_pixel.eq(self.i.payload.pixel),
                             end_strip.eq(self.i.payload.cmd == LineStripCmd.END),
                         ]
                         m.next = 'SETUP_BRESENHAM'
@@ -159,6 +161,7 @@ class _LinePlotter(wiring.Component):
                     m.d.sync += [
                         prev_x.eq(target_x),
                         prev_y.eq(target_y),
+                        current_pixel.eq(target_pixel),
                         has_prev_point.eq(~end_strip),
                     ]
                     m.next = 'IDLE'
@@ -186,7 +189,7 @@ class _LinePlotter(wiring.Component):
                         m.d.sync += [
                             prev_x.eq(target_x),
                             prev_y.eq(target_y),
-                            current_pixel.eq(self.i.payload.pixel),
+                            current_pixel.eq(target_pixel),
                             has_prev_point.eq(~end_strip),
                         ]
                         m.next = 'IDLE'
