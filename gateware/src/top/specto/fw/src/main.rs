@@ -272,6 +272,10 @@ fn sanitize_options(opts: &mut Opts, last_valid_page: &mut Page) {
         opts.histo.quality.value = Quality3d::Medium;
     }
 
+    // DisplayOpts uses this hidden mirror to expose its grid option only in
+    // spectrum mode. The actual mode remains owned by the SPECTO page.
+    opts.display.spectrum_mode.value = opts.specto.mode.value;
+
     // SPECTRUM and HISTO are alternate detail pages. The options framework
     // does not support conditional pages, so skip over the inactive page while
     // preserving navigation direction:
@@ -636,6 +640,9 @@ fn main() -> ! {
             spectro
                 .hue()
                 .write(|w| unsafe { w.value().bits(opts.display.hue.value) });
+            spectro.noise_floor().write(|w| unsafe {
+                w.value().bits(opts.display.noise_floor.value.hw_index())
+            });
             spectro.timings().write(|w| unsafe {
                 w.h_active().bits(h_active as u16);
                 w.v_active().bits(v_active as u16);
@@ -666,7 +673,8 @@ fn main() -> ! {
                 w.peaks().bits(opts.spectrum.peaks.value.hw_index());
                 w.scale().bit(opts.spectrum.scale.value.hw_index() != 0);
                 w.highlight().bit(
-                    opts.spectrum.highlight.value.hw_index() != 0)
+                    opts.spectrum.highlight.value.hw_index() != 0);
+                w.grid().bit(opts.display.grid.value == OnOff::On)
             });
 
             // SPECTO draws its own plot axes. Keep the general-purpose XBEAM

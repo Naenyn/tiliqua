@@ -307,6 +307,30 @@ pub enum OnOff {
     On,
 }
 
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
+pub enum DisplayNoiseFloor {
+    #[default]
+    #[strum(serialize = "off")]
+    Off,
+    #[strum(serialize = "-72dB")]
+    Db72,
+    #[strum(serialize = "-66dB")]
+    Db66,
+    #[strum(serialize = "-60dB")]
+    Db60,
+}
+
+impl DisplayNoiseFloor {
+    pub fn hw_index(self) -> u8 {
+        match self {
+            Self::Off => 0,
+            Self::Db72 => 1,
+            Self::Db66 => 2,
+            Self::Db60 => 3,
+        }
+    }
+}
+
 int_params!(GainParams<u8>   { step: 1, min: 0, max: 12 });
 int_params!(HueParams<u8>    { step: 1, min: 0, max: 15 });
 int_params!(AngleParams<i8>  { step: 15, min: -90, max: 90 });
@@ -375,12 +399,24 @@ pub struct HistoOpts {
 pub struct DisplayOpts {
     #[option]
     pub axes: EnumOption<OnOff>,
+    // The options framework evaluates conditional visibility within a page.
+    // Keep a hidden mirror of the top-level mode so the spectrum-only grid
+    // control can live immediately below axes on the DISPLAY page.
+    #[option]
+    #[option_if(false)]
+    pub spectrum_mode: EnumOption<DisplayMode>,
+    #[option]
+    #[option_if(self.spectrum_mode.value == DisplayMode::Spectrum)]
+    pub grid: EnumOption<OnOff>,
     #[option(0)]
     pub hue: IntOption<HueParams>,
     #[option(10)]
     pub ui_hue: IntOption<HueParams>,
     #[option(ColorPalette::Inferno)]
     pub palette: EnumOption<ColorPalette>,
+    #[option]
+    #[option_name("noise floor")]
+    pub noise_floor: EnumOption<DisplayNoiseFloor>,
 }
 
 #[derive(OptionPage, Clone)]

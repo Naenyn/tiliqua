@@ -5,14 +5,13 @@
 """Streaming spectral analysis and beam-raced waterfall display."""
 
 import math
+import os
 
 from amaranth import *
 from amaranth.lib import data, fifo, memory, stream, wiring
 from amaranth.lib.cdc import FFSynchronizer
 from amaranth.lib.wiring import In, Out
 from amaranth_soc import csr
-from amaranth_future import fixed
-
 from tiliqua import dsp
 from tiliqua.dsp import ASQ
 from tiliqua.raster.line import LineCmd, LineStripCmd
@@ -22,6 +21,223 @@ from tiliqua.video.types import Pixel, ScanPixel
 FFT_SIZE = 512
 N_BINS = FFT_SIZE // 2
 HISTORY_COLS = 256
+SPECTRUM_DB_FLOOR = -96.0
+SPECTRUM_CORDIC_GAIN = dsp.cordic.RectToPolarCordic.K
+
+
+def _magnitude_raw_to_dbfs_level(raw, *, f_bits=ASQ.f_bits):
+    """Convert an uncorrected Hann/FFT/CORDIC magnitude to 0..63 dBFS.
+
+    The forward FFT is normalized by 1/N. A real, bin-centred full-scale
+    sinusoid contributes half its amplitude to the positive spectrum and the
+    Hann window has a coherent gain of one half, while the magnitude CORDIC is
+    intentionally left at its gain K. Consequently ``raw / 2**f_bits`` needs
+    a factor of ``4/K`` to become conventional single-sided amplitude.
+    """
+    if raw <= 0:
+        return 0
+    amplitude = (raw / (1 << f_bits)) * (4.0 / SPECTRUM_CORDIC_GAIN)
+    dbfs = 20.0 * math.log10(amplitude)
+    normalized = (dbfs - SPECTRUM_DB_FLOOR) / -SPECTRUM_DB_FLOOR
+    return max(0, min(63, round(normalized * 63)))
+
+
+class MagnitudeToDbfs(wiring.Component):
+    """Streaming calibrated magnitude-to-dBFS converter.
+
+    A leading-bit exponent and four mantissa bits address a compact log LUT.
+    Unlike a uniformly addressed linear-magnitude LUT, this retains useful
+    precision throughout the fixed-point input's complete dynamic range.
+    """
+
+    def __init__(self, shape=ASQ):
+        self.shape = shape
+        super().__init__({
+            "i": In(stream.Signature(dsp.block.Block(shape))),
+            "o": Out(stream.Signature(dsp.block.Block(unsigned(6)))),
+        })
+
+    def elaborate(self, platform):
+        m = Module()
+        width = self.shape.as_shape().width
+        exponent_bits = (width - 1).bit_length()
+        raw = Signal(unsigned(width))
+        exponent = Signal(exponent_bits)
+        mantissa = Signal(4)
+
+        # log2(exponent * mantissa) is separable. Keeping independent tables
+        # avoids both a block RAM and the very large 512:1 mux produced by an
+        # Array containing every exponent/mantissa combination. Each entry
+        # represents the midpoint of its four-bit mantissa interval; this is
+        # comfortably finer than the display's 1.52dB level quantization.
+        exponent_table = []
+        for exponent_value in range(1 << exponent_bits):
+            representative = (1 << exponent_value) * (1.0 + 0.5 / 16.0)
+            exponent_table.append(_magnitude_raw_to_dbfs_level(
+                representative, f_bits=self.shape.f_bits))
+        mantissa_table = []
+        mantissa_base = 1.0 + 0.5 / 16.0
+        for mantissa_value in range(16):
+            ratio = (1.0 + (mantissa_value + 0.5) / 16.0) / mantissa_base
+            correction_db = 20.0 * math.log10(ratio)
+            mantissa_table.append(round(correction_db * 63 / 96))
+        exponent_levels = Array(Const(level, 6) for level in exponent_table)
+        mantissa_levels = Array(Const(level, 3) for level in mantissa_table)
+
+        lookup_exponent = Signal.like(exponent)
+        lookup_mantissa = Signal.like(mantissa)
+        input_zero = Signal()
+        output_first = Signal()
+        output_level = Signal(6)
+        level_sum = Signal(7)
+
+        m.d.comb += [
+            raw.eq(self.i.payload.sample.as_value()),
+            exponent.eq(0),
+            mantissa.eq(0),
+            level_sum.eq(
+                exponent_levels[lookup_exponent]
+                + mantissa_levels[lookup_mantissa]),
+        ]
+
+        # Priority-encode the leading one and collect the next four bits as a
+        # normalized fractional mantissa. Constant slices avoid a barrel
+        # shifter on this already timing-sensitive analyzer path.
+        for bit in reversed(range(width)):
+            condition = raw[bit]
+            if bit == width - 1:
+                context = m.If(condition)
+            else:
+                context = m.Elif(condition)
+            with context:
+                m.d.comb += exponent.eq(bit)
+                if bit >= 4:
+                    m.d.comb += mantissa.eq(raw[bit - 4:bit])
+                elif bit > 0:
+                    m.d.comb += mantissa.eq(raw[:bit] << (4 - bit))
+                else:
+                    m.d.comb += mantissa.eq(0)
+
+        # Register both halves of the lookup before evaluating the compact
+        # tables. This also provides ordinary stream back-pressure and keeps
+        # the leading-bit encoder out of the output path.
+        with m.FSM():
+            with m.State("IDLE"):
+                m.d.comb += self.i.ready.eq(1)
+                with m.If(self.i.valid):
+                    m.d.sync += [
+                        lookup_exponent.eq(exponent),
+                        lookup_mantissa.eq(mantissa),
+                        input_zero.eq(raw == 0),
+                        output_first.eq(self.i.payload.first),
+                    ]
+                    m.next = "LOOKUP"
+            with m.State("LOOKUP"):
+                m.d.sync += output_level.eq(Mux(
+                    input_zero, 0, Mux(level_sum > 63, 63, level_sum)))
+                m.next = "OUTPUT"
+            with m.State("OUTPUT"):
+                m.d.comb += [
+                    self.o.valid.eq(1),
+                    self.o.payload.first.eq(output_first),
+                    self.o.payload.sample.eq(output_level),
+                ]
+                with m.If(self.o.ready):
+                    m.next = "IDLE"
+
+        return m
+
+
+class DbfsLevelSmoother(wiring.Component):
+    """Short display-oriented EMA over calibrated six-bit dB levels."""
+
+    def __init__(self, sz=FFT_SIZE):
+        self.sz = sz
+        super().__init__({
+            "attack_shift": In(unsigned(2)),
+            "release_shift": In(unsigned(2)),
+            "i": In(stream.Signature(dsp.block.Block(unsigned(6)))),
+            "o": Out(stream.Signature(dsp.block.Block(unsigned(6)))),
+        })
+
+    def elaborate(self, platform):
+        m = Module()
+        m.submodules.mem = mem = memory.Memory(
+            shape=unsigned(6), depth=self.sz, init=[0] * self.sz,
+            attrs={"ram_style": "distributed"})
+        # The asynchronous distributed-RAM read follows the registered bin
+        # index. A synchronous read here would sample the previous index on
+        # the same edge that accepts a new bin, shifting the EMA state by one.
+        mem_r = mem.read_port(domain="comb")
+        mem_w = mem.write_port()
+
+        index = Signal(range(self.sz + 1))
+        input_level = Signal(6)
+        output_level = Signal(6)
+        output_first = Signal()
+        rising_delta = Signal(7)
+        falling_delta = Signal(7)
+        shift = Signal(2)
+        step = Signal(7)
+        smoothed = Signal(7)
+        m.d.comb += [
+            mem_r.addr.eq(index),
+            mem_w.addr.eq(index),
+            rising_delta.eq(input_level - mem_r.data),
+            falling_delta.eq(mem_r.data - input_level),
+            shift.eq(Mux(input_level >= mem_r.data,
+                         self.attack_shift, self.release_shift)),
+        ]
+        with m.Switch(shift):
+            with m.Case(0):
+                m.d.comb += step.eq(Mux(
+                    input_level >= mem_r.data,
+                    rising_delta, falling_delta))
+            with m.Case(1):
+                m.d.comb += step.eq((Mux(
+                    input_level >= mem_r.data,
+                    rising_delta, falling_delta) + 1) >> 1)
+            with m.Case(2):
+                m.d.comb += step.eq((Mux(
+                    input_level >= mem_r.data,
+                    rising_delta, falling_delta) + 3) >> 2)
+            with m.Default():
+                m.d.comb += step.eq((Mux(
+                    input_level >= mem_r.data,
+                    rising_delta, falling_delta) + 7) >> 3)
+        m.d.comb += smoothed.eq(Mux(
+            input_level >= mem_r.data,
+            mem_r.data + step,
+            mem_r.data - step))
+        m.d.sync += mem_w.en.eq(0)
+
+        with m.FSM():
+            with m.State("IDLE"):
+                m.d.comb += self.i.ready.eq(1)
+                with m.If(self.i.valid):
+                    m.d.sync += [
+                        input_level.eq(self.i.payload.sample),
+                        output_first.eq(self.i.payload.first),
+                        index.eq(Mux(self.i.payload.first, 0, index + 1)),
+                    ]
+                    m.next = "READ"
+            with m.State("READ"):
+                m.d.sync += [
+                    output_level.eq(smoothed[:6]),
+                    mem_w.data.eq(smoothed[:6]),
+                    mem_w.en.eq(1),
+                ]
+                m.next = "OUTPUT"
+            with m.State("OUTPUT"):
+                m.d.comb += [
+                    self.o.valid.eq(1),
+                    self.o.payload.first.eq(output_first),
+                    self.o.payload.sample.eq(output_level),
+                ]
+                with m.If(self.o.ready):
+                    m.next = "IDLE"
+
+        return m
 
 
 def _spectrum_log_coord_lut(max_hz, bin_hz, max_bin):
@@ -182,6 +398,9 @@ class Spectrogram(wiring.Component):
     class Hue(csr.Register, access="w"):
         value: csr.Field(csr.action.W, unsigned(4))
 
+    class NoiseFloor(csr.Register, access="w"):
+        value: csr.Field(csr.action.W, unsigned(2))
+
     class Timings(csr.Register, access="w"):
         h_active: csr.Field(csr.action.W, unsigned(12))
         v_active: csr.Field(csr.action.W, unsigned(12))
@@ -201,6 +420,7 @@ class Spectrogram(wiring.Component):
         peaks: csr.Field(csr.action.W, unsigned(3))
         scale: csr.Field(csr.action.W, unsigned(1))
         highlight: csr.Field(csr.action.W, unsigned(1))
+        grid: csr.Field(csr.action.W, unsigned(1))
 
     class ProjectionX(csr.Register, access="w"):
         frequency: csr.Field(csr.action.W, signed(10))
@@ -232,6 +452,8 @@ class Spectrogram(wiring.Component):
             "config_3d", self.Config3d(), offset=0x28)
         self._spectrum_config = regs.add(
             "spectrum_config", self.SpectrumConfig(), offset=0x2c)
+        self._noise_floor = regs.add(
+            "noise_floor", self.NoiseFloor(), offset=0x30)
         self._bridge = csr.Bridge(regs.as_memory_map())
 
         super().__init__({
@@ -268,6 +490,7 @@ class Spectrogram(wiring.Component):
         rate_sel = Signal(2, init=2)
         persistence = Signal(2, init=2)
         hue = Signal(4, init=5)
+        noise_floor = Signal(2)
         quality_3d = Signal(2, init=1)
         spectrum_style = Signal(init=1)
         spectrum_bands = Signal(2, init=1)
@@ -275,10 +498,11 @@ class Spectrogram(wiring.Component):
         spectrum_peaks = Signal(3, init=5)
         spectrum_scale = Signal(init=1)
         spectrum_highlight = Signal()
+        spectrum_grid = Signal(init=1)
         spectrum_log_bucket_generation = Signal(4)
         spectrum_log_config_dirty = Signal()
         spectrum_log_clear_active = Signal()
-        spectrum_log_clear_addr = Signal(8)
+        spectrum_log_clear_addr = Signal(9)
         h_active = Signal(12, init=720)
         v_active = Signal(12, init=720)
         menu_visible = Signal()
@@ -307,6 +531,8 @@ class Spectrogram(wiring.Component):
             m.d.sync += persistence.eq(self._persistence.f.value.w_data)
         with m.If(self._hue.element.w_stb):
             m.d.sync += hue.eq(self._hue.f.value.w_data)
+        with m.If(self._noise_floor.element.w_stb):
+            m.d.sync += noise_floor.eq(self._noise_floor.f.value.w_data)
         with m.If(self._timings.element.w_stb):
             m.d.sync += [
                 h_active.eq(self._timings.f.h_active.w_data),
@@ -336,6 +562,7 @@ class Spectrogram(wiring.Component):
                 spectrum_scale.eq(self._spectrum_config.f.scale.w_data),
                 spectrum_highlight.eq(
                     self._spectrum_config.f.highlight.w_data),
+                spectrum_grid.eq(self._spectrum_config.f.grid.w_data),
             ]
             with m.If((self._spectrum_config.f.bands.w_data !=
                        spectrum_bands) |
@@ -367,24 +594,46 @@ class Spectrogram(wiring.Component):
         m.submodules.resample_low = resample_low = dsp.Resample(
             fs_in=wide_fs // 4, n_up=1, m_down=2,
             bw=11/24, order_mult=24, shape=ASQ)
+        # Remove converter/input offset before the Hann window can spread it
+        # into FFT bin 1. At 192kHz, the quantized 0.9999 pole has a corner
+        # near 3Hz: low enough to preserve the analyzer's 10Hz lower edge,
+        # while preventing a stationary zero-volt input from appearing at a
+        # different frequency whenever the analysis range changes.
+        m.submodules.dc_block = dc_block = dsp.filters.DCBlock(
+            pole=0.9999, sq=ASQ)
         m.submodules.analyzer = analyzer = dsp.fft.STFTAnalyzer(
             shape=ASQ, sz=FFT_SIZE)
         m.submodules.envelope = envelope = dsp.spectral.SpectralEnvelope(
             shape=ASQ, sz=FFT_SIZE, smooth=False)
-        # Keep the shared spectrum frame-local. Spectrum rate/peaks and the
-        # spectrogram history/persistence own temporal response; smoothing
-        # individual FFT bins here leaves stale energy behind when a tone moves.
+        m.submodules.dbfs = dbfs = MagnitudeToDbfs(ASQ)
+        m.submodules.level_smoother = level_smoother = DbfsLevelSmoother(
+            FFT_SIZE)
 
-        def log_lut(x):
-            max_v = 1 << ASQ.f_bits
-            full_range = math.log2(max_v)
-            log_level = math.log2(max(1, x * max_v)) / full_range
-            # Discard the lowest part of the numerical noise floor and spend
-            # the available display levels on musically useful magnitudes.
-            return max(0, min(1, (log_level - 0.30) / 0.70))
-
-        m.submodules.log = log = dsp.block.WrapCore(dsp.WaveShaper(
-            lut_function=log_lut, lut_size=512, continuous=False))
+        # A short calibrated-level average calms ADC/numerical shimmer without
+        # the two EBRs required by the full-precision magnitude smoother. The
+        # shifts compensate for analyzer frame rate; attack is always at least
+        # twice as quick as release.
+        with m.Switch(range_sel):
+            with m.Case(0):
+                m.d.comb += [
+                    level_smoother.attack_shift.eq(1),
+                    level_smoother.release_shift.eq(2),
+                ]
+            with m.Case(1):
+                m.d.comb += [
+                    level_smoother.attack_shift.eq(0),
+                    level_smoother.release_shift.eq(1),
+                ]
+            with m.Case(2):
+                m.d.comb += [
+                    level_smoother.attack_shift.eq(0),
+                    level_smoother.release_shift.eq(1),
+                ]
+            with m.Default():
+                m.d.comb += [
+                    level_smoother.attack_shift.eq(0),
+                    level_smoother.release_shift.eq(0),
+                ]
 
         selected_sample = Signal(ASQ)
         use_wide = Signal()
@@ -392,19 +641,47 @@ class Spectrogram(wiring.Component):
         use_mid = Signal()
         use_low = Signal()
         range_decimated = Signal()
+        source_valid = Signal()
+        source_ready = Signal()
         with m.Switch(input_ch):
             for ch in range(4):
                 with m.Case(ch):
                     m.d.comb += selected_sample.eq(self.audio_i.payload[ch])
+
+        # Diagnostic-only, elaboration-time source selection. The internal
+        # oscillator exercises the complete resampler/FFT/display path while
+        # bypassing the external source, cable, analog front end, and ADC.
+        # 1.5kHz is bin-centred in both the 48kHz and 12kHz analyzer streams;
+        # its quantized oscillator coefficient is within 0.6Hz of nominal.
+        if os.environ.get("TILIQUA_SPECTO_TEST_TONE", "0") == "1":
+            m.submodules.test_tone = test_tone = dsp.DWO(
+                sq=ASQ,
+                c=math.cos(2 * math.pi * 1500.0 / self.fs),
+            )
+            m.d.comb += [
+                selected_sample.eq(test_tone.o.payload),
+                source_valid.eq(self.audio_i.valid & test_tone.o.valid),
+                source_ready.eq(dc_block.i.ready & test_tone.o.valid),
+                test_tone.o.ready.eq(
+                    self.audio_i.valid & dc_block.i.ready),
+            ]
+        else:
+            m.d.comb += [
+                source_valid.eq(self.audio_i.valid),
+                source_ready.eq(dc_block.i.ready),
+            ]
         m.d.comb += [
             use_wide.eq(range_sel == 0),
             use_fine.eq(range_sel == 1),
             use_mid.eq(range_sel == 2),
             use_low.eq(range_sel == 3),
             range_decimated.eq(range_sel != 0),
-            resample_wide.i.valid.eq(self.audio_i.valid),
-            resample_wide.i.payload.eq(selected_sample),
-            self.audio_i.ready.eq(resample_wide.i.ready),
+            dc_block.i.valid.eq(source_valid),
+            dc_block.i.payload.eq(selected_sample),
+            self.audio_i.ready.eq(source_ready),
+            resample_wide.i.valid.eq(dc_block.o.valid),
+            resample_wide.i.payload.eq(dc_block.o.payload),
+            dc_block.o.ready.eq(resample_wide.i.ready),
 
             resample_fine.i.valid.eq(resample_wide.o.valid & ~use_wide),
             resample_fine.i.payload.eq(resample_wide.o.payload),
@@ -437,7 +714,8 @@ class Spectrogram(wiring.Component):
             )),
         ]
         wiring.connect(m, analyzer.o, envelope.i)
-        wiring.connect(m, envelope.o, log.i)
+        wiring.connect(m, envelope.o, dbfs.i)
+        wiring.connect(m, dbfs.o, level_smoother.i)
 
         history = memory.Memory(
             data=memory.MemoryData(
@@ -459,8 +737,8 @@ class Spectrogram(wiring.Component):
         # needs only one lookup per pixel regardless of the selected count.
         spectrum_levels = memory.Memory(
             data=memory.MemoryData(
-                shape=unsigned(6), depth=N_BINS,
-                init=[0] * N_BINS,
+                shape=unsigned(6), depth=2 * N_BINS,
+                init=[0] * (2 * N_BINS),
             )
         )
         m.submodules.spectrum_levels = spectrum_levels
@@ -475,8 +753,8 @@ class Spectrogram(wiring.Component):
         # changes when an address can mean something different (bands/range).
         spectrum_log_levels = memory.Memory(
             data=memory.MemoryData(
-                shape=unsigned(10), depth=HISTORY_COLS,
-                init=[0] * HISTORY_COLS,
+                shape=unsigned(10), depth=2 * HISTORY_COLS,
+                init=[0] * (2 * HISTORY_COLS),
             )
         )
         m.submodules.spectrum_log_levels = spectrum_log_levels
@@ -485,8 +763,8 @@ class Spectrogram(wiring.Component):
 
         spectrum_log_focus_levels = memory.Memory(
             data=memory.MemoryData(
-                shape=unsigned(4), depth=HISTORY_COLS,
-                init=[0] * HISTORY_COLS,
+                shape=unsigned(4), depth=2 * HISTORY_COLS,
+                init=[0] * (2 * HISTORY_COLS),
             )
         )
         m.submodules.spectrum_log_focus_levels = spectrum_log_focus_levels
@@ -498,8 +776,8 @@ class Spectrogram(wiring.Component):
         # small lookup instead of recomputing harmonic distances per pixel.
         spectrum_focus_levels = memory.Memory(
             data=memory.MemoryData(
-                shape=unsigned(4), depth=N_BINS,
-                init=[0] * N_BINS,
+                shape=unsigned(4), depth=2 * N_BINS,
+                init=[0] * (2 * N_BINS),
             )
         )
         m.submodules.spectrum_focus_levels = spectrum_focus_levels
@@ -550,6 +828,16 @@ class Spectrogram(wiring.Component):
         bin_index = Signal(9)
         frame_seq = Signal(6)
         accept_latched = Signal()
+        spectrum_publish_bank = Signal()
+        spectrum_display_ack_sync = Signal()
+        spectrum_bank_ready = Signal()
+        spectrum_write_bank = Signal()
+        spectrum_frame_write = Signal()
+        m.d.comb += [
+            spectrum_bank_ready.eq(
+                spectrum_publish_bank == spectrum_display_ack_sync),
+            spectrum_write_bank.eq(~spectrum_publish_bank),
+        ]
 
         # A 3D frame is accepted only after the renderer finishes a complete
         # surface sweep. This makes capture and visible animation one-to-one:
@@ -605,11 +893,15 @@ class Spectrogram(wiring.Component):
         m.d.comb += accept_now.eq(Mux(
             view_3d,
             render_slot_ready,
-            Mux(spectrum_mode, spectrum_accept_rate, accept_rate),
+            Mux(spectrum_mode,
+                spectrum_accept_rate & spectrum_bank_ready &
+                ~spectrum_log_clear_active,
+                accept_rate),
         ))
 
         current_bin = Signal(9)
         do_write = Signal()
+        m.d.comb += spectrum_frame_write.eq(do_write & spectrum_mode)
         raw_level = Signal(6)
         boosted_level = Signal(8)
         stored_level = Signal(6)
@@ -715,7 +1007,7 @@ class Spectrogram(wiring.Component):
                 spectrum_log_bucket_focus.eq(0),
             ]
         with m.Elif(spectrum_log_clear_active):
-            with m.If(spectrum_log_clear_addr == 255):
+            with m.If(spectrum_log_clear_addr == 511):
                 m.d.sync += spectrum_log_clear_active.eq(0)
             with m.Else():
                 m.d.sync += spectrum_log_clear_addr.eq(
@@ -833,10 +1125,11 @@ class Spectrogram(wiring.Component):
                     m.d.comb += spectrum_log_column_sync.eq(
                         lut[current_bin[:8]])
         m.d.comb += [
-            log.o.ready.eq(1),
-            current_bin.eq(Mux(log.o.payload.first, 0, bin_index)),
-            do_write.eq(Mux(log.o.payload.first, accept_now, accept_latched)),
-            raw_level.eq(log.o.payload.sample.as_value()[ASQ.f_bits-6:ASQ.f_bits]),
+            level_smoother.o.ready.eq(1),
+            current_bin.eq(Mux(level_smoother.o.payload.first, 0, bin_index)),
+            do_write.eq(Mux(level_smoother.o.payload.first,
+                            accept_now, accept_latched)),
+            raw_level.eq(level_smoother.o.payload.sample),
             boosted_level.eq(raw_level + gain),
             # Bin 0 is DC, not musical frequency content. Leaving it in the
             # raw linear/history paths lets input offset dominate the left
@@ -891,31 +1184,35 @@ class Spectrogram(wiring.Component):
                 (spectrum_prev_level >= 10) &
                 (spectrum_prev_level >= spectrum_prev_prev_level) &
                 (spectrum_prev_level >= stored_level)),
-            history_w.en.eq(log.o.valid & do_write & (current_bin < N_BINS)),
+            history_w.en.eq(
+                level_smoother.o.valid & do_write & (current_bin < N_BINS)),
             history_w.addr.eq((write_col << 8) | current_bin[:8]),
             history_w.data.eq(stored_level),
             spectrum_levels_w.en.eq(
-                log.o.valid &
-                do_write &
+                level_smoother.o.valid &
+                spectrum_frame_write &
                 (current_bin <= spectrum_active_bin_last) &
                 spectrum_group_last),
-            spectrum_levels_w.addr.eq(spectrum_band_index_sync),
+            spectrum_levels_w.addr.eq(
+                Cat(spectrum_band_index_sync, spectrum_write_bank)),
             spectrum_levels_w.data.eq(spectrum_group_peak_next),
             spectrum_focus_w.en.eq(
-                log.o.valid &
-                do_write &
+                level_smoother.o.valid &
+                spectrum_frame_write &
                 (current_bin <= spectrum_active_bin_last) &
                 spectrum_group_last),
-            spectrum_focus_w.addr.eq(spectrum_band_index_sync),
+            spectrum_focus_w.addr.eq(
+                Cat(spectrum_band_index_sync, spectrum_write_bank)),
             spectrum_focus_w.data.eq(spectrum_focus_level_sync),
             spectrum_log_levels_w.en.eq(
                 spectrum_log_clear_active |
-                (log.o.valid & do_write & spectrum_log_bucket_flush &
+                (level_smoother.o.valid & spectrum_frame_write &
+                 spectrum_log_bucket_flush &
                  ~spectrum_log_clear_active)),
             spectrum_log_levels_w.addr.eq(Mux(
                 spectrum_log_clear_active,
                 spectrum_log_clear_addr,
-                spectrum_log_column_prev)),
+                Cat(spectrum_log_column_prev, spectrum_write_bank))),
             spectrum_log_levels_w.data.eq(Mux(
                 spectrum_log_clear_active,
                 0,
@@ -925,12 +1222,13 @@ class Spectrogram(wiring.Component):
                     spectrum_log_bucket_generation))),
             spectrum_log_focus_w.en.eq(
                 spectrum_log_clear_active |
-                (log.o.valid & do_write & spectrum_log_bucket_flush &
+                (level_smoother.o.valid & spectrum_frame_write &
+                 spectrum_log_bucket_flush &
                  ~spectrum_log_clear_active)),
             spectrum_log_focus_w.addr.eq(Mux(
                 spectrum_log_clear_active,
                 spectrum_log_clear_addr,
-                spectrum_log_column_prev)),
+                Cat(spectrum_log_column_prev, spectrum_write_bank))),
             spectrum_log_focus_w.data.eq(Mux(
                 spectrum_log_clear_active,
                 0,
@@ -960,8 +1258,8 @@ class Spectrogram(wiring.Component):
                     spectrum_group_last.eq(current_bin[:3] == 7),
                 ]
 
-        with m.If(log.o.valid):
-            with m.If(log.o.payload.first):
+        with m.If(level_smoother.o.valid):
+            with m.If(level_smoother.o.payload.first):
                 # Spectrum display writes are frame-rate limited so slower
                 # rates update coherently. Keep the fundamental/harmonic
                 # detector on the same accepted-frame cadence: if a skipped
@@ -1066,7 +1364,7 @@ class Spectrogram(wiring.Component):
             with m.If(current_bin <= spectrum_active_bin_last):
                 m.d.sync += spectrum_group_peak.eq(
                     spectrum_group_peak_next)
-            with m.If(log.o.payload.first):
+            with m.If(level_smoother.o.payload.first):
                 m.d.sync += [
                     bin_index.eq(1),
                     frame_seq.eq(frame_seq + 1),
@@ -1082,6 +1380,9 @@ class Spectrogram(wiring.Component):
                     newest_col.eq(write_col),
                     write_col.eq(write_col - 1),
                 ]
+            with m.If(spectrum_frame_write &
+                      (current_bin == N_BINS - 1)):
+                m.d.sync += spectrum_publish_bank.eq(spectrum_write_bank)
 
         # ---- DVI-domain circular history projection ------------------------
         enable_dvi = Signal()
@@ -1097,14 +1398,19 @@ class Spectrogram(wiring.Component):
         spectrum_peaks_dvi = Signal(3)
         spectrum_scale_dvi = Signal()
         spectrum_highlight_dvi = Signal()
+        spectrum_grid_dvi = Signal()
         spectrum_log_bucket_generation_dvi = Signal(4)
         range_dvi = Signal(2)
         rate_dvi = Signal(2)
         persistence_dvi = Signal(2)
         hue_dvi = Signal(4)
+        noise_floor_dvi = Signal(2)
         h_active_dvi = Signal(12)
         v_active_dvi = Signal(12)
         menu_visible_dvi = Signal()
+        spectrum_publish_bank_meta = Signal()
+        spectrum_display_bank_dvi = Signal()
+        spectrum_display_ack_dvi = Signal()
         projection_x_dvi = [Signal(signed(10)) for _ in range(3)]
         projection_y_dvi = [Signal(signed(10)) for _ in range(3)]
         newest_gray = Signal(8)
@@ -1126,6 +1432,7 @@ class Spectrogram(wiring.Component):
             ("spectrum_scale", spectrum_scale, spectrum_scale_dvi),
             ("spectrum_highlight", spectrum_highlight,
              spectrum_highlight_dvi),
+            ("spectrum_grid", spectrum_grid, spectrum_grid_dvi),
             ("spectrum_log_bucket_generation", spectrum_log_bucket_generation,
              spectrum_log_bucket_generation_dvi),
             ("range", range_sel, range_dvi),
@@ -1136,8 +1443,47 @@ class Spectrogram(wiring.Component):
             ("menu_visible", menu_visible, menu_visible_dvi),
             ("newest_gray", newest_gray, newest_gray_meta),
             ("hue", hue, hue_dvi),
+            ("noise_floor", noise_floor, noise_floor_dvi),
         ]:
             setattr(m.submodules, f"{name}_ff", FFSynchronizer(src, dst, o_domain="dvi"))
+
+        # Display-only floor. Six-bit levels span -96..0 dBFS, so the three
+        # thresholds are approximately levels 16, 20 and 24. Ease the first
+        # four levels (~6 dB) above the threshold in from the baseline; above
+        # that knee the calibrated amplitude is passed through unchanged.
+        noise_floor_threshold_dvi = Signal(6)
+        with m.Switch(noise_floor_dvi):
+            with m.Case(1):
+                m.d.comb += noise_floor_threshold_dvi.eq(16)  # -72 dBFS
+            with m.Case(2):
+                m.d.comb += noise_floor_threshold_dvi.eq(20)  # -66 dBFS
+            with m.Case(3):
+                m.d.comb += noise_floor_threshold_dvi.eq(24)  # -60 dBFS
+            with m.Default():
+                m.d.comb += noise_floor_threshold_dvi.eq(0)
+
+        def apply_display_floor(level):
+            return Mux(
+                noise_floor_dvi == 0,
+                level,
+                Mux(
+                    level <= noise_floor_threshold_dvi,
+                    0,
+                    Mux(
+                        level >= noise_floor_threshold_dvi + 4,
+                        level,
+                        Mux(
+                            level == noise_floor_threshold_dvi + 1,
+                            level >> 2,
+                            Mux(
+                                level == noise_floor_threshold_dvi + 2,
+                                level >> 1,
+                                level - (level >> 2),
+                            ),
+                        ),
+                    ),
+                ),
+            )
         for axis_name, sources, destinations in [
             ("projection_x", projection_x, projection_x_dvi),
             ("projection_y", projection_y, projection_y_dvi),
@@ -1145,6 +1491,13 @@ class Spectrogram(wiring.Component):
             for index, (src, dst) in enumerate(zip(sources, destinations)):
                 setattr(m.submodules, f"{axis_name}_{index}_ff",
                         FFSynchronizer(src, dst, o_domain="dvi"))
+
+        m.submodules.spectrum_publish_bank_ff = FFSynchronizer(
+            spectrum_publish_bank, spectrum_publish_bank_meta,
+            o_domain="dvi")
+        m.submodules.spectrum_display_ack_ff = FFSynchronizer(
+            spectrum_display_ack_dvi, spectrum_display_ack_sync,
+            o_domain="sync")
 
         # Gray-code the cross-domain history pointer so a video frame can
         # never latch a mixture of old and new binary pointer bits.
@@ -1157,7 +1510,11 @@ class Spectrogram(wiring.Component):
         prev_vsync = Signal()
         m.d.dvi += prev_vsync.eq(self.i.vsync)
         with m.If(self.i.vsync & ~prev_vsync):
-            m.d.dvi += newest_dvi.eq(newest_binary_meta)
+            m.d.dvi += [
+                newest_dvi.eq(newest_binary_meta),
+                spectrum_display_bank_dvi.eq(spectrum_publish_bank_meta),
+                spectrum_display_ack_dvi.eq(spectrum_publish_bank_meta),
+            ]
 
         # ---- projected 3D waterfall ---------------------------------------
         # Sixteen frequency ridges are drawn oldest-to-newest so the near
@@ -1170,6 +1527,7 @@ class Spectrogram(wiring.Component):
         scan_group_last = Signal(3)
         scan_peak = Signal(6)
         scan_peak_next = Signal(6)
+        scan_history_level = Signal(6)
         scan_history_age = Signal(4)
         scan_depth = Signal(8)
         scan_history_bin = Signal(8)
@@ -1282,9 +1640,10 @@ class Spectrogram(wiring.Component):
                 Mux(scan_group_shift == 1, 1,
                     Mux(scan_group_shift == 2, 3, 7)))),
             scan_history_bin.eq(scan_group_base + scan_group_index),
+            scan_history_level.eq(apply_display_floor(history_r.data)),
             scan_peak_next.eq(Mux(
-                history_r.data > scan_peak,
-                history_r.data,
+                scan_history_level > scan_peak,
+                scan_history_level,
                 scan_peak)),
             scan_read_en.eq(0),
             scan_read_addr.eq(
@@ -1699,7 +2058,14 @@ class Spectrogram(wiring.Component):
                         spectrum_log_col < Mux(
                             spectrum_style_dvi,
                             spectrum_log_curve_first_bin_columns[range_index],
-                            column))
+                            # Log bars are pooled into 32/64/128/256 bands.
+                            # Align the first resolvable FFT bin to the start
+                            # of its complete pooled band. Previously the
+                            # exact-frequency boundary cut through that band,
+                            # producing the anomalous half-width column around
+                            # 100Hz in the 24kHz view.
+                            (column >> spectrum_log_bar_shift) <<
+                            spectrum_log_bar_shift))
         m.d.comb += [
             wide.eq(h_active_dvi >= 1024),
             short.eq(v_active_dvi < 600),
@@ -1817,13 +2183,17 @@ class Spectrogram(wiring.Component):
                 ((newest_dvi + completed_age) << 8) | bin_addr,
             )),
             spectrum_levels_r.en.eq(spectrum_read_en_r),
-            spectrum_levels_r.addr.eq(spectrum_read_bin_r),
+            spectrum_levels_r.addr.eq(
+                Cat(spectrum_read_bin_r, spectrum_display_bank_dvi)),
             spectrum_log_levels_r.en.eq(spectrum_read_en_r),
-            spectrum_log_levels_r.addr.eq(spectrum_read_bin_r),
+            spectrum_log_levels_r.addr.eq(
+                Cat(spectrum_read_bin_r, spectrum_display_bank_dvi)),
             spectrum_log_focus_r.en.eq(spectrum_read_en_r),
-            spectrum_log_focus_r.addr.eq(spectrum_read_bin_r),
+            spectrum_log_focus_r.addr.eq(
+                Cat(spectrum_read_bin_r, spectrum_display_bank_dvi)),
             spectrum_focus_r.en.eq(spectrum_read_en_r),
-            spectrum_focus_r.addr.eq(spectrum_read_bin_r),
+            spectrum_focus_r.addr.eq(
+                Cat(spectrum_read_bin_r, spectrum_display_bank_dvi)),
             spectrum_peak_r.en.eq(spectrum_read_en_r),
             spectrum_peak_r.addr.eq(spectrum_read_bin_r),
         ]
@@ -1883,7 +2253,7 @@ class Spectrogram(wiring.Component):
                          (major_y & (rel_y >= 0) & (rel_y < plot_h) &
                           (rel_x >= -axis_pad) & (rel_x < 0)))),
             spectrum_grid_hit.eq(
-                in_plot & spectrum_mode_dvi & axes_dvi &
+                in_plot & spectrum_mode_dvi & spectrum_grid_dvi &
                 (major_x | major_y)),
         ]
         m.d.dvi += [
@@ -2122,6 +2492,7 @@ class Spectrogram(wiring.Component):
         # part at the final four-bit palette boundary.
         fade = Signal(8)
         source_ext = Signal(9)
+        history_display_level = Signal(6)
         faded_ext = Signal(9)
         display_ext = Signal(8)
         display_base = Signal(4)
@@ -2145,7 +2516,8 @@ class Spectrogram(wiring.Component):
                 with m.Case(index):
                     m.d.comb += dither_threshold.eq(threshold)
         m.d.comb += [
-            source_ext.eq((history_r.data << 2) + 8),
+            history_display_level.eq(apply_display_floor(history_r.data)),
+            source_ext.eq((history_display_level << 2) + 8),
             faded_ext.eq(Mux(
                 source_ext <= fade,
                 0,
@@ -2154,7 +2526,7 @@ class Spectrogram(wiring.Component):
             display_ext.eq(Mux(
                 phosphor_dvi,
                 Mux(faded_ext > 255, 255, faded_ext[:8]),
-                history_r.data << 2,
+                history_display_level << 2,
             )),
             display_base.eq(display_ext[4:8]),
             display_frac.eq(display_ext[:4]),
@@ -2172,6 +2544,7 @@ class Spectrogram(wiring.Component):
         spectrum_y = Signal(signed(13))
         spectrum_scan_y = Signal(signed(13))
         spectrum_display_level = Signal(6)
+        spectrum_display_level_raw = Signal(6)
         spectrum_log_level_valid = Signal()
         spectrum_focus_display_level = Signal(4)
         spectrum_line_hit = Signal()
@@ -2192,6 +2565,7 @@ class Spectrogram(wiring.Component):
         spectrum_bands_prev_dvi = Signal(2)
         spectrum_scale_prev_dvi = Signal()
         range_prev_dvi = Signal(2)
+        noise_floor_prev_dvi = Signal(2)
         spectrum_peak_config_changed = Signal()
         spectrum_peak_reset_holdoff = Signal(3)
         spectrum_peak_reset_active = Signal()
@@ -2272,13 +2646,15 @@ class Spectrogram(wiring.Component):
             (spectrum_style_dvi != spectrum_style_prev_dvi) |
             (spectrum_bands_dvi != spectrum_bands_prev_dvi) |
             (spectrum_scale_dvi != spectrum_scale_prev_dvi) |
-            (range_dvi != range_prev_dvi))
+            (range_dvi != range_prev_dvi) |
+            (noise_floor_dvi != noise_floor_prev_dvi))
         m.d.dvi += [
             spectrum_mode_prev_dvi.eq(spectrum_mode_dvi),
             spectrum_style_prev_dvi.eq(spectrum_style_dvi),
             spectrum_bands_prev_dvi.eq(spectrum_bands_dvi),
             spectrum_scale_prev_dvi.eq(spectrum_scale_dvi),
             range_prev_dvi.eq(range_dvi),
+            noise_floor_prev_dvi.eq(noise_floor_dvi),
         ]
         with m.If(spectrum_mode_dvi &
                   (~spectrum_mode_prev_dvi | spectrum_peak_config_changed)):
@@ -2383,12 +2759,14 @@ class Spectrogram(wiring.Component):
                 spectrum_peak_config_changed |
                 (spectrum_peak_reset_holdoff != 0) |
                 spectrum_peak_clear_active),
-            spectrum_display_level.eq(Mux(
+            spectrum_display_level_raw.eq(Mux(
                 spectrum_log_bar_d,
                 Mux(spectrum_log_level_valid,
                     spectrum_log_levels_r.data[:6],
                     0),
                 spectrum_levels_r.data)),
+            spectrum_display_level.eq(
+                apply_display_floor(spectrum_display_level_raw)),
             spectrum_focus_display_level.eq(Mux(
                 spectrum_log_bar_d & spectrum_log_level_valid,
                 spectrum_log_focus_r.data,

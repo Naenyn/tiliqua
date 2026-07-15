@@ -4,13 +4,15 @@
 # SPDX-License-Identifier: CERN-OHL-S-2.0
 
 """
-SPECTO is a four-channel-selectable spectral waterfall for Eurorack signals.
+SPECTO is a spectrum analyzer and spectrograph for Eurorack signals, with a
+selectable input and four-channel analog passthrough.
 
 A 512-point Hann-windowed FFT analyzes one selected input. New spectra appear
 at the left edge and history extends to the right. Low frequencies are at the
 bottom, high frequencies at the top, and brightness represents magnitude.
-The 24kHz range uses a wide 48kHz analysis feed; lower ranges automatically
-switch to a finer 24kHz feed for twice the frequency resolution.
+The analysis rate follows the selected 24/12/6/3kHz display range, using
+48/24/12/6kHz feeds respectively. This keeps the full selected bandwidth while
+progressively improving FFT resolution from 93.75Hz/bin to 11.72Hz/bin.
 
 All four analog inputs pass directly to their matching outputs:
 
@@ -38,10 +40,12 @@ replaces the phosphor treatment used in 2D. The 3D menu rotates the camera
 independently around the X, Y and Z axes in 15-degree steps.
 
 DISPLAY options toggle labeled frequency/history axes in 2D or the projected
-frequency, amplitude and time reference axes in 3D, and select plot hue, menu
-hue, and palette. Axis scales follow the selected range and rate. The Inferno
-palette supports hue rotation while preserving its heatmap gradient;
-grayscale palettes intentionally ignore hue.
+frequency, amplitude and time reference axes in 3D. Spectrum mode also offers
+an independent plot-grid toggle. Plot hue, menu hue, palette, and a
+display-only noise floor are shared by all views. The noise floor hides low
+level display clutter without changing the analyzed signal. Axis scales follow
+the selected range and rate. The Inferno palette supports hue rotation while
+preserving its heatmap gradient; grayscale palettes intentionally ignore hue.
 MISC contains display rotation and settings save/reset actions.
 """
 
@@ -168,7 +172,7 @@ class SpectoSoc(TiliquaSoc):
     module_docstring = sys.modules[__name__].__doc__
 
     bitstream_help = BitstreamHelp(
-        brief="Four-channel selectable spectral waterfall.",
+        brief="Four-channel spectrum analyzer and spectrograph.",
         io_left=['CH1 in', 'CH2 in', 'CH3 in', 'CH4 in',
                  'CH1 thru', 'CH2 thru', 'CH3 thru', 'CH4 thru'],
         io_right=['menu / adjust', '', 'video out', '', '', '']
@@ -267,8 +271,7 @@ class SpectoSoc(TiliquaSoc):
 
         pmod0 = self.pmod0_periph.pmod
 
-        # Analog inputs pass straight through to their matching outputs. The
-        # analyzer observes calibrated samples without backpressuring audio.
+        # All analog inputs pass straight through to their matching outputs.
         wiring.connect(m, pmod0.o_cal, pmod0.i_cal)
         dsp.connect_peek(m, pmod0.o_cal, self.spectrogram.audio_i)
 
