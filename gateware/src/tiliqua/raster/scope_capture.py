@@ -92,12 +92,17 @@ class ColumnCapture(wiring.Component):
     def elaborate(self, platform):
         m = Module()
 
+        raw_x = Signal(signed(16))
+        raw_y = Array(Signal(signed(16), name=f"raw_y{i}") for i in range(self.n_channels))
         in_x = Signal(signed(16))
         in_y = Array(Signal(signed(16), name=f"in_y{i}") for i in range(self.n_channels))
+        sample_valid = Signal()
+        sample_active = Signal()
+        sample_at_end = Signal()
         y_mul = Array(Signal(8, name=f"y_mul{i}") for i in range(self.n_channels))
         y_rshift = Array(Signal(5, name=f"y_rshift{i}") for i in range(self.n_channels))
 
-        m.d.comb += in_x.eq(
+        m.d.comb += raw_x.eq(
             (self.ramp.reshape(PSQ_BASE_FBITS).as_value() >> self.scale_x) +
             self.x_offset
         )
@@ -118,8 +123,21 @@ class ColumnCapture(wiring.Component):
             yprod = Signal(signed(26), name=f"yprod{ch}")
             m.d.comb += [
                 yprod.eq(-av * y_mul[ch]),
-                in_y[ch].eq((yprod >> y_rshift[ch]) + self.y_offset[ch]),
+                raw_y[ch].eq((yprod >> y_rshift[ch]) + self.y_offset[ch]),
             ]
+
+        # Break the sample scaling path before the envelope accumulator. Audio
+        # samples arrive much more slowly than the sync clock, so this cycle of
+        # latency does not reduce capture throughput.
+        m.d.sync += sample_valid.eq(self.sample_valid)
+        with m.If(self.sample_valid):
+            m.d.sync += [
+                in_x.eq(raw_x),
+                sample_active.eq(self.active),
+                sample_at_end.eq(self.ramp > RAMP_END),
+            ]
+            for ch in range(self.n_channels):
+                m.d.sync += in_y[ch].eq(raw_y[ch])
 
         latched_col = Signal(range(MAX_CAPTURE_COLS))
         max_col = Signal(range(MAX_CAPTURE_COLS))
@@ -133,9 +151,7 @@ class ColumnCapture(wiring.Component):
         flush_ymax = Array(Signal(signed(16)) for _ in range(self.n_channels))
         col_changing = Signal()
 
-        at_end = Signal()
         prev_at_end = Signal()
-        m.d.comb += at_end.eq(self.ramp > RAMP_END)
 
         # ``armed`` restricts accumulation to a clean, in-progress sweep.  It is
         # set on a ramp restart and cleared at the top, so partial sweeps and the
@@ -145,8 +161,8 @@ class ColumnCapture(wiring.Component):
         col_index = Signal(range(MAX_CAPTURE_COLS))
         pen_lift = Signal()
         m.d.comb += pen_lift.eq(
-            self.sample_valid &
-            self.active &
+            sample_valid &
+            sample_active &
             has_prev_x &
             has_col &
             (in_x < prev_x)
@@ -156,8 +172,8 @@ class ColumnCapture(wiring.Component):
         m.d.comb += [
             col_index.eq(in_x - self.plot_x_lo),
             in_plot.eq(
-                self.sample_valid &
-                self.active &
+                sample_valid &
+                sample_active &
                 armed &
                 ~pen_lift &
                 (in_x >= self.plot_x_lo) &
@@ -209,9 +225,9 @@ class ColumnCapture(wiring.Component):
 
         end_reached = Signal()
         m.d.comb += end_reached.eq(
-            self.active &
-            self.sample_valid &
-            at_end &
+            sample_active &
+            sample_valid &
+            sample_at_end &
             ~prev_at_end &
             sweeping &
             has_col
@@ -219,15 +235,13 @@ class ColumnCapture(wiring.Component):
 
         sweep_end = Signal()
         m.d.comb += sweep_end.eq(pen_lift | end_reached)
-        m.d.comb += self.sweep_done.eq(sweep_end)
-
         # Ramp restart (top -> low): start of a fresh sweep.
         sweep_restart = Signal()
         m.d.comb += sweep_restart.eq(
-            self.active &
-            self.sample_valid &
+            sample_active &
+            sample_valid &
             prev_at_end &
-            ~at_end
+            ~sample_at_end
         )
 
         with m.If(self.clear | active_rise):
@@ -245,14 +259,14 @@ class ColumnCapture(wiring.Component):
                     col_ymax[ch].eq(-1),
                     prev_in_y[ch].eq(0),
                 ]
-        with m.Elif(self.active & self.sample_valid):
+        with m.Elif(sample_active & sample_valid):
             m.d.sync += [
                 prev_x.eq(in_x),
-                prev_at_end.eq(at_end),
+                prev_at_end.eq(sample_at_end),
             ]
             for ch in range(self.n_channels):
                 m.d.sync += prev_in_y[ch].eq(in_y[ch])
-            with m.If(~at_end):
+            with m.If(~sample_at_end):
                 m.d.sync += sweeping.eq(1)
 
         # Disarm at sweep end, (re)arm on restart.  sweep_restart is applied
@@ -319,11 +333,15 @@ class ColumnCapture(wiring.Component):
         with m.If(do_flush & (flush_col > max_col)):
             m.d.sync += max_col.eq(flush_col)
 
-        m.d.comb += [
+        # Register the completed-column stream before it reaches the 128-bit
+        # sweep RAM. Keep sweep_done in the same stage so the final write and
+        # bank-swap request remain aligned.
+        m.d.sync += [
             self.flush_valid.eq(do_flush),
             self.flush_col.eq(flush_col),
             self.flush_word.eq(flush_word),
-            self.max_col.eq(max_col),
+            self.sweep_done.eq(sweep_end),
         ]
+        m.d.comb += self.max_col.eq(max_col)
 
         return m

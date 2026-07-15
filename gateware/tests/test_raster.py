@@ -372,13 +372,13 @@ class ColumnCaptureTests(unittest.TestCase):
             ctx.set(dut.ramp, fixed.Const(ramp_val, shape=PSQ))
             ctx.set(dut.audio[0], fixed.Const(audio_val, shape=PSQ))
             ctx.set(dut.sample_valid, 1)
-            await ctx.delay(0.5e-6)
+            await ctx.tick()
+            ctx.set(dut.sample_valid, 0)
+            await ctx.tick()
             flush = ctx.get(dut.flush_valid)
             word = ctx.get(dut.flush_word) if flush else 0
             col = ctx.get(dut.flush_col) if flush else 0
-            pen = ctx.get(dut.dbg_pen_lift)
-            await ctx.delay(0.5e-6)
-            ctx.set(dut.sample_valid, 0)
+            pen = ctx.get(dut.sweep_done)
             return flush, col, word, pen
 
         async def testbench(ctx):
