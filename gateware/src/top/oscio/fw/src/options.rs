@@ -34,6 +34,12 @@ pub enum ScopeTimebase {
     Timebase2ms,
     #[strum(serialize = "1ms/d")]
     Timebase1ms,
+    #[strum(serialize = "500us/d")]
+    Timebase500us,
+    #[strum(serialize = "200us/d")]
+    Timebase200us,
+    #[strum(serialize = "100us/d")]
+    Timebase100us,
 }
 
 impl ScopeTimebase {
@@ -51,6 +57,9 @@ impl ScopeTimebase {
             ScopeTimebase::Timebase5ms   => 5_000,
             ScopeTimebase::Timebase2ms   => 2_000,
             ScopeTimebase::Timebase1ms   => 1_000,
+            ScopeTimebase::Timebase500us => 500,
+            ScopeTimebase::Timebase200us => 200,
+            ScopeTimebase::Timebase100us => 100,
         }
     }
 }

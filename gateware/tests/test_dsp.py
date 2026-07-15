@@ -222,6 +222,60 @@ class DSPTests(unittest.TestCase):
         self.assertEqual(outputs[:8], [-0.75] * 8)
         self.assertEqual(outputs[8:], [0.75] * 8)
 
+    def test_edge_aware_resample_interpolates_smooth_slopes(self):
+        m = Module()
+        m.submodules.dut = dut = dsp.EdgeAwareResample(n_up=8, shape=ASQ)
+        outputs = []
+
+        async def stimulus(ctx):
+            for sample in (-0.4, -0.3, -0.2):
+                await stream.put(ctx, dut.i, fixed.Const(sample, shape=ASQ))
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            while len(outputs) < 16:
+                if ctx.get(dut.o.valid & dut.o.ready):
+                    outputs.append(ctx.get(dut.o.payload).as_float())
+                await ctx.tick()
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        self.assertTrue(all(a <= b for a, b in zip(outputs, outputs[1:])), outputs)
+        self.assertGreater(len(set(outputs[:8])), 2)
+        self.assertGreater(len(set(outputs[8:])), 2)
+        self.assertAlmostEqual(outputs[7], -0.3, places=3)
+        self.assertAlmostEqual(outputs[15], -0.2, places=3)
+
+    def test_edge_aware_resample_holds_hard_edges(self):
+        m = Module()
+        m.submodules.dut = dut = dsp.EdgeAwareResample(n_up=8, shape=ASQ)
+        outputs = []
+
+        async def stimulus(ctx):
+            for sample in (-0.5, -0.5, -0.5, 0.5, 0.5):
+                await stream.put(ctx, dut.i, fixed.Const(sample, shape=ASQ))
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            while len(outputs) < 32:
+                if ctx.get(dut.o.valid & dut.o.ready):
+                    outputs.append(ctx.get(dut.o.payload).as_float())
+                await ctx.tick()
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        edge = outputs[16:24]
+        self.assertEqual(edge[:7], [-0.5] * 7)
+        self.assertEqual(edge[7], 0.5)
+
     def test_discontinuity_reconstruct_sharpens_settling_edge(self):
         m = Module()
         m.submodules.dut = dut = dsp.DiscontinuityReconstruct(shape=ASQ)

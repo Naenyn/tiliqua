@@ -214,10 +214,10 @@ class ScopeSoc(TiliquaSoc):
             # Reconstruct only neighborhoods whose step dwarfs the local slope;
             # smooth sine/ramp samples pass through exactly.
             edge = dsp.DiscontinuityReconstruct(shape=PSQ)
-            # Zero-order hold: repeat each audio sample n_up times.  Linear
-            # interpolation chamfers square/saw corners into ramps; ZOH keeps
-            # discontinuities sharp (FIR overshoot is avoided as well).
-            r = dsp.HoldResample(n_up=self.n_upsample, shape=PSQ)
+            # Interpolate smooth slopes so individual codec samples do not
+            # become visible stair steps at fast timebases, while retaining a
+            # sample-and-hold transition for detected square/saw edges.
+            r = dsp.EdgeAwareResample(n_up=self.n_upsample, shape=PSQ)
             setattr(m.submodules, f"edge_reconstruct{ch}", edge)
             setattr(m.submodules, f"resample{ch}", r)
             wiring.connect(m, up_split4.o[ch], edge.i)

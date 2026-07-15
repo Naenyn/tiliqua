@@ -199,6 +199,119 @@ class LinearResample(wiring.Component):
         return m
 
 
+class EdgeAwareResample(wiring.Component):
+
+    """Linear interpolator that preserves isolated waveform discontinuities.
+
+    Ordinary sample pairs are linearly interpolated, removing the visible
+    sample-and-hold staircase at fast display timebases. A new delta is treated
+    as a hard edge when it exceeds ``min_step`` and is more than eight times
+    the preceding delta. Those segments hold the old value until the new
+    endpoint, retaining sharp square transitions and saw resets without FIR
+    ringing.
+    """
+
+    def __init__(self, *, n_up, shape=ASQ, min_step=0.05):
+        assert n_up >= 2 and (n_up & (n_up - 1)) == 0
+        self.n_up = n_up
+        self.shape = shape
+        self.min_step = int(min_step * (1 << shape.f_bits))
+        super().__init__({
+            "i": In(stream.Signature(shape)),
+            "o": Out(stream.Signature(shape)),
+        })
+
+    def elaborate(self, platform):
+        m = Module()
+
+        shift = int(math.log2(self.n_up))
+        width = self.shape.width
+        prev_prev = Signal(self.shape)
+        prev = Signal(self.shape)
+        target = Signal(self.shape)
+        have_prev = Signal()
+        have_prev_delta = Signal()
+        active = Signal()
+        edge_segment = Signal()
+        phase = Signal(range(self.n_up + 1))
+
+        def extended(value):
+            raw = value.as_value()
+            return Cat(raw, raw[-1]).as_signed()
+
+        delta = Signal(signed(width + 1))
+        prev_delta = Signal(signed(width + 1))
+        delta_magnitude = Signal(unsigned(width + 1))
+        prev_delta_magnitude = Signal(unsigned(width + 1))
+        current = Signal(signed(width + 1))
+        emitted = Signal(self.shape)
+        step = Signal(signed(width + 1))
+        next_value = Signal(signed(width + 1))
+        hard_edge = Signal()
+
+        m.d.comb += [
+            delta.eq(extended(self.i.payload) - extended(prev)),
+            prev_delta.eq(extended(prev) - extended(prev_prev)),
+            delta_magnitude.eq(Mux(delta < 0, -delta, delta)),
+            prev_delta_magnitude.eq(
+                Mux(prev_delta < 0, -prev_delta, prev_delta)),
+            hard_edge.eq(
+                have_prev_delta &
+                (delta_magnitude >= self.min_step) &
+                ((delta_magnitude >> 3) > prev_delta_magnitude)
+            ),
+            next_value.eq(current + step),
+            self.i.ready.eq(~active),
+            self.o.valid.eq(active),
+            self.o.payload.eq(emitted),
+        ]
+
+        with m.If(~active & self.i.valid):
+            with m.If(~have_prev):
+                m.d.sync += [
+                    prev.eq(self.i.payload),
+                    have_prev.eq(1),
+                ]
+            with m.Else():
+                m.d.sync += [
+                    target.eq(self.i.payload),
+                    current.eq(extended(prev) + (delta >> shift)),
+                    emitted.eq(Mux(
+                        hard_edge,
+                        prev.as_value(),
+                        extended(prev) + (delta >> shift),
+                    )),
+                    step.eq(delta >> shift),
+                    edge_segment.eq(hard_edge),
+                    phase.eq(1),
+                    active.eq(1),
+                ]
+
+        with m.If(active & self.o.ready):
+            with m.If(phase == self.n_up):
+                m.d.sync += [
+                    prev_prev.eq(prev),
+                    prev.eq(target),
+                    have_prev_delta.eq(1),
+                    active.eq(0),
+                ]
+            with m.Elif(phase == self.n_up - 1):
+                m.d.sync += [
+                    current.eq(extended(target)),
+                    emitted.eq(target),
+                    edge_segment.eq(0),
+                    phase.eq(phase + 1),
+                ]
+            with m.Else():
+                m.d.sync += [
+                    current.eq(next_value),
+                    emitted.eq(Mux(edge_segment, prev.as_value(), next_value)),
+                    phase.eq(phase + 1),
+                ]
+
+        return m
+
+
 class HoldResample(wiring.Component):
 
     """Repeat each input sample ``n_up`` times (zero-order hold).
