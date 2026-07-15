@@ -6,11 +6,11 @@
 
 from amaranth import *
 from amaranth.lib import data, enum, wiring
-from amaranth.lib.cdc import FFSynchronizer
 from amaranth.lib.wiring import In, Out
 from amaranth.utils import ceil_log2
 from amaranth_soc import csr
 
+from ..config_cdc import ConfigCDC
 from ..video.types import Pixel, Rotation, ScanPixel
 from . import ui_overlay
 
@@ -97,26 +97,34 @@ class GridOverlay(wiring.Component):
         offset_y_dvi = Signal(12)
         spacing_x_dvi = Signal(8)
         spacing_y_dvi = Signal(8)
-        m.submodules.style_ff = FFSynchronizer(
-            i=self.style, o=style_dvi, o_domain="dvi")
-        m.submodules.pixel_i_ff = FFSynchronizer(
-            i=self.pixel.intensity, o=pixel_dvi.intensity, o_domain="dvi")
-        m.submodules.pixel_c_ff = FFSynchronizer(
-            i=self.pixel.color, o=pixel_dvi.color, o_domain="dvi")
-        m.submodules.offset_x_ff = FFSynchronizer(
-            i=self.offset_x, o=offset_x_dvi, o_domain="dvi")
-        m.submodules.offset_y_ff = FFSynchronizer(
-            i=self.offset_y, o=offset_y_dvi, o_domain="dvi")
         start_x_dvi = Signal(8)
         start_y_dvi = Signal(8)
-        m.submodules.spacing_x_ff = FFSynchronizer(
-            i=self.spacing_x, o=spacing_x_dvi, o_domain="dvi")
-        m.submodules.spacing_y_ff = FFSynchronizer(
-            i=self.spacing_y, o=spacing_y_dvi, o_domain="dvi")
-        m.submodules.start_x_ff = FFSynchronizer(
-            i=self.start_x, o=start_x_dvi, o_domain="dvi")
-        m.submodules.start_y_ff = FFSynchronizer(
-            i=self.start_y, o=start_y_dvi, o_domain="dvi")
+        grid_config = Cat(
+            self.style,
+            self.pixel.color,
+            self.pixel.intensity,
+            self.offset_x,
+            self.offset_y,
+            self.spacing_x,
+            self.spacing_y,
+            self.start_x,
+            self.start_y,
+        )
+        m.submodules.config_cdc = config_cdc = ConfigCDC(len(grid_config))
+        m.d.comb += [
+            config_cdc.i.eq(grid_config),
+            Cat(
+                style_dvi,
+                pixel_dvi.color,
+                pixel_dvi.intensity,
+                offset_x_dvi,
+                offset_y_dvi,
+                spacing_x_dvi,
+                spacing_y_dvi,
+                start_x_dvi,
+                start_y_dvi,
+            ).eq(config_cdc.o),
+        ]
 
         # pass through pixels by default (WARN: assumes 1-cycle pipeline)
         m.d.dvi += self.o.eq(self.i)

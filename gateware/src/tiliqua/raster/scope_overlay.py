@@ -9,6 +9,7 @@ from amaranth.lib import memory, wiring
 from amaranth.lib.cdc import FFSynchronizer
 from amaranth.lib.wiring import In, Out
 
+from ..config_cdc import ConfigCDC
 from ..video.types import Pixel, Rotation, ScanPixel
 from .scope_capture import MAX_CAPTURE_COLS, ENVELOPE_SENTINEL
 
@@ -171,30 +172,49 @@ class ScopeTraceOverlay(wiring.Component):
         capture_max_col_dvi = Signal(range(MAX_CAPTURE_COLS))
         capture_progress_valid_dvi = Signal()
         back_bank_dvi = Signal()
-        m.submodules.plot_x_lo_ff = FFSynchronizer(
-            self.plot_x_lo, plot_x_lo_dvi, o_domain="dvi")
-        m.submodules.enable_ff = FFSynchronizer(
-            self.enable, enable_dvi, o_domain="dvi")
-        m.submodules.progressive_ff = FFSynchronizer(
-            self.progressive, progressive_dvi, o_domain="dvi")
-        m.submodules.capture_max_col_ff = FFSynchronizer(
-            self.capture_max_col, capture_max_col_dvi, o_domain="dvi")
-        m.submodules.capture_progress_valid_ff = FFSynchronizer(
-            self.capture_progress_valid, capture_progress_valid_dvi,
-            o_domain="dvi")
-        m.submodules.back_bank_ff = FFSynchronizer(
-            back_bank, back_bank_dvi, o_domain="dvi")
-        m.submodules.h_active_ff = FFSynchronizer(
-            self.h_active, h_active_dvi, o_domain="dvi")
-        m.submodules.v_active_ff = FFSynchronizer(
-            self.v_active, v_active_dvi, o_domain="dvi")
-        m.submodules.rotation_ff = FFSynchronizer(
-            self.rotation, rotation_dvi, o_domain="dvi")
-        for ch in range(self.n_channels):
-            setattr(m.submodules, f"hue_ff{ch}", FFSynchronizer(
-                self.hue[ch], hue_dvi[ch], o_domain="dvi"))
-            setattr(m.submodules, f"intensity_ff{ch}", FFSynchronizer(
-                self.intensity[ch], intensity_dvi[ch], o_domain="dvi"))
+        display_config = Cat(
+            self.plot_x_lo,
+            self.enable,
+            self.progressive,
+            self.h_active,
+            self.v_active,
+            self.rotation,
+            *self.hue,
+            *self.intensity,
+        )
+        m.submodules.display_config_cdc = display_config_cdc = ConfigCDC(
+            len(display_config))
+        m.d.comb += [
+            display_config_cdc.i.eq(display_config),
+            Cat(
+                plot_x_lo_dvi,
+                enable_dvi,
+                progressive_dvi,
+                h_active_dvi,
+                v_active_dvi,
+                rotation_dvi,
+                *hue_dvi,
+                *intensity_dvi,
+            ).eq(display_config_cdc.o),
+        ]
+
+        # Capture progress can update while a progressive sweep is visible, so
+        # transfer it independently from the slower display configuration.
+        progress_config = Cat(
+            self.capture_max_col,
+            self.capture_progress_valid,
+            back_bank,
+        )
+        m.submodules.progress_config_cdc = progress_config_cdc = ConfigCDC(
+            len(progress_config))
+        m.d.comb += [
+            progress_config_cdc.i.eq(progress_config),
+            Cat(
+                capture_max_col_dvi,
+                capture_progress_valid_dvi,
+                back_bank_dvi,
+            ).eq(progress_config_cdc.o),
+        ]
 
         # Transform physical scan coordinates back into the center-relative
         # logical coordinates used by ColumnCapture and the former plotter.

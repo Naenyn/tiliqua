@@ -6,13 +6,13 @@
 
 from amaranth import *
 from amaranth.lib import wiring
-from amaranth.lib.cdc import FFSynchronizer
 from amaranth.lib.memory import Memory
 from amaranth.lib.wiring import In, Out
 from amaranth.utils import ceil_log2, exact_log2
 from amaranth_soc import wishbone
 from amaranth_soc.memory import MemoryMap
 
+from ..config_cdc import ConfigCDC
 from ..video.types import Pixel, Rotation, ScanPixel
 
 # Right-side options panel (local coordinates 0..width-1, 0..height-1).
@@ -83,24 +83,32 @@ class UiMenuOverlay(wiring.Component):
         h_active_dvi = Signal(12)
         v_active_dvi = Signal(12)
 
-        m.submodules.menu_en_ff = FFSynchronizer(
-            i=self.menu_enable, o=menu_en_dvi, o_domain="dvi")
-        m.submodules.menu_transparent_ff = FFSynchronizer(
-            i=self.menu_transparent, o=menu_transparent_dvi, o_domain="dvi")
-        m.submodules.menu_ox_ff = FFSynchronizer(
-            i=self.menu_origin_x, o=menu_ox_dvi, o_domain="dvi")
-        m.submodules.menu_oy_ff = FFSynchronizer(
-            i=self.menu_origin_y, o=menu_oy_dvi, o_domain="dvi")
-        m.submodules.rotation_ff = FFSynchronizer(
-            i=self.rotation, o=rotation_dvi, o_domain="dvi")
-        m.submodules.h_active_ff = FFSynchronizer(
-            i=self.h_active, o=h_active_dvi, o_domain="dvi")
-        m.submodules.v_active_ff = FFSynchronizer(
-            i=self.v_active, o=v_active_dvi, o_domain="dvi")
-        m.submodules.menu_px_c_ff = FFSynchronizer(
-            i=self.menu_pixel.color, o=menu_px_dvi.color, o_domain="dvi")
-        m.submodules.menu_px_i_ff = FFSynchronizer(
-            i=self.menu_pixel.intensity, o=menu_px_dvi.intensity, o_domain="dvi")
+        ui_config = Cat(
+            self.menu_enable,
+            self.menu_transparent,
+            self.menu_pixel.color,
+            self.menu_pixel.intensity,
+            self.menu_origin_x,
+            self.menu_origin_y,
+            self.rotation,
+            self.h_active,
+            self.v_active,
+        )
+        m.submodules.config_cdc = config_cdc = ConfigCDC(len(ui_config))
+        m.d.comb += [
+            config_cdc.i.eq(ui_config),
+            Cat(
+                menu_en_dvi,
+                menu_transparent_dvi,
+                menu_px_dvi.color,
+                menu_px_dvi.intensity,
+                menu_ox_dvi,
+                menu_oy_dvi,
+                rotation_dvi,
+                h_active_dvi,
+                v_active_dvi,
+            ).eq(config_cdc.o),
+        ]
 
         log_x = Signal(signed(12))
         log_y = Signal(signed(12))
