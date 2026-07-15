@@ -29,8 +29,8 @@ grid style, trace intensity, and trace hue. Rising and falling modes lock the
 sweep to the selected trigger channel. Free mode continuously retriggers.
 
 MENU changes the overlay hue, palette, and automatic hide delay. MISC contains
-screen rotation, this help page, MIDI highlighting, diagnostics, and settings
-save/reset actions.
+screen rotation, this help page, MIDI highlighting, and settings save/reset
+actions.
 
 On this page, turn the encoder to scroll. Press once to leave scroll editing,
 select Back, and press again to return to the oscilloscope.

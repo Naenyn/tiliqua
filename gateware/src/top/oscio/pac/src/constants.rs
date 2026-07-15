@@ -1,5 +1,5 @@
 pub const UI_NAME: &str = "OSCIO";
-pub const UI_TAG: &str = "959cd08-";
+pub const UI_TAG: &str = "f55ff155";
 pub const HW_REV_MAJOR: u32 = 5;
 pub const USE_EXTERNAL_PLL: bool = true;
 pub const CLOCK_SYNC_HZ: u32 = 60000000;
@@ -46,8 +46,8 @@ grid style, trace intensity, and trace hue. Rising and falling modes lock the
 sweep to the selected trigger channel. Free mode continuously retriggers.
 
 MENU changes the overlay hue, palette, and automatic hide delay. MISC contains
-screen rotation, this help page, MIDI highlighting, diagnostics, and settings
-save/reset actions.
+screen rotation, this help page, MIDI highlighting, and settings save/reset
+actions.
 
 On this page, turn the encoder to scroll. Press once to leave scroll editing,
 select Back, and press again to return to the oscilloscope.

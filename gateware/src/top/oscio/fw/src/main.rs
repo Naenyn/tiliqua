@@ -1,8 +1,6 @@
 #![no_std]
 #![no_main]
 
-mod scope_debug;
-
 use critical_section::Mutex;
 use log::info;
 use riscv_rt::entry;
@@ -23,7 +21,6 @@ use tiliqua_lib::color::HI8;
 
 use options::*;
 use menu_draw::draw_scope_menu;
-use scope_debug::{log_scope_debug, redraw_scope_debug_hud};
 use opts::persistence::*;
 use opts::{Options, OptionTrait};
 use opts::cc_map::{MidiCcMapper, CcMapMode};
@@ -164,8 +161,6 @@ impl UiLayerPort for OverlayUiPort<'_> {
     }
 }
 
-/// Left margin from the active display edge to the debug HUD bitmap.
-const DEBUG_HUD_MARGIN: u32 = 8;
 /// Right margin from the active display edge to the menu bitmap.
 const MENU_MARGIN_X: u32 = 16;
 
@@ -224,7 +219,6 @@ fn sync_ui_overlay_csrs(
     rotation: Rotate,
     menu_shown: bool,
     help_page: bool,
-    debug_hud: bool,
     hue: u8,
 ) {
     let (origin_x, origin_y, transparent) = if menu_shown {
@@ -232,8 +226,6 @@ fn sync_ui_overlay_csrs(
         // Keep the normal options panel opaque for readability over scope
         // traces, but do not cover the help content behind its small menu.
         (x, y, help_page)
-    } else if debug_hud {
-        (DEBUG_HUD_MARGIN, DEBUG_HUD_MARGIN, true)
     } else {
         (0, 0, false)
     };
@@ -253,7 +245,7 @@ fn sync_ui_overlay_csrs(
         w.pixel().bits(menu_px)
     });
     overlay.ui_control().write(|w| unsafe {
-        w.menu_enable().bit(menu_shown || debug_hud);
+        w.menu_enable().bit(menu_shown);
         w.menu_transparent().bit(transparent);
         w.rotation().bits(rotation as u8)
     });
@@ -398,7 +390,6 @@ fn main() -> ! {
         let mut first = true;
         let mut menu_shown = false;
         let mut last_menu_page = Page::Chan12;
-        let mut debug_frame: u32 = 0;
         let mut overlay_active = false;
         let mut was_help_page = false;
         let mut last_help_scroll = 0u8;
@@ -418,7 +409,6 @@ fn main() -> ! {
             logical_w,
             logical_h,
             modeline.rotate.clone(),
-            false,
             false,
             false,
             boot_ui_hue,
@@ -451,7 +441,6 @@ fn main() -> ! {
             });
 
             let on_help_page = opts.tracker.page.value == Page::Help;
-            let debug_hud = opts.misc.debug.value == DebugHud::On && !on_help_page;
             let entering_help = on_help_page && !was_help_page;
             let help_scrolled = on_help_page
                 && was_help_page
@@ -494,17 +483,10 @@ fn main() -> ! {
                 if menu_shown {
                     clear_ui_menu(&mut ui_menu, &ui_port);
                     menu_shown = false;
-                } else if debug_hud {
-                    redraw_scope_debug_hud(
-                        &mut ui_menu,
-                        &ui_port,
-                        &scope,
-                        opts.menu.ui_hue.value,
-                    );
                 }
             }
 
-            let want_overlay = menu_shown || debug_hud;
+            let want_overlay = menu_shown;
             if !want_overlay && overlay_active {
                 clear_ui_menu(&mut ui_menu, &ui_port);
             }
@@ -546,7 +528,6 @@ fn main() -> ! {
                 opts.misc.rotation.value.clone(),
                 menu_shown,
                 on_help_page,
-                debug_hud && !menu_shown,
                 opts.menu.ui_hue.value,
             );
 
@@ -649,13 +630,6 @@ fn main() -> ! {
                 trigger == TriggerMode::Falling,
                 opts.scope.trigger_ch.value.hw_index(),
             );
-
-            if debug_hud {
-                debug_frame = debug_frame.wrapping_add(1);
-                if debug_frame % 120 == 0 {
-                    log_scope_debug(&scope);
-                }
-            }
 
             last_help_scroll = opts.help.scroll.value;
             was_help_page = on_help_page;

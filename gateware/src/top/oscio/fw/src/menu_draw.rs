@@ -72,9 +72,8 @@ const MISC_ROWS: &[MenuRow] = &[
     MenuRow::Opt(0, "Rotation"),
     MenuRow::Opt(1, "Help"),
     MenuRow::Opt(2, "CC Highlt"),
-    MenuRow::Opt(3, "Debug?"),
-    MenuRow::Opt(4, "Save"),
-    MenuRow::Opt(5, "Reset"),
+    MenuRow::Opt(3, "Save"),
+    MenuRow::Opt(4, "Reset"),
 ];
 
 const HELP_ROWS: &[MenuRow] = &[

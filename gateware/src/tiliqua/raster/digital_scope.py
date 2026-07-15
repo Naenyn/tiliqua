@@ -63,50 +63,6 @@ class DigitalScopePeripheral(wiring.Component):
         ch2: csr.Field(csr.action.W, unsigned(1))
         ch3: csr.Field(csr.action.W, unsigned(1))
 
-    class DebugStatus(csr.Register, access="r"):
-        fsm: csr.Field(csr.action.R, unsigned(2))
-        capturing: csr.Field(csr.action.R, unsigned(1))
-        rendering: csr.Field(csr.action.R, unsigned(1))
-        sample_valid: csr.Field(csr.action.R, unsigned(1))
-        in_plot: csr.Field(csr.action.R, unsigned(1))
-        at_end: csr.Field(csr.action.R, unsigned(1))
-        sweeping: csr.Field(csr.action.R, unsigned(1))
-        has_col: csr.Field(csr.action.R, unsigned(1))
-        sweep_end: csr.Field(csr.action.R, unsigned(1))
-        renderer_busy: csr.Field(csr.action.R, unsigned(1))
-        renderer_done: csr.Field(csr.action.R, unsigned(1))
-        ramp_at_top: csr.Field(csr.action.R, unsigned(1))
-        armed: csr.Field(csr.action.R, unsigned(1))
-        pending_trig: csr.Field(csr.action.R, unsigned(1))
-        trig_pulse: csr.Field(csr.action.R, unsigned(1))
-        sweep_holdoff: csr.Field(csr.action.R, unsigned(1))
-        soc_en: csr.Field(csr.action.R, unsigned(1))
-
-    class DebugCount(csr.Register, access="r"):
-        capture_done: csr.Field(csr.action.R, unsigned(8))
-        render_done: csr.Field(csr.action.R, unsigned(8))
-        col_writes: csr.Field(csr.action.R, unsigned(8))
-        flush_drops: csr.Field(csr.action.R, unsigned(8))
-
-    class DebugTrig(csr.Register, access="r"):
-        trig_edges: csr.Field(csr.action.R, unsigned(8))
-        ramp_restarts: csr.Field(csr.action.R, unsigned(8))
-        pen_lifts: csr.Field(csr.action.R, unsigned(8))
-        end_reached: csr.Field(csr.action.R, unsigned(8))
-
-    class DebugProbe(csr.Register, access="r"):
-        in_x: csr.Field(csr.action.R, signed(16))
-        in_y0: csr.Field(csr.action.R, signed(16))
-
-    class DebugNcols(csr.Register, access="r"):
-        ncols: csr.Field(csr.action.R, unsigned(16))
-
-    class DebugCtl(csr.Register, access="w"):
-        test_render: csr.Field(csr.action.W, unsigned(1))
-
-    class DebugTimebase(csr.Register, access="r"):
-        td: csr.Field(csr.action.R, unsigned(32))
-
     class TriggerLevel(csr.Register, access="w"):
         trigger_level: csr.Field(csr.action.W, unsigned(16))
 
@@ -153,13 +109,6 @@ class DigitalScopePeripheral(wiring.Component):
         self._plot_y_lo       = regs.add("plot_y_lo",     self.PlotBound(),      offset=0x40)
         self._plot_y_hi       = regs.add("plot_y_hi",     self.PlotBound(),      offset=0x44)
         self._channel_en      = regs.add("channel_en",    self.ChannelEnable(),  offset=0x54)
-        self._debug_status    = regs.add("debug_status",  self.DebugStatus(),    offset=0x58)
-        self._debug_count     = regs.add("debug_count",   self.DebugCount(),     offset=0x5C)
-        self._debug_probe     = regs.add("debug_probe",   self.DebugProbe(),     offset=0x60)
-        self._debug_ncols     = regs.add("debug_ncols",   self.DebugNcols(),     offset=0x64)
-        self._debug_ctl       = regs.add("debug_ctl",     self.DebugCtl(),       offset=0x68)
-        self._debug_timebase  = regs.add("debug_timebase", self.DebugTimebase(), offset=0x6C)
-        self._debug_trig      = regs.add("debug_trig",    self.DebugTrig(),      offset=0x70)
         self._display_mode    = regs.add("display_mode",   self.DisplayMode(),     offset=0x74)
 
         self._bridge = csr.Bridge(regs.as_memory_map())
@@ -206,14 +155,6 @@ class DigitalScopePeripheral(wiring.Component):
         plot_y_lo = Signal(signed(16))
         plot_y_hi = Signal(signed(16))
 
-        plot_width = Signal(signed(17))
-        ncols = Signal(range(MAX_CAPTURE_COLS + 1))
-        m.d.comb += plot_width.eq(plot_x_hi - plot_x_lo)
-        with m.If(plot_width > MAX_CAPTURE_COLS):
-            m.d.comb += ncols.eq(MAX_CAPTURE_COLS)
-        with m.Else():
-            m.d.comb += ncols.eq(plot_width.as_unsigned())
-
         self.isplit4 = dsp.Split(self.n_channels, shape=PSQ)
         wiring.connect(m, wiring.flipped(self.i), self.isplit4.i)
 
@@ -243,15 +184,12 @@ class DigitalScopePeripheral(wiring.Component):
         #     is waiting at top restarts the sweep.
         #   - ``trigger_always`` (FREE) restarts as soon as the ramp reaches top.
         ramp_at_top = Signal()
-        prev_ramp_at_top = Signal()
-        ramp_restarted = Signal()
         trig_seen = Signal()
         norm_fire = Signal()
         ramp_fire = Signal()
 
         m.d.comb += [
             ramp_at_top.eq(ramp.o.payload > fixed.Const(0.985, shape=PSQ)),
-            ramp_restarted.eq(prev_ramp_at_top & ~ramp_at_top),
             trig_seen.eq(trig.o.payload & trig.i.valid & trig.o.ready),
             norm_fire.eq(trig_seen & ramp_at_top & ~trigger_always),
             # The buffer controller briefly drops capture_active while a
@@ -261,8 +199,6 @@ class DigitalScopePeripheral(wiring.Component):
             ramp_fire.eq((trigger_always | norm_fire) &
                          self.capture_active & self.soc_en),
         ]
-        m.d.sync += prev_ramp_at_top.eq(ramp_at_top)
-
         trig_sample = Signal(shape=PSQ)
         with m.Switch(trigger_ch):
             for ch in range(self.n_channels):
@@ -336,80 +272,6 @@ class DigitalScopePeripheral(wiring.Component):
                 self.hue_o[ch].eq(hue[ch]),
                 self.intensity_o[ch].eq(Mux(visible[ch], intensity[ch], 0)),
             ]
-
-        capturing = Signal()
-        rendering = Signal()
-        fsm_state = Signal(2)
-        m.d.comb += [
-            capturing.eq(self.capture_active & self.soc_en),
-            rendering.eq(self.soc_en & ~self.capture_active),
-            fsm_state.eq(Cat(capturing, rendering)),
-        ]
-
-        capture_done_cnt = Signal(8)
-        flush_sweep_cnt = Signal(8)
-        render_sweep_cnt = Signal(8)
-        trig_sweep_cnt = Signal(8)
-        ramp_restart_sweep_cnt = Signal(8)
-        pen_lift_sweep_cnt = Signal(8)
-        end_reached_sweep_cnt = Signal(8)
-        trig_pulse = Signal()
-        m.d.comb += trig_pulse.eq(norm_fire)
-
-        with m.If(capture.sweep_done):
-            m.d.sync += [
-                capture_done_cnt.eq(capture_done_cnt + 1),
-                flush_sweep_cnt.eq(0),
-                render_sweep_cnt.eq(0),
-                trig_sweep_cnt.eq(0),
-                ramp_restart_sweep_cnt.eq(0),
-                pen_lift_sweep_cnt.eq(0),
-                end_reached_sweep_cnt.eq(0),
-            ]
-        with m.If(capture.flush_valid):
-            m.d.sync += flush_sweep_cnt.eq(flush_sweep_cnt + 1)
-        with m.If(self.swap_done):
-            m.d.sync += render_sweep_cnt.eq(render_sweep_cnt + 1)
-        with m.If(trig_pulse):
-            m.d.sync += trig_sweep_cnt.eq(trig_sweep_cnt + 1)
-        with m.If(ramp_restarted):
-            m.d.sync += ramp_restart_sweep_cnt.eq(ramp_restart_sweep_cnt + 1)
-        with m.If(capture.dbg_pen_lift):
-            m.d.sync += pen_lift_sweep_cnt.eq(pen_lift_sweep_cnt + 1)
-        with m.If(capture.dbg_end_reached):
-            m.d.sync += end_reached_sweep_cnt.eq(end_reached_sweep_cnt + 1)
-
-        m.d.comb += [
-            self._debug_status.f.fsm.r_data.eq(fsm_state),
-            self._debug_status.f.capturing.r_data.eq(capturing),
-            self._debug_status.f.rendering.r_data.eq(rendering),
-            self._debug_status.f.sample_valid.r_data.eq(ch0_merge4.o.valid),
-            self._debug_status.f.in_plot.r_data.eq(capture.dbg_in_plot),
-            self._debug_status.f.at_end.r_data.eq(capture.dbg_at_end),
-            self._debug_status.f.sweeping.r_data.eq(capture.dbg_sweeping),
-            self._debug_status.f.has_col.r_data.eq(capture.dbg_has_col),
-            self._debug_status.f.sweep_end.r_data.eq(capture.dbg_sweep_end),
-            self._debug_status.f.renderer_busy.r_data.eq(rendering),
-            self._debug_status.f.renderer_done.r_data.eq(~rendering),
-            self._debug_status.f.ramp_at_top.r_data.eq(ramp_at_top),
-            self._debug_status.f.armed.r_data.eq(capture.dbg_armed),
-            self._debug_status.f.pending_trig.r_data.eq(0),
-            self._debug_status.f.trig_pulse.r_data.eq(trig_pulse),
-            self._debug_status.f.sweep_holdoff.r_data.eq(0),
-            self._debug_status.f.soc_en.r_data.eq(self.soc_en),
-            self._debug_count.f.capture_done.r_data.eq(capture_done_cnt),
-            self._debug_count.f.render_done.r_data.eq(render_sweep_cnt),
-            self._debug_count.f.col_writes.r_data.eq(flush_sweep_cnt),
-            self._debug_count.f.flush_drops.r_data.eq(0),
-            self._debug_trig.f.trig_edges.r_data.eq(trig_sweep_cnt),
-            self._debug_trig.f.ramp_restarts.r_data.eq(ramp_restart_sweep_cnt),
-            self._debug_trig.f.pen_lifts.r_data.eq(pen_lift_sweep_cnt),
-            self._debug_trig.f.end_reached.r_data.eq(end_reached_sweep_cnt),
-            self._debug_probe.f.in_x.r_data.eq(capture.dbg_in_x),
-            self._debug_probe.f.in_y0.r_data.eq(capture.dbg_in_y0),
-            self._debug_ncols.f.ncols.r_data.eq(ncols),
-            self._debug_timebase.f.td.r_data.eq(timebase.as_value()),
-        ]
 
         with m.If(self._flags.f.trigger_always.w_stb):
             m.d.sync += trigger_always.eq(self._flags.f.trigger_always.w_data)

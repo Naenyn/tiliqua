@@ -126,34 +126,6 @@ macro_rules! impl_scope {
                 self.registers.plot_y_hi().write(|w| unsafe { w.value().bits(y_hi as u16) });
             }
 
-            pub fn debug_status(&self) -> u32 {
-                u32::from(self.registers.debug_status().read().bits())
-            }
-
-            pub fn debug_counts(&self) -> u32 {
-                self.registers.debug_count().read().bits()
-            }
-
-            pub fn debug_trig(&self) -> u32 {
-                self.registers.debug_trig().read().bits()
-            }
-
-            pub fn debug_probe(&self) -> (i16, i16) {
-                let r = self.registers.debug_probe().read();
-                (r.in_x().bits() as i16, r.in_y0().bits() as i16)
-            }
-
-            pub fn debug_ncols(&self) -> u32 {
-                u32::from(self.registers.debug_ncols().read().ncols().bits())
-            }
-
-            pub fn debug_timebase(&self) -> u32 {
-                self.registers.debug_timebase().read().td().bits()
-            }
-
-            pub fn trigger_test_render(&mut self) {
-                self.registers.debug_ctl().write(|w| w.test_render().bit(true));
-            }
         }
     )+ };
 }
