@@ -217,8 +217,10 @@ fn redraw_ui_menu(
 
 fn sync_ui_overlay_csrs(
     overlay: &pac::OVERLAY_PERIPH,
-    h_active: u32,
-    v_active: u32,
+    dvi_w: u32,
+    dvi_h: u32,
+    logical_w: u32,
+    logical_h: u32,
     rotation: Rotate,
     menu_shown: bool,
     help_page: bool,
@@ -226,7 +228,7 @@ fn sync_ui_overlay_csrs(
     hue: u8,
 ) {
     let (origin_x, origin_y, transparent) = if menu_shown {
-        let (x, y) = ui_menu_origin(h_active, v_active, help_page);
+        let (x, y) = ui_menu_origin(logical_w, logical_h, help_page);
         // Keep the normal options panel opaque for readability over scope
         // traces, but do not cover the help content behind its small menu.
         (x, y, help_page)
@@ -237,8 +239,11 @@ fn sync_ui_overlay_csrs(
     };
     let menu_px = ((10u8) << 4) | hue;
     overlay.ui_timings().write(|w| unsafe {
-        w.h_active().bits(h_active as u16);
-        w.v_active().bits(v_active as u16)
+        // The overlay rotates physical DVI scan coordinates into logical
+        // framebuffer coordinates, so these must remain the unrotated mode
+        // dimensions even when the framebuffer's reported size is swapped.
+        w.h_active().bits(dvi_w as u16);
+        w.v_active().bits(dvi_h as u16)
     });
     overlay.ui_menu_origin().write(|w| unsafe {
         w.origin_x().bits(origin_x as u16);
@@ -400,6 +405,8 @@ fn main() -> ! {
 
         let dvi_w = modeline.h_active as u32;
         let dvi_h = modeline.v_active as u32;
+        let logical_w = display.size().width;
+        let logical_h = display.size().height;
         overlay_periph.grid_offset().write(|w| unsafe {
             w.offset_x().bits((dvi_w / 2) as u16);
             w.offset_y().bits((dvi_h / 2) as u16)
@@ -408,6 +415,8 @@ fn main() -> ! {
             &overlay_periph,
             dvi_w,
             dvi_h,
+            logical_w,
+            logical_h,
             modeline.rotate.clone(),
             false,
             false,
@@ -530,6 +539,8 @@ fn main() -> ! {
 
             sync_ui_overlay_csrs(
                 &overlay_periph,
+                dvi_w,
+                dvi_h,
                 h_active,
                 v_active,
                 opts.misc.rotation.value.clone(),
