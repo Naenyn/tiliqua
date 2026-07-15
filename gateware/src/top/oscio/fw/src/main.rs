@@ -51,25 +51,42 @@ fn build_cc_mapper(_opts: &Opts) -> MidiCcMapper {
   MidiCcMapper::new()
 }
 
-/// Horizontal xscale so the ramp sweep spans the active display width.
+/// Maximum display width covered by the scope capture RAM. Wider modes still
+/// render, but the waveform is limited to a centered viewport of this width.
+const MAX_SCOPE_DISPLAY_WIDTH: u32 = 1280;
+const WAVEFORM_MARGIN_X: u32 = 8;
+
+fn scope_display_width(h_active: u32) -> u32 {
+    h_active.min(MAX_SCOPE_DISPLAY_WIDTH)
+}
+
+/// Horizontal xscale so the ramp sweep spans the supported waveform width.
 ///
 /// At xscale ``S`` the sweep is approximately ``sppdx * 2^(9-S)`` pixels wide
 /// (the old Normal 1x zoom used ``S=6``, i.e. ``8 * sppdx``).
 fn xscale_for_full_width(h_active: u32, sppdx: u32) -> u8 {
-    let margin = 16u32;
-    let target = h_active.saturating_sub(2 * margin).max(1);
+    let target = scope_display_width(h_active)
+        .saturating_sub(2 * WAVEFORM_MARGIN_X)
+        .max(1);
     let sppdx = sppdx.max(1);
     let ratio = (target + sppdx - 1) / sppdx;
-    let exp = 32 - ratio.max(8).leading_zeros();
+    // ceil(log2(ratio)); subtracting one is important at exact powers of two.
+    // The previous expression selected the next larger exponent in that case,
+    // making the sweep twice as wide as intended.
+    let exp = if ratio <= 1 {
+        0
+    } else {
+        32 - (ratio - 1).leading_zeros()
+    };
     let xscale = 9i32.saturating_sub(exp as i32);
     xscale.clamp(2, 8) as u8
 }
 
 /// Center-coordinate plot bounds for waveform erase/draw (full display width).
 fn waveform_plot_bounds(h_active: u32, v_active: u32) -> (i16, i16, i16, i16) {
-    let hx = (h_active / 2) as i16;
+    let hx = (scope_display_width(h_active) / 2) as i16;
     let hy = (v_active / 2) as i16;
-    let margin_x = 8i16;
+    let margin_x = WAVEFORM_MARGIN_X as i16;
     let margin_y = 16i16;
     (-hx + margin_x, hx - margin_x, -hy + margin_y, hy - margin_y)
 }
