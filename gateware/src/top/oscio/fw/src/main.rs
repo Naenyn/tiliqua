@@ -60,26 +60,23 @@ fn scope_display_width(h_active: u32) -> u32 {
     h_active.min(MAX_SCOPE_DISPLAY_WIDTH)
 }
 
-/// Horizontal xscale so the ramp sweep spans the supported waveform width.
-///
-/// At xscale ``S`` the sweep is approximately ``sppdx * 2^(9-S)`` pixels wide
-/// (the old Normal 1x zoom used ``S=6``, i.e. ``8 * sppdx``).
-fn xscale_for_full_width(h_active: u32, sppdx: u32) -> u8 {
+/// The -1..+1 ramp reshaped to the plotter's 15 fractional bits spans 2^16
+/// integer counts before the horizontal shift in ColumnCapture.
+const RAMP_SPAN_BASE_PX: u32 = 1 << 16;
+
+/// Select the largest horizontal shift whose ramp still covers the supported
+/// waveform width. This calculation must not depend on ``px_div_x`` because
+/// that value already contains the previous shift; feeding it back here makes
+/// the main loop alternate between two scales.
+fn xscale_for_full_width(h_active: u32) -> u8 {
     let target = scope_display_width(h_active)
         .saturating_sub(2 * WAVEFORM_MARGIN_X)
         .max(1);
-    let sppdx = sppdx.max(1);
-    let ratio = (target + sppdx - 1) / sppdx;
-    // ceil(log2(ratio)); subtracting one is important at exact powers of two.
-    // The previous expression selected the next larger exponent in that case,
-    // making the sweep twice as wide as intended.
-    let exp = if ratio <= 1 {
-        0
-    } else {
-        32 - (ratio - 1).leading_zeros()
-    };
-    let xscale = 9i32.saturating_sub(exp as i32);
-    xscale.clamp(2, 8) as u8
+    let mut scale = 8u8;
+    while scale > 2 && (RAMP_SPAN_BASE_PX >> scale) < target {
+        scale -= 1;
+    }
+    scale
 }
 
 /// Center-coordinate plot bounds for waveform erase/draw (full display width).
@@ -571,7 +568,7 @@ fn main() -> ! {
             scope.set_intensity(opts.scope.intensity.value);
             scope.set_trigger_level(opts.scope.trig_lvl.value);
             let (sppd_x, sppd) = scope.pixels_per_div();
-            let xscale = xscale_for_full_width(h_active, sppd_x);
+            let xscale = xscale_for_full_width(h_active);
             scope.set_xscale(xscale);
             let t_div_us = opts.scope.timebase.value.t_div_us();
             scope.set_timebase_us(t_div_us);
