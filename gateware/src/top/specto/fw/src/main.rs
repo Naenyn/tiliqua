@@ -420,8 +420,6 @@ fn main() -> ! {
         let mut menu_fb1: Option<(Opts, u32, u32, u32)> = None;
 
         loop {
-            let h_active = display.size().width;
-            let v_active = display.size().height;
             let (opts, draw_options, save_opts, wipe_opts) = critical_section::with(|cs| {
                 let mut app = app.borrow_ref_mut(cs);
                 sanitize_options(&mut app.ui.opts, &mut last_valid_page);
@@ -434,6 +432,13 @@ fn main() -> ! {
                     wipe_opts,
                 )
             });
+            // Apply the selected framebuffer rotation before asking for the
+            // logical drawing dimensions. The direct spectrum/2D overlay is
+            // told about the same rotation below so both renderers agree in
+            // the first iteration after an encoder change.
+            display.rotate(&opts.misc.rotation.value);
+            let h_active = display.size().width;
+            let v_active = display.size().height;
             let on_help_page = opts.tracker.page.value == Page::Help;
             let spectrum_mode = opts.specto.mode.value == DisplayMode::Spectrum;
             let view_3d = !spectrum_mode && opts.histo.view.value == ViewMode::ThreeD;
@@ -646,7 +651,8 @@ fn main() -> ! {
             spectro.timings().write(|w| unsafe {
                 w.h_active().bits(h_active as u16);
                 w.v_active().bits(v_active as u16);
-                w.menu_visible().bit(menu_visible)
+                w.menu_visible().bit(menu_visible);
+                w.rotation().bits(opts.misc.rotation.value as u8)
             });
             let (projection_x, projection_y) = projection_matrix(
                 opts.histo.rot_x.value,
@@ -695,7 +701,6 @@ fn main() -> ! {
                 // readable until software clears/redraws it on scroll.
                 persist.set_persistence(if on_help_page { 80 } else { 24 });
             }
-            display.rotate(&opts.misc.rotation.value);
             first = false;
         }
     })

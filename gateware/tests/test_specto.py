@@ -4,7 +4,7 @@ from math import pi, sin
 from pathlib import Path
 
 import numpy as np
-from amaranth import Module
+from amaranth import Module, Signal
 from amaranth.lib import wiring
 from amaranth.sim import Simulator
 from amaranth_future import fixed
@@ -20,11 +20,55 @@ from spectrogram import (  # noqa: E402
     DbfsLevelSmoother,
     MagnitudeToDbfs,
     SPECTRUM_CORDIC_GAIN,
+    _logical_scan_coordinates,
     _magnitude_raw_to_dbfs_level,
 )
 
 
 class SpectoMagnitudeTests(unittest.TestCase):
+
+    def test_physical_scan_coordinates_follow_display_rotation(self):
+        m = Module()
+        physical_x = Signal(12)
+        physical_y = Signal(12)
+        logical_width = Signal(12)
+        logical_height = Signal(12)
+        rotation = Signal(2)
+        logical_x = Signal(12)
+        logical_y = Signal(12)
+        mapped = _logical_scan_coordinates(
+            physical_x, physical_y,
+            logical_width, logical_height, rotation)
+        m.d.comb += [
+            logical_x.eq(mapped[0]),
+            logical_y.eq(mapped[1]),
+        ]
+
+        async def bench(ctx):
+            # (rotation, logical dimensions, physical position, logical
+            # position). Non-square cases prove that left/right use the
+            # correct physical axis; square cases cover the official display.
+            cases = [
+                (0, (1280, 720), (100, 200), (100, 200)),
+                (1, (720, 1280), (1079, 100), (100, 200)),
+                (2, (1280, 720), (1179, 519), (100, 200)),
+                (3, (720, 1280), (200, 619), (100, 200)),
+                (1, (720, 720), (519, 100), (100, 200)),
+                (3, (720, 720), (200, 619), (100, 200)),
+            ]
+            for mode, dimensions, physical, expected in cases:
+                ctx.set(rotation, mode)
+                ctx.set(logical_width, dimensions[0])
+                ctx.set(logical_height, dimensions[1])
+                ctx.set(physical_x, physical[0])
+                ctx.set(physical_y, physical[1])
+                await ctx.delay(1e-9)
+                self.assertEqual(
+                    (ctx.get(logical_x), ctx.get(logical_y)), expected)
+
+        sim = Simulator(m)
+        sim.add_testbench(bench)
+        sim.run()
 
     def raw_for_dbfs(self, dbfs):
         amplitude = 10 ** (dbfs / 20)

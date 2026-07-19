@@ -25,6 +25,23 @@ SPECTRUM_DB_FLOOR = -96.0
 SPECTRUM_CORDIC_GAIN = dsp.cordic.RectToPolarCordic.K
 
 
+def _logical_scan_coordinates(x, y, h_active, v_active, rotation):
+    """Map a physical DVI scan position into framebuffer coordinates.
+
+    ``h_active`` and ``v_active`` are the logical dimensions exposed by the
+    rotated framebuffer. The scan timing itself remains physical; only direct
+    overlay layout and hit-testing use the returned coordinates.
+    """
+    return (
+        Mux(rotation == 1, y,
+            Mux(rotation == 2, h_active - 1 - x,
+                Mux(rotation == 3, h_active - 1 - y, x))),
+        Mux(rotation == 1, v_active - 1 - x,
+            Mux(rotation == 2, v_active - 1 - y,
+                Mux(rotation == 3, x, y))),
+    )
+
+
 def _magnitude_raw_to_dbfs_level(raw, *, f_bits=ASQ.f_bits):
     """Convert an uncorrected Hann/FFT/CORDIC magnitude to 0..63 dBFS.
 
@@ -405,6 +422,7 @@ class Spectrogram(wiring.Component):
         h_active: csr.Field(csr.action.W, unsigned(12))
         v_active: csr.Field(csr.action.W, unsigned(12))
         menu_visible: csr.Field(csr.action.W, unsigned(1))
+        rotation: csr.Field(csr.action.W, unsigned(2))
 
     class Status(csr.Register, access="r"):
         display_buffer: csr.Field(csr.action.R, unsigned(1))
@@ -506,6 +524,7 @@ class Spectrogram(wiring.Component):
         h_active = Signal(12, init=720)
         v_active = Signal(12, init=720)
         menu_visible = Signal()
+        rotation = Signal(2)
         projection_x = [Signal(signed(10), init=value) for value in (384, 0, 90)]
         projection_y = [Signal(signed(10), init=value) for value in (0, -320, -96)]
 
@@ -538,6 +557,7 @@ class Spectrogram(wiring.Component):
                 h_active.eq(self._timings.f.h_active.w_data),
                 v_active.eq(self._timings.f.v_active.w_data),
                 menu_visible.eq(self._timings.f.menu_visible.w_data),
+                rotation.eq(self._timings.f.rotation.w_data),
             ]
         with m.If(self._projection_x.element.w_stb):
             m.d.sync += [
@@ -1408,6 +1428,7 @@ class Spectrogram(wiring.Component):
         h_active_dvi = Signal(12)
         v_active_dvi = Signal(12)
         menu_visible_dvi = Signal()
+        rotation_dvi = Signal(2)
         spectrum_publish_bank_meta = Signal()
         spectrum_display_bank_dvi = Signal()
         spectrum_display_ack_dvi = Signal()
@@ -1441,6 +1462,7 @@ class Spectrogram(wiring.Component):
             ("h_active", h_active, h_active_dvi),
             ("v_active", v_active, v_active_dvi),
             ("menu_visible", menu_visible, menu_visible_dvi),
+            ("rotation", rotation, rotation_dvi),
             ("newest_gray", newest_gray, newest_gray_meta),
             ("hue", hue, hue_dvi),
             ("noise_floor", noise_floor, noise_floor_dvi),
@@ -1948,6 +1970,8 @@ class Spectrogram(wiring.Component):
         plot_y0 = Signal(signed(12))
         rel_x = Signal(signed(13))
         rel_y = Signal(signed(13))
+        logical_x = Signal(12)
+        logical_y = Signal(12)
         rev_y = Signal(12)
         age = Signal(8)
         completed_age = Signal(8)
@@ -2066,7 +2090,12 @@ class Spectrogram(wiring.Component):
                             # 100Hz in the 24kHz view.
                             (column >> spectrum_log_bar_shift) <<
                             spectrum_log_bar_shift))
+        logical_scan = _logical_scan_coordinates(
+            self.i.x, self.i.y,
+            h_active_dvi, v_active_dvi, rotation_dvi)
         m.d.comb += [
+            logical_x.eq(logical_scan[0]),
+            logical_y.eq(logical_scan[1]),
             wide.eq(h_active_dvi >= 1024),
             short.eq(v_active_dvi < 600),
             x_scale_shift.eq(Mux(wide, 2, 1)),
@@ -2075,8 +2104,8 @@ class Spectrogram(wiring.Component):
             plot_h.eq(N_BINS << y_scale_shift),
             plot_x0.eq((h_active_dvi - plot_w) >> 1),
             plot_y0.eq((v_active_dvi - plot_h) >> 1),
-            rel_x.eq(self.i.x - plot_x0),
-            rel_y.eq(self.i.y - plot_y0),
+            rel_x.eq(logical_x - plot_x0),
+            rel_y.eq(logical_y - plot_y0),
             rev_y.eq(plot_h - 1 - rel_y),
             age.eq(rel_x.as_unsigned() >> x_scale_shift),
             # Age 255 is also the scratch column receiving the next FFT. Read
@@ -2200,6 +2229,15 @@ class Spectrogram(wiring.Component):
 
         # Align scan and styling information with the synchronous BRAM read.
         scan_d = Signal(ScanPixel)
+        logical_x_d = Signal(12)
+        logical_y_d = Signal(12)
+        logical_scan_d = _logical_scan_coordinates(
+            scan_d.x, scan_d.y,
+            h_active_dvi, v_active_dvi, rotation_dvi)
+        m.d.comb += [
+            logical_x_d.eq(logical_scan_d[0]),
+            logical_y_d.eq(logical_scan_d[1]),
+        ]
         spectrogram_plot_d = Signal()
         spectrum_plot_d = Signal()
         spectrum_band_d = Signal(8)
@@ -2308,8 +2346,8 @@ class Spectrogram(wiring.Component):
             selected_char = Signal(7, name=f"axis_char_{serial}")
             active = Signal(name=f"axis_label_active_{serial}")
             m.d.comb += [
-                rel_lx.eq(scan_d.x - x0),
-                rel_ly.eq(scan_d.y - y0),
+                rel_lx.eq(logical_x_d - x0),
+                rel_ly.eq(logical_y_d - y0),
                 char_index.eq(rel_lx.as_unsigned() >> 3),
                 active.eq(~view_3d_dvi & axes_dvi & scan_d.de &
                           (rel_lx >= 0) & (rel_lx < width_chars * 8) &
@@ -2507,7 +2545,8 @@ class Spectrogram(wiring.Component):
                 m.d.comb += fade.eq(age_d >> 2)
             with m.Default():
                 m.d.comb += fade.eq(age_d >> 3)
-        m.d.comb += dither_index.eq(Cat(scan_d.x[:2], scan_d.y[:2]))
+        m.d.comb += dither_index.eq(
+            Cat(logical_x_d[:2], logical_y_d[:2]))
         # 4x4 Bayer matrix, indexed by {y[1:0], x[1:0]}.
         bayer4 = [0, 8, 2, 10, 12, 4, 14, 6,
                   3, 11, 1, 9, 15, 7, 13, 5]
@@ -2823,7 +2862,7 @@ class Spectrogram(wiring.Component):
                         0,
                         spectrum_display_level << (y_scale_shift + 2)))),
             spectrum_y.eq(plot_h - 1 - spectrum_height),
-            spectrum_scan_y.eq(scan_d.y - plot_y0),
+            spectrum_scan_y.eq(logical_y_d - plot_y0),
             spectrum_shape_pixel.eq(
                 spectrum_style_dvi |
                 ~spectrum_band_gap_d),
@@ -3039,10 +3078,10 @@ class Spectrogram(wiring.Component):
         m.d.comb += [
             menu_protect.eq(
                 menu_visible_dvi & scan_d.de &
-                (scan_d.x >= h_active_dvi - 292) &
-                (scan_d.x < h_active_dvi - 28) &
-                (scan_d.y >= (v_active_dvi >> 1) - 18) &
-                (scan_d.y < (v_active_dvi >> 1) + 120)),
+                (logical_x_d >= h_active_dvi - 292) &
+                (logical_x_d < h_active_dvi - 28) &
+                (logical_y_d >= (v_active_dvi >> 1) - 18) &
+                (logical_y_d < (v_active_dvi >> 1) + 120)),
             ui_clear.eq((scan_d.pixel.intensity == 0) & ~menu_protect),
         ]
         m.d.dvi += base_o.eq(scan_d)
