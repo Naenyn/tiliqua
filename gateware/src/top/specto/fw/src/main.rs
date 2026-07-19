@@ -412,6 +412,7 @@ fn main() -> ! {
         let mut last_on_help_page = false;
         let mut last_view_3d = false;
         let mut last_help_scroll = 0;
+        let mut help_waiting_for_renderer = false;
         // Each physical framebuffer retains UI independently. Remember the
         // exact menu last drawn into each one so changed values, selection
         // markers, and timeout hiding can be erased without clearing a large
@@ -444,6 +445,9 @@ fn main() -> ! {
             let view_3d = !spectrum_mode && opts.histo.view.value == ViewMode::ThreeD;
             let help_scroll = opts.help.scroll.value;
             let help_page_entered = on_help_page && !last_on_help_page;
+            if help_page_entered {
+                help_waiting_for_renderer = view_3d;
+            }
             // In 3D, keep transient UI in the lower half of the palette. The
             // literal back-buffer renderer also uses low plot hues so the
             // legacy tagged cleanup path never touches visible 3D pixels.
@@ -459,6 +463,10 @@ fn main() -> ! {
             // state machine can clear/swap underneath the freshly drawn help
             // text even though analyzer capture itself is disabled.
             let renderer_3d_enabled = view_3d && !on_help_page;
+            let help_renderer_ready =
+                !help_waiting_for_renderer || surface_status.renderer_idle().bit();
+            let help_page_became_ready =
+                on_help_page && help_waiting_for_renderer && help_renderer_ready;
             let display_buffer = if on_help_page {
                 current_fb_base != PSRAM_FB_BASE as u32
             } else {
@@ -466,25 +474,20 @@ fn main() -> ! {
                     && surface_status.surface_valid().bit()
                     && surface_status.display_buffer().bit()
             };
-            // Publish the stop request before any CPU framebuffer clears or
-            // help drawing. Those relatively long operations then also give
-            // the DVI-domain renderer time to drain and become idle.
-            spectro.flags().write(|w| unsafe {
-                w.enable().bit(!on_help_page);
-                // Explicit history already provides the temporal dimension in
-                // 3D. Keep its analyzer response stable and reserve phosphor
-                // smoothing/persistence as a user-selectable 2D treatment.
-                w.phosphor().bit(
-                    !spectrum_mode
-                        && opts.histo.view.value == ViewMode::TwoD
-                        && opts.histo.style.value == RenderStyle::Phosphor,
-                );
-                w.axes().bit(opts.display.axes.value == OnOff::On);
-                w.input_ch().bits(opts.specto.input.value.hw_index());
-                w.view_3d().bit(renderer_3d_enabled);
-                w.spectrum_mode().bit(spectrum_mode);
-                w.display_ack().bit(display_buffer)
-            });
+            // Publish a Help stop request before touching either framebuffer.
+            // Normal 3D display acknowledgements remain below, after menu
+            // drawing, so scanout can never reveal a half-drawn menu.
+            if on_help_page {
+                spectro.flags().write(|w| unsafe {
+                    w.enable().bit(false);
+                    w.phosphor().bit(false);
+                    w.axes().bit(opts.display.axes.value == OnOff::On);
+                    w.input_ch().bits(opts.specto.input.value.hw_index());
+                    w.view_3d().bit(false);
+                    w.spectrum_mode().bit(spectrum_mode);
+                    w.display_ack().bit(display_buffer)
+                });
+            }
             let desired_fb_base = PSRAM_FB_BASE as u32
                 + if display_buffer { 0x0010_0000 } else { 0 };
             let framebuffer_swapped = desired_fb_base != current_fb_base;
@@ -500,7 +503,9 @@ fn main() -> ! {
                 on_help_page && (!last_on_help_page || help_scroll != last_help_scroll);
             let fullscreen_layer_changed =
                 first || (view_3d != last_view_3d) ||
-                (on_help_page != last_on_help_page);
+                ((on_help_page != last_on_help_page) &&
+                    (!on_help_page || help_renderer_ready)) ||
+                help_page_became_ready;
             if fullscreen_layer_changed {
                 if view_3d || last_view_3d || on_help_page || last_on_help_page {
                     clear_3d_framebuffers();
@@ -538,91 +543,98 @@ fn main() -> ! {
                 (h_active - 200, v_active / 2)
             };
             let menu_visible = draw_options || on_help_page || first;
-            let menu_hash = menu_fingerprint(&opts);
-            let menu_slot = if display_buffer {
-                &mut menu_fb1
-            } else {
-                &mut menu_fb0
-            };
-            let menu_changed = menu_slot.as_ref().map(
-                |(_, old_x, old_y, old_hash)| {
-                    *old_x != menu_x || *old_y != menu_y ||
-                        *old_hash != menu_hash
-                }).unwrap_or(menu_visible);
-            // In 3D, each completed surface starts by clearing the back
-            // buffer. After the swap, the current physical buffer may no
-            // longer contain the cached menu even if its fingerprint matches.
-            // Redraw visible menus on 3D swaps, but avoid the old unconditional
-            // erase/redraw loop when no menu is visible.
-            let menu_invalidated_by_3d_swap =
-                view_3d && framebuffer_swapped && menu_visible;
-            let menu_visibility_changed =
-                menu_visible != menu_slot.is_some();
-            if first || menu_changed || menu_visibility_changed ||
-                    menu_invalidated_by_3d_swap {
-                if let Some((old_opts, old_x, old_y, _)) = menu_slot.take() {
-                    draw::erase_options(
-                        &mut display, &old_opts, old_x, old_y).ok();
-                }
-                if menu_visible {
+            let ui_render_ready = !on_help_page || help_renderer_ready;
+            if ui_render_ready {
+                let menu_hash = menu_fingerprint(&opts);
+                let menu_slot = if display_buffer {
+                    &mut menu_fb1
+                } else {
+                    &mut menu_fb0
+                };
+                let menu_changed = menu_slot.as_ref().map(
+                    |(_, old_x, old_y, old_hash)| {
+                        *old_x != menu_x || *old_y != menu_y ||
+                            *old_hash != menu_hash
+                    }).unwrap_or(menu_visible);
+                // In 3D, each completed surface starts by clearing the back
+                // buffer. After the swap, the current physical buffer may no
+                // longer contain the cached menu even if its fingerprint matches.
+                // Redraw visible menus on 3D swaps, but avoid the old unconditional
+                // erase/redraw loop when no menu is visible.
+                let menu_invalidated_by_3d_swap =
+                    view_3d && framebuffer_swapped && menu_visible;
+                let menu_visibility_changed =
+                    menu_visible != menu_slot.is_some();
+                if first || menu_changed || menu_visibility_changed ||
+                        menu_invalidated_by_3d_swap {
+                    if let Some((old_opts, old_x, old_y, _)) = menu_slot.take() {
+                        draw::erase_options(
+                            &mut display, &old_opts, old_x, old_y).ok();
+                    }
+                    if menu_visible {
+                        draw::draw_options(
+                            &mut display, &opts, menu_x, menu_y, ui_hue).ok();
+                        *menu_slot = Some((
+                            opts.clone(), menu_x, menu_y, menu_hash));
+                    }
+                } else if menu_visible && !view_3d {
+                    // In the beam-raced 2D modes, framebuffer persistence also
+                    // decays UI pixels. Refresh the unchanged visible menu as the
+                    // original renderer did; unlike a state change, this needs no
+                    // erase pass. In 3D, the menu is stable in the front buffer,
+                    // so redundant refresh traffic remains disabled.
                     draw::draw_options(
                         &mut display, &opts, menu_x, menu_y, ui_hue).ok();
-                    *menu_slot = Some((
-                        opts.clone(), menu_x, menu_y, menu_hash));
                 }
-            } else if menu_visible && !view_3d {
-                // In the beam-raced 2D modes, framebuffer persistence also
-                // decays UI pixels. Refresh the unchanged visible menu as the
-                // original renderer did; unlike a state change, this needs no
-                // erase pass. In 3D, the menu is stable in the front buffer,
-                // so redundant refresh traffic remains disabled.
-                draw::draw_options(
-                    &mut display, &opts, menu_x, menu_y, ui_hue).ok();
-            }
-            if draw_options || on_help_page || first || framebuffer_swapped {
-                draw::draw_name(
-                    &mut display,
-                    h_active / 2,
-                    v_active - 50,
-                    ui_hue,
-                    &bootinfo.manifest.name,
-                    &bootinfo.manifest.tag,
-                    &modeline,
-                )
-                .ok();
-            }
-
-            if on_help_page {
-                if help_page_entered || help_scroll_changed || first {
-                    clear_help_text_window(
+                if draw_options || on_help_page || first || framebuffer_swapped {
+                    draw::draw_name(
                         &mut display,
-                        h_active,
-                        v_active,
-                    )
-                    .ok();
-                    draw::draw_help(
-                        &mut display,
-                        h_active / 2 - 280,
-                        v_active / 2 - 150,
-                        opts.help.scroll.value,
-                        MODULE_DOCSTRING,
+                        h_active / 2,
+                        v_active - 50,
                         ui_hue,
+                        &bootinfo.manifest.name,
+                        &bootinfo.manifest.tag,
+                        &modeline,
                     )
                     .ok();
                 }
-                if help_page_entered || first {
-                    if let Some(help) = bootinfo.manifest.help.as_ref() {
-                        draw::draw_tiliqua(
+
+                if on_help_page {
+                    if help_page_entered || help_page_became_ready ||
+                            help_scroll_changed || first {
+                        clear_help_text_window(
                             &mut display,
-                            (h_active / 2 - 80) as i32,
-                            (v_active / 2) as i32 - 330,
+                            h_active,
+                            v_active,
+                        )
+                        .ok();
+                        draw::draw_help(
+                            &mut display,
+                            h_active / 2 - 280,
+                            v_active / 2 - 150,
+                            opts.help.scroll.value,
+                            MODULE_DOCSTRING,
                             ui_hue,
-                            help.io_left.each_ref().map(|s| s.as_str()),
-                            help.io_right.each_ref().map(|s| s.as_str()),
                         )
                         .ok();
                     }
+                    if help_page_entered || help_page_became_ready || first {
+                        if let Some(help) = bootinfo.manifest.help.as_ref() {
+                            draw::draw_tiliqua(
+                                &mut display,
+                                (h_active / 2 - 80) as i32,
+                                (v_active / 2) as i32 - 330,
+                                ui_hue,
+                                help.io_left.each_ref().map(|s| s.as_str()),
+                                help.io_right.each_ref().map(|s| s.as_str()),
+                            )
+                            .ok();
+                        }
+                    }
                 }
+            }
+            if help_page_became_ready {
+                help_waiting_for_renderer = false;
             }
 
             if save_opts {
@@ -643,6 +655,22 @@ fn main() -> ! {
                 });
             }
 
+            // In normal 3D operation this acknowledgement deliberately comes
+            // after menu drawing. The renderer waits for it before swapping at
+            // VSync, so the next front buffer always contains a complete menu.
+            spectro.flags().write(|w| unsafe {
+                w.enable().bit(!on_help_page);
+                w.phosphor().bit(
+                    !spectrum_mode
+                        && opts.histo.view.value == ViewMode::TwoD
+                        && opts.histo.style.value == RenderStyle::Phosphor,
+                );
+                w.axes().bit(opts.display.axes.value == OnOff::On);
+                w.input_ch().bits(opts.specto.input.value.hw_index());
+                w.view_3d().bit(renderer_3d_enabled);
+                w.spectrum_mode().bit(spectrum_mode);
+                w.display_ack().bit(display_buffer)
+            });
             spectro
                 .gain()
                 .write(|w| unsafe { w.value().bits(opts.specto.gain.value) });

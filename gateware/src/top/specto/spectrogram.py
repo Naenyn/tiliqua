@@ -427,6 +427,7 @@ class Spectrogram(wiring.Component):
     class Status(csr.Register, access="r"):
         display_buffer: csr.Field(csr.action.R, unsigned(1))
         surface_valid: csr.Field(csr.action.R, unsigned(1))
+        renderer_idle: csr.Field(csr.action.R, unsigned(1))
 
     class Config3d(csr.Register, access="w"):
         quality: csr.Field(csr.action.W, unsigned(2))
@@ -488,6 +489,7 @@ class Spectrogram(wiring.Component):
             "flush_done": In(1),
             "clear_request": Out(1),
             "clear_done": In(1),
+            "clear_busy": In(1),
         })
         self.bus.memory_map = self._bridge.bus.memory_map
 
@@ -836,12 +838,15 @@ class Spectrogram(wiring.Component):
         line_busy_dvi = Signal()
         flush_done_dvi = Signal()
         clear_done_dvi = Signal()
+        clear_busy_dvi = Signal()
         m.submodules.line_busy_ff = FFSynchronizer(
             self.line_busy, line_busy_dvi, o_domain="dvi")
         m.submodules.flush_done_ff = FFSynchronizer(
             self.flush_done, flush_done_dvi, o_domain="dvi")
         m.submodules.clear_done_ff = FFSynchronizer(
             self.clear_done, clear_done_dvi, o_domain="dvi")
+        m.submodules.clear_busy_ff = FFSynchronizer(
+            self.clear_busy, clear_busy_dvi, o_domain="dvi")
 
         write_col = Signal(8)
         newest_col = Signal(8)
@@ -1576,6 +1581,8 @@ class Spectrogram(wiring.Component):
         completed_generation_sync = Signal(3)
         surface_valid = Signal()
         surface_valid_sync = Signal()
+        renderer_idle_dvi = Signal()
+        renderer_idle_sync = Signal()
         m.submodules.visible_generation_ff = FFSynchronizer(
             visible_generation, visible_generation_sync, o_domain="sync")
         m.submodules.draw_generation_ff = FFSynchronizer(
@@ -1584,6 +1591,8 @@ class Spectrogram(wiring.Component):
             completed_generation, completed_generation_sync, o_domain="sync")
         m.submodules.surface_valid_ff = FFSynchronizer(
             surface_valid, surface_valid_sync, o_domain="sync")
+        m.submodules.renderer_idle_ff = FFSynchronizer(
+            renderer_idle_dvi, renderer_idle_sync, o_domain="sync")
         m.d.comb += [
             self.protect_enable.eq(view_3d),
             self.protect_visible.eq(visible_generation_sync),
@@ -1593,6 +1602,7 @@ class Spectrogram(wiring.Component):
             self._status.f.display_buffer.r_data.eq(
                 completed_generation_sync[0]),
             self._status.f.surface_valid.r_data.eq(surface_valid_sync),
+            self._status.f.renderer_idle.r_data.eq(renderer_idle_sync),
         ]
 
         # In 3D, Rate controls how many complete surface redraws occur before
@@ -1704,7 +1714,7 @@ class Spectrogram(wiring.Component):
             with m.Default():
                 m.d.comb += capture_sweep_due.eq(render_sweep_count == 0)
 
-        with m.FSM(domain="dvi", name="waterfall_3d"):
+        with m.FSM(domain="dvi", name="waterfall_3d") as waterfall_3d_fsm:
             with m.State("IDLE"):
                 m.d.dvi += [
                     clear_request.eq(0),
@@ -1959,6 +1969,14 @@ class Spectrogram(wiring.Component):
                     point_next.eq(6),
                 ]
                 m.next = "MULTIPLY_POINT"
+
+        # Firmware must not draw a static full-screen page until every 3D
+        # writer has released PSRAM. ``IDLE`` alone is insufficient because a
+        # cancelled clear burst or queued Bresenham command can outlive the
+        # renderer state machine by a few cycles.
+        m.d.comb += renderer_idle_dvi.eq(
+            ~view_3d & waterfall_3d_fsm.ongoing("IDLE") &
+            (line_fifo.w_level == 0) & ~line_busy_dvi & ~clear_busy_dvi)
 
         wide = Signal()
         short = Signal()

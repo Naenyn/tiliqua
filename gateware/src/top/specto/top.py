@@ -86,6 +86,7 @@ class BackbufferClear(wiring.Component):
             "alternate": In(1, init=1),
             "pause": In(1),
             "done": Out(1),
+            "busy": Out(1),
             "bus": Out(bus_signature),
             "fbp": In(DMAFramebuffer.Properties()),
         })
@@ -163,6 +164,8 @@ class BackbufferClear(wiring.Component):
                 with m.If(~self.start):
                     m.d.sync += done.eq(0)
                     m.next = "IDLE"
+
+        m.d.comb += self.busy.eq(~fsm.ongoing("IDLE"))
 
         return m
 
@@ -267,6 +270,7 @@ class SpectoSoc(TiliquaSoc):
                 self.framebuffer_plotter.flush_done),
             self.backbuffer_clear.start.eq(clear_request_sync),
             self.spectrogram.clear_done.eq(self.backbuffer_clear.done),
+            self.spectrogram.clear_busy.eq(self.backbuffer_clear.busy),
         ]
 
         pmod0 = self.pmod0_periph.pmod
