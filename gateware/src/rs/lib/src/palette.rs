@@ -285,7 +285,7 @@ impl ColorPalette {
         }
     }
 
-    /// Return the scalar heat-map color for one four-bit intensity. SPECTO
+    /// Return the scalar heat-map color for one four-bit intensity. SONORO
     /// uses this to populate hue-rotated columns while ordinary users can
     /// continue programming the palette through `write_to_hardware`.
     pub fn heatmap_color(&self, intensity: u8) -> Option<(u8, u8, u8)> {

@@ -38,7 +38,7 @@ class Persistance(wiring.Component):
             # well formed and bounding the remaining contention.
             "pause": In(1, init=0),
             # Optional protection for two tagged framebuffer generations.
-            # SPECTO uses color[3] as the tag marker and color[:3] as the
+            # SONORO uses color[3] as the tag marker and color[:3] as the
             # generation, allowing old surfaces to decay while the visible and
             # in-progress surfaces remain unchanged.
             "protect_enable": In(1, init=0),
@@ -105,7 +105,7 @@ class Persistance(wiring.Component):
         m.d.comb += self.fifo.w_data.eq(bus.dat_r)
 
         # Used for the no-write fastpath when every pixel is either zero or a
-        # protected SPECTO generation. Avoiding writes of unchanged protected
+        # protected SONORO generation. Avoiding writes of unchanged protected
         # pixels materially reduces 3D PSRAM traffic.
         any_nonzero_reads = Signal()
         pixels_peek = Signal(data.ArrayLayout(Pixel, 4))

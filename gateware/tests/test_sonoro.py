@@ -12,8 +12,8 @@ from tiliqua import dsp
 from tiliqua.test import stream as test_stream
 
 
-SPECTO_SRC = Path(__file__).parents[1] / "src" / "top" / "specto"
-sys.path.insert(0, str(SPECTO_SRC))
+SONORO_SRC = Path(__file__).parents[1] / "src" / "top" / "sonoro"
+sys.path.insert(0, str(SONORO_SRC))
 
 from spectrogram import (  # noqa: E402
     ASQ,
@@ -25,7 +25,7 @@ from spectrogram import (  # noqa: E402
 )
 
 
-class SpectoMagnitudeTests(unittest.TestCase):
+class SonoroMagnitudeTests(unittest.TestCase):
 
     def test_physical_scan_coordinates_follow_display_rotation(self):
         m = Module()

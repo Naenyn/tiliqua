@@ -675,7 +675,7 @@ class Spectrogram(wiring.Component):
         # bypassing the external source, cable, analog front end, and ADC.
         # 1.5kHz is bin-centred in both the 48kHz and 12kHz analyzer streams;
         # its quantized oscillator coefficient is within 0.6Hz of nominal.
-        if os.environ.get("TILIQUA_SPECTO_TEST_TONE", "0") == "1":
+        if os.environ.get("TILIQUA_SONORO_TEST_TONE", "0") == "1":
             m.submodules.test_tone = test_tone = dsp.DWO(
                 sq=ASQ,
                 c=math.cos(2 * math.pi * 1500.0 / self.fs),

@@ -255,7 +255,7 @@ class _FramebufferBackend(wiring.Component):
         ]
         fb_hwords = ((self.fbp.timings.h_active * self.pixel_bytes)
                      // self.pixels_per_word)
-        # SPECTO keeps two 1 MiB framebuffer regions. Most producers address
+        # SONORO keeps two 1 MiB framebuffer regions. Most producers address
         # the displayed buffer normally; its 3D renderer selects the other
         # region without needing another cache, multiplier, or PSRAM master.
         framebuffer_base = Signal.like(self.fbp.base)

@@ -169,9 +169,9 @@ fn scale_rgb_like_palette(
     }
 }
 
-/// Program SPECTO's palette. Scalar heat maps use each hardware hue column
+/// Program SONORO's palette. Scalar heat maps use each hardware hue column
 /// for a rotated version, keeping the plot hue control meaningful.
-fn write_specto_palette(
+fn write_sonoro_palette(
     palette: ColorPalette,
     video: &mut impl DMAFramebuffer,
     frequency_ramp: bool,
@@ -273,20 +273,20 @@ fn sanitize_options(opts: &mut Opts, last_valid_page: &mut Page) {
     }
 
     // DisplayOpts uses this hidden mirror to expose its grid option only in
-    // spectrum mode. The actual mode remains owned by the SPECTO page.
-    opts.display.spectrum_mode.value = opts.specto.mode.value;
+    // spectrum mode. The actual mode remains owned by the SONORO page.
+    opts.display.spectrum_mode.value = opts.sonoro.mode.value;
 
     // SPECTRUM and HISTO are alternate detail pages. The options framework
     // does not support conditional pages, so skip over the inactive page while
     // preserving navigation direction:
     //
-    //   SPECTO <--> SPECTRUM|HISTO <--> DISPLAY <--> MISC <--> HELP
+    //   SONORO <--> SPECTRUM|HISTO <--> DISPLAY <--> MISC <--> HELP
     //
-    // With the enum ordered as SPECTO, SPECTRUM, HISTO, DISPLAY..., the
+    // With the enum ordered as SONORO, SPECTRUM, HISTO, DISPLAY..., the
     // inactive page is an in-between sentinel. Use the last valid page to tell
     // whether the user was moving left or right through that sentinel.
     let mut page = opts.tracker.page.value;
-    match (opts.specto.mode.value, page) {
+    match (opts.sonoro.mode.value, page) {
         (DisplayMode::Spectrum, Page::Histo) => {
             page = if *last_valid_page == Page::Spectrum {
                 Page::Display
@@ -296,7 +296,7 @@ fn sanitize_options(opts: &mut Opts, last_valid_page: &mut Page) {
         }
         (DisplayMode::Spectrograph, Page::Spectrum) => {
             page = if *last_valid_page == Page::Histo {
-                Page::Specto
+                Page::Sonoro
             } else {
                 Page::Histo
             };
@@ -343,7 +343,7 @@ fn main() -> ! {
     let spiflash = SPIFlash0::new(peripherals.SPIFLASH_CTRL, SPIFLASH_BASE, SPIFLASH_SZ_BYTES);
 
     tiliqua_fw::handlers::logger_init(serial);
-    info!("Hello from Tiliqua SPECTO!");
+    info!("Hello from Tiliqua SONORO!");
 
     let bootinfo = unsafe { bootinfo::BootInfo::from_addr(BOOTINFO_BASE) }.unwrap();
     let modeline = bootinfo
@@ -355,7 +355,7 @@ fn main() -> ! {
     // random power-on contents cannot flash as the buffers are exchanged.
     // Firmware begins at +0x200000, immediately after these two regions.
     // Use ordinary RV32 stores rather than the legacy VexRiscv cache-flush
-    // custom instruction: SPECTO runs on VexiiRiscv, where that instruction
+    // custom instruction: SONORO runs on VexiiRiscv, where that instruction
     // traps before the framebuffer/DVI peripheral can be enabled. Sequential
     // volatile writes naturally evict the visible portions of both buffers;
     // any final dirty cache lines lie in the unused padding after buffer 1.
@@ -387,10 +387,10 @@ fn main() -> ! {
             warn!("No option storage region: disable persistent storage");
             None
         };
-    // Boot into the analyzer view even when older saved SPECTO settings came
+    // Boot into the analyzer view even when older saved SONORO settings came
     // from the 3D renderer work. The 3D spectrograph remains available from
     // the mode/view menus.
-    opts.specto.mode.value = DisplayMode::Spectrum;
+    opts.sonoro.mode.value = DisplayMode::Spectrum;
     opts.spectrum.spectrum_style.value = SpectrumStyle::Bars;
     opts.spectrum.scale.value = SpectrumScale::Log;
     let mut last_valid_page = opts.tracker.page.value;
@@ -441,7 +441,7 @@ fn main() -> ! {
             let h_active = display.size().width;
             let v_active = display.size().height;
             let on_help_page = opts.tracker.page.value == Page::Help;
-            let spectrum_mode = opts.specto.mode.value == DisplayMode::Spectrum;
+            let spectrum_mode = opts.sonoro.mode.value == DisplayMode::Spectrum;
             let view_3d = !spectrum_mode && opts.histo.view.value == ViewMode::ThreeD;
             let help_scroll = opts.help.scroll.value;
             let help_page_entered = on_help_page && !last_on_help_page;
@@ -482,7 +482,7 @@ fn main() -> ! {
                     w.enable().bit(false);
                     w.phosphor().bit(false);
                     w.axes().bit(opts.display.axes.value == OnOff::On);
-                    w.input_ch().bits(opts.specto.input.value.hw_index());
+                    w.input_ch().bits(opts.sonoro.input.value.hw_index());
                     w.view_3d().bit(false);
                     w.spectrum_mode().bit(spectrum_mode);
                     w.display_ack().bit(display_buffer)
@@ -528,7 +528,7 @@ fn main() -> ! {
             if opts.display.palette.value != last_palette ||
                     frequency_ramp_palette != last_frequency_ramp_palette ||
                     first {
-                write_specto_palette(
+                write_sonoro_palette(
                     opts.display.palette.value,
                     &mut display,
                     frequency_ramp_palette,
@@ -647,7 +647,7 @@ fn main() -> ! {
                     let mut app = app.borrow_ref_mut(cs);
                     app.ui.opts = Opts::default();
                     app.ui.opts.misc.rotation.value = modeline.rotate.clone();
-                    last_valid_page = Page::Specto;
+                    last_valid_page = Page::Sonoro;
                     sanitize_options(&mut app.ui.opts, &mut last_valid_page);
                     if let Some(ref mut flash_persist) = flash_persist_opt {
                         flash_persist.erase_all().unwrap();
@@ -666,20 +666,20 @@ fn main() -> ! {
                         && opts.histo.style.value == RenderStyle::Phosphor,
                 );
                 w.axes().bit(opts.display.axes.value == OnOff::On);
-                w.input_ch().bits(opts.specto.input.value.hw_index());
+                w.input_ch().bits(opts.sonoro.input.value.hw_index());
                 w.view_3d().bit(renderer_3d_enabled);
                 w.spectrum_mode().bit(spectrum_mode);
                 w.display_ack().bit(display_buffer)
             });
             spectro
                 .gain()
-                .write(|w| unsafe { w.value().bits(opts.specto.gain.value) });
+                .write(|w| unsafe { w.value().bits(opts.sonoro.gain.value) });
             spectro
                 .range()
-                .write(|w| unsafe { w.value().bits(opts.specto.range.value.hw_index()) });
+                .write(|w| unsafe { w.value().bits(opts.sonoro.range.value.hw_index()) });
             spectro
                 .rate()
-                .write(|w| unsafe { w.value().bits(opts.specto.rate.value.hw_index()) });
+                .write(|w| unsafe { w.value().bits(opts.sonoro.rate.value.hw_index()) });
             spectro
                 .persistence()
                 .write(|w| unsafe { w.value().bits(opts.histo.persist.value.hw_index()) });
@@ -724,7 +724,7 @@ fn main() -> ! {
                 w.grid().bit(opts.display.grid.value == OnOff::On)
             });
 
-            // SPECTO draws its own plot axes. Keep the general-purpose XBEAM
+            // SONORO draws its own plot axes. Keep the general-purpose XBEAM
             // grid disabled for the MVP so the analytical display stays clean.
             overlay.flags().write(|w| unsafe {
                 w.grid_style().bits(0);

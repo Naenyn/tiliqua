@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: CERN-OHL-S-2.0
 
 """
-SPECTO is a spectrum analyzer and spectrograph for Eurorack signals, with a
+SONORO is a spectrum analyzer and spectrograph for Eurorack signals, with a
 selectable input and four-channel analog passthrough.
 
 A 512-point Hann-windowed FFT analyzes one selected input. New spectra appear
@@ -23,7 +23,7 @@ All four analog inputs pass directly to their matching outputs:
         in3 ───────────────────────► out3
         in4 ───────────────────────► out4
 
-SPECTO options select a live spectrum analyzer or historical spectrograph,
+SONORO options select a live spectrum analyzer or historical spectrograph,
 input, sensitivity, and maximum displayed frequency. Spectrum mode plots the
 newest FFT with frequency on X and magnitude on Y. Spectrograph mode adds 2D
 heatmap or 3D waterfall views and history speed; its 2D view also offers
@@ -71,7 +71,7 @@ from spectrogram import Spectrogram
 
 
 class BackbufferClear(wiring.Component):
-    """Burst-clear the inactive SPECTO framebuffer region.
+    """Burst-clear the inactive SONORO framebuffer region.
 
     The 3D renderer draws a complete surface into the framebuffer that is not
     currently being scanned out, then swaps at a VSync boundary. Clearing that
@@ -170,7 +170,7 @@ class BackbufferClear(wiring.Component):
         return m
 
 
-class SpectoSoc(TiliquaSoc):
+class SonoroSoc(TiliquaSoc):
 
     module_docstring = sys.modules[__name__].__doc__
 
@@ -285,7 +285,7 @@ class SpectoSoc(TiliquaSoc):
 if __name__ == "__main__":
     this_path = os.path.dirname(os.path.realpath(__file__))
     top_level_cli(
-        SpectoSoc,
+        SonoroSoc,
         path=this_path,
         archiver_callback=lambda archiver: archiver.with_option_storage(),
     )

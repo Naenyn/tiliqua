@@ -8,7 +8,7 @@ use tiliqua_lib::palette::ColorPalette;
 #[strum(serialize_all = "SCREAMING-KEBAB-CASE")]
 pub enum Page {
     #[default]
-    Specto,
+    Sonoro,
     Spectrum,
     Histo,
     Display,
@@ -340,7 +340,7 @@ button_params!(OneShotButtonParams {
 });
 
 #[derive(OptionPage, Clone)]
-pub struct SpectoOpts {
+pub struct SonoroOpts {
     #[option]
     pub input: EnumOption<InputChannel>,
     #[option]
@@ -438,8 +438,8 @@ pub struct HelpOpts {
 #[derive(Options, Clone)]
 pub struct Opts {
     pub tracker: ScreenTracker<Page>,
-    #[page(Page::Specto)]
-    pub specto: SpectoOpts,
+    #[page(Page::Sonoro)]
+    pub sonoro: SonoroOpts,
     #[page(Page::Spectrum)]
     pub spectrum: SpectrumOpts,
     #[page(Page::Histo)]
