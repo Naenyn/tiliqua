@@ -453,9 +453,38 @@ fn main() -> ! {
                 opts.display.ui_hue.value
             };
             let surface_status = spectro.status().read();
-            let display_buffer = view_3d
-                && surface_status.surface_valid().bit()
-                && surface_status.display_buffer().bit();
+            // Help is a static framebuffer page. Suspend the autonomous 3D
+            // renderer before clearing or drawing it, and keep scanning the
+            // physical buffer that was visible on entry. Otherwise the 3D
+            // state machine can clear/swap underneath the freshly drawn help
+            // text even though analyzer capture itself is disabled.
+            let renderer_3d_enabled = view_3d && !on_help_page;
+            let display_buffer = if on_help_page {
+                current_fb_base != PSRAM_FB_BASE as u32
+            } else {
+                renderer_3d_enabled
+                    && surface_status.surface_valid().bit()
+                    && surface_status.display_buffer().bit()
+            };
+            // Publish the stop request before any CPU framebuffer clears or
+            // help drawing. Those relatively long operations then also give
+            // the DVI-domain renderer time to drain and become idle.
+            spectro.flags().write(|w| unsafe {
+                w.enable().bit(!on_help_page);
+                // Explicit history already provides the temporal dimension in
+                // 3D. Keep its analyzer response stable and reserve phosphor
+                // smoothing/persistence as a user-selectable 2D treatment.
+                w.phosphor().bit(
+                    !spectrum_mode
+                        && opts.histo.view.value == ViewMode::TwoD
+                        && opts.histo.style.value == RenderStyle::Phosphor,
+                );
+                w.axes().bit(opts.display.axes.value == OnOff::On);
+                w.input_ch().bits(opts.specto.input.value.hw_index());
+                w.view_3d().bit(renderer_3d_enabled);
+                w.spectrum_mode().bit(spectrum_mode);
+                w.display_ack().bit(display_buffer)
+            });
             let desired_fb_base = PSRAM_FB_BASE as u32
                 + if display_buffer { 0x0010_0000 } else { 0 };
             let framebuffer_swapped = desired_fb_base != current_fb_base;
@@ -614,22 +643,6 @@ fn main() -> ! {
                 });
             }
 
-            spectro.flags().write(|w| unsafe {
-                w.enable().bit(!on_help_page);
-                // Explicit history already provides the temporal dimension in
-                // 3D. Keep its analyzer response stable and reserve phosphor
-                // smoothing/persistence as a user-selectable 2D treatment.
-                w.phosphor().bit(
-                    !spectrum_mode
-                        && opts.histo.view.value == ViewMode::TwoD
-                        && opts.histo.style.value == RenderStyle::Phosphor,
-                );
-                w.axes().bit(opts.display.axes.value == OnOff::On);
-                w.input_ch().bits(opts.specto.input.value.hw_index());
-                w.view_3d().bit(view_3d);
-                w.spectrum_mode().bit(spectrum_mode);
-                w.display_ack().bit(display_buffer)
-            });
             spectro
                 .gain()
                 .write(|w| unsafe { w.value().bits(opts.specto.gain.value) });
@@ -690,7 +703,7 @@ fn main() -> ! {
                 w.grid_pixel().bits(0)
             });
 
-            if view_3d {
+            if renderer_3d_enabled {
                 // The 3D view uses explicit double-buffered surfaces. The
                 // gateware pauses persistence in 3D; this write is kept benign
                 // in case that pause is ever relaxed while debugging.
