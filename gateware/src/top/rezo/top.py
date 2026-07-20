@@ -37,24 +37,28 @@ import sys
 
 from amaranth import *
 from amaranth.lib import data, stream, wiring
+from amaranth.lib.cdc import FFSynchronizer
 from amaranth.lib.wiring import In, Out, connect, flipped
 from amaranth_soc import csr
 
 from amaranth_future import fixed
 
 from tiliqua import dsp
+from tiliqua.build import sim
 from tiliqua.build.cli import top_level_cli
 from tiliqua.build.types import BitstreamHelp
 from tiliqua.dsp import ASQ
-from tiliqua.raster import PSQ, scope
-from tiliqua.raster.plot import FramebufferPlotter
+from tiliqua.periph import encoder, eurorack_pmod
+from tiliqua.platform import RebootProvider
 from tiliqua.tiliqua_soc import TiliquaSoc
+from tiliqua.video import dvi
 
 
 class RezoCore(wiring.Component):
     """Ten-band mono resonant filterbank."""
 
     N_BANDS = 10
+    PARAM_SLEW_STEP = 64
 
     # Erica-inspired nominal centers.  SVF cutoff is approximate because the
     # existing DSP block expects the Chamberlin integration coefficient rather
@@ -66,8 +70,8 @@ class RezoCore(wiring.Component):
 
     def __init__(self, fs=48_000):
         self.fs = fs
-        self.levels = [Signal(signed(16), init=8192) for _ in range(self.N_BANDS)]
-        self.dry = Signal(unsigned(16), init=4096)
+        self.levels = [Signal(signed(16), init=0) for _ in range(self.N_BANDS)]
+        self.dry = Signal(unsigned(16), init=0)
         self.resonance = Signal(unsigned(16), init=8192)
         self.feedback = Signal(signed(16), init=0)
         super().__init__()
@@ -80,90 +84,267 @@ class RezoCore(wiring.Component):
     def elaborate(self, platform):
         m = Module()
 
-        # Shared values.  Convert the 0..65535 UI values into ASQ-ish fractions.
-        dry_gain = Signal(ASQ)
-        resonance = Signal(ASQ)
-        fb_gain = Signal(ASQ)
-        fb_sample = Signal(ASQ)
-        x = Signal(ASQ)
-
-        m.submodules.mac_server = mac_server = dsp.mac.RingMACServer(
-            max_clients=16)
-
+        # Smooth UI/CV target parameters before the DSP consumes them.  The UI
+        # can jump a target by a whole encoder detent; the filterbank should
+        # hear a short ramp instead of a coefficient/gain discontinuity.
+        smooth_levels = [Signal(signed(16), init=0, name=f"smooth_level{n}")
+                         for n in range(self.N_BANDS)]
+        smooth_dry = Signal(unsigned(16), init=0)
+        smooth_resonance = Signal(unsigned(16), init=8192)
+        level_diffs = [Signal(signed(17), name=f"level_diff{n}")
+                       for n in range(self.N_BANDS)]
+        dry_diff = Signal(signed(17))
+        resonance_diff = Signal(signed(17))
         m.d.comb += [
-            dry_gain.eq(self.dry >> (16 - ASQ.f_bits)),
-            # The SVF uses inverse-Q.  Lower values are more resonant; keep a
-            # floor so the first build does not scream into instability.
-            resonance.eq((ASQ.max() >> 4) + (self.resonance >> (16 - ASQ.f_bits + 1))),
-            fb_gain.eq(self.feedback.as_signed() >> (16 - ASQ.f_bits)),
+            dry_diff.eq(self.dry - smooth_dry),
+            resonance_diff.eq(self.resonance - smooth_resonance),
+        ]
+        for n in range(self.N_BANDS):
+            m.d.comb += level_diffs[n].eq(self.levels[n] - smooth_levels[n])
+
+        # Shared values.  Convert the UI values into ASQ-ish fractions.  The
+        # SVF uses inverse-Q: lower values are more resonant.  Keep the safer
+        # inverse-Q floor from the stable hardware tests.
+        resonance_ctl = Signal(ASQ)
+        res_ctl = Signal(signed(17))
+        m.d.comb += [
+            res_ctl.eq(16384 - (smooth_resonance >> 1)),
+            resonance_ctl.eq(Mux(res_ctl < 4096, 4096, res_ctl)),
         ]
 
-        # Light feedback injection.  This is intentionally modest: enough to
-        # make the bank sing, not enough to make first power-up rude.
-        fb_term = Signal(dsp.mac.SQRNative)
-        m.d.comb += fb_term.eq(fb_sample * fb_gain)
-        m.d.comb += x.eq(self.i.payload[0] + (fb_term.saturate(ASQ) >> 2))
+        # Feedback is intentionally disconnected in v0.2.  The first hardware
+        # test found pitch-change glitches and no audible feedback response, so
+        # keep the register/UI alive but remove feedback as a stability variable
+        # until the shared filterbank path is timing-clean and well-behaved.
+        # Drive the SVFs a little below unity.  This costs us some drama, but
+        # avoids turning a bright oscillator into a fixed-point stress test.
+        x = Signal(dsp.mac.SQNative)
+        resonance = Signal(dsp.mac.SQNative)
+        dry_sample = Signal(ASQ)
 
-        band_bp = []
-        for n, freq in enumerate(self.FREQS_HZ):
-            svf = dsp.SVF(macp=mac_server.new_client())
-            setattr(m.submodules, f"svf{n}", svf)
-            band_bp.append(svf.o.payload.bp)
-            m.d.comb += [
-                svf.i.valid.eq(self.i.valid),
-                svf.i.payload.x.eq(x),
-                svf.i.payload.cutoff.eq(fixed.Const(self.cutoff_coeff(freq, self.fs), ASQ)),
-                svf.i.payload.resonance.eq(resonance),
-            ]
+        cutoffs = Array([
+            fixed.Const(self.cutoff_coeff(freq, self.fs), dsp.mac.SQNative).as_value()
+            for freq in self.FREQS_HZ
+        ])
+        levels = Array(smooth_levels)
 
-        # The source is accepted only when every band can accept a sample.
-        m.d.comb += self.i.ready.eq(Cat([svf.i.ready for svf in [getattr(m.submodules, f"svf{n}") for n in range(self.N_BANDS)]]).all())
+        state_shape = unsigned(4)
+        state_wait = 0
+        state_dry_gain_commit = 1
+        state_mac0_setup = 2
+        state_mac0_commit = 3
+        state_mac1_setup = 4
+        state_mac1_commit = 5
+        state_mac2_setup = 6
+        state_mac2_commit = 7
+        state_mix_setup = 8
+        state_mix_gain_commit = 9
+        state_mix_commit = 10
+        state = Signal(state_shape, init=state_wait)
+        band = Signal(range(self.N_BANDS))
+        oversample = Signal()
+
+        svf_shape = fixed.SQ(dsp.mac.SQNative.i_bits, dsp.mac.SQNative.f_bits + 2)
+        svf_storage = svf_shape.as_shape()
+        alp = Array([Signal(svf_storage, name=f"alp{n}") for n in range(self.N_BANDS)])
+        abp = Array([Signal(svf_storage, name=f"abp{n}") for n in range(self.N_BANDS)])
+        ahp = Array([Signal(svf_storage, name=f"ahp{n}") for n in range(self.N_BANDS)])
+        alp_cur_raw = Signal(svf_storage)
+        abp_cur_raw = Signal(svf_storage)
+        ahp_cur_raw = Signal(svf_storage)
+        cutoff_cur_raw = Signal(dsp.mac.SQNative.as_shape())
+        alp_cur = svf_shape(alp_cur_raw)
+        abp_cur = svf_shape(abp_cur_raw)
+        ahp_cur = svf_shape(ahp_cur_raw)
+        cutoff_cur = dsp.mac.SQNative(cutoff_cur_raw)
+
+        mac_a_q = Signal(dsp.mac.SQNative)
+        mac_b_q = Signal(dsp.mac.SQNative)
+        mac_z = Signal(dsp.mac.SQRNative)
+        hp_offset_q = Signal(svf_shape)
+        alp_next = Signal(svf_shape)
+        ahp_next = Signal(svf_shape)
+        abp_next = Signal(svf_shape)
+
+        m.d.comb += [
+            alp_cur_raw.eq(alp[band]),
+            abp_cur_raw.eq(abp[band]),
+            ahp_cur_raw.eq(ahp[band]),
+            cutoff_cur_raw.eq(cutoffs[band]),
+            mac_z.eq(mac_a_q * mac_b_q),
+            alp_next.eq(mac_z + alp_cur),
+            ahp_next.eq(mac_z + hp_offset_q),
+            abp_next.eq(mac_z + abp_cur),
+        ]
 
         mix_shape = signed(ASQ.as_shape().width + 5)
         main_acc = Signal(mix_shape)
         odd_acc = Signal(mix_shape)
         even_acc = Signal(mix_shape)
-        dry_acc = Signal(mix_shape)
-
-        main_terms = []
-        odd_terms = []
-        even_terms = []
-        for n in range(self.N_BANDS):
-            term = Signal(mix_shape, name=f"term{n}")
-            m.d.comb += term.eq(
-                Mux(self.levels[n] > 512,
-                    band_bp[n].as_value().as_signed() >> 4,
-                    Mux(self.levels[n] < -512,
-                        -(band_bp[n].as_value().as_signed() >> 4),
-                        0)))
-            main_terms.append(term)
-            if n % 2:
-                odd_terms.append(term)
-            else:
-                even_terms.append(term)
-
+        term = Signal(mix_shape)
+        term_q = Signal(mix_shape)
+        band_is_odd_q = Signal()
+        level_cur = Signal(signed(16))
+        band_sample = Signal(dsp.mac.SQNative)
+        main_next = Signal(mix_shape)
+        odd_next = Signal(mix_shape)
+        even_next = Signal(mix_shape)
+        dry_gain_term = Signal(mix_shape)
         m.d.comb += [
-            dry_acc.eq(Mux(self.dry > 512, self.i.payload[0].as_value().as_signed() >> 2, 0)),
-            main_acc.eq(sum(main_terms) + dry_acc),
-            odd_acc.eq(sum(odd_terms)),
-            even_acc.eq(sum(even_terms)),
+            level_cur.eq(levels[band]),
+            band_sample.eq(abp_cur.as_value().as_signed() >> 2),
+            term.eq(mac_z.as_value().as_signed() >> (dsp.mac.SQNative.f_bits + 3)),
+            dry_gain_term.eq(mac_z.as_value().as_signed() >> dsp.mac.SQNative.f_bits),
+            main_next.eq(main_acc + term_q),
+            odd_next.eq(Mux(band_is_odd_q, odd_acc + term_q, odd_acc)),
+            even_next.eq(Mux(band_is_odd_q, even_acc, even_acc + term_q)),
         ]
 
-        all_valid = Signal()
-        m.d.comb += all_valid.eq(Cat([getattr(m.submodules, f"svf{n}").o.valid for n in range(self.N_BANDS)]).all())
-        for n in range(self.N_BANDS):
-            m.d.comb += getattr(m.submodules, f"svf{n}").o.ready.eq(self.o.ready & all_valid)
+        out_valid = Signal()
+        out_ready = Signal()
+        main_q = Signal(ASQ)
+        odd_q = Signal(ASQ)
+        even_q = Signal(ASQ)
+        dry_q = Signal(ASQ)
 
         m.d.comb += [
-            self.o.valid.eq(all_valid),
-            self.o.payload[0].eq(main_acc),
-            self.o.payload[1].eq(odd_acc),
-            self.o.payload[2].eq(even_acc),
-            self.o.payload[3].eq(dry_acc),
+            out_ready.eq(~out_valid | self.o.ready),
+            self.i.ready.eq((state == state_wait) & out_ready),
         ]
-        with m.If(self.o.valid & self.o.ready):
-            m.d.sync += fb_sample.eq(self.o.payload[0])
 
+        with m.If(self.o.ready):
+            m.d.sync += out_valid.eq(0)
+
+        with m.Switch(state):
+            with m.Case(state_wait):
+                with m.If(self.i.valid & self.i.ready):
+                    for n, diff in enumerate(level_diffs):
+                        with m.If(diff > self.PARAM_SLEW_STEP):
+                            m.d.sync += smooth_levels[n].eq(smooth_levels[n] + self.PARAM_SLEW_STEP)
+                        with m.Elif(diff < -self.PARAM_SLEW_STEP):
+                            m.d.sync += smooth_levels[n].eq(smooth_levels[n] - self.PARAM_SLEW_STEP)
+                        with m.Else():
+                            m.d.sync += smooth_levels[n].eq(self.levels[n])
+                    with m.If(dry_diff > self.PARAM_SLEW_STEP):
+                        m.d.sync += smooth_dry.eq(smooth_dry + self.PARAM_SLEW_STEP)
+                    with m.Elif(dry_diff < -self.PARAM_SLEW_STEP):
+                        m.d.sync += smooth_dry.eq(smooth_dry - self.PARAM_SLEW_STEP)
+                    with m.Else():
+                        m.d.sync += smooth_dry.eq(self.dry)
+                    with m.If(resonance_diff > self.PARAM_SLEW_STEP):
+                        m.d.sync += smooth_resonance.eq(smooth_resonance + self.PARAM_SLEW_STEP)
+                    with m.Elif(resonance_diff < -self.PARAM_SLEW_STEP):
+                        m.d.sync += smooth_resonance.eq(smooth_resonance - self.PARAM_SLEW_STEP)
+                    with m.Else():
+                        m.d.sync += smooth_resonance.eq(self.resonance)
+                    m.d.sync += [
+                        x.eq(self.i.payload[0] >> 1),
+                        resonance.eq(resonance_ctl),
+                        mac_a_q.eq(self.i.payload[0]),
+                        mac_b_q.eq(smooth_dry >> 1),
+                        band.eq(0),
+                        oversample.eq(0),
+                        state.eq(state_dry_gain_commit),
+                    ]
+
+            with m.Case(state_dry_gain_commit):
+                m.d.sync += [
+                    dry_sample.eq(dry_gain_term),
+                    main_acc.eq(dry_gain_term),
+                    odd_acc.eq(0),
+                    even_acc.eq(0),
+                    state.eq(state_mac0_setup),
+                    ]
+
+            with m.Case(state_mac0_setup):
+                m.d.sync += [
+                    mac_a_q.eq(abp_cur),
+                    mac_b_q.eq(cutoff_cur),
+                    state.eq(state_mac0_commit),
+                ]
+
+            with m.Case(state_mac0_commit):
+                m.d.sync += [
+                    alp[band].eq(alp_next.as_value()),
+                    state.eq(state_mac1_setup),
+                ]
+
+            with m.Case(state_mac1_setup):
+                m.d.sync += [
+                    mac_a_q.eq(abp_cur),
+                    mac_b_q.eq(-resonance),
+                    hp_offset_q.eq(x - alp_cur),
+                    state.eq(state_mac1_commit),
+                ]
+
+            with m.Case(state_mac1_commit):
+                m.d.sync += [
+                    ahp[band].eq(ahp_next.as_value()),
+                    state.eq(state_mac2_setup),
+                ]
+
+            with m.Case(state_mac2_setup):
+                m.d.sync += [
+                    mac_a_q.eq(ahp_cur),
+                    mac_b_q.eq(cutoff_cur),
+                    state.eq(state_mac2_commit),
+                ]
+
+            with m.Case(state_mac2_commit):
+                m.d.sync += abp[band].eq(abp_next.as_value())
+                with m.If(~oversample):
+                    m.d.sync += [
+                        oversample.eq(1),
+                        state.eq(state_mac0_setup),
+                    ]
+                with m.Else():
+                    m.d.sync += [
+                        oversample.eq(0),
+                        state.eq(state_mix_setup),
+                    ]
+
+            with m.Case(state_mix_setup):
+                m.d.sync += [
+                    mac_a_q.eq(band_sample),
+                    mac_b_q.eq(level_cur),
+                    band_is_odd_q.eq(band[0]),
+                    state.eq(state_mix_gain_commit),
+                ]
+
+            with m.Case(state_mix_gain_commit):
+                m.d.sync += [
+                    term_q.eq(term),
+                    state.eq(state_mix_commit),
+                ]
+
+            with m.Case(state_mix_commit):
+                m.d.sync += [
+                    main_acc.eq(main_next),
+                    odd_acc.eq(odd_next),
+                    even_acc.eq(even_next),
+                ]
+                with m.If(band == self.N_BANDS - 1):
+                    m.d.sync += [
+                        main_q.eq(main_next),
+                        odd_q.eq(odd_next),
+                        even_q.eq(even_next),
+                        dry_q.eq(dry_sample),
+                        out_valid.eq(1),
+                        state.eq(state_wait),
+                    ]
+                with m.Else():
+                    m.d.sync += [
+                        band.eq(band + 1),
+                        state.eq(state_mac0_setup),
+                    ]
+
+        m.d.comb += [
+            self.o.valid.eq(out_valid),
+            self.o.payload[0].eq(main_q),
+            self.o.payload[1].eq(odd_q),
+            self.o.payload[2].eq(even_q),
+            self.o.payload[3].eq(dry_q),
+        ]
         return m
 
 
@@ -225,23 +406,7 @@ class RezoSoc(TiliquaSoc):
     def __init__(self, **kwargs):
         super().__init__(finalize_csr_bridge=False, **kwargs)
 
-        self.vector_periph_base = 0x00001000
-        self.scope_periph_base = 0x00001100
-        self.rezo_periph_base = 0x00001200
-
-        self.plotter = FramebufferPlotter(
-            bus_signature=self.psram_periph.bus.signature.flip(), n_ports=5)
-        self.psram_periph.add_master(self.plotter.bus)
-
-        self.n_upsample = 16 if self.clock_settings.audio_clock.is_192khz() else 32
-
-        self.vector_periph = scope.VectorPeripheral()
-        self.csr_decoder.add(self.vector_periph.bus, addr=self.vector_periph_base, name="vector_periph")
-
-        self.scope_periph = scope.ScopePeripheral(
-            fs=self.clock_settings.audio_clock.fs() * self.n_upsample)
-        self.csr_decoder.add(self.scope_periph.bus, addr=self.scope_periph_base, name="scope_periph")
-
+        self.rezo_periph_base = 0x00001000
         self.rezo_periph = RezoPeripheral()
         self.csr_decoder.add(self.rezo_periph.bus, addr=self.rezo_periph_base, name="rezo_periph")
 
@@ -251,14 +416,6 @@ class RezoSoc(TiliquaSoc):
 
     def elaborate(self, platform):
         m = Module()
-
-        m.submodules.plotter = self.plotter
-        m.submodules.vector_periph = self.vector_periph
-        m.submodules.scope_periph = self.scope_periph
-        wiring.connect(m, self.vector_periph.o, self.plotter.i[0])
-        for n in range(4):
-            wiring.connect(m, self.scope_periph.o[n], self.plotter.i[n+1])
-        wiring.connect(m, wiring.flipped(self.fb.fbp), self.plotter.fbp)
 
         m.submodules.rezo = rezo = RezoCore(fs=self.clock_settings.audio_clock.fs())
         self.rezo_periph.core = rezo
@@ -273,27 +430,1040 @@ class RezoSoc(TiliquaSoc):
         wiring.connect(m, rezo.o, audio_out_fifo.i)
         wiring.connect(m, audio_out_fifo.o, pmod0.i_cal)
 
-        m.submodules.plot_fifo = plot_fifo = dsp.SyncFIFOBuffered(
-            shape=data.ArrayLayout(PSQ, 4), depth=64)
-        dsp.connect_peek(m, audio_out_fifo.o, plot_fifo.i)
+        return m
 
-        fs = self.clock_settings.audio_clock.fs()
-        m.submodules.up_split4 = up_split4 = dsp.Split(n_channels=4, source=plot_fifo.o, shape=PSQ)
-        m.submodules.up_merge4 = up_merge4 = dsp.Merge(n_channels=4, shape=PSQ)
-        for ch in range(4):
-            r = dsp.Resample(fs_in=fs, n_up=self.n_upsample, m_down=1, shape=PSQ)
-            setattr(m.submodules, f"resample{ch}", r)
-            wiring.connect(m, up_split4.o[ch], r.i)
-            wiring.connect(m, r.o, up_merge4.i[ch])
 
-        with m.If(self.scope_periph.soc_en):
-            wiring.connect(m, up_merge4.o, self.scope_periph.i)
+class RezoHardwareUI(wiring.Component):
+    """Small no-SoC control surface for the beam-raced REZO prototype."""
+
+    N_TARGETS = RezoCore.N_BANDS + 3
+    TARGET_PRESET = 0
+    TARGET_DRY = RezoCore.N_BANDS + 1
+    TARGET_RESONANCE = RezoCore.N_BANDS + 2
+
+    def __init__(self):
+        super().__init__({
+            "enc_i": In(1),
+            "enc_q": In(1),
+            "button": In(1),
+            "levels": Out(data.ArrayLayout(signed(16), RezoCore.N_BANDS)),
+            "dry": Out(unsigned(16)),
+            "resonance": Out(unsigned(16)),
+            "feedback": Out(signed(16)),
+            "selected": Out(unsigned(4)),
+            "preset": Out(unsigned(3)),
+            "editing": Out(1),
+        })
+
+    @staticmethod
+    def clamp_add(m, signal, delta, min_value, max_value):
+        with m.If(delta > 0):
+            with m.If(signal <= max_value - delta):
+                m.d.sync += signal.eq(signal + delta)
+            with m.Else():
+                m.d.sync += signal.eq(max_value)
         with m.Else():
-            wiring.connect(m, up_merge4.o, self.vector_periph.i)
+            with m.If(signal >= min_value - delta):
+                m.d.sync += signal.eq(signal + delta)
+            with m.Else():
+                m.d.sync += signal.eq(min_value)
+
+    @staticmethod
+    def apply_preset(m, preset, levels, dry, resonance):
+        with m.Switch(preset):
+            with m.Case(0):  # all bands
+                for level in levels:
+                    m.d.sync += level.eq(8192)
+                m.d.sync += [
+                    dry.eq(0),
+                    resonance.eq(8192),
+                ]
+            with m.Case(1):  # odd bands
+                for n, level in enumerate(levels):
+                    m.d.sync += level.eq(8192 if n & 1 else 0)
+                m.d.sync += [
+                    dry.eq(0),
+                    resonance.eq(8192),
+                ]
+            with m.Case(2):  # even bands
+                for n, level in enumerate(levels):
+                    m.d.sync += level.eq(0 if n & 1 else 8192)
+                m.d.sync += [
+                    dry.eq(0),
+                    resonance.eq(8192),
+                ]
+            with m.Case(3):  # lows
+                for n, level in enumerate(levels):
+                    m.d.sync += level.eq(8192 if n < 4 else 0)
+                m.d.sync += [
+                    dry.eq(0),
+                    resonance.eq(8192),
+                ]
+            with m.Case(4):  # mids
+                for n, level in enumerate(levels):
+                    m.d.sync += level.eq(8192 if 3 <= n <= 6 else 0)
+                m.d.sync += [
+                    dry.eq(0),
+                    resonance.eq(8192),
+                ]
+            with m.Case(5):  # highs
+                for n, level in enumerate(levels):
+                    m.d.sync += level.eq(8192 if n >= 6 else 0)
+                m.d.sync += [
+                    dry.eq(0),
+                    resonance.eq(8192),
+                ]
+            with m.Case(6):  # zero
+                for level in levels:
+                    m.d.sync += level.eq(0)
+                m.d.sync += [
+                    dry.eq(0),
+                    resonance.eq(8192),
+                ]
+
+    def elaborate(self, platform):
+        m = Module()
+
+        levels = [Signal(signed(16), init=8192, name=f"ui_level{n}")
+                  for n in range(RezoCore.N_BANDS)]
+        dry = Signal(unsigned(16), init=0)
+        resonance = Signal(unsigned(16), init=8192)
+        selected = Signal(range(self.N_TARGETS), init=self.TARGET_PRESET)
+        preset = Signal(range(7), init=0)
+        next_preset = Signal(range(7))
+        next_selected = Signal(range(self.N_TARGETS))
+        editing = Signal()
+
+        iq_sync = Signal(2)
+        iq_prev = Signal(2)
+        detent_armed = Signal()
+        detent_acc = Signal(signed(4))
+        transition_delta = Signal(signed(3))
+        next_detent_acc = Signal(signed(5))
+        iq_is_detent = Signal()
+        iq_prev_is_detent = Signal()
+        edit_step = Signal()
+        edit_direction = Signal()
+        m.submodules += FFSynchronizer(Cat(self.enc_i, self.enc_q), iq_sync, init=0)
+
+        forward_transition = (
+            ((iq_prev == 0b00) & (iq_sync == 0b01)) |
+            ((iq_prev == 0b01) & (iq_sync == 0b11)) |
+            ((iq_prev == 0b11) & (iq_sync == 0b10)) |
+            ((iq_prev == 0b10) & (iq_sync == 0b00))
+        )
+        reverse_transition = (
+            ((iq_prev == 0b00) & (iq_sync == 0b10)) |
+            ((iq_prev == 0b10) & (iq_sync == 0b11)) |
+            ((iq_prev == 0b11) & (iq_sync == 0b01)) |
+            ((iq_prev == 0b01) & (iq_sync == 0b00))
+        )
+        m.d.comb += [
+            transition_delta.eq(Mux(forward_transition, 1,
+                                    Mux(reverse_transition, -1, 0))),
+            next_detent_acc.eq(detent_acc + transition_delta),
+            iq_is_detent.eq((iq_sync == 0b00) | (iq_sync == 0b11)),
+            iq_prev_is_detent.eq((iq_prev == 0b00) | (iq_prev == 0b11)),
+        ]
+
+        m.d.sync += [
+            edit_step.eq(0),
+            iq_prev.eq(iq_sync),
+        ]
+        with m.If(iq_sync != iq_prev):
+            with m.If(transition_delta != 0):
+                with m.If(iq_prev_is_detent & ~iq_is_detent):
+                    m.d.sync += [
+                        detent_armed.eq(1),
+                        detent_acc.eq(transition_delta),
+                    ]
+                with m.Elif(iq_is_detent & detent_armed):
+                    with m.If(next_detent_acc > 0):
+                        m.d.sync += [
+                            edit_step.eq(1),
+                            edit_direction.eq(0),
+                        ]
+                    with m.Elif(next_detent_acc < 0):
+                        m.d.sync += [
+                            edit_step.eq(1),
+                            edit_direction.eq(1),
+                        ]
+                    m.d.sync += [
+                        detent_acc.eq(0),
+                        detent_armed.eq(0),
+                    ]
+                with m.Else():
+                    m.d.sync += detent_acc.eq(next_detent_acc)
+
+        button_sync = Signal()
+        button_last = Signal()
+        click = Signal()
+        click_lockout = Signal(unsigned(23))
+        click_ready = Signal(init=1)
+        m.submodules += FFSynchronizer(self.button, button_sync, init=0)
+        m.d.sync += button_last.eq(button_sync)
+        m.d.sync += click.eq(0)
+        with m.If(click_lockout != 0):
+            m.d.sync += click_lockout.eq(click_lockout - 1)
+        with m.Elif(~button_sync):
+            m.d.sync += click_ready.eq(1)
+        with m.Elif(click_ready & button_sync & ~button_last):
+            m.d.sync += [
+                click.eq(1),
+                click_ready.eq(0),
+                click_lockout.eq(7200000),
+            ]
+
+        m.d.comb += next_preset.eq(preset)
+        with m.If(edit_direction):
+            m.d.comb += next_preset.eq(Mux(preset == 6, 0, preset + 1))
+        with m.Else():
+            m.d.comb += next_preset.eq(Mux(preset == 0, 6, preset - 1))
+
+        m.d.comb += next_selected.eq(selected)
+        with m.If(edit_direction):
+            m.d.comb += next_selected.eq(Mux(selected == self.N_TARGETS - 1, 0, selected + 1))
+        with m.Else():
+            m.d.comb += next_selected.eq(Mux(selected == 0, self.N_TARGETS - 1, selected - 1))
+
+        with m.If(click):
+            with m.If(editing):
+                with m.If(selected == self.TARGET_PRESET):
+                    self.apply_preset(m, preset, levels, dry, resonance)
+                m.d.sync += editing.eq(0)
+            with m.Else():
+                m.d.sync += editing.eq(1)
+
+        step_amount = 1024
+        with m.If(edit_step):
+            with m.If(~editing):
+                m.d.sync += selected.eq(next_selected)
+            with m.Else():
+                with m.If(selected == self.TARGET_PRESET):
+                    m.d.sync += preset.eq(next_preset)
+                with m.Elif(selected == self.TARGET_DRY):
+                    with m.If(edit_direction):
+                        self.clamp_add(m, dry, step_amount, 0, 32768)
+                    with m.Else():
+                        self.clamp_add(m, dry, -step_amount, 0, 32768)
+                with m.Elif(selected == self.TARGET_RESONANCE):
+                    with m.If(edit_direction):
+                        self.clamp_add(m, resonance, step_amount, 0, 32768)
+                    with m.Else():
+                        self.clamp_add(m, resonance, -step_amount, 0, 32768)
+                with m.Else():
+                    for n, level in enumerate(levels):
+                        with m.If(selected == n + 1):
+                            with m.If(edit_direction):
+                                self.clamp_add(m, level, step_amount, -16384, 16383)
+                            with m.Else():
+                                self.clamp_add(m, level, -step_amount, -16384, 16383)
+
+        for n, level in enumerate(levels):
+            m.d.comb += self.levels[n].eq(level)
+        m.d.comb += [
+            self.dry.eq(dry),
+            self.resonance.eq(resonance),
+            self.feedback.eq(0),
+            self.selected.eq(selected),
+            self.preset.eq(preset),
+            self.editing.eq(editing),
+        ]
+
+        return m
+
+
+class RezoBeamDisplay(wiring.Component):
+    """Monochrome 720x720 beam-raced REZO panel.
+
+    The renderer is intentionally LCD-like: a bounded 720x720 coordinate space,
+    coarse shapes, small bitmap text, and cheap animation.  On 1280x720 it is
+    centered; on 720x720 it fills the display.  This keeps the UI predictable
+    and leaves headroom for DSP growth and modulation.
+    """
+
+    FONT_5X7 = {
+        " ": [0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000],
+        "0": [0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110],
+        "1": [0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110],
+        "2": [0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111],
+        "3": [0b11110, 0b00001, 0b00001, 0b01110, 0b00001, 0b00001, 0b11110],
+        "4": [0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010],
+        "5": [0b11111, 0b10000, 0b10000, 0b11110, 0b00001, 0b00001, 0b11110],
+        "6": [0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110],
+        "7": [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000],
+        "8": [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110],
+        "9": [0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100],
+        "A": [0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001],
+        "B": [0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110],
+        "C": [0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110],
+        "D": [0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110],
+        "E": [0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111],
+        "F": [0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000],
+        "G": [0b01110, 0b10001, 0b10000, 0b10111, 0b10001, 0b10001, 0b01110],
+        "H": [0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001],
+        "I": [0b01110, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110],
+        "K": [0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001],
+        "L": [0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111],
+        "M": [0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001],
+        "N": [0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001],
+        "O": [0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
+        "P": [0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000],
+        "R": [0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001],
+        "S": [0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110],
+        "T": [0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100],
+        "U": [0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
+        "V": [0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100],
+        "W": [0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b10101, 0b01010],
+        "X": [0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001],
+        "Y": [0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100],
+        "Z": [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111],
+    }
+
+    PANEL_W = 720
+    PANEL_H = 720
+
+    def __init__(self, h_active=1280):
+        self.x_offset = max(0, (h_active - self.PANEL_W) // 2)
+        super().__init__({
+            "x": In(signed(12)),
+            "y": In(signed(12)),
+            "de": In(1),
+            "levels": In(data.ArrayLayout(signed(6), RezoCore.N_BANDS)),
+            "dry": In(unsigned(6)),
+            "resonance": In(unsigned(6)),
+            "selected": In(unsigned(4)),
+            "preset": In(unsigned(3)),
+            "editing": In(1),
+            "r": Out(8),
+            "g": Out(8),
+            "b": Out(8),
+        })
+
+    @classmethod
+    def text_pixel(cls, m, x, y, text, x0, y0, scale_shift=1, name="text"):
+        """Return a pixel signal for an 8x8-cell 5x7 bitmap text run.
+
+        scale_shift 1 means 2x pixels, 2 means 4x pixels.  Using power-of-two
+        cells keeps glyph lookup cheap compared with arbitrary rectangle text.
+        """
+        cell_shift = 3 + scale_shift
+        local_x = Signal(signed(12), name=f"{name}_lx")
+        local_y = Signal(signed(12), name=f"{name}_ly")
+        char_idx = Signal(unsigned(max(1, (len(text) - 1).bit_length())), name=f"{name}_ci")
+        glyph_col = Signal(3, name=f"{name}_col")
+        glyph_row = Signal(3, name=f"{name}_row")
+        row_bits = Signal(5, name=f"{name}_bits")
+        pixel = Signal(name=name)
+        in_text = Signal(name=f"{name}_in")
+
+        m.d.comb += [
+            local_x.eq(x - x0),
+            local_y.eq(y - y0),
+            in_text.eq((x >= x0) & (x < x0 + (len(text) << cell_shift)) &
+                       (y >= y0) & (y < y0 + (8 << scale_shift))),
+            char_idx.eq(local_x[cell_shift:cell_shift + max(1, (len(text) - 1).bit_length())]),
+            glyph_col.eq(local_x[scale_shift:scale_shift + 3]),
+            glyph_row.eq(local_y[scale_shift:scale_shift + 3]),
+            row_bits.eq(0),
+            pixel.eq(0),
+        ]
+
+        for char_i, char in enumerate(text):
+            glyph = cls.FONT_5X7.get(char, cls.FONT_5X7[" "])
+            for row, bits in enumerate(glyph):
+                with m.If(in_text & (char_idx == char_i) & (glyph_row == row)):
+                    m.d.comb += row_bits.eq(bits)
+
+        for col in range(5):
+            with m.If(in_text & (glyph_col == col)):
+                m.d.comb += pixel.eq(row_bits[4 - col])
+
+        return pixel
+
+    @classmethod
+    def fixed_text_pixel(cls, m, x, y, text, x0, y0, scale_shift=1, name="text"):
+        """Return a pixel signal for a fixed 5x7 text label.
+
+        Unlike ``text_pixel``, this pre-flattens the whole word into seven row
+        bitmaps at elaboration time.  The DVI logic then chooses only one row
+        and one bit.  This is much friendlier to 1280x720p60 timing than a
+        character-indexed glyph mux for every label.
+        """
+        cell_w = 6
+        text_cols = max(1, len(text) * cell_w - 1)
+        col_w = max(1, (text_cols - 1).bit_length())
+        row_masks = []
+        for row in range(7):
+            bits = []
+            for char_i, char in enumerate(text):
+                glyph = cls.FONT_5X7.get(char, cls.FONT_5X7[" "])
+                row_bits = glyph[row]
+                for col in range(5):
+                    bits.append((row_bits >> (4 - col)) & 1)
+                if char_i != len(text) - 1:
+                    bits.append(0)
+            mask = 0
+            for bit in bits:
+                mask = (mask << 1) | bit
+            row_masks.append(mask)
+
+        local_x = Signal(signed(12), name=f"{name}_lx")
+        local_y = Signal(signed(12), name=f"{name}_ly")
+        col = Signal(unsigned(col_w), name=f"{name}_col")
+        row = Signal(3, name=f"{name}_row")
+        bit_offset = Signal(unsigned(col_w), name=f"{name}_bit")
+        row_bits = Signal(text_cols, name=f"{name}_bits")
+        pixel = Signal(name=name)
+        in_text = Signal(name=f"{name}_in")
+
+        m.d.comb += [
+            local_x.eq(x - x0),
+            local_y.eq(y - y0),
+            in_text.eq((x >= x0) & (x < x0 + (text_cols << scale_shift)) &
+                       (y >= y0) & (y < y0 + (7 << scale_shift))),
+            col.eq(local_x[scale_shift:scale_shift + col_w]),
+            row.eq(local_y[scale_shift:scale_shift + 3]),
+            bit_offset.eq((text_cols - 1) - col),
+            row_bits.eq(0),
+        ]
+
+        for row_i, mask in enumerate(row_masks):
+            with m.If(in_text & (row == row_i)):
+                m.d.comb += row_bits.eq(mask)
+
+        m.d.comb += pixel.eq(in_text & row_bits.bit_select(bit_offset, 1))
+        return pixel
+
+    @staticmethod
+    def rect(x, y, x0, y0, x1, y1):
+        return (x >= x0) & (x < x1) & (y >= y0) & (y < y1)
+
+    @classmethod
+    def outline(cls, x, y, x0, y0, x1, y1, t=2):
+        return cls.rect(x, y, x0, y0, x1, y1) & (
+            (x < x0 + t) | (x >= x1 - t) | (y < y0 + t) | (y >= y1 - t))
+
+    def elaborate(self, platform):
+        m = Module()
+
+        sx = self.x
+        sy = self.y
+        x = Signal(signed(12))
+        y = Signal(signed(12))
+        active = Signal()
+        m.d.comb += [
+            x.eq(sx - self.x_offset),
+            y.eq(sy),
+            active.eq(self.de & (sx >= self.x_offset) & (sx < self.x_offset + self.PANEL_W) &
+                      (sy >= 0) & (sy < self.PANEL_H)),
+        ]
+
+        frame = Signal(8)
+        last_vblank = Signal()
+        vblank = Signal()
+        m.d.comb += vblank.eq(sy < 0)
+        m.d.dvi += last_vblank.eq(vblank)
+        with m.If(vblank & ~last_vblank):
+            m.d.dvi += frame.eq(frame + 1)
+
+        text_signals = [
+            self.fixed_text_pixel(m, x, y, "REZO", 36, 28, scale_shift=2,
+                                  name="lcd_rezo"),
+            self.fixed_text_pixel(m, x, y, "PRESET", 36, 104,
+                                  name="lcd_preset"),
+            self.fixed_text_pixel(m, x, y, "BANDS", 36, 168,
+                                  name="lcd_bands"),
+            self.fixed_text_pixel(m, x, y, "DRY", 36, 604,
+                                  name="lcd_dry"),
+            self.fixed_text_pixel(m, x, y, "RES", 36, 648,
+                                  name="lcd_res"),
+        ]
+
+        preset_chip = Signal()
+        preset_select = Signal()
+        preset_chip_signals = []
+        preset_select_signals = []
+        preset_names = ["ALL", "ODD", "EVN", "LOW", "MID", "HI"]
+        for p in range(6):
+            x0 = 166 + 74 * p
+            preset_chip_signals.append(self.rect(x, y, x0, 96, x0 + 52, 132))
+            preset_select_signals.append(
+                (self.preset == p) & self.outline(x, y, x0 - 5, 91, x0 + 57, 137, t=3))
+            label = preset_names[p]
+            text_signals.append(
+                self.fixed_text_pixel(m, x, y, label, x0 + 6, 106,
+                                      name=f"lcd_preset_{p}"))
+
+        band_slot = Signal()
+        band_fill = Signal()
+        band_marker = Signal()
+        band_negative = Signal()
+        band_select = Signal()
+        band_zero = Signal()
+        band_slot_signals = []
+        band_fill_signals = []
+        band_marker_signals = []
+        band_negative_signals = []
+        band_select_signals = []
+        band_zero_signals = []
+        band_names = ["29", "61", "115", "218", "411", "777", "1K5", "2K8", "5K2", "11K"]
+        zero_y = 366
+        for n in range(RezoCore.N_BANDS):
+            x0 = 48 + 66 * n
+            x1 = x0 + 42
+            level = self.levels[n]
+            mag = Signal(unsigned(5), name=f"lcd_mag{n}")
+            top_y = Signal(signed(12), name=f"lcd_top{n}")
+            bottom_y = Signal(signed(12), name=f"lcd_bottom{n}")
+            selected_band = self.selected == n + 1
+            m.d.comb += [
+                mag.eq(Mux(level < 0, -level, level)),
+                top_y.eq(zero_y - (mag << 4)),
+                bottom_y.eq(zero_y + (mag << 4)),
+            ]
+            band_slot_signals.append(self.rect(x, y, x0, 202, x1, 532))
+            band_zero_signals.append(self.rect(x, y, x0 - 5, zero_y - 1, x1 + 5, zero_y + 2))
+            band_marker_signals.append(
+                ((level > 0) & self.rect(x, y, x0, zero_y - 130, x1, zero_y - 124)) |
+                ((level < 0) & self.rect(x, y, x0, zero_y + 124, x1, zero_y + 130)))
+            band_fill_signals.append(
+                selected_band &
+                ((self.rect(x, y, x0, top_y, x1, zero_y) & (level >= 0)) |
+                 (self.rect(x, y, x0, zero_y, x1, bottom_y) & (level < 0))))
+            band_negative_signals.append(
+                selected_band & self.rect(x, y, x0, zero_y, x1, bottom_y) & (level < 0))
+            band_select_signals.append(
+                selected_band & self.outline(x, y, x0 - 7, 195, x1 + 7, 539, t=3))
+            band_label = band_names[n]
+            band_label_x = x0 + (5 if len(band_label) == 3 else 10)
+            text_signals.append(
+                self.fixed_text_pixel(m, x, y, band_label, band_label_x, 548,
+                                      name=f"lcd_band_{n}"))
+
+        for target, signals in [
+                (preset_chip, preset_chip_signals),
+                (preset_select, preset_select_signals),
+                (band_slot, band_slot_signals),
+                (band_fill, band_fill_signals),
+                (band_marker, band_marker_signals),
+                (band_negative, band_negative_signals),
+                (band_select, band_select_signals),
+                (band_zero, band_zero_signals)]:
+            expr = Const(0)
+            for sig in signals:
+                expr = expr | sig
+            m.d.comb += target.eq(expr)
+
+        band_fill_q0 = Signal()
+        band_marker_q0 = Signal()
+        band_negative_q0 = Signal()
+        m.d.dvi += [
+            band_fill_q0.eq(band_fill),
+            band_marker_q0.eq(band_marker),
+            band_negative_q0.eq(band_negative),
+        ]
+
+        dry_fill = self.rect(x, y, 124, 604, 124 + (self.dry << 4), 624)
+        dry_select = (self.selected == RezoHardwareUI.TARGET_DRY) & self.outline(
+            x, y, 118, 596, 650, 632, t=3)
+        res_fill = self.rect(x, y, 124, 648, 124 + (self.resonance << 4), 668)
+        res_select = (self.selected == RezoHardwareUI.TARGET_RESONANCE) & self.outline(
+            x, y, 118, 640, 650, 676, t=3)
+
+        text = Signal()
+        text_group_q = []
+        for group_idx in range(0, len(text_signals), 1):
+            text_group = Signal(name=f"lcd_text_group{group_idx}")
+            text_group_q_sig = Signal(name=f"lcd_text_group{group_idx}_q")
+            text_expr = Const(0)
+            for sig in text_signals[group_idx:group_idx + 1]:
+                text_expr = text_expr | sig
+            m.d.comb += text_group.eq(text_expr)
+            m.d.dvi += text_group_q_sig.eq(text_group)
+            text_group_q.append(text_group_q_sig)
+        text_expr = Const(0)
+        for sig in text_group_q:
+            text_expr = text_expr | sig
+        m.d.comb += text.eq(text_expr)
+
+        border = active & self.outline(x, y, 12, 12, 708, 708, t=2)
+        title_panel = active & self.rect(x, y, 20, 20, 700, 82)
+        bands_panel = active & self.rect(x, y, 28, 190, 692, 574)
+        meter_panel = active & (self.rect(x, y, 118, 596, 650, 632) |
+                                self.rect(x, y, 118, 640, 650, 676))
+        grid = Const(0)
+        scan = Const(0)
+        selected = active & (preset_select | band_select | dry_select | res_select)
+
+        selected_q = Signal()
+        text_q = Signal()
+        band_negative_q = Signal()
+        fill_q = Signal()
+        line_q = Signal()
+        panel_q = Signal()
+        background_q = Signal()
+        active_q = Signal()
+        m.d.dvi += [
+            selected_q.eq(selected),
+            text_q.eq(text),
+            band_negative_q.eq(band_negative_q0),
+            fill_q.eq(band_fill_q0 | band_marker_q0 | dry_fill | res_fill),
+            line_q.eq(band_zero | border | scan),
+            panel_q.eq(preset_chip | band_slot | meter_panel),
+            background_q.eq(grid | title_panel | bands_panel),
+            active_q.eq(active),
+        ]
+
+        mono = Signal(8)
+        with m.If(selected_q):
+            m.d.comb += mono.eq(0xff)
+        with m.Elif(text_q):
+            m.d.comb += mono.eq(0xdc)
+        with m.Elif(band_negative_q):
+            m.d.comb += mono.eq(0xb0)
+        with m.Elif(fill_q):
+            m.d.comb += mono.eq(0x9a)
+        with m.Elif(line_q):
+            m.d.comb += mono.eq(0x72)
+        with m.Elif(panel_q):
+            m.d.comb += mono.eq(0x34)
+        with m.Elif(background_q):
+            m.d.comb += mono.eq(0x18)
+        with m.Elif(active_q):
+            m.d.comb += mono.eq(0x05)
+        with m.Else():
+            m.d.comb += mono.eq(0)
+
+        # Green monochrome LCD palette.  Color can come back later; the logic
+        # stays scalar for now so UI growth does not steal timing from DSP.
+        m.d.dvi += [
+            self.r.eq(mono >> 3),
+            self.g.eq(mono),
+            self.b.eq(mono >> 2),
+        ]
+
+        return m
+
+
+class RezoTileDisplay(wiring.Component):
+    """Low-resolution, character-cell REZO UI.
+
+    This renderer treats the 720x720 panel like a 45x45 grid of 16x16 cells.
+    Text is drawn by selecting one character for the current cell, then looking
+    up one 5x7 glyph row.  That keeps text cost roughly constant as labels are
+    added, instead of OR-ing together a pile of independent pixel label layers.
+    """
+
+    PANEL_W = 720
+    PANEL_H = 720
+    CELL_SHIFT = 4
+
+    CHARS = " 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    CHAR_CODES = {ch: i for i, ch in enumerate(CHARS)}
+
+    def __init__(self, h_active=1280):
+        self.x_offset = max(0, (h_active - self.PANEL_W) // 2)
+        super().__init__({
+            "x": In(signed(12)),
+            "y": In(signed(12)),
+            "de": In(1),
+            "levels": In(data.ArrayLayout(signed(6), RezoCore.N_BANDS)),
+            "dry": In(unsigned(6)),
+            "resonance": In(unsigned(6)),
+            "selected": In(unsigned(4)),
+            "preset": In(unsigned(3)),
+            "editing": In(1),
+            "r": Out(8),
+            "g": Out(8),
+            "b": Out(8),
+        })
+
+    @classmethod
+    def code(cls, ch):
+        return cls.CHAR_CODES.get(ch, 0)
+
+    @classmethod
+    def place_text(cls, m, char_code, cell_x, cell_y, text, x0, y0):
+        for idx, ch in enumerate(text):
+            if ch != " ":
+                with m.If((cell_y == y0) & (cell_x == x0 + idx)):
+                    m.d.comb += char_code.eq(cls.code(ch))
+
+    @staticmethod
+    def rect(x, y, x0, y0, x1, y1):
+        return (x >= x0) & (x < x1) & (y >= y0) & (y < y1)
+
+    @classmethod
+    def outline(cls, x, y, x0, y0, x1, y1, t=2):
+        return cls.rect(x, y, x0, y0, x1, y1) & (
+            (x < x0 + t) | (x >= x1 - t) | (y < y0 + t) | (y >= y1 - t))
+
+    def elaborate(self, platform):
+        m = Module()
+
+        sx = self.x
+        sy = self.y
+        x = Signal(signed(12))
+        y = Signal(signed(12))
+        active = Signal()
+        m.d.comb += [
+            x.eq(sx - self.x_offset),
+            y.eq(sy),
+            active.eq(self.de & (sx >= self.x_offset) & (sx < self.x_offset + self.PANEL_W) &
+                      (sy >= 0) & (sy < self.PANEL_H)),
+        ]
+
+        zero_y = 366
+        band_top_values = [Signal(signed(12), init=zero_y, name=f"tile_band_top_value{n}")
+                           for n in range(RezoCore.N_BANDS)]
+        band_bottom_values = [Signal(signed(12), init=zero_y, name=f"tile_band_bottom_value{n}")
+                              for n in range(RezoCore.N_BANDS)]
+        band_positive_values = [Signal(name=f"tile_band_positive{n}")
+                                for n in range(RezoCore.N_BANDS)]
+        band_negative_values = [Signal(name=f"tile_band_negative{n}")
+                                for n in range(RezoCore.N_BANDS)]
+
+        for n in range(RezoCore.N_BANDS):
+            level = self.levels[n]
+            mag = Signal(unsigned(6), name=f"tile_level_mag{n}")
+            height = Signal(signed(12), name=f"tile_level_height{n}")
+            m.d.comb += [
+                mag.eq(Mux(level < 0, -level, level)),
+                height.eq((mag << 3) + (mag << 1) + Mux(level < 0, mag >> 2, mag)),
+            ]
+            m.d.dvi += [
+                band_top_values[n].eq(zero_y - height),
+                band_bottom_values[n].eq(zero_y + height),
+                band_positive_values[n].eq(level > 0),
+                band_negative_values[n].eq(level < 0),
+            ]
+
+        cell_x = Signal(unsigned(6))
+        cell_y = Signal(unsigned(6))
+        glyph_col = Signal(unsigned(3))
+        glyph_row = Signal(unsigned(3))
+        m.d.comb += [
+            cell_x.eq(x[self.CELL_SHIFT:]),
+            cell_y.eq(y[self.CELL_SHIFT:]),
+            glyph_col.eq(x[1:4]),
+            glyph_row.eq(y[1:4]),
+        ]
+
+        char_code = Signal(unsigned(6))
+        m.d.comb += char_code.eq(0)
+        self.place_text(m, char_code, cell_x, cell_y, "REZO", 2, 2)
+        with m.If(self.editing):
+            self.place_text(m, char_code, cell_x, cell_y, "EDIT", 38, 2)
+        with m.Else():
+            self.place_text(m, char_code, cell_x, cell_y, "NAV", 39, 2)
+        self.place_text(m, char_code, cell_x, cell_y, "PRESET", 2, 6)
+        preset_names = ["ALL", "ODD", "EVN", "LOW", "MID", "HI", "ZERO"]
+        preset_label_xs = [9, 13, 18, 22, 27, 32, 36]
+        for p, label in enumerate(preset_names):
+            self.place_text(m, char_code, cell_x, cell_y, label, preset_label_xs[p], 7)
+        self.place_text(m, char_code, cell_x, cell_y, "BANDS", 2, 11)
+        band_names = ["29", "61", "115", "218", "411", "777", "1K5", "2K8", "5K2", "11K"]
+        for n, label in enumerate(band_names):
+            self.place_text(m, char_code, cell_x, cell_y, label, 3 + 4 * n, 34)
+        self.place_text(m, char_code, cell_x, cell_y, "DRY", 2, 38)
+        self.place_text(m, char_code, cell_x, cell_y, "RES", 2, 41)
+
+        char_code_q = Signal(unsigned(6))
+        glyph_row_q = Signal(unsigned(3))
+        glyph_col_q = Signal(unsigned(3))
+        text_active_q = Signal()
+        m.d.dvi += [
+            char_code_q.eq(char_code),
+            glyph_row_q.eq(glyph_row),
+            glyph_col_q.eq(glyph_col),
+            text_active_q.eq(active),
+        ]
+
+        row_bits = Signal(5)
+        glyph_bit = Signal(unsigned(3))
+        m.d.comb += row_bits.eq(0)
+        m.d.comb += glyph_bit.eq(4 - glyph_col_q)
+        with m.Switch(char_code_q):
+            for ch in self.CHARS:
+                code = self.code(ch)
+                glyph = RezoBeamDisplay.FONT_5X7.get(ch, RezoBeamDisplay.FONT_5X7[" "])
+                with m.Case(code):
+                    with m.Switch(glyph_row_q):
+                        for row, bits in enumerate(glyph):
+                            with m.Case(row):
+                                m.d.comb += row_bits.eq(bits)
+
+        text = Signal()
+        m.d.dvi += text.eq(
+            text_active_q & (glyph_row_q < 7) & (glyph_col_q < 5) &
+            row_bits.bit_select(glyph_bit, 1))
+
+        border = active & self.outline(x, y, 12, 12, 708, 708, t=2)
+        title_panel = active & self.rect(x, y, 20, 20, 700, 82)
+        bands_panel = active & self.rect(x, y, 28, 190, 692, 574)
+        meter_panel = active & (self.rect(x, y, 118, 596, 650, 632) |
+                                self.rect(x, y, 118, 640, 650, 676))
+
+        preset_chip = Signal()
+        preset_select = Signal()
+        preset_group_select = Signal()
+        band_slot = Signal()
+        band_zero = Signal()
+        band_marker = Signal()
+        band_fill = Signal()
+        band_select = Signal()
+
+        preset_chip_signals = []
+        preset_select_signals = []
+        band_slot_signals = []
+        band_zero_signals = []
+        band_marker_signals = []
+        band_fill_signals = []
+        band_select_signals = []
+
+        for p in range(7):
+            x0 = 136 + 72 * p
+            preset_chip_signals.append(self.rect(x, y, x0, 96, x0 + 64, 132))
+            preset_select_signals.append(
+                self.editing & (self.selected == RezoHardwareUI.TARGET_PRESET) &
+                (self.preset == p) &
+                self.outline(x, y, x0 - 5, 91, x0 + 69, 137, t=3))
+
+        for n in range(RezoCore.N_BANDS):
+            x0 = 48 + 66 * n
+            x1 = x0 + 42
+            top_y = band_top_values[n]
+            bottom_y = band_bottom_values[n]
+            level_positive = band_positive_values[n]
+            level_negative = band_negative_values[n]
+            selected_band = self.selected == n + 1
+            band_slot_signals.append(self.rect(x, y, x0, 202, x1, 532))
+            band_zero_signals.append(self.rect(x, y, x0 - 5, zero_y - 1, x1 + 5, zero_y + 2))
+            band_marker_signals.append(
+                (level_positive & self.rect(x, y, x0, top_y - 2, x1, top_y + 3)) |
+                (level_negative & self.rect(x, y, x0, bottom_y - 2, x1, bottom_y + 3)))
+            band_fill_signals.append(
+                (level_positive & self.rect(x, y, x0, top_y, x1, zero_y)) |
+                (level_negative & self.rect(x, y, x0, zero_y, x1, bottom_y)))
+            band_select_signals.append(
+                selected_band & self.outline(x, y, x0 - 7, 195, x1 + 7, 539, t=3))
+
+        for target, signals in [
+                (preset_chip, preset_chip_signals),
+                (preset_select, preset_select_signals),
+                (band_slot, band_slot_signals),
+                (band_zero, band_zero_signals),
+                (band_select, band_select_signals)]:
+            expr = Const(0)
+            for sig in signals:
+                expr = expr | sig
+            m.d.comb += target.eq(expr)
+
+        m.d.comb += preset_group_select.eq(
+            (self.selected == RezoHardwareUI.TARGET_PRESET) & ~self.editing &
+            self.outline(x, y, 130, 91, 638, 137, t=3))
+
+        band_marker_qs = []
+        for n, sig in enumerate(band_marker_signals):
+            band_marker_q = Signal(name=f"tile_band_marker{n}_q")
+            m.d.dvi += band_marker_q.eq(sig)
+            band_marker_qs.append(band_marker_q)
+        band_fill_qs = []
+        for n, sig in enumerate(band_fill_signals):
+            band_fill_q = Signal(name=f"tile_band_fill{n}_q")
+            m.d.dvi += band_fill_q.eq(sig)
+            band_fill_qs.append(band_fill_q)
+        marker_expr = Const(0)
+        for sig in band_marker_qs:
+            marker_expr = marker_expr | sig
+        fill_expr = Const(0)
+        for sig in band_fill_qs:
+            fill_expr = fill_expr | sig
+        m.d.comb += [
+            band_marker.eq(marker_expr),
+            band_fill.eq(fill_expr),
+        ]
+
+        dry_fill = self.rect(x, y, 124, 604, 124 + (self.dry << 4), 624)
+        dry_select = (self.selected == RezoHardwareUI.TARGET_DRY) & self.outline(
+            x, y, 118, 596, 650, 632, t=3)
+        res_fill = self.rect(x, y, 124, 648, 124 + (self.resonance << 4), 668)
+        res_select = (self.selected == RezoHardwareUI.TARGET_RESONANCE) & self.outline(
+            x, y, 118, 640, 650, 676, t=3)
+
+        selected = active & (preset_select | preset_group_select | band_select | dry_select | res_select)
+
+        selected_q = Signal()
+        text_q = Signal()
+        fill_q = Signal()
+        line_q = Signal()
+        panel_q = Signal()
+        background_q = Signal()
+        active_q = Signal()
+        m.d.dvi += [
+            selected_q.eq(selected),
+            text_q.eq(text),
+            fill_q.eq(band_fill | band_marker | dry_fill | res_fill),
+            line_q.eq(band_zero | border),
+            panel_q.eq(preset_chip | band_slot | meter_panel),
+            background_q.eq(title_panel | bands_panel),
+            active_q.eq(active),
+        ]
+
+        mono = Signal(8)
+        with m.If(selected_q):
+            m.d.comb += mono.eq(0xff)
+        with m.Elif(text_q):
+            m.d.comb += mono.eq(0xee)
+        with m.Elif(fill_q):
+            m.d.comb += mono.eq(0xb8)
+        with m.Elif(line_q):
+            m.d.comb += mono.eq(0x88)
+        with m.Elif(panel_q):
+            m.d.comb += mono.eq(0x32)
+        with m.Elif(background_q):
+            m.d.comb += mono.eq(0x14)
+        with m.Elif(active_q):
+            m.d.comb += mono.eq(0x00)
+        with m.Else():
+            m.d.comb += mono.eq(0)
+
+        m.d.dvi += [
+            self.r.eq(mono),
+            self.g.eq(mono),
+            self.b.eq(mono),
+        ]
+
+        return m
+
+
+class RezoBeamTop(Elaboratable):
+    """REZO without the SoC framebuffer path.
+
+    This is a timing experiment for a REZO-specific HDMI path.  It keeps the
+    audio filterbank in gateware and renders a small status view directly in
+    the DVI pixel domain.
+    """
+
+    bitstream_help = BitstreamHelp(
+        brief="REZO beam-raced filterbank timing prototype.",
+        io_left=['audio in', 'resonance CV', 'morph CV', 'feedback CV',
+                 'main out', 'odd bands', 'even bands', 'dry out'],
+        io_right=['', '', 'video out required', '', '', '']
+    )
+
+    def __init__(self, clock_settings):
+        assert clock_settings.modeline is not None
+        self.clock_settings = clock_settings
+        self.pmod0 = eurorack_pmod.EurorackPmod(self.clock_settings.audio_clock)
+
+    def elaborate(self, platform):
+        m = Module()
+
+        if sim.is_hw(platform):
+            m.submodules.car = platform.clock_domain_generator(self.clock_settings)
+            m.submodules.reboot = reboot = RebootProvider(self.clock_settings.frequencies.sync)
+            enc_pins = platform.request("encoder")
+            m.submodules.btn = FFSynchronizer(
+                enc_pins.s.i, reboot.button)
+            m.submodules.pmod0_provider = pmod0_provider = eurorack_pmod.FFCProvider()
+            wiring.connect(m, self.pmod0.pins, pmod0_provider.pins)
+            m.d.comb += self.pmod0.codec_mute.eq(reboot.mute)
+        else:
+            m.submodules.car = sim.FakeTiliquaDomainGenerator()
+            enc_pins = None
+
+        m.submodules.pmod0 = pmod0 = self.pmod0
+        m.submodules.rezo = rezo = RezoCore(fs=self.clock_settings.audio_clock.fs())
+        m.submodules.ui = ui = RezoHardwareUI()
+        m.submodules.audio_out_fifo = audio_out_fifo = dsp.SyncFIFOBuffered(
+            shape=data.ArrayLayout(ASQ, 4), depth=4)
+
+        if sim.is_hw(platform):
+            m.d.comb += [
+                ui.enc_i.eq(enc_pins.i.i),
+                ui.enc_q.eq(enc_pins.q.i),
+                ui.button.eq(enc_pins.s.i),
+            ]
+        else:
+            m.d.comb += [
+                ui.enc_i.eq(0),
+                ui.enc_q.eq(0),
+                ui.button.eq(0),
+            ]
+
+        m.d.comb += [
+            rezo.dry.eq(ui.dry),
+            rezo.resonance.eq(ui.resonance),
+            rezo.feedback.eq(ui.feedback),
+        ]
+        for n in range(RezoCore.N_BANDS):
+            m.d.comb += rezo.levels[n].eq(ui.levels[n])
+
+        wiring.connect(m, pmod0.o_cal, rezo.i)
+        wiring.connect(m, rezo.o, audio_out_fifo.i)
+        wiring.connect(m, audio_out_fifo.o, pmod0.i_cal)
+
+        m.submodules.dvi_tgen = dvi_tgen = dvi.DVITimingGen()
+        for member in dvi_tgen.timings.signature.members:
+            m.d.comb += getattr(dvi_tgen.timings, member).eq(
+                getattr(self.clock_settings.modeline, member))
+
+        m.submodules.display = display = DomainRenamer("dvi")(
+            RezoTileDisplay(h_active=self.clock_settings.modeline.h_active))
+        m.d.comb += [
+            display.x.eq(dvi_tgen.x),
+            display.y.eq(dvi_tgen.y),
+            display.de.eq(dvi_tgen.ctrl.de),
+        ]
+        for n in range(RezoCore.N_BANDS):
+            display_level = Signal(signed(6), name=f"display_level{n}")
+            m.d.comb += display_level.eq(rezo.levels[n] >> 10)
+            m.submodules += FFSynchronizer(
+                i=display_level, o=display.levels[n], o_domain="dvi")
+        display_dry = Signal(unsigned(6))
+        display_resonance = Signal(unsigned(6))
+        m.d.comb += [
+            display_dry.eq(rezo.dry >> 10),
+            display_resonance.eq(rezo.resonance >> 10),
+        ]
+        m.submodules += [
+            FFSynchronizer(i=display_dry, o=display.dry, o_domain="dvi"),
+            FFSynchronizer(i=display_resonance, o=display.resonance, o_domain="dvi"),
+            FFSynchronizer(i=ui.selected, o=display.selected, o_domain="dvi"),
+            FFSynchronizer(i=ui.preset, o=display.preset, o_domain="dvi"),
+            FFSynchronizer(i=ui.editing, o=display.editing, o_domain="dvi"),
+        ]
+
+        if sim.is_hw(platform):
+            m.submodules.dvi_gen = dvi_gen = dvi.DVIPHY()
+            display_de0 = Signal()
+            display_hsync0 = Signal()
+            display_vsync0 = Signal()
+            display_de1 = Signal()
+            display_hsync1 = Signal()
+            display_vsync1 = Signal()
+            m.d.dvi += [
+                display_de0.eq(dvi_tgen.ctrl_phy.de),
+                display_hsync0.eq(dvi_tgen.ctrl_phy.hsync),
+                display_vsync0.eq(dvi_tgen.ctrl_phy.vsync),
+                display_de1.eq(display_de0),
+                display_hsync1.eq(display_hsync0),
+                display_vsync1.eq(display_vsync0),
+            ]
+            m.d.dvi += [
+                dvi_gen.i.de.eq(display_de1),
+                dvi_gen.i.hsync.eq(display_hsync1),
+                dvi_gen.i.vsync.eq(display_vsync1),
+                dvi_gen.i.r.eq(display.r),
+                dvi_gen.i.g.eq(display.g),
+                dvi_gen.i.b.eq(display.b),
+            ]
 
         return m
 
 
 if __name__ == "__main__":
     this_path = os.path.dirname(os.path.realpath(__file__))
-    top_level_cli(RezoSoc, path=this_path, archiver_callback=lambda archiver: archiver.with_option_storage())
+    top_level_cli(RezoBeamTop, path=this_path)
