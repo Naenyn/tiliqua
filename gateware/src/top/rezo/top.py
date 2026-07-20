@@ -73,7 +73,7 @@ class RezoCore(wiring.Component):
         self.levels = [Signal(signed(16), init=0) for _ in range(self.N_BANDS)]
         self.dry = Signal(unsigned(16), init=0)
         self.resonance = Signal(unsigned(16), init=8192)
-        self.feedback = Signal(signed(16), init=0)
+        self.feedback = Signal(unsigned(16), init=0)
         super().__init__()
 
     @staticmethod
@@ -91,13 +91,18 @@ class RezoCore(wiring.Component):
                          for n in range(self.N_BANDS)]
         smooth_dry = Signal(unsigned(16), init=0)
         smooth_resonance = Signal(unsigned(16), init=8192)
+        smooth_feedback = Signal(unsigned(16), init=0)
         level_diffs = [Signal(signed(17), name=f"level_diff{n}")
                        for n in range(self.N_BANDS)]
         dry_diff = Signal(signed(17))
         resonance_diff = Signal(signed(17))
+        feedback_diff = Signal(signed(17))
+        feedback_gain = Signal(unsigned(16))
         m.d.comb += [
             dry_diff.eq(self.dry - smooth_dry),
             resonance_diff.eq(self.resonance - smooth_resonance),
+            feedback_diff.eq(self.feedback - smooth_feedback),
+            feedback_gain.eq(Mux(smooth_feedback > 31744, 31744, smooth_feedback)),
         ]
         for n in range(self.N_BANDS):
             m.d.comb += level_diffs[n].eq(self.levels[n] - smooth_levels[n])
@@ -112,15 +117,13 @@ class RezoCore(wiring.Component):
             resonance_ctl.eq(Mux(res_ctl < 4096, 4096, res_ctl)),
         ]
 
-        # Feedback is intentionally disconnected in v0.2.  The first hardware
-        # test found pitch-change glitches and no audible feedback response, so
-        # keep the register/UI alive but remove feedback as a stability variable
-        # until the shared filterbank path is timing-clean and well-behaved.
-        # Drive the SVFs a little below unity.  This costs us some drama, but
-        # avoids turning a bright oscillator into a fixed-point stress test.
+        # Feedback is smoothed and scheduled through the shared multiplier.
+        # Full-scale UI feedback is capped just below the hardware-tested cliff
+        # so the final encoder tick stays in the "hot but not runaway" region.
         x = Signal(dsp.mac.SQNative)
         resonance = Signal(dsp.mac.SQNative)
         dry_sample = Signal(ASQ)
+        feedback_sample = Signal(ASQ)
 
         cutoffs = Array([
             fixed.Const(self.cutoff_coeff(freq, self.fs), dsp.mac.SQNative).as_value()
@@ -130,16 +133,17 @@ class RezoCore(wiring.Component):
 
         state_shape = unsigned(4)
         state_wait = 0
-        state_dry_gain_commit = 1
-        state_mac0_setup = 2
-        state_mac0_commit = 3
-        state_mac1_setup = 4
-        state_mac1_commit = 5
-        state_mac2_setup = 6
-        state_mac2_commit = 7
-        state_mix_setup = 8
-        state_mix_gain_commit = 9
-        state_mix_commit = 10
+        state_feedback_commit = 1
+        state_dry_gain_commit = 2
+        state_mac0_setup = 3
+        state_mac0_commit = 4
+        state_mac1_setup = 5
+        state_mac1_commit = 6
+        state_mac2_setup = 7
+        state_mac2_commit = 8
+        state_mix_setup = 9
+        state_mix_gain_commit = 10
+        state_mix_commit = 11
         state = Signal(state_shape, init=state_wait)
         band = Signal(range(self.N_BANDS))
         oversample = Signal()
@@ -189,17 +193,22 @@ class RezoCore(wiring.Component):
         main_next = Signal(mix_shape)
         odd_next = Signal(mix_shape)
         even_next = Signal(mix_shape)
+        filtered_next = Signal(mix_shape)
+        feedback_drive = Signal(mix_shape)
+        feedback_term = Signal(dsp.mac.SQNative)
         dry_gain_term = Signal(mix_shape)
         m.d.comb += [
             level_cur.eq(levels[band]),
             band_sample.eq(abp_cur.as_value().as_signed() >> 2),
             term.eq(mac_z.as_value().as_signed() >> (dsp.mac.SQNative.f_bits + 3)),
+            feedback_term.eq(mac_z.as_value().as_signed() >> dsp.mac.SQNative.f_bits),
             dry_gain_term.eq(mac_z.as_value().as_signed() >> dsp.mac.SQNative.f_bits),
             main_next.eq(main_acc + term_q),
+            filtered_next.eq(main_next - dry_sample.as_value().as_signed()),
+            feedback_drive.eq(filtered_next << 2),
             odd_next.eq(Mux(band_is_odd_q, odd_acc + term_q, odd_acc)),
             even_next.eq(Mux(band_is_odd_q, even_acc, even_acc + term_q)),
         ]
-
         out_valid = Signal()
         out_ready = Signal()
         main_q = Signal(ASQ)
@@ -237,15 +246,28 @@ class RezoCore(wiring.Component):
                         m.d.sync += smooth_resonance.eq(smooth_resonance - self.PARAM_SLEW_STEP)
                     with m.Else():
                         m.d.sync += smooth_resonance.eq(self.resonance)
+                    with m.If(feedback_diff > self.PARAM_SLEW_STEP):
+                        m.d.sync += smooth_feedback.eq(smooth_feedback + self.PARAM_SLEW_STEP)
+                    with m.Elif(feedback_diff < -self.PARAM_SLEW_STEP):
+                        m.d.sync += smooth_feedback.eq(smooth_feedback - self.PARAM_SLEW_STEP)
+                    with m.Else():
+                        m.d.sync += smooth_feedback.eq(self.feedback)
                     m.d.sync += [
-                        x.eq(self.i.payload[0] >> 1),
                         resonance.eq(resonance_ctl),
-                        mac_a_q.eq(self.i.payload[0]),
-                        mac_b_q.eq(smooth_dry >> 1),
+                        mac_a_q.eq(feedback_sample),
+                        mac_b_q.eq(feedback_gain >> 1),
                         band.eq(0),
                         oversample.eq(0),
-                        state.eq(state_dry_gain_commit),
+                        state.eq(state_feedback_commit),
                     ]
+
+            with m.Case(state_feedback_commit):
+                m.d.sync += [
+                    x.eq((self.i.payload[0] >> 1) + feedback_term),
+                    mac_a_q.eq(self.i.payload[0]),
+                    mac_b_q.eq(smooth_dry >> 1),
+                    state.eq(state_dry_gain_commit),
+                ]
 
             with m.Case(state_dry_gain_commit):
                 m.d.sync += [
@@ -254,7 +276,7 @@ class RezoCore(wiring.Component):
                     odd_acc.eq(0),
                     even_acc.eq(0),
                     state.eq(state_mac0_setup),
-                    ]
+                ]
 
             with m.Case(state_mac0_setup):
                 m.d.sync += [
@@ -328,6 +350,7 @@ class RezoCore(wiring.Component):
                         main_q.eq(main_next),
                         odd_q.eq(odd_next),
                         even_q.eq(even_next),
+                        feedback_sample.eq(feedback_drive),
                         dry_q.eq(dry_sample),
                         out_valid.eq(1),
                         state.eq(state_wait),
@@ -366,7 +389,7 @@ class RezoPeripheral(wiring.Component):
         ]
         self._dry = regs.add("dry", self.UnsignedValue(), offset=0x30)
         self._resonance = regs.add("resonance", self.UnsignedValue(), offset=0x34)
-        self._feedback = regs.add("feedback", self.SignedValue(), offset=0x38)
+        self._feedback = regs.add("feedback", self.UnsignedValue(), offset=0x38)
         self.core = None
         self._bridge = csr.Bridge(regs.as_memory_map())
 
@@ -436,10 +459,11 @@ class RezoSoc(TiliquaSoc):
 class RezoHardwareUI(wiring.Component):
     """Small no-SoC control surface for the beam-raced REZO prototype."""
 
-    N_TARGETS = RezoCore.N_BANDS + 3
+    N_TARGETS = RezoCore.N_BANDS + 4
     TARGET_PRESET = 0
     TARGET_DRY = RezoCore.N_BANDS + 1
     TARGET_RESONANCE = RezoCore.N_BANDS + 2
+    TARGET_FEEDBACK = RezoCore.N_BANDS + 3
 
     def __init__(self):
         super().__init__({
@@ -449,7 +473,7 @@ class RezoHardwareUI(wiring.Component):
             "levels": Out(data.ArrayLayout(signed(16), RezoCore.N_BANDS)),
             "dry": Out(unsigned(16)),
             "resonance": Out(unsigned(16)),
-            "feedback": Out(signed(16)),
+            "feedback": Out(unsigned(16)),
             "selected": Out(unsigned(4)),
             "preset": Out(unsigned(3)),
             "editing": Out(1),
@@ -469,57 +493,29 @@ class RezoHardwareUI(wiring.Component):
                 m.d.sync += signal.eq(min_value)
 
     @staticmethod
-    def apply_preset(m, preset, levels, dry, resonance):
+    def apply_preset(m, preset, levels):
         with m.Switch(preset):
             with m.Case(0):  # all bands
                 for level in levels:
                     m.d.sync += level.eq(8192)
-                m.d.sync += [
-                    dry.eq(0),
-                    resonance.eq(8192),
-                ]
             with m.Case(1):  # odd bands
                 for n, level in enumerate(levels):
                     m.d.sync += level.eq(8192 if n & 1 else 0)
-                m.d.sync += [
-                    dry.eq(0),
-                    resonance.eq(8192),
-                ]
             with m.Case(2):  # even bands
                 for n, level in enumerate(levels):
                     m.d.sync += level.eq(0 if n & 1 else 8192)
-                m.d.sync += [
-                    dry.eq(0),
-                    resonance.eq(8192),
-                ]
             with m.Case(3):  # lows
                 for n, level in enumerate(levels):
                     m.d.sync += level.eq(8192 if n < 4 else 0)
-                m.d.sync += [
-                    dry.eq(0),
-                    resonance.eq(8192),
-                ]
             with m.Case(4):  # mids
                 for n, level in enumerate(levels):
                     m.d.sync += level.eq(8192 if 3 <= n <= 6 else 0)
-                m.d.sync += [
-                    dry.eq(0),
-                    resonance.eq(8192),
-                ]
             with m.Case(5):  # highs
                 for n, level in enumerate(levels):
                     m.d.sync += level.eq(8192 if n >= 6 else 0)
-                m.d.sync += [
-                    dry.eq(0),
-                    resonance.eq(8192),
-                ]
             with m.Case(6):  # zero
                 for level in levels:
                     m.d.sync += level.eq(0)
-                m.d.sync += [
-                    dry.eq(0),
-                    resonance.eq(8192),
-                ]
 
     def elaborate(self, platform):
         m = Module()
@@ -528,6 +524,7 @@ class RezoHardwareUI(wiring.Component):
                   for n in range(RezoCore.N_BANDS)]
         dry = Signal(unsigned(16), init=0)
         resonance = Signal(unsigned(16), init=8192)
+        feedback = Signal(unsigned(16), init=0)
         selected = Signal(range(self.N_TARGETS), init=self.TARGET_PRESET)
         preset = Signal(range(7), init=0)
         next_preset = Signal(range(7))
@@ -629,7 +626,7 @@ class RezoHardwareUI(wiring.Component):
         with m.If(click):
             with m.If(editing):
                 with m.If(selected == self.TARGET_PRESET):
-                    self.apply_preset(m, preset, levels, dry, resonance)
+                    self.apply_preset(m, preset, levels)
                 m.d.sync += editing.eq(0)
             with m.Else():
                 m.d.sync += editing.eq(1)
@@ -651,6 +648,11 @@ class RezoHardwareUI(wiring.Component):
                         self.clamp_add(m, resonance, step_amount, 0, 32768)
                     with m.Else():
                         self.clamp_add(m, resonance, -step_amount, 0, 32768)
+                with m.Elif(selected == self.TARGET_FEEDBACK):
+                    with m.If(edit_direction):
+                        self.clamp_add(m, feedback, step_amount, 0, 32768)
+                    with m.Else():
+                        self.clamp_add(m, feedback, -step_amount, 0, 32768)
                 with m.Else():
                     for n, level in enumerate(levels):
                         with m.If(selected == n + 1):
@@ -664,7 +666,7 @@ class RezoHardwareUI(wiring.Component):
         m.d.comb += [
             self.dry.eq(dry),
             self.resonance.eq(resonance),
-            self.feedback.eq(0),
+            self.feedback.eq(feedback),
             self.selected.eq(selected),
             self.preset.eq(preset),
             self.editing.eq(editing),
@@ -732,6 +734,7 @@ class RezoBeamDisplay(wiring.Component):
             "levels": In(data.ArrayLayout(signed(6), RezoCore.N_BANDS)),
             "dry": In(unsigned(6)),
             "resonance": In(unsigned(6)),
+            "feedback": In(unsigned(6)),
             "selected": In(unsigned(4)),
             "preset": In(unsigned(3)),
             "editing": In(1),
@@ -1071,6 +1074,7 @@ class RezoTileDisplay(wiring.Component):
             "levels": In(data.ArrayLayout(signed(6), RezoCore.N_BANDS)),
             "dry": In(unsigned(6)),
             "resonance": In(unsigned(6)),
+            "feedback": In(unsigned(6)),
             "selected": In(unsigned(4)),
             "preset": In(unsigned(3)),
             "editing": In(1),
@@ -1166,8 +1170,9 @@ class RezoTileDisplay(wiring.Component):
         band_names = ["29", "61", "115", "218", "411", "777", "1K5", "2K8", "5K2", "11K"]
         for n, label in enumerate(band_names):
             self.place_text(m, char_code, cell_x, cell_y, label, 3 + 4 * n, 34)
-        self.place_text(m, char_code, cell_x, cell_y, "DRY", 2, 38)
-        self.place_text(m, char_code, cell_x, cell_y, "RES", 2, 41)
+        self.place_text(m, char_code, cell_x, cell_y, "DRY", 2, 37)
+        self.place_text(m, char_code, cell_x, cell_y, "RES", 2, 40)
+        self.place_text(m, char_code, cell_x, cell_y, "FB", 2, 43)
 
         char_code_q = Signal(unsigned(6))
         glyph_row_q = Signal(unsigned(3))
@@ -1202,8 +1207,9 @@ class RezoTileDisplay(wiring.Component):
         border = active & self.outline(x, y, 12, 12, 708, 708, t=2)
         title_panel = active & self.rect(x, y, 20, 20, 700, 82)
         bands_panel = active & self.rect(x, y, 28, 190, 692, 574)
-        meter_panel = active & (self.rect(x, y, 118, 596, 650, 632) |
-                                self.rect(x, y, 118, 640, 650, 676))
+        meter_panel = active & (self.rect(x, y, 118, 584, 650, 612) |
+                                self.rect(x, y, 118, 628, 650, 656) |
+                                self.rect(x, y, 118, 672, 650, 700))
 
         preset_chip = Signal()
         preset_select = Signal()
@@ -1285,14 +1291,19 @@ class RezoTileDisplay(wiring.Component):
             band_fill.eq(fill_expr),
         ]
 
-        dry_fill = self.rect(x, y, 124, 604, 124 + (self.dry << 4), 624)
+        dry_fill = self.rect(x, y, 124, 588, 124 + (self.dry << 4), 608)
         dry_select = (self.selected == RezoHardwareUI.TARGET_DRY) & self.outline(
-            x, y, 118, 596, 650, 632, t=3)
-        res_fill = self.rect(x, y, 124, 648, 124 + (self.resonance << 4), 668)
+            x, y, 118, 584, 650, 612, t=3)
+        res_fill = self.rect(x, y, 124, 632, 124 + (self.resonance << 4), 652)
         res_select = (self.selected == RezoHardwareUI.TARGET_RESONANCE) & self.outline(
-            x, y, 118, 640, 650, 676, t=3)
+            x, y, 118, 628, 650, 656, t=3)
+        fb_fill = self.rect(x, y, 124, 676, 124 + (self.feedback << 4), 696)
+        fb_select = (self.selected == RezoHardwareUI.TARGET_FEEDBACK) & self.outline(
+            x, y, 118, 672, 650, 700, t=3)
 
-        selected = active & (preset_select | preset_group_select | band_select | dry_select | res_select)
+        selected = active & (
+            preset_select | preset_group_select | band_select |
+            dry_select | res_select | fb_select)
 
         selected_q = Signal()
         text_q = Signal()
@@ -1304,7 +1315,7 @@ class RezoTileDisplay(wiring.Component):
         m.d.dvi += [
             selected_q.eq(selected),
             text_q.eq(text),
-            fill_q.eq(band_fill | band_marker | dry_fill | res_fill),
+            fill_q.eq(band_fill | band_marker | dry_fill | res_fill | fb_fill),
             line_q.eq(band_zero | border),
             panel_q.eq(preset_chip | band_slot | meter_panel),
             background_q.eq(title_panel | bands_panel),
@@ -1424,13 +1435,16 @@ class RezoBeamTop(Elaboratable):
                 i=display_level, o=display.levels[n], o_domain="dvi")
         display_dry = Signal(unsigned(6))
         display_resonance = Signal(unsigned(6))
+        display_feedback = Signal(unsigned(6))
         m.d.comb += [
             display_dry.eq(rezo.dry >> 10),
             display_resonance.eq(rezo.resonance >> 10),
+            display_feedback.eq(rezo.feedback >> 10),
         ]
         m.submodules += [
             FFSynchronizer(i=display_dry, o=display.dry, o_domain="dvi"),
             FFSynchronizer(i=display_resonance, o=display.resonance, o_domain="dvi"),
+            FFSynchronizer(i=display_feedback, o=display.feedback, o_domain="dvi"),
             FFSynchronizer(i=ui.selected, o=display.selected, o_domain="dvi"),
             FFSynchronizer(i=ui.preset, o=display.preset, o_domain="dvi"),
             FFSynchronizer(i=ui.editing, o=display.editing, o_domain="dvi"),
