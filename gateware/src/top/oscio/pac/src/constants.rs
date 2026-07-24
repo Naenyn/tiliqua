@@ -1,5 +1,5 @@
 pub const UI_NAME: &str = "OSCIO";
-pub const UI_TAG: &str = "f55ff155";
+pub const UI_TAG: &str = "95d9f7eb";
 pub const HW_REV_MAJOR: u32 = 5;
 pub const USE_EXTERNAL_PLL: bool = true;
 pub const CLOCK_SYNC_HZ: u32 = 60000000;
@@ -41,16 +41,17 @@ the current edit, while pressing reopens it in navigation mode.
 CHANNEL 1-2 and CHANNEL 3-4 set each trace's vertical offset, volts per
 division, and visibility.
 
-OSCIO sets time per division, trigger mode, trigger source, trigger level,
-grid style, trace intensity, and trace hue. Rising and falling modes lock the
-sweep to the selected trigger channel. Free mode continuously retriggers.
+OSCIO sets time per division, trigger mode, trigger source, and trigger level.
+Rising and falling modes lock the sweep to the selected trigger channel. Free
+mode continuously retriggers.
 
-MENU changes the overlay hue, palette, and automatic hide delay. MISC contains
-screen rotation, this help page, MIDI highlighting, and settings save/reset
-actions.
+DISPLAY sets grid style, grid and trace intensity, trace hue, and graph
+palette. MENU changes the overlay hue, automatic hide delay, and whether that
+delay remains active while editing. MISC contains screen rotation and settings
+save/reset actions. HELP is the final menu page.
 
-On this page, turn the encoder to scroll. Press once to leave scroll editing,
-select Back, and press again to return to the oscilloscope.
+On this page, turn the encoder to scroll. Select the HELP page title to return
+to the preceding menu pages.
 "###;
 pub const OVERLAY_UI_SCRATCH_BASE: usize = 0x20f00000;
 pub const OVERLAY_UI_MEM_BASE: usize = 0xc1000000;

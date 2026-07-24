@@ -107,6 +107,8 @@ pub enum Page {
     Chan34,
     #[strum(serialize = "OSCIO")]
     Scope,
+    #[strum(serialize = "DISPLAY")]
+    Display,
     #[strum(serialize = "MENU")]
     Menu,
     #[strum(serialize = "MISC")]
@@ -160,7 +162,7 @@ pub enum GridOverlay {
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 #[strum(serialize_all = "kebab-case")]
-pub enum CcHighlight {
+pub enum EditHide {
     Off,
     #[default]
     On,
@@ -188,18 +190,30 @@ button_params!(OneShotButtonParams { mode: ButtonMode::OneShot });
 pub struct HelpOpts {
     #[option(0)]
     pub scroll: IntOption<ScrollParams>,
-    #[option(false)]
-    pub back: ButtonOption<OneShotButtonParams>,
 }
 
 #[derive(OptionPage, Clone)]
 pub struct MenuOpts {
     #[option(10)]
     pub ui_hue: IntOption<HueParams>,
-    #[option]
-    pub palette: EnumOption<ColorPalette>,
     #[option(5)]
     pub hide: IntOption<HideParams>,
+    #[option]
+    pub edit_hide: EnumOption<EditHide>,
+}
+
+#[derive(OptionPage, Clone)]
+pub struct DisplayOpts {
+    #[option]
+    pub grid: EnumOption<GridOverlay>,
+    #[option(4)]
+    pub grid_i: IntOption<IntensityParams>,
+    #[option(8)]
+    pub intensity: IntOption<IntensityParams>,
+    #[option(10)]
+    pub hue: IntOption<HueParams>,
+    #[option]
+    pub palette: EnumOption<ColorPalette>,
 }
 
 /// Convert ``Hide`` menu value (0.5 s steps) to milliseconds for the UI fade timer.
@@ -211,10 +225,6 @@ pub fn menu_hide_ms(hide: u8) -> u32 {
 pub struct MiscOpts {
     #[option]
     pub rotation: EnumOption<Rotate>,
-    #[option(false)]
-    pub help: ButtonOption<OneShotButtonParams>,
-    #[option]
-    pub cc_highlight: EnumOption<CcHighlight>,
     #[option(false)]
     pub save_settings: ButtonOption<OneShotButtonParams>,
     #[option(false)]
@@ -263,14 +273,6 @@ pub struct ScopeOpts {
     pub trigger_ch: EnumOption<TriggerChannel>,
     #[option]
     pub trig_lvl: IntOption<TriggerLvlParams>,
-    #[option]
-    pub grid: EnumOption<GridOverlay>,
-    #[option(4)]
-    pub grid_i: IntOption<IntensityParams>,
-    #[option(8)]
-    pub intensity: IntOption<IntensityParams>,
-    #[option(10)]
-    pub hue: IntOption<HueParams>,
 }
 
 #[derive(Options, Clone)]
@@ -284,19 +286,24 @@ pub struct Opts {
     pub chan34: Chan34Opts,
     #[page(Page::Scope)]
     pub scope: ScopeOpts,
+    #[page(Page::Display)]
+    pub display: DisplayOpts,
     #[page(Page::Menu)]
     pub menu: MenuOpts,
     #[page(Page::Misc)]
     pub misc: MiscOpts,
 }
 
-/// Pages shown when turning the encoder at the page title (no wrap).
-pub const MENU_PAGES: [Page; 5] = [
+/// Pages shown when turning the encoder at the page title (no wrap). Help is
+/// deliberately the final page, matching SONORO's direct page navigation.
+pub const MENU_PAGES: [Page; 7] = [
     Page::Chan12,
     Page::Chan34,
     Page::Scope,
+    Page::Display,
     Page::Menu,
     Page::Misc,
+    Page::Help,
 ];
 
 pub fn scope_consume_ticks(opts: &mut Opts, ticks: i8) {

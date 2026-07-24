@@ -9,17 +9,18 @@ use opts::Options;
 
 use crate::options::Page;
 
-const VSPACE: i32 = 15;
+const VSPACE: i32 = 18;
 const BORDER: i32 = 1;
-/// Align the first row with XBEAM/SPECTO's menu baseline at screen center.
+/// Match the shared Tiliqua menu geometry used by SONORO and XBEAM.
 const CONTENT_Y0: i32 = 18;
-/// Left column wide enough for the longest page title (``CH 1-2``).
-const GUTTER_W: i32 = 64;
-const SEP_X: i32 = GUTTER_W - 3;
-const PAGE_X: i32 = GUTTER_W - 6;
-const ITEM_X: i32 = GUTTER_W + 5;
-const RIGHT_MARGIN: i32 = 8;
-const MARKER_GAP: i32 = 72;
+// Balance the title gutter and option columns within the fixed 250px bitmap.
+// This leaves room for the seven-character DISPLAY title without wasting the
+// former wide margin to the right of option values.
+const SEP_X: i32 = 79;
+const PAGE_X: i32 = 72;
+const ITEM_X: i32 = 87;
+const VALUE_X: i32 = 232;
+const MARKER_X: i32 = 234;
 
 enum MenuRow {
     Header(&'static str),
@@ -29,56 +30,57 @@ enum MenuRow {
 
 const CHAN12_ROWS: &[MenuRow] = &[
     MenuRow::Header("Channel 1"),
-    MenuRow::Opt(0, "Offset"),
-    MenuRow::Opt(1, "Scale"),
-    MenuRow::Opt(2, "Enabled"),
+    MenuRow::Opt(0, "offset"),
+    MenuRow::Opt(1, "scale"),
+    MenuRow::Opt(2, "enabled"),
     MenuRow::Spacer,
     MenuRow::Header("Channel 2"),
-    MenuRow::Opt(3, "Offset"),
-    MenuRow::Opt(4, "Scale"),
-    MenuRow::Opt(5, "Enabled"),
+    MenuRow::Opt(3, "offset"),
+    MenuRow::Opt(4, "scale"),
+    MenuRow::Opt(5, "enabled"),
 ];
 
 const CHAN34_ROWS: &[MenuRow] = &[
     MenuRow::Header("Channel 3"),
-    MenuRow::Opt(0, "Offset"),
-    MenuRow::Opt(1, "Scale"),
-    MenuRow::Opt(2, "Enabled"),
+    MenuRow::Opt(0, "offset"),
+    MenuRow::Opt(1, "scale"),
+    MenuRow::Opt(2, "enabled"),
     MenuRow::Spacer,
     MenuRow::Header("Channel 4"),
-    MenuRow::Opt(3, "Offset"),
-    MenuRow::Opt(4, "Scale"),
-    MenuRow::Opt(5, "Enabled"),
+    MenuRow::Opt(3, "offset"),
+    MenuRow::Opt(4, "scale"),
+    MenuRow::Opt(5, "enabled"),
 ];
 
 const SCOPE_ROWS: &[MenuRow] = &[
-    MenuRow::Opt(0, "Timebase"),
-    MenuRow::Opt(1, "Trigger"),
-    MenuRow::Opt(2, "Trigger CH"),
-    MenuRow::Opt(3, "Trig Lvl"),
-    MenuRow::Opt(4, "Grid"),
-    MenuRow::Opt(5, "Grid Int"),
-    MenuRow::Opt(6, "Intensity"),
-    MenuRow::Opt(7, "Hue"),
+    MenuRow::Opt(0, "timebase"),
+    MenuRow::Opt(1, "trigger"),
+    MenuRow::Opt(2, "trigger ch"),
+    MenuRow::Opt(3, "trig lvl"),
+];
+
+const DISPLAY_ROWS: &[MenuRow] = &[
+    MenuRow::Opt(0, "grid"),
+    MenuRow::Opt(1, "grid int"),
+    MenuRow::Opt(2, "intensity"),
+    MenuRow::Opt(3, "hue"),
+    MenuRow::Opt(4, "palette"),
 ];
 
 const MENU_ROWS: &[MenuRow] = &[
-    MenuRow::Opt(0, "UI Hue"),
-    MenuRow::Opt(1, "Palette"),
-    MenuRow::Opt(2, "Hide UI"),
+    MenuRow::Opt(0, "ui hue"),
+    MenuRow::Opt(1, "hide ui"),
+    MenuRow::Opt(2, "edit hide"),
 ];
 
 const MISC_ROWS: &[MenuRow] = &[
-    MenuRow::Opt(0, "Rotation"),
-    MenuRow::Opt(1, "Help"),
-    MenuRow::Opt(2, "CC Highlt"),
-    MenuRow::Opt(3, "Save"),
-    MenuRow::Opt(4, "Reset"),
+    MenuRow::Opt(0, "rotation"),
+    MenuRow::Opt(1, "save"),
+    MenuRow::Opt(2, "reset"),
 ];
 
 const HELP_ROWS: &[MenuRow] = &[
-    MenuRow::Opt(0, "Scroll"),
-    MenuRow::Opt(1, "Back"),
+    MenuRow::Opt(0, "scroll"),
 ];
 
 fn rows_for_page(page: Page) -> &'static [MenuRow] {
@@ -86,9 +88,19 @@ fn rows_for_page(page: Page) -> &'static [MenuRow] {
         Page::Chan12 => CHAN12_ROWS,
         Page::Chan34 => CHAN34_ROWS,
         Page::Scope => SCOPE_ROWS,
+        Page::Display => DISPLAY_ROWS,
         Page::Menu => MENU_ROWS,
         Page::Misc => MISC_ROWS,
         Page::Help => HELP_ROWS,
+    }
+}
+
+fn row_spacing(page: Page) -> i32 {
+    match page {
+        // Nine rows, including the visual group separator, fit the fixed
+        // 160px hardware overlay at this pitch.
+        Page::Chan12 | Page::Chan34 => 16,
+        _ => VSPACE,
     }
 }
 
@@ -115,18 +127,19 @@ where
         .build();
 
     let rows = rows_for_page(page);
+    let row_spacing = row_spacing(page);
     let y0 = CONTENT_Y0;
-    let value_x = menu_w as i32 - RIGHT_MARGIN;
-    let marker_x = value_x - MARKER_GAP;
     let page_hl = matches!((opts.selected(), opts.modify()), (None, _));
     let opts_view = opts.view().options();
 
-    Rectangle::new(
-        Point::new(BORDER, BORDER),
-        Size::new(menu_w - (BORDER * 2) as u32, menu_h - (BORDER * 2) as u32),
-    )
-    .into_styled(stroke)
-    .draw(d)?;
+    if page != Page::Help {
+        Rectangle::new(
+            Point::new(BORDER, BORDER),
+            Size::new(menu_w - (BORDER * 2) as u32, menu_h - (BORDER * 2) as u32),
+        )
+        .into_styled(stroke)
+        .draw(d)?;
+    }
 
     if !rows.is_empty() {
         // Match draw_options(): the separator begins just above the first
@@ -134,7 +147,10 @@ where
         // fixed-size backing bitmap.
         Line::new(
             Point::new(SEP_X, y0 - 10),
-            Point::new(SEP_X, y0 - 13 + VSPACE * rows.len() as i32),
+            Point::new(
+                SEP_X,
+                y0 - 13 + row_spacing * rows.len() as i32,
+            ),
         )
         .into_styled(stroke)
         .draw(d)?;
@@ -149,7 +165,12 @@ where
     .draw(d)?;
 
     if page_hl && opts.modify() {
-        Text::with_alignment("^", Point::new(PAGE_X, y0 + VSPACE), font_white, Alignment::Right)
+        Text::with_alignment(
+            "^",
+            Point::new(PAGE_X, y0 + row_spacing),
+            font_white,
+            Alignment::Right,
+        )
             .draw(d)?;
     }
 
@@ -157,12 +178,17 @@ where
     for row in rows {
         match row {
             MenuRow::Spacer => {
-                row_y += VSPACE;
+                row_y += row_spacing;
             }
             MenuRow::Header(label) => {
-                Text::with_alignment(*label, Point::new(ITEM_X, row_y), font_header, Alignment::Left)
+                Text::with_alignment(
+                    *label,
+                    Point::new(ITEM_X, row_y),
+                    font_header,
+                    Alignment::Left,
+                )
                     .draw(d)?;
-                row_y += VSPACE;
+                row_y += row_spacing;
             }
             MenuRow::Opt(idx, label) => {
                 let mut font = font_grey;
@@ -177,16 +203,16 @@ where
                     .draw(d)?;
                 Text::with_alignment(
                     &opts_view[*idx].value(),
-                    Point::new(value_x, row_y),
+                    Point::new(VALUE_X, row_y),
                     font,
                     Alignment::Right,
                 )
                 .draw(d)?;
                 if show_marker {
-                    Text::with_alignment("<", Point::new(marker_x, row_y), font, Alignment::Left)
+                    Text::with_alignment("<", Point::new(MARKER_X, row_y), font, Alignment::Left)
                         .draw(d)?;
                 }
-                row_y += VSPACE;
+                row_y += row_spacing;
             }
         }
     }

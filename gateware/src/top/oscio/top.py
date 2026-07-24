@@ -24,29 +24,26 @@ the current edit, while pressing reopens it in navigation mode.
 CHANNEL 1-2 and CHANNEL 3-4 set each trace's vertical offset, volts per
 division, and visibility.
 
-OSCIO sets time per division, trigger mode, trigger source, trigger level,
-grid style, trace intensity, and trace hue. Rising and falling modes lock the
-sweep to the selected trigger channel. Free mode continuously retriggers.
+OSCIO sets time per division, trigger mode, trigger source, and trigger level.
+Rising and falling modes lock the sweep to the selected trigger channel. Free
+mode continuously retriggers.
 
-MENU changes the overlay hue, palette, and automatic hide delay. MISC contains
-screen rotation, this help page, MIDI highlighting, and settings save/reset
-actions.
+DISPLAY sets grid style, grid and trace intensity, trace hue, and graph
+palette. MENU changes the overlay hue, automatic hide delay, and whether that
+delay remains active while editing. MISC contains screen rotation and settings
+save/reset actions. HELP is the final menu page.
 
-On this page, turn the encoder to scroll. Press once to leave scroll editing,
-select Back, and press again to return to the oscilloscope.
+On this page, turn the encoder to scroll. Select the HELP page title to return
+to the preceding menu pages.
 """
 
 import os
 import sys
 
 from amaranth import *
-from amaranth.lib import data, stream, wiring
-from amaranth.lib.fifo import SyncFIFOBuffered
-from amaranth.lib.wiring import In, Out, connect, flipped
-from amaranth_soc import csr
+from amaranth.lib import data, wiring
 
-from tiliqua import dsp, midi
-from tiliqua.build import sim
+from tiliqua import dsp
 from tiliqua.build.cli import top_level_cli
 from tiliqua.build.types import BitstreamHelp
 from tiliqua.periph import overlay
@@ -55,43 +52,6 @@ from tiliqua.raster import PSQ
 from tiliqua.raster.digital_scope import DigitalScopePeripheral
 from tiliqua.raster.scope_overlay import ScopeTraceOverlay
 from tiliqua.tiliqua_soc import TiliquaSoc
-
-
-class ScopeCtrlPeripheral(wiring.Component):
-
-    class MidiRead(csr.Register, access="r"):
-        msg: csr.Field(csr.action.R, unsigned(32))
-
-    def __init__(self):
-        regs = csr.Builder(addr_width=5, data_width=8)
-        self._midi_read = regs.add("midi_read", self.MidiRead(), offset=0x0)
-        self._bridge = csr.Bridge(regs.as_memory_map())
-        super().__init__({
-            "bus": In(csr.Signature(addr_width=regs.addr_width, data_width=regs.data_width)),
-            "i_midi": In(stream.Signature(midi.MidiMessage)),
-        })
-        self.bus.memory_map = self._bridge.bus.memory_map
-
-    def elaborate(self, platform):
-        m = Module()
-
-        m.submodules.bridge = self._bridge
-        connect(m, flipped(self.bus), self._bridge.bus)
-
-        m.submodules.read_midi_fifo = read_midi_fifo = SyncFIFOBuffered(
-            width=24, depth=8)
-        m.d.comb += [
-            self.i_midi.ready.eq(1),
-            read_midi_fifo.w_data.eq(self.i_midi.payload),
-            read_midi_fifo.w_en.eq(self.i_midi.valid),
-            read_midi_fifo.r_en.eq(self._midi_read.element.r_stb),
-        ]
-        with m.If(read_midi_fifo.r_level != 0):
-            m.d.comb += self._midi_read.f.msg.r_data.eq(read_midi_fifo.r_data)
-        with m.Else():
-            m.d.comb += self._midi_read.f.msg.r_data.eq(0)
-
-        return m
 
 
 class ScopeSoc(TiliquaSoc):
@@ -121,7 +81,6 @@ class ScopeSoc(TiliquaSoc):
         self.overlay_ui_scratch_base = self.psram_base + 0x00F0_0000
 
         self.scope_periph_base  = 0x00001100
-        self.scope_ctrl_base    = 0x00001200
         self.overlay_periph_base = 0x00001300
 
         self.wb_decoder.add(
@@ -146,9 +105,6 @@ class ScopeSoc(TiliquaSoc):
             fs=self.clock_settings.audio_clock.fs() * self.n_upsample)
         self.csr_decoder.add(self.scope_periph.bus, addr=self.scope_periph_base, name="scope_periph")
 
-        self.scope_ctrl = ScopeCtrlPeripheral()
-        self.csr_decoder.add(self.scope_ctrl.bus, addr=self.scope_ctrl_base, name="scope_ctrl_periph")
-
         self.csr_decoder.add(self.overlay_periph.bus, addr=self.overlay_periph_base, name="overlay_periph")
 
         self.finalize_csr_bridge()
@@ -158,7 +114,6 @@ class ScopeSoc(TiliquaSoc):
         m = Module()
 
         m.submodules.scope_periph = self.scope_periph
-        m.submodules.scope_ctrl = self.scope_ctrl
         m.submodules.overlay_periph = self.overlay_periph
 
         m.d.comb += [
@@ -192,14 +147,6 @@ class ScopeSoc(TiliquaSoc):
         pmod0 = self.pmod0_periph.pmod
 
         wiring.connect(m, pmod0.o_cal, pmod0.i_cal)
-
-        if sim.is_hw(platform):
-            midi_pins = platform.request("midi")
-            m.submodules.serialrx = serialrx = midi.SerialRx(
-                    system_clk_hz=60e6, pins=midi_pins)
-            m.submodules.midi_decode = midi_decode = midi.MidiDecodeSerial()
-            wiring.connect(m, serialrx.o, midi_decode.i)
-            wiring.connect(m, midi_decode.o, self.scope_ctrl.i_midi)
 
         m.submodules.plot_fifo = plot_fifo = dsp.SyncFIFOBuffered(
             shape=data.ArrayLayout(PSQ, 4), depth=256)

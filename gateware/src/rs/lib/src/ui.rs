@@ -31,6 +31,7 @@ where
     draw: bool,
     menu_dirty: bool,
     menu_visible: bool,
+    hide_while_editing: bool,
 }
 
 impl<EncoderT: Encoder,
@@ -40,12 +41,20 @@ impl<EncoderT: Encoder,
          UI<EncoderT, PmodT, MoboI2CT, OptionsT> {
     pub fn new(opts: OptionsT, period_ms: u32, encoder: EncoderT,
                pca9635: Pca9635Driver<MoboI2CT>, pmod: PmodT) -> Self {
-        Self::new_with_fade(opts, period_ms, 1000, encoder, pca9635, pmod)
+        Self::new_internal(
+            opts, period_ms, 1000, false, encoder, pca9635, pmod)
     }
 
     pub fn new_with_fade(opts: OptionsT, period_ms: u32, encoder_fade_ms: u32,
                          encoder: EncoderT, pca9635: Pca9635Driver<MoboI2CT>,
                          pmod: PmodT) -> Self {
+        Self::new_internal(
+            opts, period_ms, encoder_fade_ms, true, encoder, pca9635, pmod)
+    }
+
+    fn new_internal(opts: OptionsT, period_ms: u32, encoder_fade_ms: u32,
+                    hide_while_editing: bool, encoder: EncoderT,
+                    pca9635: Pca9635Driver<MoboI2CT>, pmod: PmodT) -> Self {
         Self {
             opts,
             encoder,
@@ -60,14 +69,18 @@ impl<EncoderT: Encoder,
             touch_led_mask: 0u8,
             draw: true,
             menu_dirty: false,
-            // Existing users of UI have permanently visible menus. Bitstreams
-            // with a timed overlay explicitly update this state.
             menu_visible: true,
+            hide_while_editing,
         }
     }
 
     pub fn set_encoder_fade_ms(&mut self, ms: u32) {
         self.encoder_fade_ms = ms;
+    }
+
+    /// Allow or suspend the normal menu timeout while an option is being edited.
+    pub fn set_hide_while_editing(&mut self, hide: bool) {
+        self.hide_while_editing = hide;
     }
 
     /// Tell the encoder handler whether its menu is currently visible.
@@ -223,6 +236,7 @@ impl<EncoderT: Encoder,
 
         self.pca9635.push().ok();
 
-        self.draw = self.time_since_encoder_touched < self.encoder_fade_ms;
+        self.draw = self.time_since_encoder_touched < self.encoder_fade_ms
+            || (!self.hide_while_editing && self.opts.modify());
     }
 }

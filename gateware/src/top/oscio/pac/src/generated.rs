@@ -164,15 +164,6 @@ impl core::fmt::Debug for SCOPE_PERIPH {
 }
 #[doc = "scope_periph"]
 pub mod scope_periph;
-#[doc = "scope_ctrl_periph"]
-pub type SCOPE_CTRL_PERIPH = crate::Periph<scope_ctrl_periph::RegisterBlock, 0xf000_1200>;
-impl core::fmt::Debug for SCOPE_CTRL_PERIPH {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-        f.debug_struct("SCOPE_CTRL_PERIPH").finish()
-    }
-}
-#[doc = "scope_ctrl_periph"]
-pub mod scope_ctrl_periph;
 #[doc = "overlay_periph"]
 pub type OVERLAY_PERIPH = crate::Periph<overlay_periph::RegisterBlock, 0xf000_1300>;
 impl core::fmt::Debug for OVERLAY_PERIPH {
@@ -219,8 +210,6 @@ pub struct Peripherals {
     pub LINE: LINE,
     #[doc = "scope_periph"]
     pub SCOPE_PERIPH: SCOPE_PERIPH,
-    #[doc = "scope_ctrl_periph"]
-    pub SCOPE_CTRL_PERIPH: SCOPE_CTRL_PERIPH,
     #[doc = "overlay_periph"]
     pub OVERLAY_PERIPH: OVERLAY_PERIPH,
 }
@@ -261,7 +250,6 @@ impl Peripherals {
             BLIT: BLIT::steal(),
             LINE: LINE::steal(),
             SCOPE_PERIPH: SCOPE_PERIPH::steal(),
-            SCOPE_CTRL_PERIPH: SCOPE_CTRL_PERIPH::steal(),
             OVERLAY_PERIPH: OVERLAY_PERIPH::steal(),
         }
     }
