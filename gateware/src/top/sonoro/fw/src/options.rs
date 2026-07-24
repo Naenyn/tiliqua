@@ -419,6 +419,14 @@ pub struct DisplayOpts {
     pub noise_floor: EnumOption<DisplayNoiseFloor>,
 }
 
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
+#[strum(serialize_all = "kebab-case")]
+pub enum EditHide {
+    Off,
+    #[default]
+    On,
+}
+
 #[derive(OptionPage, Clone)]
 pub struct MenuOpts {
     #[option(10)]
@@ -426,6 +434,9 @@ pub struct MenuOpts {
     #[option(5)]
     #[option_name("hide UI")]
     pub hide: IntOption<HideParams>,
+    #[option]
+    #[option_name("edit hide")]
+    pub edit_hide: EnumOption<EditHide>,
 }
 
 #[derive(OptionPage, Clone)]

@@ -384,16 +384,17 @@ impl App {
         let pca9635 = hal::pca9635::Pca9635Driver::new(i2cdev);
         let pmod = EurorackPmod0::new(peripherals.PMOD0_PERIPH);
         let hide_ms = menu_hide_ms(opts.menu.hide.value);
-        Self {
-            ui: ui::UI::new_with_fade(
-                opts,
-                TIMER0_ISR_PERIOD_MS,
-                hide_ms,
-                encoder,
-                pca9635,
-                pmod,
-            ),
-        }
+        let hide_while_editing = opts.menu.edit_hide.value == EditHide::On;
+        let mut ui = ui::UI::new_with_fade(
+            opts,
+            TIMER0_ISR_PERIOD_MS,
+            hide_ms,
+            encoder,
+            pca9635,
+            pmod,
+        );
+        ui.set_hide_while_editing(hide_while_editing);
+        Self { ui }
     }
 }
 
@@ -467,6 +468,7 @@ fn main() -> ! {
     let mut last_palette = opts.display.palette.value;
     let mut last_frequency_ramp_palette = false;
     let mut last_hide = opts.menu.hide.value;
+    let mut last_edit_hide = opts.menu.edit_hide.value;
     let app = Mutex::new(RefCell::new(App::new(opts)));
     handler!(timer0 = || timer0_handler(&app));
 
@@ -521,6 +523,14 @@ fn main() -> ! {
                         .set_encoder_fade_ms(menu_hide_ms(opts.menu.hide.value));
                 });
                 last_hide = opts.menu.hide.value;
+            }
+            if opts.menu.edit_hide.value != last_edit_hide || first {
+                critical_section::with(|cs| {
+                    app.borrow_ref_mut(cs).ui.set_hide_while_editing(
+                        opts.menu.edit_hide.value == EditHide::On,
+                    );
+                });
+                last_edit_hide = opts.menu.edit_hide.value;
             }
             if help_page_entered {
                 help_waiting_for_renderer = view_3d;

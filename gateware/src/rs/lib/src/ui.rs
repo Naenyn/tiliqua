@@ -78,6 +78,11 @@ impl<EncoderT: Encoder,
         self.encoder_fade_ms = ms;
     }
 
+    /// Allow or suspend the normal menu timeout while an option is being edited.
+    pub fn set_hide_while_editing(&mut self, hide: bool) {
+        self.hide_while_editing = hide;
+    }
+
     /// Tell the encoder handler whether its menu is currently visible.
     /// A button press while hidden wakes the menu but must not also toggle its
     /// edit state; rotation remains active so a timed-out edit can resume.
