@@ -12,7 +12,9 @@ use opts::Options;
 use tiliqua_fw::*;
 use tiliqua_hal::dma_framebuffer::DMAFramebuffer;
 use tiliqua_hal::embedded_graphics::prelude::*;
-use tiliqua_hal::embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
+use tiliqua_hal::embedded_graphics::primitives::{
+    PrimitiveStyle, PrimitiveStyleBuilder, Rectangle,
+};
 use tiliqua_hal::persist::Persist;
 use tiliqua_lib::calibration::*;
 use tiliqua_lib::color::HI8;
@@ -24,6 +26,13 @@ use pac::constants::*;
 
 pub const TIMER0_ISR_PERIOD_MS: u32 = 5;
 const FRAMEBUFFER_REGION_BYTES: usize = 0x0010_0000;
+// This matches the gateware's protected menu region. Keep the normal panel
+// fixed to the largest menu so its border and black analyzer cutout never
+// jump as conditional options appear or disappear.
+const MENU_PANEL_WIDTH: u32 = 264;
+const MENU_PANEL_HEIGHT: u32 = 138;
+const MENU_PANEL_X_OFFSET: i32 = -92;
+const MENU_PANEL_Y_OFFSET: i32 = -18;
 
 fn clear_framebuffer_region(base: usize) {
     let framebuffer_words = base as *mut u32;
@@ -56,6 +65,57 @@ where
     )
     .into_styled(PrimitiveStyle::with_fill(HI8::BLACK))
     .draw(display)
+}
+
+fn menu_panel_rect(pos_x: u32, pos_y: u32) -> Rectangle {
+    Rectangle::new(
+        Point::new(
+            pos_x as i32 + MENU_PANEL_X_OFFSET,
+            pos_y as i32 + MENU_PANEL_Y_OFFSET,
+        ),
+        Size::new(MENU_PANEL_WIDTH, MENU_PANEL_HEIGHT),
+    )
+}
+
+fn draw_menu<D>(
+    display: &mut D,
+    opts: &Opts,
+    pos_x: u32,
+    pos_y: u32,
+    hue: u8,
+) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = HI8>,
+{
+    if opts.tracker.page.value == Page::Help {
+        return draw::draw_options(display, opts, pos_x, pos_y, hue);
+    }
+    let border = PrimitiveStyleBuilder::new()
+        .stroke_color(HI8::new(hue, 10))
+        .stroke_width(1)
+        .build();
+    menu_panel_rect(pos_x, pos_y)
+        .into_styled(border)
+        .draw(display)?;
+    draw::draw_options(display, opts, pos_x, pos_y, hue)
+}
+
+fn erase_menu<D>(
+    display: &mut D,
+    opts: &Opts,
+    pos_x: u32,
+    pos_y: u32,
+) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = HI8>,
+{
+    draw::erase_options(display, opts, pos_x, pos_y)?;
+    if opts.tracker.page.value == Page::Help {
+        return Ok(());
+    }
+    menu_panel_rect(pos_x, pos_y)
+        .into_styled(PrimitiveStyle::with_stroke(HI8::BLACK, 1))
+        .draw(display)
 }
 
 fn hash_menu_bytes(mut hash: u32, bytes: &[u8]) -> u32 {
@@ -323,8 +383,16 @@ impl App {
         let i2cdev = I2c0::new(peripherals.I2C0);
         let pca9635 = hal::pca9635::Pca9635Driver::new(i2cdev);
         let pmod = EurorackPmod0::new(peripherals.PMOD0_PERIPH);
+        let hide_ms = menu_hide_ms(opts.menu.hide.value);
         Self {
-            ui: ui::UI::new(opts, TIMER0_ISR_PERIOD_MS, encoder, pca9635, pmod),
+            ui: ui::UI::new_with_fade(
+                opts,
+                TIMER0_ISR_PERIOD_MS,
+                hide_ms,
+                encoder,
+                pca9635,
+                pmod,
+            ),
         }
     }
 }
@@ -398,6 +466,7 @@ fn main() -> ! {
 
     let mut last_palette = opts.display.palette.value;
     let mut last_frequency_ramp_palette = false;
+    let mut last_hide = opts.menu.hide.value;
     let app = Mutex::new(RefCell::new(App::new(opts)));
     handler!(timer0 = || timer0_handler(&app));
 
@@ -445,6 +514,14 @@ fn main() -> ! {
             let view_3d = !spectrum_mode && opts.histo.view.value == ViewMode::ThreeD;
             let help_scroll = opts.help.scroll.value;
             let help_page_entered = on_help_page && !last_on_help_page;
+            if opts.menu.hide.value != last_hide {
+                critical_section::with(|cs| {
+                    app.borrow_ref_mut(cs)
+                        .ui
+                        .set_encoder_fade_ms(menu_hide_ms(opts.menu.hide.value));
+                });
+                last_hide = opts.menu.hide.value;
+            }
             if help_page_entered {
                 help_waiting_for_renderer = view_3d;
             }
@@ -452,9 +529,9 @@ fn main() -> ! {
             // literal back-buffer renderer also uses low plot hues so the
             // legacy tagged cleanup path never touches visible 3D pixels.
             let ui_hue = if view_3d {
-                opts.display.ui_hue.value & 7
+                opts.menu.ui_hue.value & 7
             } else {
-                opts.display.ui_hue.value
+                opts.menu.ui_hue.value
             };
             let surface_status = spectro.status().read();
             // Help is a static framebuffer page. Suspend the autonomous 3D
@@ -543,6 +620,9 @@ fn main() -> ! {
                 (h_active - 200, v_active / 2)
             };
             let menu_visible = draw_options || on_help_page || first;
+            critical_section::with(|cs| {
+                app.borrow_ref_mut(cs).ui.set_menu_visible(menu_visible);
+            });
             let ui_render_ready = !on_help_page || help_renderer_ready;
             if ui_render_ready {
                 let menu_hash = menu_fingerprint(&opts);
@@ -568,11 +648,11 @@ fn main() -> ! {
                 if first || menu_changed || menu_visibility_changed ||
                         menu_invalidated_by_3d_swap {
                     if let Some((old_opts, old_x, old_y, _)) = menu_slot.take() {
-                        draw::erase_options(
+                        erase_menu(
                             &mut display, &old_opts, old_x, old_y).ok();
                     }
                     if menu_visible {
-                        draw::draw_options(
+                        draw_menu(
                             &mut display, &opts, menu_x, menu_y, ui_hue).ok();
                         *menu_slot = Some((
                             opts.clone(), menu_x, menu_y, menu_hash));
@@ -583,7 +663,7 @@ fn main() -> ! {
                     // original renderer did; unlike a state change, this needs no
                     // erase pass. In 3D, the menu is stable in the front buffer,
                     // so redundant refresh traffic remains disabled.
-                    draw::draw_options(
+                    draw_menu(
                         &mut display, &opts, menu_x, menu_y, ui_hue).ok();
                 }
                 if draw_options || on_help_page || first || framebuffer_swapped {

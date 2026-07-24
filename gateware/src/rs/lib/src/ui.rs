@@ -29,6 +29,9 @@ where
     encoder_fade_ms: u32,
     touch_led_mask: u8,
     draw: bool,
+    menu_dirty: bool,
+    menu_visible: bool,
+    hide_while_editing: bool,
 }
 
 impl<EncoderT: Encoder,
@@ -38,6 +41,20 @@ impl<EncoderT: Encoder,
          UI<EncoderT, PmodT, MoboI2CT, OptionsT> {
     pub fn new(opts: OptionsT, period_ms: u32, encoder: EncoderT,
                pca9635: Pca9635Driver<MoboI2CT>, pmod: PmodT) -> Self {
+        Self::new_internal(
+            opts, period_ms, 1000, false, encoder, pca9635, pmod)
+    }
+
+    pub fn new_with_fade(opts: OptionsT, period_ms: u32, encoder_fade_ms: u32,
+                         encoder: EncoderT, pca9635: Pca9635Driver<MoboI2CT>,
+                         pmod: PmodT) -> Self {
+        Self::new_internal(
+            opts, period_ms, encoder_fade_ms, true, encoder, pca9635, pmod)
+    }
+
+    fn new_internal(opts: OptionsT, period_ms: u32, encoder_fade_ms: u32,
+                    hide_while_editing: bool, encoder: EncoderT,
+                    pca9635: Pca9635Driver<MoboI2CT>, pmod: PmodT) -> Self {
         Self {
             opts,
             encoder,
@@ -48,10 +65,31 @@ impl<EncoderT: Encoder,
             time_since_midi_activity: u32::MAX,
             toggle_leds: false,
             period_ms,
-            encoder_fade_ms: 1000u32,
+            encoder_fade_ms,
             touch_led_mask: 0u8,
             draw: true,
+            menu_dirty: false,
+            menu_visible: true,
+            hide_while_editing,
         }
+    }
+
+    pub fn set_encoder_fade_ms(&mut self, ms: u32) {
+        self.encoder_fade_ms = ms;
+    }
+
+    /// Tell the encoder handler whether its menu is currently visible.
+    /// A button press while hidden wakes the menu but must not also toggle its
+    /// edit state; rotation remains active so a timed-out edit can resume.
+    pub fn set_menu_visible(&mut self, visible: bool) {
+        self.menu_visible = visible;
+    }
+
+    /// True when the encoder turned or was pressed since the last call.
+    pub fn take_menu_dirty(&mut self) -> bool {
+        let dirty = self.menu_dirty;
+        self.menu_dirty = false;
+        dirty
     }
 
     pub fn midi_activity(&mut self) {
@@ -61,6 +99,7 @@ impl<EncoderT: Encoder,
     /// Resets the encoder-touched timer so draw/LED feedback activates.
     pub fn external_modify(&mut self) {
         self.time_since_encoder_touched = 0;
+        self.menu_dirty = true;
     }
 
     pub fn touch_led_mask(&mut self, mask: u8) {
@@ -71,15 +110,31 @@ impl<EncoderT: Encoder,
         self.draw
     }
 
+    /// Clear the one-shot draw flag set at construction (before the first timer tick).
+    pub fn clear_draw(&mut self) {
+        self.draw = false;
+    }
+
     pub fn encoder_recently_touched(&self, threshold_ms: u32) -> bool {
         self.time_since_encoder_touched < threshold_ms
     }
 
     pub fn update(&mut self) {
-        //
-        // Consume encoder, update options
-        //
+        self.update_encoder(|opts, ticks| opts.consume_ticks(ticks));
+    }
 
+    pub fn update_encoder<F>(&mut self, apply_ticks: F)
+    where
+        F: FnOnce(&mut OptionsT, i8),
+    {
+        self.poll_encoder(apply_ticks);
+        self.finish_update();
+    }
+
+    fn poll_encoder<F>(&mut self, apply_ticks: F)
+    where
+        F: FnOnce(&mut OptionsT, i8),
+    {
         self.encoder.update();
 
         self.time_since_encoder_touched = self.time_since_encoder_touched.saturating_add(self.period_ms);
@@ -88,18 +143,25 @@ impl<EncoderT: Encoder,
 
         let ticks = self.encoder.poke_ticks();
         if ticks != 0 {
-            self.opts.consume_ticks(ticks);
+            apply_ticks(&mut self.opts, ticks);
             self.time_since_encoder_touched = 0;
+            self.menu_dirty = true;
         }
         if self.encoder.poke_btn() {
-            self.opts.toggle_modify();
+            if self.menu_visible {
+                self.opts.toggle_modify();
+            } else {
+                // A hidden-menu click is a navigation wake-up, not an edit
+                // action. Keep the selected item but leave value editing so
+                // the reopened menu starts in item-selection mode.
+                self.opts.modify_mut(false);
+            }
             self.time_since_encoder_touched = 0;
+            self.menu_dirty = true;
         }
+    }
 
-        //
-        // Update LEDs
-        //
-
+    fn finish_update(&mut self) {
         if self.uptime_ms % (20*self.period_ms) == 0 {
             self.toggle_leds = !self.toggle_leds;
         }
@@ -168,6 +230,7 @@ impl<EncoderT: Encoder,
 
         self.pca9635.push().ok();
 
-        self.draw = self.time_since_encoder_touched < self.encoder_fade_ms || self.opts.modify();
+        self.draw = self.time_since_encoder_touched < self.encoder_fade_ms
+            || (!self.hide_while_editing && self.opts.modify());
     }
 }

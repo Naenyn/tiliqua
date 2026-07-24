@@ -12,6 +12,7 @@ pub enum Page {
     Spectrum,
     Histo,
     Display,
+    Menu,
     Misc,
     Help,
 }
@@ -335,6 +336,7 @@ int_params!(GainParams<u8>   { step: 1, min: 0, max: 12 });
 int_params!(HueParams<u8>    { step: 1, min: 0, max: 15 });
 int_params!(AngleParams<i8>  { step: 15, min: -90, max: 90 });
 int_params!(ScrollParams<u8> { step: 1, min: 0, max: 125 });
+int_params!(HideParams<u8>   { step: 1, min: 2, max: 16, format: IntFormat::Scaled { divisor: 2, precision: 1, suffix: "s" } });
 button_params!(OneShotButtonParams {
     mode: ButtonMode::OneShot
 });
@@ -410,13 +412,20 @@ pub struct DisplayOpts {
     pub grid: EnumOption<OnOff>,
     #[option(0)]
     pub hue: IntOption<HueParams>,
-    #[option(10)]
-    pub ui_hue: IntOption<HueParams>,
     #[option(ColorPalette::Inferno)]
     pub palette: EnumOption<ColorPalette>,
     #[option]
     #[option_name("noise floor")]
     pub noise_floor: EnumOption<DisplayNoiseFloor>,
+}
+
+#[derive(OptionPage, Clone)]
+pub struct MenuOpts {
+    #[option(10)]
+    pub ui_hue: IntOption<HueParams>,
+    #[option(5)]
+    #[option_name("hide UI")]
+    pub hide: IntOption<HideParams>,
 }
 
 #[derive(OptionPage, Clone)]
@@ -446,8 +455,15 @@ pub struct Opts {
     pub histo: HistoOpts,
     #[page(Page::Display)]
     pub display: DisplayOpts,
+    #[page(Page::Menu)]
+    pub menu: MenuOpts,
     #[page(Page::Misc)]
     pub misc: MiscOpts,
     #[page(Page::Help)]
     pub help: HelpOpts,
+}
+
+/// Convert the Hide UI value (0.5-second steps) to milliseconds.
+pub fn menu_hide_ms(hide: u8) -> u32 {
+    hide as u32 * 500
 }
