@@ -81,6 +81,8 @@ class RezoCore(wiring.Component):
                             for n in range(4)]
         self.cv_resonance = Signal(unsigned(16), init=0)
         self.cv_feedback = Signal(unsigned(16), init=0)
+        self.effective_resonance = Signal(unsigned(16), init=8192)
+        self.effective_feedback = Signal(unsigned(16), init=0)
         super().__init__()
 
     @staticmethod
@@ -129,6 +131,8 @@ class RezoCore(wiring.Component):
             effective_resonance_raw.eq(smooth_resonance + resonance_cv_term),
             effective_feedback_raw.eq(smooth_feedback + feedback_cv_term),
             feedback_gain.eq(Mux(effective_feedback > 31744, 31744, effective_feedback)),
+            self.effective_resonance.eq(effective_resonance),
+            self.effective_feedback.eq(effective_feedback),
         ]
         with m.If(effective_resonance_raw < 0):
             m.d.comb += effective_resonance.eq(0)
@@ -1073,6 +1077,8 @@ class RezoBeamDisplay(wiring.Component):
             "dry": In(unsigned(6)),
             "resonance": In(unsigned(6)),
             "feedback": In(unsigned(6)),
+            "effective_resonance": In(unsigned(6)),
+            "effective_feedback": In(unsigned(6)),
             "limit_knee": In(unsigned(6)),
             "limit_cap": In(unsigned(6)),
             "damp_mode": In(unsigned(3)),
@@ -1419,6 +1425,8 @@ class RezoTileDisplay(wiring.Component):
             "dry": In(unsigned(6)),
             "resonance": In(unsigned(6)),
             "feedback": In(unsigned(6)),
+            "effective_resonance": In(unsigned(6)),
+            "effective_feedback": In(unsigned(6)),
             "limit_knee": In(unsigned(6)),
             "limit_cap": In(unsigned(6)),
             "damp_mode": In(unsigned(3)),
@@ -1705,11 +1713,13 @@ class RezoTileDisplay(wiring.Component):
             row0_value.eq(Mux(input_page, self.input_gains[0],
                               Mux(mod_page, self.cv_mods[0],
                                   Mux(tune_page, self.limit_knee, self.dry)))),
-            row1_value.eq(Mux(input_page, self.input_gains[1],
-                              Mux(mod_page, self.cv_mods[1],
-                                  Mux(tune_page, self.limit_cap, self.resonance)))),
-            row2_value.eq(Mux(input_page, self.input_gains[2],
-                              Mux(tune_page, Cat(Const(0, 1), self.damp_mode, Const(0, 2)), self.feedback))),
+            row1_value.eq(Mux(bank_page, self.effective_resonance,
+                              Mux(input_page, self.input_gains[1],
+                                  Mux(mod_page, self.cv_mods[1],
+                                      Mux(tune_page, self.limit_cap, self.resonance))))),
+            row2_value.eq(Mux(bank_page, self.effective_feedback,
+                              Mux(input_page, self.input_gains[2],
+                                  Mux(tune_page, Cat(Const(0, 1), self.damp_mode, Const(0, 2)), self.feedback)))),
             row3_value.eq(Mux(input_page, self.input_gains[3], 0)),
         ]
         dry_fill = self.rect(x, y, 124, 588, 124 + (row0_value << 4), 604)
@@ -1719,12 +1729,18 @@ class RezoTileDisplay(wiring.Component):
                       (tune_page & (self.selected == RezoHardwareUI.TARGET_LIMIT_KNEE))) & self.outline(
             x, y, 118, 584, 650, 608, t=3)
         res_fill = self.rect(x, y, 124, 620, 124 + (row1_value << 4), 636)
+        res_mod_marker = bank_page & self.rect(
+            x, y, 122 + (self.resonance << 4), 616 + 2,
+            126 + (self.resonance << 4), 640 - 2)
         res_select = ((bank_page & (self.selected == RezoHardwareUI.TARGET_RESONANCE)) |
                       (input_page & (self.selected == RezoHardwareUI.TARGET_INPUT_BASE + 1)) |
                       (mod_page & (self.selected == RezoHardwareUI.TARGET_MOD_BASE + 1)) |
                       (tune_page & (self.selected == RezoHardwareUI.TARGET_LIMIT_CAP))) & self.outline(
             x, y, 118, 616, 650, 640, t=3)
         fb_fill = ~mod_page & self.rect(x, y, 124, 652, 124 + (row2_value << 4), 668)
+        fb_mod_marker = bank_page & self.rect(
+            x, y, 122 + (self.feedback << 4), 648 + 2,
+            126 + (self.feedback << 4), 672 - 2)
         fb_select = ((bank_page & (self.selected == RezoHardwareUI.TARGET_FEEDBACK)) |
                      (input_page & (self.selected == RezoHardwareUI.TARGET_INPUT_BASE + 2)) |
                      (tune_page & (self.selected == RezoHardwareUI.TARGET_DAMP))) & self.outline(
@@ -1750,7 +1766,7 @@ class RezoTileDisplay(wiring.Component):
             selected_q.eq(selected),
             text_q.eq(text),
             fill_q.eq(band_fill | band_marker | spectrum_selected | dry_fill | res_fill | fb_fill | row3_fill),
-            line_q.eq(band_zero | spectrum_rail | spectrum_tick | border),
+            line_q.eq(band_zero | spectrum_rail | spectrum_tick | res_mod_marker | fb_mod_marker | border),
             panel_q.eq(preset_chip | band_slot | meter_panel),
             background_q.eq(title_panel | bands_panel),
             active_q.eq(active),
@@ -1877,6 +1893,8 @@ class RezoBeamTop(Elaboratable):
         display_dry = Signal(unsigned(6))
         display_resonance = Signal(unsigned(6))
         display_feedback = Signal(unsigned(6))
+        display_effective_resonance = Signal(unsigned(6))
+        display_effective_feedback = Signal(unsigned(6))
         display_limit_knee = Signal(unsigned(6))
         display_limit_cap = Signal(unsigned(6))
         display_input_gains = [Signal(unsigned(6), name=f"display_input_gain{n}")
@@ -1887,6 +1905,8 @@ class RezoBeamTop(Elaboratable):
             display_dry.eq(rezo.dry >> 10),
             display_resonance.eq(rezo.resonance >> 10),
             display_feedback.eq(rezo.feedback >> 10),
+            display_effective_resonance.eq(rezo.effective_resonance >> 10),
+            display_effective_feedback.eq(rezo.effective_feedback >> 10),
             display_limit_knee.eq(rezo.limit_knee >> 10),
             display_limit_cap.eq(rezo.limit_cap >> 10),
         ]
@@ -1900,6 +1920,8 @@ class RezoBeamTop(Elaboratable):
             FFSynchronizer(i=display_dry, o=display.dry, o_domain="dvi"),
             FFSynchronizer(i=display_resonance, o=display.resonance, o_domain="dvi"),
             FFSynchronizer(i=display_feedback, o=display.feedback, o_domain="dvi"),
+            FFSynchronizer(i=display_effective_resonance, o=display.effective_resonance, o_domain="dvi"),
+            FFSynchronizer(i=display_effective_feedback, o=display.effective_feedback, o_domain="dvi"),
             FFSynchronizer(i=display_limit_knee, o=display.limit_knee, o_domain="dvi"),
             FFSynchronizer(i=display_limit_cap, o=display.limit_cap, o_domain="dvi"),
             FFSynchronizer(i=ui.damp_mode, o=display.damp_mode, o_domain="dvi"),
