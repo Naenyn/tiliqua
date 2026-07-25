@@ -107,23 +107,32 @@ class RezoCore(wiring.Component):
         for n in range(self.N_BANDS):
             m.d.comb += level_diffs[n].eq(self.levels[n] - smooth_levels[n])
 
+        feedback_sample = Signal(ASQ)
+
         # Shared values.  Convert the UI values into ASQ-ish fractions.  The
         # SVF uses inverse-Q: lower values are more resonant.  Keep the safer
-        # inverse-Q floor from the stable hardware tests.
+        # inverse-Q floor from the stable hardware tests, then raise it when
+        # feedback is high. This prevents max-Q and max-feedback from combining
+        # into a self-sustaining noisy latch-up state.
         resonance_ctl = Signal(ASQ)
         res_ctl = Signal(signed(17))
+        resonance_floor_raw = Signal(signed(17))
+        resonance_floor = Signal(signed(17))
         m.d.comb += [
             res_ctl.eq(16384 - (smooth_resonance >> 1)),
-            resonance_ctl.eq(Mux(res_ctl < 4096, 4096, res_ctl)),
+            resonance_floor_raw.eq(4096 + (smooth_feedback >> 3)),
+            resonance_floor.eq(Mux(resonance_floor_raw > 12288, 12288, resonance_floor_raw)),
+            resonance_ctl.eq(Mux(res_ctl < resonance_floor, resonance_floor, res_ctl)),
         ]
 
         # Feedback is smoothed and scheduled through the shared multiplier.
         # Full-scale UI feedback is capped just below the hardware-tested cliff
         # so the final encoder tick stays in the "hot but not runaway" region.
         x = Signal(dsp.mac.SQNative)
+        x_drive = Signal(dsp.mac.SQNative)
+        x_limited = Signal(dsp.mac.SQNative)
         resonance = Signal(dsp.mac.SQNative)
         dry_sample = Signal(ASQ)
-        feedback_sample = Signal(ASQ)
 
         cutoffs = Array([
             fixed.Const(self.cutoff_coeff(freq, self.fs), dsp.mac.SQNative).as_value()
@@ -195,6 +204,11 @@ class RezoCore(wiring.Component):
         even_next = Signal(mix_shape)
         filtered_next = Signal(mix_shape)
         feedback_drive = Signal(mix_shape)
+        feedback_limited = Signal(ASQ)
+        feedback_soft = Signal(mix_shape)
+        main_limited = Signal(ASQ)
+        odd_limited = Signal(ASQ)
+        even_limited = Signal(ASQ)
         feedback_term = Signal(dsp.mac.SQNative)
         dry_gain_term = Signal(mix_shape)
         m.d.comb += [
@@ -203,12 +217,53 @@ class RezoCore(wiring.Component):
             term.eq(mac_z.as_value().as_signed() >> (dsp.mac.SQNative.f_bits + 3)),
             feedback_term.eq(mac_z.as_value().as_signed() >> dsp.mac.SQNative.f_bits),
             dry_gain_term.eq(mac_z.as_value().as_signed() >> dsp.mac.SQNative.f_bits),
+            x_drive.eq((self.i.payload[0] >> 1) + feedback_term),
             main_next.eq(main_acc + term_q),
             filtered_next.eq(main_next - dry_sample.as_value().as_signed()),
             feedback_drive.eq(filtered_next << 2),
             odd_next.eq(Mux(band_is_odd_q, odd_acc + term_q, odd_acc)),
             even_next.eq(Mux(band_is_odd_q, even_acc, even_acc + term_q)),
         ]
+        # The feedback tap is deliberately driven hot for character, but a hard
+        # rail turns high-resonance feedback into square-edged digital hash.
+        # Use a cheap piecewise limiter: above about +/-0.75, extra level is
+        # compressed 8:1, then capped at about +/-1.5 before the loop delay.
+        with m.If(feedback_drive > 12288):
+            m.d.comb += feedback_soft.eq(12288 + ((feedback_drive - 12288) >> 3))
+        with m.Elif(feedback_drive < -12288):
+            m.d.comb += feedback_soft.eq(-12288 + ((feedback_drive + 12288) >> 3))
+        with m.Else():
+            m.d.comb += feedback_soft.eq(feedback_drive)
+        with m.If(feedback_soft > 24576):
+            m.d.comb += feedback_limited.as_value().eq(24576)
+        with m.Elif(feedback_soft < -24576):
+            m.d.comb += feedback_limited.as_value().eq(-24576)
+        with m.Else():
+            m.d.comb += feedback_limited.as_value().eq(feedback_soft)
+
+        def limit_to_asq(source, target):
+            with m.If(source > 32767):
+                m.d.comb += target.as_value().eq(32767)
+            with m.Elif(source < -32768):
+                m.d.comb += target.as_value().eq(-32768)
+            with m.Else():
+                m.d.comb += target.as_value().eq(source)
+
+        limit_to_asq(main_next, main_limited)
+        limit_to_asq(odd_next, odd_limited)
+        limit_to_asq(even_next, even_limited)
+
+        # Limit the signal entering every SVF section too.  The delayed
+        # feedback sample can be civilized while the actual bank input is still
+        # too hot, which makes high-Q filters chatter harshly at sympathetic
+        # pitches.  Keep the center region clean and compress the shove into
+        # the resonators above about +/-0.75.
+        with m.If(x_drive > 12288):
+            m.d.comb += x_limited.as_value().eq(12288 + ((x_drive.as_value().as_signed() - 12288) >> 3))
+        with m.Elif(x_drive < -12288):
+            m.d.comb += x_limited.as_value().eq(-12288 + ((x_drive.as_value().as_signed() + 12288) >> 3))
+        with m.Else():
+            m.d.comb += x_limited.eq(x_drive)
         out_valid = Signal()
         out_ready = Signal()
         main_q = Signal(ASQ)
@@ -263,7 +318,7 @@ class RezoCore(wiring.Component):
 
             with m.Case(state_feedback_commit):
                 m.d.sync += [
-                    x.eq((self.i.payload[0] >> 1) + feedback_term),
+                    x.eq(x_limited),
                     mac_a_q.eq(self.i.payload[0]),
                     mac_b_q.eq(smooth_dry >> 1),
                     state.eq(state_dry_gain_commit),
@@ -287,7 +342,7 @@ class RezoCore(wiring.Component):
 
             with m.Case(state_mac0_commit):
                 m.d.sync += [
-                    alp[band].eq(alp_next.as_value()),
+                    alp[band].eq(alp_next.saturate(svf_shape).as_value()),
                     state.eq(state_mac1_setup),
                 ]
 
@@ -301,7 +356,7 @@ class RezoCore(wiring.Component):
 
             with m.Case(state_mac1_commit):
                 m.d.sync += [
-                    ahp[band].eq(ahp_next.as_value()),
+                    ahp[band].eq(ahp_next.saturate(svf_shape).as_value()),
                     state.eq(state_mac2_setup),
                 ]
 
@@ -313,7 +368,7 @@ class RezoCore(wiring.Component):
                 ]
 
             with m.Case(state_mac2_commit):
-                m.d.sync += abp[band].eq(abp_next.as_value())
+                m.d.sync += abp[band].eq(abp_next.saturate(svf_shape).as_value())
                 with m.If(~oversample):
                     m.d.sync += [
                         oversample.eq(1),
@@ -347,10 +402,10 @@ class RezoCore(wiring.Component):
                 ]
                 with m.If(band == self.N_BANDS - 1):
                     m.d.sync += [
-                        main_q.eq(main_next),
-                        odd_q.eq(odd_next),
-                        even_q.eq(even_next),
-                        feedback_sample.eq(feedback_drive),
+                        main_q.eq(main_limited),
+                        odd_q.eq(odd_limited),
+                        even_q.eq(even_limited),
+                        feedback_sample.eq(feedback_limited),
                         dry_q.eq(dry_sample),
                         out_valid.eq(1),
                         state.eq(state_wait),
