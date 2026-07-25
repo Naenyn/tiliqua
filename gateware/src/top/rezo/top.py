@@ -74,6 +74,9 @@ class RezoCore(wiring.Component):
         self.dry = Signal(unsigned(16), init=0)
         self.resonance = Signal(unsigned(16), init=8192)
         self.feedback = Signal(unsigned(16), init=0)
+        self.limit_knee = Signal(unsigned(16), init=12288)
+        self.limit_cap = Signal(unsigned(16), init=24576)
+        self.damp_mode = Signal(unsigned(3), init=2)
         super().__init__()
 
     @staticmethod
@@ -116,11 +119,23 @@ class RezoCore(wiring.Component):
         # into a self-sustaining noisy latch-up state.
         resonance_ctl = Signal(ASQ)
         res_ctl = Signal(signed(17))
+        feedback_damp = Signal(unsigned(16))
         resonance_floor_raw = Signal(signed(17))
         resonance_floor = Signal(signed(17))
+        with m.Switch(self.damp_mode):
+            with m.Case(0):
+                m.d.comb += feedback_damp.eq(0)
+            with m.Case(1):
+                m.d.comb += feedback_damp.eq(smooth_feedback >> 4)
+            with m.Case(2):
+                m.d.comb += feedback_damp.eq(smooth_feedback >> 3)
+            with m.Case(3):
+                m.d.comb += feedback_damp.eq(smooth_feedback >> 2)
+            with m.Default():
+                m.d.comb += feedback_damp.eq((smooth_feedback >> 2) + (smooth_feedback >> 3))
         m.d.comb += [
             res_ctl.eq(16384 - (smooth_resonance >> 1)),
-            resonance_floor_raw.eq(4096 + (smooth_feedback >> 3)),
+            resonance_floor_raw.eq(4096 + feedback_damp),
             resonance_floor.eq(Mux(resonance_floor_raw > 12288, 12288, resonance_floor_raw)),
             resonance_ctl.eq(Mux(res_ctl < resonance_floor, resonance_floor, res_ctl)),
         ]
@@ -206,6 +221,8 @@ class RezoCore(wiring.Component):
         feedback_drive = Signal(mix_shape)
         feedback_limited = Signal(ASQ)
         feedback_soft = Signal(mix_shape)
+        limit_knee_s = Signal(signed(17))
+        limit_cap_s = Signal(signed(17))
         main_limited = Signal(ASQ)
         odd_limited = Signal(ASQ)
         even_limited = Signal(ASQ)
@@ -218,6 +235,8 @@ class RezoCore(wiring.Component):
             feedback_term.eq(mac_z.as_value().as_signed() >> dsp.mac.SQNative.f_bits),
             dry_gain_term.eq(mac_z.as_value().as_signed() >> dsp.mac.SQNative.f_bits),
             x_drive.eq((self.i.payload[0] >> 1) + feedback_term),
+            limit_knee_s.eq(self.limit_knee),
+            limit_cap_s.eq(self.limit_cap),
             main_next.eq(main_acc + term_q),
             filtered_next.eq(main_next - dry_sample.as_value().as_signed()),
             feedback_drive.eq(filtered_next << 2),
@@ -226,18 +245,18 @@ class RezoCore(wiring.Component):
         ]
         # The feedback tap is deliberately driven hot for character, but a hard
         # rail turns high-resonance feedback into square-edged digital hash.
-        # Use a cheap piecewise limiter: above about +/-0.75, extra level is
-        # compressed 8:1, then capped at about +/-1.5 before the loop delay.
-        with m.If(feedback_drive > 12288):
-            m.d.comb += feedback_soft.eq(12288 + ((feedback_drive - 12288) >> 3))
-        with m.Elif(feedback_drive < -12288):
-            m.d.comb += feedback_soft.eq(-12288 + ((feedback_drive + 12288) >> 3))
+        # Use a cheap piecewise limiter: above the configured knee, extra level
+        # is compressed 8:1, then capped before the loop delay.
+        with m.If(feedback_drive > limit_knee_s):
+            m.d.comb += feedback_soft.eq(limit_knee_s + ((feedback_drive - limit_knee_s) >> 3))
+        with m.Elif(feedback_drive < -limit_knee_s):
+            m.d.comb += feedback_soft.eq(-limit_knee_s + ((feedback_drive + limit_knee_s) >> 3))
         with m.Else():
             m.d.comb += feedback_soft.eq(feedback_drive)
-        with m.If(feedback_soft > 24576):
-            m.d.comb += feedback_limited.as_value().eq(24576)
-        with m.Elif(feedback_soft < -24576):
-            m.d.comb += feedback_limited.as_value().eq(-24576)
+        with m.If(feedback_soft > limit_cap_s):
+            m.d.comb += feedback_limited.as_value().eq(limit_cap_s)
+        with m.Elif(feedback_soft < -limit_cap_s):
+            m.d.comb += feedback_limited.as_value().eq(-limit_cap_s)
         with m.Else():
             m.d.comb += feedback_limited.as_value().eq(feedback_soft)
 
@@ -257,11 +276,11 @@ class RezoCore(wiring.Component):
         # feedback sample can be civilized while the actual bank input is still
         # too hot, which makes high-Q filters chatter harshly at sympathetic
         # pitches.  Keep the center region clean and compress the shove into
-        # the resonators above about +/-0.75.
-        with m.If(x_drive > 12288):
-            m.d.comb += x_limited.as_value().eq(12288 + ((x_drive.as_value().as_signed() - 12288) >> 3))
-        with m.Elif(x_drive < -12288):
-            m.d.comb += x_limited.as_value().eq(-12288 + ((x_drive.as_value().as_signed() + 12288) >> 3))
+        # the resonators above the configured knee.
+        with m.If(x_drive > limit_knee_s):
+            m.d.comb += x_limited.as_value().eq(limit_knee_s + ((x_drive.as_value().as_signed() - limit_knee_s) >> 3))
+        with m.Elif(x_drive < -limit_knee_s):
+            m.d.comb += x_limited.as_value().eq(-limit_knee_s + ((x_drive.as_value().as_signed() + limit_knee_s) >> 3))
         with m.Else():
             m.d.comb += x_limited.eq(x_drive)
         out_valid = Signal()
@@ -514,11 +533,16 @@ class RezoSoc(TiliquaSoc):
 class RezoHardwareUI(wiring.Component):
     """Small no-SoC control surface for the beam-raced REZO prototype."""
 
-    N_TARGETS = RezoCore.N_BANDS + 4
-    TARGET_PRESET = 0
-    TARGET_DRY = RezoCore.N_BANDS + 1
-    TARGET_RESONANCE = RezoCore.N_BANDS + 2
-    TARGET_FEEDBACK = RezoCore.N_BANDS + 3
+    N_TARGETS = RezoCore.N_BANDS + 8
+    TARGET_PAGE = 0
+    TARGET_PRESET = 1
+    TARGET_BAND_BASE = 2
+    TARGET_DRY = RezoCore.N_BANDS + 2
+    TARGET_RESONANCE = RezoCore.N_BANDS + 3
+    TARGET_FEEDBACK = RezoCore.N_BANDS + 4
+    TARGET_LIMIT_KNEE = RezoCore.N_BANDS + 5
+    TARGET_LIMIT_CAP = RezoCore.N_BANDS + 6
+    TARGET_DAMP = RezoCore.N_BANDS + 7
 
     def __init__(self):
         super().__init__({
@@ -529,7 +553,11 @@ class RezoHardwareUI(wiring.Component):
             "dry": Out(unsigned(16)),
             "resonance": Out(unsigned(16)),
             "feedback": Out(unsigned(16)),
-            "selected": Out(unsigned(4)),
+            "limit_knee": Out(unsigned(16)),
+            "limit_cap": Out(unsigned(16)),
+            "damp_mode": Out(unsigned(3)),
+            "selected": Out(unsigned(5)),
+            "page": Out(unsigned(2)),
             "preset": Out(unsigned(3)),
             "editing": Out(1),
         })
@@ -580,10 +608,17 @@ class RezoHardwareUI(wiring.Component):
         dry = Signal(unsigned(16), init=0)
         resonance = Signal(unsigned(16), init=8192)
         feedback = Signal(unsigned(16), init=0)
-        selected = Signal(range(self.N_TARGETS), init=self.TARGET_PRESET)
+        limit_knee = Signal(unsigned(16), init=12288)
+        limit_cap = Signal(unsigned(16), init=24576)
+        damp_mode = Signal(unsigned(3), init=2)
+        selected = Signal(range(self.N_TARGETS), init=self.TARGET_PAGE)
+        page = Signal(unsigned(2), init=0)
         preset = Signal(range(7), init=0)
         next_preset = Signal(range(7))
         next_selected = Signal(range(self.N_TARGETS))
+        next_page = Signal(unsigned(2))
+        bank_target_visible = Signal()
+        tune_target_visible = Signal()
         editing = Signal()
 
         iq_sync = Signal(2)
@@ -672,11 +707,50 @@ class RezoHardwareUI(wiring.Component):
         with m.Else():
             m.d.comb += next_preset.eq(Mux(preset == 0, 6, preset - 1))
 
-        m.d.comb += next_selected.eq(selected)
-        with m.If(edit_direction):
-            m.d.comb += next_selected.eq(Mux(selected == self.N_TARGETS - 1, 0, selected + 1))
+        m.d.comb += [
+            bank_target_visible.eq((selected <= self.TARGET_FEEDBACK)),
+            tune_target_visible.eq((selected == self.TARGET_PAGE) |
+                                   ((selected >= self.TARGET_LIMIT_KNEE) &
+                                    (selected <= self.TARGET_DAMP))),
+            next_selected.eq(selected),
+        ]
+        with m.If(page == 0):
+            with m.If(edit_direction):
+                with m.If(~bank_target_visible):
+                    m.d.comb += next_selected.eq(self.TARGET_PRESET)
+                with m.Elif(selected == self.TARGET_PAGE):
+                    m.d.comb += next_selected.eq(self.TARGET_PRESET)
+                with m.Elif(selected == self.TARGET_FEEDBACK):
+                    m.d.comb += next_selected.eq(self.TARGET_PAGE)
+                with m.Else():
+                    m.d.comb += next_selected.eq(selected + 1)
+            with m.Else():
+                with m.If(~bank_target_visible):
+                    m.d.comb += next_selected.eq(self.TARGET_FEEDBACK)
+                with m.Elif(selected == self.TARGET_PAGE):
+                    m.d.comb += next_selected.eq(self.TARGET_FEEDBACK)
+                with m.Else():
+                    m.d.comb += next_selected.eq(selected - 1)
         with m.Else():
-            m.d.comb += next_selected.eq(Mux(selected == 0, self.N_TARGETS - 1, selected - 1))
+            with m.If(edit_direction):
+                with m.If(~tune_target_visible):
+                    m.d.comb += next_selected.eq(self.TARGET_LIMIT_KNEE)
+                with m.Elif(selected == self.TARGET_PAGE):
+                    m.d.comb += next_selected.eq(self.TARGET_LIMIT_KNEE)
+                with m.Elif(selected == self.TARGET_DAMP):
+                    m.d.comb += next_selected.eq(self.TARGET_PAGE)
+                with m.Else():
+                    m.d.comb += next_selected.eq(selected + 1)
+            with m.Else():
+                with m.If(~tune_target_visible):
+                    m.d.comb += next_selected.eq(self.TARGET_DAMP)
+                with m.Elif(selected == self.TARGET_PAGE):
+                    m.d.comb += next_selected.eq(self.TARGET_DAMP)
+                with m.Elif(selected == self.TARGET_LIMIT_KNEE):
+                    m.d.comb += next_selected.eq(self.TARGET_PAGE)
+                with m.Else():
+                    m.d.comb += next_selected.eq(selected - 1)
+        m.d.comb += next_page.eq(Mux(page == 0, 1, 0))
 
         with m.If(click):
             with m.If(editing):
@@ -693,6 +767,8 @@ class RezoHardwareUI(wiring.Component):
             with m.Else():
                 with m.If(selected == self.TARGET_PRESET):
                     m.d.sync += preset.eq(next_preset)
+                with m.Elif(selected == self.TARGET_PAGE):
+                    m.d.sync += page.eq(next_page)
                 with m.Elif(selected == self.TARGET_DRY):
                     with m.If(edit_direction):
                         self.clamp_add(m, dry, step_amount, 0, 32768)
@@ -708,9 +784,24 @@ class RezoHardwareUI(wiring.Component):
                         self.clamp_add(m, feedback, step_amount, 0, 32768)
                     with m.Else():
                         self.clamp_add(m, feedback, -step_amount, 0, 32768)
+                with m.Elif(selected == self.TARGET_LIMIT_KNEE):
+                    with m.If(edit_direction):
+                        self.clamp_add(m, limit_knee, step_amount, 4096, 32768)
+                    with m.Else():
+                        self.clamp_add(m, limit_knee, -step_amount, 4096, 32768)
+                with m.Elif(selected == self.TARGET_LIMIT_CAP):
+                    with m.If(edit_direction):
+                        self.clamp_add(m, limit_cap, step_amount, 4096, 32768)
+                    with m.Else():
+                        self.clamp_add(m, limit_cap, -step_amount, 4096, 32768)
+                with m.Elif(selected == self.TARGET_DAMP):
+                    with m.If(edit_direction):
+                        self.clamp_add(m, damp_mode, 1, 0, 4)
+                    with m.Else():
+                        self.clamp_add(m, damp_mode, -1, 0, 4)
                 with m.Else():
                     for n, level in enumerate(levels):
-                        with m.If(selected == n + 1):
+                        with m.If(selected == self.TARGET_BAND_BASE + n):
                             with m.If(edit_direction):
                                 self.clamp_add(m, level, step_amount, -16384, 16383)
                             with m.Else():
@@ -722,7 +813,11 @@ class RezoHardwareUI(wiring.Component):
             self.dry.eq(dry),
             self.resonance.eq(resonance),
             self.feedback.eq(feedback),
+            self.limit_knee.eq(limit_knee),
+            self.limit_cap.eq(limit_cap),
+            self.damp_mode.eq(damp_mode),
             self.selected.eq(selected),
+            self.page.eq(page),
             self.preset.eq(preset),
             self.editing.eq(editing),
         ]
@@ -766,6 +861,7 @@ class RezoBeamDisplay(wiring.Component):
         "N": [0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001],
         "O": [0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
         "P": [0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000],
+        "Q": [0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b10010, 0b01101],
         "R": [0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001],
         "S": [0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110],
         "T": [0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100],
@@ -790,7 +886,11 @@ class RezoBeamDisplay(wiring.Component):
             "dry": In(unsigned(6)),
             "resonance": In(unsigned(6)),
             "feedback": In(unsigned(6)),
-            "selected": In(unsigned(4)),
+            "limit_knee": In(unsigned(6)),
+            "limit_cap": In(unsigned(6)),
+            "damp_mode": In(unsigned(3)),
+            "selected": In(unsigned(5)),
+            "page": In(unsigned(2)),
             "preset": In(unsigned(3)),
             "editing": In(1),
             "r": Out(8),
@@ -974,7 +1074,7 @@ class RezoBeamDisplay(wiring.Component):
             mag = Signal(unsigned(5), name=f"lcd_mag{n}")
             top_y = Signal(signed(12), name=f"lcd_top{n}")
             bottom_y = Signal(signed(12), name=f"lcd_bottom{n}")
-            selected_band = self.selected == n + 1
+            selected_band = self.selected == RezoHardwareUI.TARGET_BAND_BASE + n
             m.d.comb += [
                 mag.eq(Mux(level < 0, -level, level)),
                 top_y.eq(zero_y - (mag << 4)),
@@ -1130,7 +1230,11 @@ class RezoTileDisplay(wiring.Component):
             "dry": In(unsigned(6)),
             "resonance": In(unsigned(6)),
             "feedback": In(unsigned(6)),
-            "selected": In(unsigned(4)),
+            "limit_knee": In(unsigned(6)),
+            "limit_cap": In(unsigned(6)),
+            "damp_mode": In(unsigned(3)),
+            "selected": In(unsigned(5)),
+            "page": In(unsigned(2)),
             "preset": In(unsigned(3)),
             "editing": In(1),
             "r": Out(8),
@@ -1210,7 +1314,11 @@ class RezoTileDisplay(wiring.Component):
         ]
 
         char_code = Signal(unsigned(6))
-        m.d.comb += char_code.eq(0)
+        tune_page = Signal()
+        m.d.comb += [
+            char_code.eq(0),
+            tune_page.eq(self.page == 1),
+        ]
         self.place_text(m, char_code, cell_x, cell_y, "REZO", 2, 2)
         with m.If(self.editing):
             self.place_text(m, char_code, cell_x, cell_y, "EDIT", 38, 2)
@@ -1222,9 +1330,11 @@ class RezoTileDisplay(wiring.Component):
         for p, label in enumerate(preset_names):
             self.place_text(m, char_code, cell_x, cell_y, label, preset_label_xs[p], 7)
         self.place_text(m, char_code, cell_x, cell_y, "BANDS", 2, 11)
-        band_names = ["29", "61", "115", "218", "411", "777", "1K5", "2K8", "5K2", "11K"]
-        for n, label in enumerate(band_names):
-            self.place_text(m, char_code, cell_x, cell_y, label, 3 + 4 * n, 34)
+        self.place_text(m, char_code, cell_x, cell_y, "FRQ", 22, 11)
+        band_freq_labels = ["29", "61", "115", "218", "411", "777", "1K5", "2K8", "5K2", "11K"]
+        for n, label in enumerate(band_freq_labels):
+            with m.If(~tune_page & (self.selected == RezoHardwareUI.TARGET_BAND_BASE + n)):
+                self.place_text(m, char_code, cell_x, cell_y, label, 28, 11)
         self.place_text(m, char_code, cell_x, cell_y, "DRY", 2, 37)
         self.place_text(m, char_code, cell_x, cell_y, "RES", 2, 40)
         self.place_text(m, char_code, cell_x, cell_y, "FB", 2, 43)
@@ -1274,6 +1384,9 @@ class RezoTileDisplay(wiring.Component):
         band_marker = Signal()
         band_fill = Signal()
         band_select = Signal()
+        spectrum_rail = Signal()
+        spectrum_tick = Signal()
+        spectrum_selected = Signal()
 
         preset_chip_signals = []
         preset_select_signals = []
@@ -1282,6 +1395,8 @@ class RezoTileDisplay(wiring.Component):
         band_marker_signals = []
         band_fill_signals = []
         band_select_signals = []
+        spectrum_tick_signals = []
+        spectrum_selected_signals = []
 
         for p in range(7):
             x0 = 136 + 72 * p
@@ -1298,7 +1413,7 @@ class RezoTileDisplay(wiring.Component):
             bottom_y = band_bottom_values[n]
             level_positive = band_positive_values[n]
             level_negative = band_negative_values[n]
-            selected_band = self.selected == n + 1
+            selected_band = self.selected == RezoHardwareUI.TARGET_BAND_BASE + n
             band_slot_signals.append(self.rect(x, y, x0, 202, x1, 532))
             band_zero_signals.append(self.rect(x, y, x0 - 5, zero_y - 1, x1 + 5, zero_y + 2))
             band_marker_signals.append(
@@ -1309,13 +1424,21 @@ class RezoTileDisplay(wiring.Component):
                 (level_negative & self.rect(x, y, x0, zero_y, x1, bottom_y)))
             band_select_signals.append(
                 selected_band & self.outline(x, y, x0 - 7, 195, x1 + 7, 539, t=3))
+            spectrum_x = x0 + 21
+            spectrum_tick_signals.append(
+                ~tune_page & self.rect(x, y, spectrum_x - 2, 548, spectrum_x + 3, 562))
+            spectrum_selected_signals.append(
+                ~tune_page & selected_band &
+                self.rect(x, y, spectrum_x - 5, 542, spectrum_x + 6, 568))
 
         for target, signals in [
                 (preset_chip, preset_chip_signals),
                 (preset_select, preset_select_signals),
                 (band_slot, band_slot_signals),
                 (band_zero, band_zero_signals),
-                (band_select, band_select_signals)]:
+                (band_select, band_select_signals),
+                (spectrum_tick, spectrum_tick_signals),
+                (spectrum_selected, spectrum_selected_signals)]:
             expr = Const(0)
             for sig in signals:
                 expr = expr | sig
@@ -1324,6 +1447,7 @@ class RezoTileDisplay(wiring.Component):
         m.d.comb += preset_group_select.eq(
             (self.selected == RezoHardwareUI.TARGET_PRESET) & ~self.editing &
             self.outline(x, y, 130, 91, 638, 137, t=3))
+        m.d.comb += spectrum_rail.eq(~tune_page & self.rect(x, y, 48, 554, 674, 557))
 
         band_marker_qs = []
         for n, sig in enumerate(band_marker_signals):
@@ -1346,19 +1470,32 @@ class RezoTileDisplay(wiring.Component):
             band_fill.eq(fill_expr),
         ]
 
-        dry_fill = self.rect(x, y, 124, 588, 124 + (self.dry << 4), 608)
-        dry_select = (self.selected == RezoHardwareUI.TARGET_DRY) & self.outline(
+        row0_value = Signal(unsigned(6))
+        row1_value = Signal(unsigned(6))
+        row2_value = Signal(unsigned(6))
+        m.d.comb += [
+            row0_value.eq(Mux(tune_page, self.limit_knee, self.dry)),
+            row1_value.eq(Mux(tune_page, self.limit_cap, self.resonance)),
+            row2_value.eq(Mux(tune_page, Cat(Const(0, 1), self.damp_mode, Const(0, 2)), self.feedback)),
+        ]
+        dry_fill = self.rect(x, y, 124, 588, 124 + (row0_value << 4), 608)
+        dry_select = ((~tune_page & (self.selected == RezoHardwareUI.TARGET_DRY)) |
+                      (tune_page & (self.selected == RezoHardwareUI.TARGET_LIMIT_KNEE))) & self.outline(
             x, y, 118, 584, 650, 612, t=3)
-        res_fill = self.rect(x, y, 124, 632, 124 + (self.resonance << 4), 652)
-        res_select = (self.selected == RezoHardwareUI.TARGET_RESONANCE) & self.outline(
+        res_fill = self.rect(x, y, 124, 632, 124 + (row1_value << 4), 652)
+        res_select = ((~tune_page & (self.selected == RezoHardwareUI.TARGET_RESONANCE)) |
+                      (tune_page & (self.selected == RezoHardwareUI.TARGET_LIMIT_CAP))) & self.outline(
             x, y, 118, 628, 650, 656, t=3)
-        fb_fill = self.rect(x, y, 124, 676, 124 + (self.feedback << 4), 696)
-        fb_select = (self.selected == RezoHardwareUI.TARGET_FEEDBACK) & self.outline(
+        fb_fill = self.rect(x, y, 124, 676, 124 + (row2_value << 4), 696)
+        fb_select = ((~tune_page & (self.selected == RezoHardwareUI.TARGET_FEEDBACK)) |
+                     (tune_page & (self.selected == RezoHardwareUI.TARGET_DAMP))) & self.outline(
             x, y, 118, 672, 650, 700, t=3)
+        page_select = (self.selected == RezoHardwareUI.TARGET_PAGE) & self.outline(
+            x, y, 20, 20, 700, 82, t=3)
 
         selected = active & (
             preset_select | preset_group_select | band_select |
-            dry_select | res_select | fb_select)
+            dry_select | res_select | fb_select | page_select)
 
         selected_q = Signal()
         text_q = Signal()
@@ -1370,8 +1507,8 @@ class RezoTileDisplay(wiring.Component):
         m.d.dvi += [
             selected_q.eq(selected),
             text_q.eq(text),
-            fill_q.eq(band_fill | band_marker | dry_fill | res_fill | fb_fill),
-            line_q.eq(band_zero | border),
+            fill_q.eq(band_fill | band_marker | spectrum_selected | dry_fill | res_fill | fb_fill),
+            line_q.eq(band_zero | spectrum_rail | spectrum_tick | border),
             panel_q.eq(preset_chip | band_slot | meter_panel),
             background_q.eq(title_panel | bands_panel),
             active_q.eq(active),
@@ -1463,6 +1600,9 @@ class RezoBeamTop(Elaboratable):
             rezo.dry.eq(ui.dry),
             rezo.resonance.eq(ui.resonance),
             rezo.feedback.eq(ui.feedback),
+            rezo.limit_knee.eq(ui.limit_knee),
+            rezo.limit_cap.eq(ui.limit_cap),
+            rezo.damp_mode.eq(ui.damp_mode),
         ]
         for n in range(RezoCore.N_BANDS):
             m.d.comb += rezo.levels[n].eq(ui.levels[n])
@@ -1491,16 +1631,24 @@ class RezoBeamTop(Elaboratable):
         display_dry = Signal(unsigned(6))
         display_resonance = Signal(unsigned(6))
         display_feedback = Signal(unsigned(6))
+        display_limit_knee = Signal(unsigned(6))
+        display_limit_cap = Signal(unsigned(6))
         m.d.comb += [
             display_dry.eq(rezo.dry >> 10),
             display_resonance.eq(rezo.resonance >> 10),
             display_feedback.eq(rezo.feedback >> 10),
+            display_limit_knee.eq(rezo.limit_knee >> 10),
+            display_limit_cap.eq(rezo.limit_cap >> 10),
         ]
         m.submodules += [
             FFSynchronizer(i=display_dry, o=display.dry, o_domain="dvi"),
             FFSynchronizer(i=display_resonance, o=display.resonance, o_domain="dvi"),
             FFSynchronizer(i=display_feedback, o=display.feedback, o_domain="dvi"),
+            FFSynchronizer(i=display_limit_knee, o=display.limit_knee, o_domain="dvi"),
+            FFSynchronizer(i=display_limit_cap, o=display.limit_cap, o_domain="dvi"),
+            FFSynchronizer(i=ui.damp_mode, o=display.damp_mode, o_domain="dvi"),
             FFSynchronizer(i=ui.selected, o=display.selected, o_domain="dvi"),
+            FFSynchronizer(i=ui.page, o=display.page, o_domain="dvi"),
             FFSynchronizer(i=ui.preset, o=display.preset, o_domain="dvi"),
             FFSynchronizer(i=ui.editing, o=display.editing, o_domain="dvi"),
         ]
