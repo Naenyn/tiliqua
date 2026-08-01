@@ -5,6 +5,75 @@ from amaranth.sim import Simulator
 from top.rezo.top import RezoCore
 
 
+def test_filter_profile_band_tags_do_not_wrap():
+    dut = RezoCore(fs=192_000)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+    profiles = {}
+
+    async def bench(ctx):
+        ctx.set(dut.filter_mode, 1)
+        for filter_type, name in ((dut.FILTER_LP, "lp"),
+                                  (dut.FILTER_HP, "hp")):
+            ctx.set(dut.filter_type, filter_type)
+            for _ in range(64):
+                await ctx.tick()
+            profiles[name] = [ctx.get(level) for level in dut.filter_levels]
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    lp = profiles["lp"]
+    hp = profiles["hp"]
+    assert lp[0] == dut.FILTER_PASS_LEVEL
+    assert lp[-1] == 0
+    assert all(left >= right for left, right in zip(lp, lp[1:]))
+    assert hp[0] == 0
+    assert hp[-1] == dut.FILTER_PASS_LEVEL
+    assert all(left <= right for left, right in zip(hp, hp[1:]))
+
+
+def test_filter_cv_matrix_modulates_all_four_destinations():
+    dut = RezoCore(fs=192_000)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+    result = {}
+
+    async def send(ctx):
+        for channel, sample in enumerate((0, 12_000, 8_000, 10_000)):
+            ctx.set(dut.i.payload[channel].as_value(), sample)
+        ctx.set(dut.i.valid, 1)
+        await ctx.tick().until(dut.i.ready == 1)
+        ctx.set(dut.i.valid, 0)
+        ctx.set(dut.o.ready, 1)
+        await ctx.tick().until(dut.o.valid == 1)
+
+    async def bench(ctx):
+        ctx.set(dut.filter_mode, 1)
+        # IN1 raises frequency and slope, IN2 lowers resonance, and IN3
+        # raises width. Matrix storage is destination-major.
+        ctx.set(dut.filter_cv_matrix[0], 32)
+        ctx.set(dut.filter_cv_matrix[3 + 1], -32)
+        ctx.set(dut.filter_cv_matrix[6 + 2], 32)
+        ctx.set(dut.filter_cv_matrix[9 + 0], 32)
+        for _ in range(160):
+            await send(ctx)
+        result.update(
+            cutoff=ctx.get(dut.effective_filter_cutoff),
+            resonance=ctx.get(dut.effective_resonance),
+            width=ctx.get(dut.effective_filter_width),
+            slope=ctx.get(dut.effective_filter_slope),
+        )
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    assert result["cutoff"] > 16384
+    assert result["resonance"] < 16384
+    assert result["width"] > 12288
+    assert result["slope"] > 16384
+
+
 def test_bank_zero_wet_and_dry_paths():
     dut = RezoCore(fs=192_000)
     sim = Simulator(dut)
