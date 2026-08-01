@@ -80,6 +80,7 @@ def test_bank_zero_wet_and_dry_paths():
     sim.add_clock(1e-6)
     zero_output = []
     output = []
+    half_send_output = []
     dry_pairs = []
 
     async def send(ctx, sample):
@@ -107,6 +108,12 @@ def test_bank_zero_wet_and_dry_paths():
             sample = int(12_000 * (2 / math.pi) * math.asin(math.sin(n * 0.19)))
             output.append(await send(ctx, sample))
 
+        for group in range(dut.N_GROUPS):
+            ctx.set(dut.output_sends[group], 8)
+        for n in range(512):
+            sample = int(12_000 * (2 / math.pi) * math.asin(math.sin(n * 0.19)))
+            half_send_output.append(await send(ctx, sample))
+
         for level in dut.levels:
             ctx.set(level, 0)
         ctx.set(dut.output_routes[0], 0b10000)
@@ -121,7 +128,11 @@ def test_bank_zero_wet_and_dry_paths():
     sim.run()
 
     rail_count = sum(value in (-32768, 32767) for value in output)
+    full_rms = math.sqrt(sum(value * value for value in output[-256:]) / 256)
+    half_rms = math.sqrt(
+        sum(value * value for value in half_send_output[-256:]) / 256)
     print("wet", min(output), max(output), "rails", rail_count, "tail", output[-16:])
     assert zero_output == [0] * len(zero_output)
     assert rail_count == 0
+    assert 0.45 < half_rms / full_rms < 0.55
     assert max(abs(source - result) for source, result in dry_pairs) <= 2

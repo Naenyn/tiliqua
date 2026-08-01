@@ -125,6 +125,15 @@ class RezoCore(wiring.Component):
         self.output_routes = [Signal(unsigned(5), init=route, name=f"output_route{n}")
                               for n, route in enumerate((0b01111, 0b00101,
                                                          0b01010, 0b10000))]
+        # Unipolar G1..G4 send levels for OUT0..OUT3. A value of 16 is
+        # unity; DRY remains the fifth route bit and is intentionally a toggle.
+        initial_routes = (0b01111, 0b00101, 0b01010, 0b10000)
+        self.output_sends = [
+            Signal(unsigned(5),
+                   init=16 if initial_routes[output] & (1 << group) else 0,
+                   name=f"output_send{output}_{group}")
+            for output in range(4) for group in range(self.N_GROUPS)
+        ]
         self.effective_resonance = Signal(unsigned(16), init=8192)
         self.effective_feedback = Signal(unsigned(16), init=0)
         self.effective_filter_cutoff = Signal(unsigned(16), init=16384)
@@ -374,6 +383,7 @@ class RezoCore(wiring.Component):
         state_filter_cv_setup = 22
         state_filter_cv_commit = 23
         state_filter_cv_route = 24
+        state_output_product_commit = 25
         state = Signal(state_shape, init=state_wait)
         band = Signal(range(self.N_BANDS))
         input_chan = Signal(range(4))
@@ -426,7 +436,12 @@ class RezoCore(wiring.Component):
         output_acc = [Signal(mix_shape, name=f"output_acc{n}") for n in range(4)]
         output_acc_array = Array(output_acc)
         output_next = Signal(mix_shape)
-        output_route_hit = Signal()
+        output_send_index = Signal(unsigned(5))
+        output_send_gain = Signal(unsigned(7))
+        output_send_gain_q = Signal(unsigned(7))
+        output_send_product = Signal(signed(mix_shape.width + 7))
+        output_send_term = Signal(mix_shape)
+        output_send_term_q = Signal(mix_shape)
         term = Signal(mix_shape)
         term_q = Signal(mix_shape)
         level_cur = Signal(signed(16))
@@ -460,7 +475,7 @@ class RezoCore(wiring.Component):
         cv_acc = Signal(signed(20))
         cv_acc_next = Signal(signed(20))
         bank_group_array = Array(self.bank_groups)
-        output_route_array = Array(self.output_routes)
+        output_send_array = Array(self.output_sends)
         input_mode_array = Array(self.input_modes)
         cv_target_array = Array(self.cv_targets)
         filter_cutoff_raw = Signal(signed(19))
@@ -524,11 +539,19 @@ class RezoCore(wiring.Component):
             cv_acc_next.eq(cv_acc),
         ]
         m.d.comb += [
-            output_route_hit.eq(
-                (output_route_array[output_chan][:4] & bank_group_array[band]) != 0),
-            output_next.eq(Mux(output_route_hit,
-                               output_acc_array[output_chan] + term_q,
-                               output_acc_array[output_chan])),
+            output_send_index.eq(output_chan << 2),
+            output_send_gain.eq(
+                Mux(bank_group_array[band][0],
+                    output_send_array[output_send_index], 0) +
+                Mux(bank_group_array[band][1],
+                    output_send_array[output_send_index + 1], 0) +
+                Mux(bank_group_array[band][2],
+                    output_send_array[output_send_index + 2], 0) +
+                Mux(bank_group_array[band][3],
+                    output_send_array[output_send_index + 3], 0)),
+            output_send_product.eq(term_q * output_send_gain_q),
+            output_send_term.eq(output_send_product >> 4),
+            output_next.eq(output_acc_array[output_chan] + output_send_term_q),
         ]
         m.d.comb += [
             group_cur.eq(group_offsets[band]),
@@ -577,7 +600,7 @@ class RezoCore(wiring.Component):
             with m.Else():
                 m.d.comb += target.as_value().eq(source)
 
-        limit_to_asq(output_acc_array[output_chan], output_limited)
+        limit_to_asq(output_next, output_limited)
         limit_to_asq(input_mix_acc, input_mix_limited)
 
         # Limit the signal entering every SVF section too.  The delayed
@@ -1000,11 +1023,18 @@ class RezoCore(wiring.Component):
 
             with m.Case(state_output_route_commit):
                 m.d.sync += [
-                    output_acc_array[output_chan].eq(output_next),
+                    output_send_gain_q.eq(output_send_gain),
                     state.eq(state_output_limit_commit),
                 ]
 
             with m.Case(state_output_limit_commit):
+                m.d.sync += [
+                    output_send_term_q.eq(output_send_term),
+                    state.eq(state_output_product_commit),
+                ]
+
+            with m.Case(state_output_product_commit):
+                m.d.sync += output_acc_array[output_chan].eq(output_next)
                 with m.If(band == self.N_BANDS - 1):
                     m.d.sync += output_q_array[output_chan].eq(output_limited)
                 with m.If(output_chan != 3):
@@ -1170,6 +1200,7 @@ class RezoHardwareUI(wiring.Component):
             "cv_depths": Out(data.ArrayLayout(signed(16), 4)),
             "bank_groups": Out(data.ArrayLayout(unsigned(4), RezoCore.N_BANDS)),
             "output_routes": Out(data.ArrayLayout(unsigned(5), 4)),
+            "output_sends": Out(data.ArrayLayout(unsigned(5), 16)),
             "selected": Out(unsigned(7)),
             "page": Out(unsigned(3)),
             "preset": Out(unsigned(3)),
@@ -1262,17 +1293,36 @@ class RezoHardwareUI(wiring.Component):
                               for n, route in enumerate(initial_output_masks)]
         output_routes = [Signal(unsigned(5), name=f"ui_output_route{n}")
                          for n in range(4)]
-        filter_output_routes = [Signal(unsigned(4), init=route,
-                                       name=f"ui_filter_output_route{n}")
-                                for n, route in enumerate((0b1111, 0b0101,
-                                                           0b1010, 0b0000))]
+        bank_output_sends = [
+            Signal(unsigned(5),
+                   init=16 if initial_output_masks[output] & (1 << group) else 0,
+                   name=f"ui_bank_output_send{output}_{group}")
+            for output in range(4) for group in range(RezoCore.N_GROUPS)
+        ]
+        filter_output_masks = (0b1111, 0b0101, 0b1010, 0b0000)
+        filter_output_sends = [
+            Signal(unsigned(5),
+                   init=16 if filter_output_masks[output] & (1 << group) else 0,
+                   name=f"ui_filter_output_send{output}_{group}")
+            for output in range(4) for group in range(RezoCore.N_GROUPS)
+        ]
+        output_sends = [Signal(unsigned(5), name=f"ui_output_send{n}")
+                        for n in range(16)]
         for n in range(RezoCore.N_BANDS):
             m.d.comb += bank_groups[n].eq(
                 bank_group_indices[n] ^ (bank_group_indices[n] >> 1))
         for n in range(4):
-            m.d.comb += output_routes[n].eq(
-                Mux(filter_mode, Cat(filter_output_routes[n], Const(0, 1)),
-                    bank_output_routes[n]))
+            base = n * RezoCore.N_GROUPS
+            m.d.comb += output_routes[n].eq(Mux(
+                filter_mode,
+                Cat(*(filter_output_sends[base + group] != 0
+                      for group in range(RezoCore.N_GROUPS)), Const(0, 1)),
+                Cat(*(bank_output_sends[base + group] != 0
+                      for group in range(RezoCore.N_GROUPS)),
+                    bank_output_routes[n][4])))
+        for n in range(16):
+            m.d.comb += output_sends[n].eq(
+                Mux(filter_mode, filter_output_sends[n], bank_output_sends[n]))
         selected = Signal(range(self.N_TARGETS), init=self.TARGET_PAGE)
         page = Signal(unsigned(3), init=0)
         preset = Signal(range(7), init=0)
@@ -1610,23 +1660,14 @@ class RezoHardwareUI(wiring.Component):
                 with m.Else():
                     m.d.comb += next_selected.eq(selected - 1)
         with m.If(click):
-            with m.If(output_cell_target):
-                # OUT is a toggle matrix rather than an edit-mode control:
-                # select one OUT/source pair and click to flip only that route.
+            with m.If(output_cell_target & output_dry_target):
+                # DRY remains a simple route toggle. Group cells enter the
+                # normal edit mode so their send level can be adjusted.
                 for output in range(4):
-                    for source in range(5):
-                        target = self.TARGET_OUTPUT_BASE + output * 5 + source
-                        with m.If(selected == target):
-                            if source == 4:
-                                m.d.sync += bank_output_routes[output][source].eq(
-                                    ~bank_output_routes[output][source])
-                            else:
-                                with m.If(filter_mode):
-                                    m.d.sync += filter_output_routes[output][source].eq(
-                                        ~filter_output_routes[output][source])
-                                with m.Else():
-                                    m.d.sync += bank_output_routes[output][source].eq(
-                                        ~bank_output_routes[output][source])
+                    target = self.TARGET_OUTPUT_BASE + output * 5 + 4
+                    with m.If(selected == target):
+                        m.d.sync += bank_output_routes[output][4].eq(
+                            ~bank_output_routes[output][4])
                 m.d.sync += editing.eq(0)
             with m.Elif(editing):
                 with m.If(selected == self.TARGET_PRESET):
@@ -1693,6 +1734,25 @@ class RezoHardwareUI(wiring.Component):
                         with m.Else():
                             self.clamp_add(m, filter_cv_matrix[n], -matrix_edit_step,
                                            -128, 127)
+                for output in range(4):
+                    for group in range(RezoCore.N_GROUPS):
+                        target = self.TARGET_OUTPUT_BASE + output * 5 + group
+                        send_index = output * RezoCore.N_GROUPS + group
+                        with m.Elif(selected == target):
+                            with m.If(edit_direction):
+                                with m.If(filter_mode):
+                                    self.clamp_add(m, filter_output_sends[send_index],
+                                                   1, 0, 16)
+                                with m.Else():
+                                    self.clamp_add(m, bank_output_sends[send_index],
+                                                   1, 0, 16)
+                            with m.Else():
+                                with m.If(filter_mode):
+                                    self.clamp_add(m, filter_output_sends[send_index],
+                                                   -1, 0, 16)
+                                with m.Else():
+                                    self.clamp_add(m, bank_output_sends[send_index],
+                                                   -1, 0, 16)
                 with m.Elif(selected == self.TARGET_DRY):
                     with m.If(edit_direction):
                         self.clamp_add(m, dry, step_amount, 0, 32768)
@@ -1772,6 +1832,8 @@ class RezoHardwareUI(wiring.Component):
             m.d.comb += self.bank_groups[n].eq(bank_group)
         for n, output_route in enumerate(output_routes):
             m.d.comb += self.output_routes[n].eq(output_route)
+        for n, output_send in enumerate(output_sends):
+            m.d.comb += self.output_sends[n].eq(output_send)
         for n, depth in enumerate(filter_cv_matrix):
             m.d.comb += self.filter_cv_matrix[n].eq(depth)
         m.d.comb += [
@@ -2234,6 +2296,9 @@ class RezoTileDisplay(wiring.Component):
             "filter_cv_write_addr": In(unsigned(4)),
             "filter_cv_write_data": In(signed(6)),
             "filter_cv_write_en": In(1),
+            "output_send_write_addr": In(unsigned(4)),
+            "output_send_write_data": In(unsigned(5)),
+            "output_send_write_en": In(1),
             "bank_groups": In(data.ArrayLayout(unsigned(4), RezoCore.N_BANDS)),
             "output_routes": In(data.ArrayLayout(unsigned(5), 4)),
             "selected": In(unsigned(7)),
@@ -2931,6 +2996,19 @@ class RezoTileDisplay(wiring.Component):
         output_row_inner = Signal()
         output_col_inner = Signal()
         output_route_array = Array(self.output_routes)
+        m.submodules.output_send_mem = output_send_mem = Memory(
+            shape=unsigned(5), depth=16, init=[0] * 16)
+        output_send_rport = output_send_mem.read_port(domain="dvi")
+        output_send_wport = output_send_mem.write_port(domain="sync")
+        m.d.comb += [
+            output_send_wport.addr.eq(self.output_send_write_addr),
+            output_send_wport.data.eq(self.output_send_write_data),
+            output_send_wport.en.eq(self.output_send_write_en),
+        ]
+        output_cell_x0 = Signal(unsigned(10))
+        output_cell_y0 = Signal(unsigned(10))
+        output_send_index = Signal(unsigned(4))
+        output_route_active = Signal()
         m.d.comb += [
             output_row.eq(0),
             output_source.eq(0),
@@ -2940,6 +3018,10 @@ class RezoTileDisplay(wiring.Component):
             output_col_edge.eq(0),
             output_row_inner.eq(0),
             output_col_inner.eq(0),
+            output_cell_x0.eq(208),
+            output_cell_y0.eq(326),
+            output_send_index.eq(0),
+            output_route_active.eq(0),
         ]
         for output in range(4):
             row_y = 326 + output * 80
@@ -2949,6 +3031,7 @@ class RezoTileDisplay(wiring.Component):
                     output_row_active.eq(1),
                     output_row_edge.eq((y < row_y + 2) | (y >= row_y + 26)),
                     output_row_inner.eq((y >= row_y + 5) & (y < row_y + 23)),
+                    output_cell_y0.eq(row_y),
                 ]
         for source in range(5):
             cell_x0 = 208 + source * 96
@@ -2958,12 +3041,50 @@ class RezoTileDisplay(wiring.Component):
                     output_col_active.eq(Const(source != 4) | ~self.filter_mode),
                     output_col_edge.eq((x < cell_x0 + 2) | (x >= cell_x0 + 40)),
                     output_col_inner.eq((x >= cell_x0 + 5) & (x < cell_x0 + 37)),
+                    output_cell_x0.eq(cell_x0),
                 ]
+        m.d.comb += [
+            output_send_index.eq(output_source + (output_row << 2)),
+            output_send_rport.addr.eq(output_send_index),
+            output_route_active.eq(
+                output_route_array[output_row].bit_select(output_source, 1)),
+        ]
+        output_x_q = Signal.like(x)
+        output_y_q = Signal.like(y)
+        output_x0_q = Signal.like(output_cell_x0)
+        output_y0_q = Signal.like(output_cell_y0)
+        output_source_q = Signal.like(output_source)
+        output_row_active_q = Signal()
+        output_col_active_q = Signal()
+        output_route_active_q = Signal()
+        output_page_q = Signal()
+        m.d.dvi += [
+            output_x_q.eq(x),
+            output_y_q.eq(y),
+            output_x0_q.eq(output_cell_x0),
+            output_y0_q.eq(output_cell_y0),
+            output_source_q.eq(output_source),
+            output_row_active_q.eq(output_row_active),
+            output_col_active_q.eq(output_col_active),
+            output_route_active_q.eq(output_route_active),
+            output_page_q.eq(output_page),
+        ]
+        output_send_end = Signal(unsigned(10))
+        m.d.comb += output_send_end.eq(
+            output_x0_q + 5 + (output_send_rport.data << 1))
         m.d.comb += [
             output_cell.eq(output_page & output_row_active & output_col_active &
                            (output_row_edge | output_col_edge)),
-            output_fill.eq(output_page & output_row_inner & output_col_inner &
-                           output_route_array[output_row].bit_select(output_source, 1)),
+            output_fill.eq(
+                output_page_q & output_row_active_q & output_col_active_q &
+                (output_y_q >= output_y0_q + 5) &
+                (output_y_q < output_y0_q + 23) & Mux(
+                    output_source_q < 4,
+                    (output_x_q >= output_x0_q + 5) &
+                    (output_x_q < output_send_end),
+                    output_route_active_q &
+                    (output_x_q >= output_x0_q + 5) &
+                    (output_x_q < output_x0_q + 37))),
         ]
         output_target = Signal(unsigned(7))
         m.d.comb += [
@@ -3022,9 +3143,9 @@ class RezoTileDisplay(wiring.Component):
         filter_cv_select_q0 = tile_registered_or(filter_cv_select_signals, "filter_cv_select")
         m.d.dvi += [
             output_cell_q0.eq(output_cell),
-            output_fill_q0.eq(output_fill),
             output_select_q0.eq(output_select),
         ]
+        m.d.dvi += output_fill_q0.eq(output_fill)
         m.d.comb += group_fill_q0.eq(group_fill)
 
         m.d.comb += preset_group_select.eq(
@@ -3273,6 +3394,8 @@ class RezoBeamTop(Elaboratable):
             m.d.comb += rezo.bank_groups[n].eq(ui.bank_groups[n])
         for n in range(4):
             m.d.comb += rezo.output_routes[n].eq(ui.output_routes[n])
+        for n in range(16):
+            m.d.comb += rezo.output_sends[n].eq(ui.output_sends[n])
         for n in range(12):
             m.d.comb += rezo.filter_cv_matrix[n].eq(ui.filter_cv_matrix[n])
 
@@ -3321,6 +3444,8 @@ class RezoBeamTop(Elaboratable):
         filter_cv_write_index = Signal(range(12))
         filter_cv_write_data = Signal(signed(6))
         filter_cv_matrix_array = Array(ui.filter_cv_matrix)
+        output_send_write_index = Signal(range(16))
+        output_send_array = Array(ui.output_sends)
         m.d.comb += [
             display_dry.eq(rezo.dry >> 10),
             display_resonance.eq(rezo.resonance >> 10),
@@ -3348,11 +3473,19 @@ class RezoBeamTop(Elaboratable):
             display.filter_cv_write_addr.eq(filter_cv_write_index),
             display.filter_cv_write_data.eq(filter_cv_write_data),
             display.filter_cv_write_en.eq(1),
+            display.output_send_write_addr.eq(output_send_write_index),
+            display.output_send_write_data.eq(
+                output_send_array[output_send_write_index]),
+            display.output_send_write_en.eq(1),
         ]
         with m.If(filter_cv_write_index == 11):
             m.d.sync += filter_cv_write_index.eq(0)
         with m.Else():
             m.d.sync += filter_cv_write_index.eq(filter_cv_write_index + 1)
+        with m.If(output_send_write_index == 15):
+            m.d.sync += output_send_write_index.eq(0)
+        with m.Else():
+            m.d.sync += output_send_write_index.eq(output_send_write_index + 1)
         m.submodules += [
             FFSynchronizer(i=display_dry, o=display.dry, o_domain="dvi"),
             FFSynchronizer(i=display_resonance, o=display.resonance, o_domain="dvi"),
