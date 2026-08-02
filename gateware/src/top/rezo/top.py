@@ -2474,6 +2474,7 @@ class RezoTileDisplay(wiring.Component):
             "levels": In(data.ArrayLayout(signed(6), RezoCore.N_BANDS)),
             "effective_levels": In(data.ArrayLayout(signed(6), RezoCore.N_BANDS)),
             "drive": In(unsigned(6)),
+            "effective_drive": In(unsigned(6)),
             "resonance": In(unsigned(6)),
             "feedback": In(unsigned(6)),
             "effective_resonance": In(unsigned(6)),
@@ -3507,52 +3508,87 @@ class RezoTileDisplay(wiring.Component):
         m.d.comb += preset_group_select.eq(
             bank_page & (self.selected == RezoHardwareUI.TARGET_PRESET) & ~self.editing &
             self.outline(x, y, 131, 95, 269, 143, t=3))
-        drive_fill = bank_page & self.rect(
-            x, y, 124, 556, 124 + (self.drive << 4), 572)
         drive_select = bank_page & (self.selected == RezoHardwareUI.TARGET_DRIVE) & self.outline(
             x, y, 118, 552, 650, 576, t=3)
 
-        row1_value = Signal(unsigned(6))
-        row2_value = Signal(unsigned(6))
-        row1_base_value = Signal(unsigned(6))
-        row2_base_value = Signal(unsigned(6))
+        # DRIVE, RES and FB use one pipelined row/value decoder.  Keeping the
+        # base/effective split here gives all three controls identical CV
+        # shading and fixed markers without three copies of wide x compares.
+        bank_control_row = Signal(unsigned(2))
+        bank_control_y0 = Signal(unsigned(10), init=556)
+        bank_control_active = Signal()
+        bank_control_base = Signal(unsigned(6))
+        bank_control_effective = Signal(unsigned(6))
         m.d.comb += [
-            row1_value.eq(Mux(bank_page, self.effective_resonance, self.limit_cap)),
-            row2_value.eq(Mux(bank_page, self.effective_feedback,
-                              Cat(Const(0, 1), self.damp_mode, Const(0, 2)))),
-            row1_base_value.eq(Mux(bank_page, self.resonance, self.limit_cap)),
-            row2_base_value.eq(Mux(bank_page, self.feedback,
-                                   Cat(Const(0, 1), self.damp_mode, Const(0, 2)))),
+            bank_control_row.eq(0),
+            bank_control_y0.eq(556),
+            bank_control_active.eq(0),
+            bank_control_base.eq(self.drive),
+            bank_control_effective.eq(self.effective_drive),
         ]
+        for row in range(3):
+            row_y0 = 556 + row * 32
+            with m.If((y >= row_y0 - 2) & (y < row_y0 + 18)):
+                m.d.comb += [
+                    bank_control_row.eq(row),
+                    bank_control_y0.eq(row_y0),
+                    bank_control_active.eq(1),
+                ]
+        with m.Switch(bank_control_row):
+            with m.Case(1):
+                m.d.comb += [
+                    bank_control_base.eq(self.resonance),
+                    bank_control_effective.eq(self.effective_resonance),
+                ]
+            with m.Case(2):
+                m.d.comb += [
+                    bank_control_base.eq(self.feedback),
+                    bank_control_effective.eq(self.effective_feedback),
+                ]
+        bank_control_x_q = Signal.like(x)
+        bank_control_y_q = Signal.like(y)
+        bank_control_y0_q = Signal.like(bank_control_y0)
+        bank_control_active_q = Signal()
+        bank_control_base_q = Signal.like(bank_control_base)
+        bank_control_effective_q = Signal.like(bank_control_effective)
+        bank_control_page_q = Signal()
+        m.d.dvi += [
+            bank_control_x_q.eq(x),
+            bank_control_y_q.eq(y),
+            bank_control_y0_q.eq(bank_control_y0),
+            bank_control_active_q.eq(bank_control_active),
+            bank_control_base_q.eq(bank_control_base),
+            bank_control_effective_q.eq(bank_control_effective),
+            bank_control_page_q.eq(bank_page),
+        ]
+        bank_control_visible = bank_control_page_q & bank_control_active_q
+        bank_control_fill = bank_control_visible & self.rect(
+            bank_control_x_q, bank_control_y_q, 124, bank_control_y0_q,
+            124 + (bank_control_base_q << 4), bank_control_y0_q + 16)
+        bank_control_effective_fill = bank_control_visible & self.rect(
+            bank_control_x_q, bank_control_y_q, 124, bank_control_y0_q,
+            124 + (bank_control_effective_q << 4), bank_control_y0_q + 16)
+        bank_control_mod_fill = (
+            bank_control_fill ^ bank_control_effective_fill)
+        bank_control_mod_marker = bank_control_visible & self.rect(
+            bank_control_x_q, bank_control_y_q,
+            122 + (bank_control_base_q << 4), bank_control_y0_q - 2,
+            126 + (bank_control_base_q << 4), bank_control_y0_q + 18)
+
         dry_fill = tune_page & self.rect(
             x, y, 124, 588, 124 + (self.limit_knee << 4), 604)
         dry_select = (tune_page &
                       (self.selected == RezoHardwareUI.TARGET_LIMIT_KNEE)) & self.outline(
             x, y, 118, 584, 650, 608, t=3)
-        res_fill = ((bank_page & self.rect(
-            x, y, 124, 588, 124 + (row1_base_value << 4), 604)) |
-            (tune_page & self.rect(
-                x, y, 124, 620, 124 + (row1_base_value << 4), 636)))
-        res_effective_fill = bank_page & self.rect(
-            x, y, 124, 588, 124 + (row1_value << 4), 604)
-        res_mod_fill = bank_page & (res_fill ^ res_effective_fill)
-        res_mod_marker = bank_page & self.rect(
-            x, y, 122 + (self.resonance << 4), 586,
-            126 + (self.resonance << 4), 606)
+        tune_cap_fill = tune_page & self.rect(
+            x, y, 124, 620, 124 + (self.limit_cap << 4), 636)
         res_select = ((bank_page & (self.selected == RezoHardwareUI.TARGET_RESONANCE)) |
                       (tune_page & (self.selected == RezoHardwareUI.TARGET_LIMIT_CAP))) & (
             (bank_page & self.outline(x, y, 118, 584, 650, 608, t=3)) |
             (tune_page & self.outline(x, y, 118, 616, 650, 640, t=3)))
-        fb_fill = ((bank_page & self.rect(
-            x, y, 124, 620, 124 + (row2_base_value << 4), 636)) |
-            (tune_page & self.rect(
-                x, y, 124, 652, 124 + (row2_base_value << 4), 668)))
-        fb_effective_fill = bank_page & self.rect(
-            x, y, 124, 620, 124 + (row2_value << 4), 636)
-        fb_mod_fill = bank_page & (fb_fill ^ fb_effective_fill)
-        fb_mod_marker = bank_page & self.rect(
-            x, y, 122 + (self.feedback << 4), 618,
-            126 + (self.feedback << 4), 638)
+        tune_damp_fill = tune_page & self.rect(
+            x, y, 124, 652,
+            124 + (Cat(Const(0, 1), self.damp_mode, Const(0, 2)) << 4), 668)
         fb_select = ((bank_page & (self.selected == RezoHardwareUI.TARGET_FEEDBACK)) |
                      (tune_page & (self.selected == RezoHardwareUI.TARGET_DAMP))) & (
             (bank_page & self.outline(x, y, 118, 616, 650, 640, t=3)) |
@@ -3594,7 +3630,7 @@ class RezoTileDisplay(wiring.Component):
             with m.Case(3):
                 m.d.comb += [
                     filter_control_base.eq(self.drive),
-                    filter_control_effective.eq(self.drive),
+                    filter_control_effective.eq(self.effective_drive),
                 ]
             with m.Case(4):
                 m.d.comb += [
@@ -3698,12 +3734,13 @@ class RezoTileDisplay(wiring.Component):
         geometry_mod_q0 = Signal()
         geometry_panel_q0 = Signal()
         m.d.dvi += [
-            geometry_fill_q0.eq(band_fill | band_marker | drive_fill | dry_fill |
-                                res_fill | fb_fill | filter_control_fill),
+            geometry_fill_q0.eq(band_fill | band_marker | bank_control_fill |
+                                dry_fill | tune_cap_fill | tune_damp_fill |
+                                filter_control_fill),
             geometry_line_q0.eq(
-                band_zero_q0 | res_mod_marker | fb_mod_marker |
+                band_zero_q0 | bank_control_mod_marker |
                 filter_control_mod_marker | border),
-            geometry_mod_q0.eq(band_mod_fill | res_mod_fill | fb_mod_fill |
+            geometry_mod_q0.eq(band_mod_fill | bank_control_mod_fill |
                                filter_control_mod_fill),
             geometry_panel_q0.eq(preset_chip | filter_type_chip | mode_chip | band_slot_q0 |
                                  meter_panel | filter_meter_panel),
@@ -3768,11 +3805,11 @@ class RezoBeamTop(Elaboratable):
                  'assignable out', 'assignable out'],
         io_right=['', '', 'video out required', '', '', '']
     )
-    # This design's DVI PHY placement is seed-sensitive at 720p60. Seed 4
+    # This design's DVI PHY placement is seed-sensitive at 720p60. Seed 8
     # provides healthy margin on all four constrained clocks for the shared
     # tile renderer, while the environment override remains useful for
     # place-and-route experiments.
-    nextpnr_opts = f"--timing-allow-fail --seed {os.getenv('TILIQUA_REZO_SEED', '4')}"
+    nextpnr_opts = f"--timing-allow-fail --seed {os.getenv('TILIQUA_REZO_SEED', '8')}"
 
     def __init__(self, clock_settings):
         assert clock_settings.modeline is not None
@@ -3879,6 +3916,7 @@ class RezoBeamTop(Elaboratable):
         display_resonance = Signal(unsigned(6))
         display_feedback = Signal(unsigned(6))
         display_drive = Signal(unsigned(6))
+        display_effective_drive = Signal(unsigned(6))
         display_effective_resonance = Signal(unsigned(6))
         display_effective_feedback = Signal(unsigned(6))
         display_filter_cutoff = Signal(unsigned(6))
@@ -3900,6 +3938,7 @@ class RezoBeamTop(Elaboratable):
         output_send_array = Array(ui.output_sends)
         m.d.comb += [
             display_drive.eq((RezoCore.DRIVE_FLOOR + rezo.drive) >> 10),
+            display_effective_drive.eq(rezo.effective_drive >> 10),
             display_resonance.eq(rezo.resonance >> 10),
             display_feedback.eq(rezo.feedback >> 10),
             display_effective_resonance.eq(rezo.effective_resonance >> 10),
@@ -3940,6 +3979,8 @@ class RezoBeamTop(Elaboratable):
             m.d.sync += output_send_write_index.eq(output_send_write_index + 1)
         m.submodules += [
             FFSynchronizer(i=display_drive, o=display.drive, o_domain="dvi"),
+            FFSynchronizer(i=display_effective_drive,
+                           o=display.effective_drive, o_domain="dvi"),
             FFSynchronizer(i=display_resonance, o=display.resonance, o_domain="dvi"),
             FFSynchronizer(i=display_feedback, o=display.feedback, o_domain="dvi"),
             FFSynchronizer(i=display_effective_resonance, o=display.effective_resonance, o_domain="dvi"),
