@@ -5,6 +5,34 @@ from amaranth.sim import Simulator
 from top.rezo.top import RezoCore
 
 
+def test_core_meets_192khz_sample_cycle_budget():
+    dut = RezoCore(fs=192_000)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+    result = {}
+
+    async def bench(ctx):
+        ctx.set(dut.o.ready, 1)
+        ctx.set(dut.i.payload[0].as_value(), 1000)
+        ctx.set(dut.i.valid, 1)
+        await ctx.tick().until(dut.i.ready == 1)
+        ctx.set(dut.i.valid, 0)
+
+        processing_cycles = 0
+        while not ctx.get(dut.o.valid):
+            await ctx.tick()
+            processing_cycles += 1
+        result["cycles"] = processing_cycles + 1
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    # The sync domain is 60 MHz, leaving 312.5 clocks per sample at 192 kHz.
+    # Crossing this limit causes the asynchronous audio FIFOs to drop/repeat
+    # samples, which is heard as deterministic harmonic buzz on wet signals.
+    assert result["cycles"] <= 60_000_000 // 192_000
+
+
 def test_filter_profile_band_tags_do_not_wrap():
     dut = RezoCore(fs=192_000)
     sim = Simulator(dut)
@@ -33,7 +61,7 @@ def test_filter_profile_band_tags_do_not_wrap():
     assert all(left <= right for left, right in zip(hp, hp[1:]))
 
 
-def test_filter_cv_matrix_modulates_all_four_destinations():
+def test_filter_cv_matrix_modulates_all_five_destinations():
     dut = RezoCore(fs=192_000)
     sim = Simulator(dut)
     sim.add_clock(1e-6)
@@ -50,12 +78,13 @@ def test_filter_cv_matrix_modulates_all_four_destinations():
 
     async def bench(ctx):
         ctx.set(dut.filter_mode, 1)
-        # IN1 raises frequency and slope, IN2 lowers resonance, and IN3
-        # raises width. Matrix storage is destination-major.
+        # IN1 raises frequency and slope, IN2 lowers resonance, IN3 raises
+        # width, and IN2 raises drive. Matrix storage is destination-major.
         ctx.set(dut.filter_cv_matrix[0], 32)
         ctx.set(dut.filter_cv_matrix[3 + 1], -32)
         ctx.set(dut.filter_cv_matrix[6 + 2], 32)
         ctx.set(dut.filter_cv_matrix[9 + 0], 32)
+        ctx.set(dut.filter_cv_matrix[12 + 1], 32)
         for _ in range(160):
             await send(ctx)
         result.update(
@@ -63,6 +92,7 @@ def test_filter_cv_matrix_modulates_all_four_destinations():
             resonance=ctx.get(dut.effective_resonance),
             width=ctx.get(dut.effective_filter_width),
             slope=ctx.get(dut.effective_filter_slope),
+            drive=ctx.get(dut.effective_drive),
         )
 
     sim.add_testbench(bench)
@@ -72,6 +102,7 @@ def test_filter_cv_matrix_modulates_all_four_destinations():
     assert result["resonance"] < 16384
     assert result["width"] > 12288
     assert result["slope"] > 16384
+    assert result["drive"] > 16384
 
 
 def test_bank_zero_wet_and_dry_paths():
@@ -97,7 +128,6 @@ def test_bank_zero_wet_and_dry_paths():
         return values[0]
 
     async def bench(ctx):
-        ctx.set(dut.output_routes[0], 0b01111)
         for n in range(64):
             sample = int(12_000 * (2 / math.pi) * math.asin(math.sin(n * 0.19)))
             zero_output.append(await send(ctx, sample))
@@ -116,8 +146,9 @@ def test_bank_zero_wet_and_dry_paths():
 
         for level in dut.levels:
             ctx.set(level, 0)
-        ctx.set(dut.output_routes[0], 0b10000)
-        ctx.set(dut.dry, 32768)
+        for group in range(dut.N_GROUPS):
+            ctx.set(dut.output_sends[group], 0)
+        ctx.set(dut.output_sends[dut.N_GROUPS], 16)
         for n in range(768):
             sample = int(12_000 * (2 / math.pi) * math.asin(math.sin(n * 0.19)))
             result = await send(ctx, sample)
@@ -136,3 +167,44 @@ def test_bank_zero_wet_and_dry_paths():
     assert rail_count == 0
     assert 0.45 < half_rms / full_rms < 0.55
     assert max(abs(source - result) for source, result in dry_pairs) <= 2
+
+
+def test_band5_zero_feedback_matches_known_good_drive_scale():
+    """Guard the Q1.15-to-wide conversion feeding the resonator bank.
+
+    This vector comes from the last hardware-clean implementation.  It catches
+    the otherwise visually innocuous fixed-point conversion that doubled the
+    direct filter drive while leaving DRY unchanged.
+    """
+    dut = RezoCore(fs=192_000)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+    output = []
+
+    async def send(ctx, sample):
+        ctx.set(dut.i.payload[0].as_value(), sample)
+        for channel in range(1, 4):
+            ctx.set(dut.i.payload[channel].as_value(), 0)
+        ctx.set(dut.i.valid, 1)
+        await ctx.tick().until(dut.i.ready == 1)
+        ctx.set(dut.i.valid, 0)
+        ctx.set(dut.o.ready, 1)
+        values = await ctx.tick().sample(
+            dut.o.payload[0].as_value()).until(dut.o.valid == 1)
+        output.append(values[0])
+
+    async def bench(ctx):
+        for index, level in enumerate(dut.levels):
+            ctx.set(level, 8192 if index == 5 else 0)
+        ctx.set(dut.resonance, 0)
+        ctx.set(dut.feedback, 0)
+        for n in range(180):
+            sample = int(5000 * math.sin(2 * math.pi * 777 * n / 192000))
+            await send(ctx, sample)
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    assert output[-12:] == [
+        252, 243, 233, 223, 213, 203, 193, 183, 173, 163, 152, 142,
+    ]
