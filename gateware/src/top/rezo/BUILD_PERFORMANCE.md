@@ -53,6 +53,13 @@ also passing every constrained clock.
 | SAVE-CONFIRM-CANCEL-S8-D | Edit-mode cancellation on an encoder quadrature edge, local parity decode | 8 | 20,402 | 23,878 | 410 | 6,579 | 13 | 352.73 | 75.02 | 64.36 | 80.66 | FAIL DVI5X; superseded before flash |
 | SAVE-CONFIRM-CANCEL-S8-E | Dedicated confirmation latch and display synchronization | 8 | 20,323 | 23,801 | 487 | 6,584 | 13 | 386.85 | 69.34 | 63.55 | 76.92 | PASS; superseded before flash due to packing cost |
 | **SAVE-ONE-CLICK-S4** | Remove confirmation state; SAVE DEFAULT requests immediately on click | **4** | **20,312** | **23,784** | **504** | **6,579** | **13** | **396.35** | **74.48** | **64.87** | **78.11** | **PASS; hardware candidate** |
+| OPT-JOURNAL-STREAM-S4 | Stream header validation; share active generation; remove CRC staging; shift-register CS recovery | 4 | 20,258 | 23,720 | 568 | 6,461 | 13 | — | — | — | — | Routing aborted after pathological congestion search |
+| OPT-JOURNAL-SPLIT-POLL-S8 | Separate erase/program poll states; remove poll-purpose flags | 8 | 20,256 | 23,730 | 558 | 6,459 | 13 | 429.92 | 71.39 | 65.61 | 79.46 | PASS; structurally clean but negligible area gain |
+| OPT-JOURNAL-HEADER-SHIFT-S8 | Hold SPI request in journal and shift generation/CRC header bytes sequentially | 8 | 20,122 | 23,592 | 696 | 6,439 | 13 | — | — | — | — | Routing aborted after pathological congestion search |
+| OPT-JOURNAL-FOLDED-STATE-S4 | Reuse active-generation and stored-CRC registers for pending save state | 4 | 19,846 | 23,308 | 980 | 6,375 | 13 | 438.21 | 72.14 | 65.49 | 79.97 | PASS |
+| **OPT-JOURNAL-FOLDED-ADDR-S8** | Reuse scan validity/sector/address state for boot selection and inactive save target | **8** | **19,742** | **23,206** | **1,082** | **6,373** | **13** | **411.18** | **75.60** | **65.42** | **77.41** | **PASS; final optimization candidate** |
+| OPT-JOURNAL-FOLDED-ADDR-S4 | Exact `top.json` reroute of final candidate | 4 | 19,742 | 23,206 | 1,082 | 6,373 | 13 | 389.71 | 74.59 | 65.31 | 77.57 | PASS |
+| OPT-JOURNAL-FOLDED-ADDR-S2 | Exact `top.json` reroute of final candidate | 2 | 19,742 | 23,206 | 1,082 | 6,373 | 13 | 488.28 | 73.17 | 67.74 | 76.60 | PASS |
 
 ## Notes
 
@@ -125,3 +132,22 @@ also passing every constrained clock.
 - UI/DSP functional regressions are checked separately by
   `tests/test_rezo_compare_path.py`, `tests/test_rezo_display.py`, and
   `tests/test_rezo_ui.py`.
+- The 2026-08-03 journal optimization preserves the version-1 flash bytes,
+  active-slot bounds, dual-sector selection, CRC verification, UI behavior,
+  and the measured four-cycle physical CS# recovery. Header constants are
+  validated as they stream in instead of being retained in separate magic,
+  version, and word-count registers. Generation and CRC fields serialize
+  through an existing register rather than two wide dynamic byte muxes.
+- Pending save generation and CRC now reuse the active-generation and
+  stored-CRC registers. If a verification fails and the user retries during
+  the same boot, the next record may skip a generation number; ordering,
+  sector safety, and power-loss recovery do not require generations to be
+  contiguous.
+- Boot-sector-A validity reuses `have_active`, and the scan sector/address
+  also carries the inactive save target. This final fold produced 1,082 free
+  cells, a gain of 578 over SAVE-ONE-CLICK-S4, and routed successfully from
+  the exact same synthesized netlist at seeds 8, 4, and 2.
+- OPT-JOURNAL-STREAM-S4 and OPT-JOURNAL-HEADER-SHIFT-S8 were stopped only
+  after their detailed routers entered prolonged congestion searches. Their
+  pre-route placement clock estimates are deliberately omitted from the
+  table; they are not final timing results.

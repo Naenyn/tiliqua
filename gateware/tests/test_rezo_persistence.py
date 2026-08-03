@@ -284,3 +284,60 @@ def test_explicit_save_is_bounded_to_active_slot_option_sector():
     assert all(base <= address < base + 0x1000 for address in flash.touched)
     saved = bytes(flash.mem.get(base + n, 0xff) for n in range(24))
     assert saved == make_record(values, generation=1)
+
+
+def test_record_programming_continues_across_flash_page_boundary():
+    slot = 0
+    base = RezoStateJournal.OPTIONS_BASE_OFFSET + \
+        ((slot + 1) * RezoStateJournal.SLOT_BYTES)
+    values = [(0x1234 + n * 0x101) & 0xffff for n in range(130)]
+    dut = RezoStateJournal(len(values))
+    m = Module()
+    m.submodules.dut = dut
+    flash = FlashModel(dut)
+
+    async def bench(ctx):
+        scan_index = 0
+        ctx.set(dut.boot_slot, slot)
+        ctx.set(dut.boot_slot_valid, 1)
+        ctx.set(dut.boot_slot_checked, 1)
+        for _ in range(20_000):
+            if ctx.get(dut.startup_done):
+                break
+            await ctx.tick()
+        else:
+            raise AssertionError("journal startup did not complete")
+
+        ctx.set(dut.save_request, 1)
+        await ctx.tick()
+        ctx.set(dut.save_request, 0)
+        for _ in range(80_000):
+            ctx.set(dut.state_read_data, values[scan_index])
+            if (ctx.get(dut.state_shift_enable) and
+                    not ctx.get(dut.state_shift_load)):
+                scan_index = (scan_index + 1) % len(values)
+            if ctx.get(dut.save_done):
+                break
+            assert not ctx.get(dut.save_error)
+            await ctx.tick()
+        else:
+            raise AssertionError("multi-page save did not complete")
+
+    sim = Simulator(m)
+    sim.add_clock(1e-6)
+    sim.add_testbench(bench)
+    sim.add_testbench(flash.run, background=True)
+    sim.run()
+
+    expected = make_record(values, generation=1)
+    saved = bytes(flash.mem.get(base + n, 0xff)
+                  for n in range(len(expected)))
+    assert len(expected) > 256
+    assert saved == expected
+    program_commands = [transaction for transaction in flash.transactions
+                        if transaction[0] == 32 and
+                        (transaction[2] >> 24) == 0x02]
+    assert program_commands == [
+        (32, 1, (0x02 << 24) | base),
+        (32, 1, (0x02 << 24) | base | 0x100),
+    ]

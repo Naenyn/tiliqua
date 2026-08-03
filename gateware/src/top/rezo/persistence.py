@@ -55,20 +55,19 @@ class SPIFlashTransfer(wiring.Component):
 
     def elaborate(self, platform):
         m = Module()
-        tx_data = Signal(unsigned(32))
-        length = Signal(unsigned(6))
-        output_mask = Signal(unsigned(8))
         last_chip_select = Signal()
-        cs_recovery = Signal(range(5))
+        cs_recovery = Signal(4)
         cs_ready = Signal()
 
         m.d.comb += [
-            cs_ready.eq(cs_recovery == 0),
+            cs_ready.eq(~cs_recovery.any()),
             self.spi.cs.eq(self.chip_select & cs_ready),
-            self.spi.source.data.eq(tx_data),
-            self.spi.source.len.eq(length),
+            # The journal holds the request fields until the next start pulse,
+            # so retaining a second copy in this bridge only adds registers.
+            self.spi.source.data.eq(self.tx_data),
+            self.spi.source.len.eq(self.length),
             self.spi.source.width.eq(1),
-            self.spi.source.mask.eq(output_mask),
+            self.spi.source.mask.eq(self.output_mask),
         ]
         m.d.sync += self.done.eq(0)
 
@@ -78,19 +77,14 @@ class SPIFlashTransfer(wiring.Component):
         # physical CS and the next transfer remain inactive during that time.
         m.d.sync += last_chip_select.eq(self.chip_select)
         with m.If(last_chip_select & ~self.chip_select):
-            m.d.sync += cs_recovery.eq(4)
-        with m.Elif(cs_recovery != 0):
-            m.d.sync += cs_recovery.eq(cs_recovery - 1)
+            m.d.sync += cs_recovery.eq(0b1111)
+        with m.Elif(cs_recovery.any()):
+            m.d.sync += cs_recovery.eq(cs_recovery >> 1)
 
         with m.FSM() as fsm:
             m.d.comb += self.busy.eq(~fsm.ongoing("IDLE"))
             with m.State("IDLE"):
                 with m.If(self.start):
-                    m.d.sync += [
-                        tx_data.eq(self.tx_data),
-                        length.eq(self.length),
-                        output_mask.eq(self.output_mask),
-                    ]
                     m.next = "SEND"
             with m.State("SEND"):
                 m.d.comb += self.spi.source.valid.eq(
@@ -162,9 +156,7 @@ class RezoStateJournal(wiring.Component):
         })
 
     @staticmethod
-    def _header_byte(index, generation, state_words, crc_value=0):
-        generation = Value.cast(generation)
-        crc_value = Value.cast(crc_value)
+    def _header_prefix_byte(index, state_words):
         header = Array([
             Const((RezoStateJournal.MAGIC >> (8 * n)) & 0xff, 8)
             for n in range(4)
@@ -173,9 +165,8 @@ class RezoStateJournal(wiring.Component):
             Const((RezoStateJournal.VERSION >> 8) & 0xff, 8),
             Const(state_words & 0xff, 8),
             Const((state_words >> 8) & 0xff, 8),
-        ] + [generation[n * 8:(n + 1) * 8] for n in range(4)] +
-            [crc_value[n * 8:(n + 1) * 8] for n in range(4)])
-        return header[index[:4]]
+        ])
+        return header[index[:3]]
 
     def elaborate(self, platform):
         m = Module()
@@ -196,52 +187,35 @@ class RezoStateJournal(wiring.Component):
                          init=_crc32_bzip2_table())
         m.submodules.crc_mem = crc_mem
         crc_r = crc_mem.read_port()
-        crc_shifted = Signal(unsigned(32))
-
         options_base = Signal(unsigned(24))
         scan_sector = Signal()
         scan_purpose = Signal(unsigned(2))
         scan_index = Signal(range(self.record_bytes + 1))
         scan_crc = Signal(unsigned(32), init=0xffffffff)
-        scan_magic = Signal(unsigned(32))
-        scan_version = Signal(unsigned(16))
-        scan_words = Signal(unsigned(16))
+        scan_header_valid = Signal(init=1)
         scan_generation = Signal(unsigned(32))
         scan_stored_crc = Signal(unsigned(32))
         scan_valid = Signal()
-        a_valid = Signal()
-        b_valid = Signal()
-        a_generation = Signal(unsigned(32))
-        b_generation = Signal(unsigned(32))
+        active_generation = Signal(unsigned(32))
         active_sector = Signal()
         have_active = Signal()
-        save_sector = Signal()
-        save_generation = Signal(unsigned(32))
-        save_crc = Signal(unsigned(32))
         save_word = Signal(range(self.state_words + 1))
         save_header_index = Signal(range(13))
         save_byte_phase = Signal()
         program_index = Signal(range(self.record_bytes + 1))
-        program_complete = Signal()
-        poll_after_program = Signal()
         cs_active = Signal()
         saving = Signal()
         startup_done = Signal()
 
         scan_address = Signal(unsigned(24))
-        save_address = Signal(unsigned(24))
         m.d.comb += [
             # Both sector and record offsets occupy zero bits in the aligned
             # option base, so OR is exactly equivalent to addition and avoids
             # putting 24-bit adders in the flash-control path.
             scan_address.eq(options_base |
                             Mux(scan_sector, self.SECTOR_BYTES, 0)),
-            save_address.eq(options_base |
-                            Mux(save_sector, self.SECTOR_BYTES, 0)),
             scan_valid.eq(
-                (scan_magic == self.MAGIC) &
-                (scan_version == self.VERSION) &
-                (scan_words == self.state_words) &
+                scan_header_valid &
                 ((scan_crc ^ 0xffffffff) == scan_stored_crc)),
             self.available.eq(self.boot_slot_valid & startup_done),
             self.busy.eq(saving),
@@ -278,7 +252,6 @@ class RezoStateJournal(wiring.Component):
 
         def start_crc(byte_value):
             m.d.comb += crc_r.addr.eq(scan_crc[24:32] ^ byte_value)
-            m.d.sync += crc_shifted.eq(scan_crc << 8)
 
         def finish_scan_byte():
             with m.If(scan_index == self.record_bytes - 1):
@@ -314,9 +287,7 @@ class RezoStateJournal(wiring.Component):
                 m.d.sync += [
                     scan_index.eq(0),
                     scan_crc.eq(0xffffffff),
-                    scan_magic.eq(0),
-                    scan_version.eq(0),
-                    scan_words.eq(0),
+                    scan_header_valid.eq(1),
                     scan_generation.eq(0),
                     scan_stored_crc.eq(0),
                     cs_active.eq(1),
@@ -335,20 +306,17 @@ class RezoStateJournal(wiring.Component):
             with m.State("SCAN-BYTE-WAIT"):
                 with m.If(self.xfer_done):
                     byte = self.xfer_rx[:8]
-                    with m.If(scan_index < 4):
-                        m.d.sync += scan_magic.word_select(scan_index, 8).eq(byte)
-                    with m.Elif(scan_index < 6):
-                        m.d.sync += scan_version.word_select(
-                            (scan_index - 4).as_unsigned(), 8).eq(byte)
-                    with m.Elif(scan_index < 8):
-                        m.d.sync += scan_words.word_select(
-                            (scan_index - 6).as_unsigned(), 8).eq(byte)
+                    with m.If(scan_index < 8):
+                        expected_prefix = self._header_prefix_byte(
+                            scan_index, self.state_words)
+                        with m.If(byte != expected_prefix):
+                            m.d.sync += scan_header_valid.eq(0)
                     with m.Elif(scan_index < 12):
-                        m.d.sync += scan_generation.word_select(
-                            (scan_index - 8).as_unsigned(), 8).eq(byte)
+                        m.d.sync += scan_generation.eq(Cat(
+                            scan_generation[8:], byte))
                     with m.Elif(scan_index < 16):
-                        m.d.sync += scan_stored_crc.word_select(
-                            (scan_index - 12).as_unsigned(), 8).eq(byte)
+                        m.d.sync += scan_stored_crc.eq(Cat(
+                            scan_stored_crc[8:], byte))
                     with m.If((scan_purpose == self.PURPOSE_LOAD) &
                               (scan_index >= self.HEADER_BYTES)):
                         payload_index = scan_index - self.HEADER_BYTES
@@ -365,34 +333,32 @@ class RezoStateJournal(wiring.Component):
                         finish_scan_byte()
 
             with m.State("SCAN-CRC-WAIT"):
-                m.d.sync += scan_crc.eq(crc_shifted ^ crc_r.data)
+                m.d.sync += scan_crc.eq((scan_crc << 8) ^ crc_r.data)
                 finish_scan_byte()
 
             with m.State("SCAN-VALIDATE"):
                 with m.Switch(scan_purpose):
                     with m.Case(self.PURPOSE_BOOT_A):
                         m.d.sync += [
-                            a_valid.eq(scan_valid),
-                            a_generation.eq(scan_generation),
+                            have_active.eq(scan_valid),
+                            active_generation.eq(scan_generation),
                             scan_sector.eq(1),
                             scan_purpose.eq(self.PURPOSE_BOOT_B),
                         ]
                         m.next = "SCAN-BEGIN"
                     with m.Case(self.PURPOSE_BOOT_B):
-                        m.d.sync += [
-                            b_valid.eq(scan_valid),
-                            b_generation.eq(scan_generation),
-                        ]
                         with m.If(scan_valid &
-                                  (~a_valid | (scan_generation > a_generation))):
+                                  (~have_active |
+                                   (scan_generation > active_generation))):
                             m.d.sync += [
                                 active_sector.eq(1),
+                                active_generation.eq(scan_generation),
                                 have_active.eq(1),
                                 scan_sector.eq(1),
                                 scan_purpose.eq(self.PURPOSE_LOAD),
                             ]
                             m.next = "SCAN-BEGIN"
-                        with m.Elif(a_valid):
+                        with m.Elif(have_active):
                             m.d.sync += [
                                 active_sector.eq(0),
                                 have_active.eq(1),
@@ -414,19 +380,9 @@ class RezoStateJournal(wiring.Component):
                             m.next = "IDLE"
                     with m.Case(self.PURPOSE_VERIFY):
                         with m.If(scan_valid &
-                                  (scan_generation == save_generation)):
-                            with m.If(save_sector):
-                                m.d.sync += [
-                                    b_valid.eq(1),
-                                    b_generation.eq(save_generation),
-                                ]
-                            with m.Else():
-                                m.d.sync += [
-                                    a_valid.eq(1),
-                                    a_generation.eq(save_generation),
-                                ]
+                                  (scan_generation == active_generation)):
                             m.d.sync += [
-                                active_sector.eq(save_sector),
+                                active_sector.eq(scan_sector),
                                 have_active.eq(1),
                                 self.save_done.eq(1),
                             ]
@@ -454,26 +410,33 @@ class RezoStateJournal(wiring.Component):
 
             with m.State("IDLE"):
                 with m.If(self.save_request & self.boot_slot_valid & startup_done):
+                    next_generation = Mux(
+                        have_active, active_generation + 1, 1)
                     m.d.sync += [
                         saving.eq(1),
-                        save_sector.eq(Mux(have_active, ~active_sector, 0)),
-                        save_generation.eq(
-                            Mux(have_active,
-                                Mux(active_sector, b_generation, a_generation) + 1,
-                                1)),
+                        scan_sector.eq(Mux(have_active, ~active_sector, 0)),
+                        active_generation.eq(next_generation),
+                        # Reuse the scan register as a byte shifter so header
+                        # serialization does not build two 32-bit byte muxes.
+                        scan_generation.eq(next_generation),
                         save_header_index.eq(0),
                         scan_crc.eq(0xffffffff),
                     ]
                     m.next = "SAVE-HEADER-CRC"
 
             with m.State("SAVE-HEADER-CRC"):
-                header_byte = self._header_byte(
-                    save_header_index, save_generation, self.state_words)
+                header_byte = Mux(
+                    save_header_index < 8,
+                    self._header_prefix_byte(
+                        save_header_index, self.state_words),
+                    scan_generation[:8])
                 start_crc(header_byte)
+                with m.If(save_header_index >= 8):
+                    m.d.sync += scan_generation.eq(scan_generation >> 8)
                 m.next = "SAVE-HEADER-CRC-WAIT"
 
             with m.State("SAVE-HEADER-CRC-WAIT"):
-                m.d.sync += scan_crc.eq(crc_shifted ^ crc_r.data)
+                m.d.sync += scan_crc.eq((scan_crc << 8) ^ crc_r.data)
                 with m.If(save_header_index == 11):
                     m.d.sync += save_word.eq(0)
                     m.next = "SAVE-CAPTURE"
@@ -508,12 +471,12 @@ class RezoStateJournal(wiring.Component):
                 m.next = "SAVE-CRC-PAYLOAD-WAIT"
 
             with m.State("SAVE-CRC-PAYLOAD-WAIT"):
-                crc_next = crc_shifted ^ crc_r.data
+                crc_next = (scan_crc << 8) ^ crc_r.data
                 m.d.sync += scan_crc.eq(crc_next)
                 with m.If(save_byte_phase):
                     with m.If(save_word == self.state_words - 1):
                         m.d.sync += [
-                            save_crc.eq(crc_next ^ 0xffffffff),
+                            scan_stored_crc.eq(crc_next ^ 0xffffffff),
                             cs_active.eq(1),
                         ]
                         start_xfer(0x06, 8, 1)
@@ -536,46 +499,31 @@ class RezoStateJournal(wiring.Component):
 
             with m.State("ERASE-START"):
                 m.d.sync += cs_active.eq(1)
-                start_xfer((0x20 << 24) | save_address, 32, 1)
+                start_xfer((0x20 << 24) | scan_address, 32, 1)
                 m.next = "ERASE-WAIT"
 
             with m.State("ERASE-WAIT"):
                 with m.If(self.xfer_done):
-                    m.d.sync += [
-                        cs_active.eq(0),
-                        poll_after_program.eq(0),
-                    ]
-                    m.next = "POLL-START"
+                    m.d.sync += cs_active.eq(0)
+                    m.next = "ERASE-POLL-START"
 
-            with m.State("POLL-START"):
+            with m.State("ERASE-POLL-START"):
                 m.d.sync += cs_active.eq(1)
                 start_xfer(0x05, 8, 1)
-                m.next = "POLL-CMD-WAIT"
+                m.next = "ERASE-POLL-CMD-WAIT"
 
-            with m.State("POLL-CMD-WAIT"):
+            with m.State("ERASE-POLL-CMD-WAIT"):
                 with m.If(self.xfer_done):
                     start_xfer(0, 8, 0)
-                    m.next = "POLL-DATA-WAIT"
+                    m.next = "ERASE-POLL-DATA-WAIT"
 
-            with m.State("POLL-DATA-WAIT"):
+            with m.State("ERASE-POLL-DATA-WAIT"):
                 with m.If(self.xfer_done):
                     m.d.sync += cs_active.eq(0)
                     with m.If(self.xfer_rx[0]):
-                        m.next = "POLL-START"
-                    with m.Elif(poll_after_program):
-                        with m.If(program_complete):
-                            m.d.sync += [
-                                scan_sector.eq(save_sector),
-                                scan_purpose.eq(self.PURPOSE_VERIFY),
-                            ]
-                            m.next = "SCAN-BEGIN"
-                        with m.Else():
-                            m.next = "PROGRAM-WREN-START"
+                        m.next = "ERASE-POLL-START"
                     with m.Else():
-                        m.d.sync += [
-                            program_index.eq(0),
-                            program_complete.eq(0),
-                        ]
+                        m.d.sync += program_index.eq(0)
                         m.next = "PROGRAM-WREN-START"
 
             with m.State("PROGRAM-WREN-START"):
@@ -590,7 +538,9 @@ class RezoStateJournal(wiring.Component):
 
             with m.State("PROGRAM-CMD-START"):
                 m.d.sync += cs_active.eq(1)
-                start_xfer((0x02 << 24) | (save_address | program_index),
+                with m.If(program_index == 0):
+                    m.d.sync += scan_generation.eq(active_generation)
+                start_xfer((0x02 << 24) | (scan_address | program_index),
                            32, 1)
                 m.next = "PROGRAM-CMD-WAIT"
 
@@ -605,14 +555,23 @@ class RezoStateJournal(wiring.Component):
                 m.next = "PROGRAM-BYTE-START"
 
             with m.State("PROGRAM-BYTE-START"):
-                header_byte = self._header_byte(
-                    program_index, save_generation, self.state_words, save_crc)
                 payload_index = program_index - self.HEADER_BYTES
                 payload_byte = Mux(payload_index[0], state_r.data[8:16],
                                    state_r.data[:8])
-                record_byte = Mux(program_index < self.HEADER_BYTES,
-                                  header_byte, payload_byte)
+                header_byte = Mux(
+                    program_index < 8,
+                    self._header_prefix_byte(program_index, self.state_words),
+                    scan_generation[:8])
+                record_byte = Mux(
+                    program_index < self.HEADER_BYTES,
+                    header_byte, payload_byte)
                 start_xfer(record_byte, 8, 1)
+                with m.If((program_index >= 8) &
+                          (program_index < self.HEADER_BYTES)):
+                    with m.If(program_index == 11):
+                        m.d.sync += scan_generation.eq(scan_stored_crc)
+                    with m.Else():
+                        m.d.sync += scan_generation.eq(scan_generation >> 8)
                 m.next = "PROGRAM-BYTE-WAIT"
 
             with m.State("PROGRAM-BYTE-WAIT"):
@@ -620,16 +579,33 @@ class RezoStateJournal(wiring.Component):
                     end_record = program_index == self.record_bytes - 1
                     end_page = program_index[:8] == 0xff
                     with m.If(end_record | end_page):
-                        m.d.sync += [
-                            cs_active.eq(0),
-                            poll_after_program.eq(1),
-                            program_complete.eq(end_record),
-                        ]
+                        m.d.sync += cs_active.eq(0)
                         with m.If(~end_record):
                             m.d.sync += program_index.eq(program_index + 1)
-                        m.next = "POLL-START"
+                        m.next = "PROGRAM-POLL-START"
                     with m.Else():
                         m.d.sync += program_index.eq(program_index + 1)
                         m.next = "PROGRAM-BYTE-PREP"
+
+            with m.State("PROGRAM-POLL-START"):
+                m.d.sync += cs_active.eq(1)
+                start_xfer(0x05, 8, 1)
+                m.next = "PROGRAM-POLL-CMD-WAIT"
+
+            with m.State("PROGRAM-POLL-CMD-WAIT"):
+                with m.If(self.xfer_done):
+                    start_xfer(0, 8, 0)
+                    m.next = "PROGRAM-POLL-DATA-WAIT"
+
+            with m.State("PROGRAM-POLL-DATA-WAIT"):
+                with m.If(self.xfer_done):
+                    m.d.sync += cs_active.eq(0)
+                    with m.If(self.xfer_rx[0]):
+                        m.next = "PROGRAM-POLL-START"
+                    with m.Elif(program_index == self.record_bytes - 1):
+                        m.d.sync += scan_purpose.eq(self.PURPOSE_VERIFY)
+                        m.next = "SCAN-BEGIN"
+                    with m.Else():
+                        m.next = "PROGRAM-WREN-START"
 
         return m

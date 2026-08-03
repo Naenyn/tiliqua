@@ -29,6 +29,33 @@ vector atomically, reuse a multiplier where practical, and retain separate base
 and effective values for UI modulation shading. This avoids ten parallel copies
 of every new transform and keeps most future work out of the audio-rate FSM.
 
+## Capacity checkpoint after the 2026-08-03 optimization pass
+
+The current feature-free optimized design leaves 1,082 packed cells free and
+passes every clock from the exact same synthesized netlist at placement seeds
+8, 4, and 2. This is 578 cells more headroom than the preceding one-click-save
+build, but it is the lower edge of the intended 1,000-1,500-cell feature budget,
+not room to accumulate several roadmap items at once.
+
+- Additional factory preset shapes remain the safest near-zero-DSP addition.
+  Their UI and selection decode still need a measured build.
+- One small control-rate feature such as randomize, tilt, or rotate is a
+  reasonable isolated experiment once it uses shared sequential machinery.
+- A basic forward-only shift register is now a reasonable next prototype:
+  one clock input, one CV source, threshold plus hysteresis, and atomic
+  publication of all ten values. Reverse, ping-pong, random, reset, and a
+  general clock page should remain separate follow-ups.
+- Building the complete general transformation engine, feature-rich clock UI,
+  and persistence expansion in one step is still too risky at 95% packed-cell
+  use. Add the engine and minimal shift operation incrementally, synthesize
+  each boundary, and retain at least one known passing placement seed.
+- Do not spend the newly recovered room on unrelated UI ornamentation before
+  the clocked-mode prototype is placed and routed.
+
+No roadmap feature was added during this optimization-only checkpoint. The
+figures above describe measured headroom before feature implementation, not a
+resource estimate for unbuilt features.
+
 ## Ranked feature list
 
 ### 1. Preset shapes — very low complexity
