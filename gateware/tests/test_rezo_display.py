@@ -131,3 +131,36 @@ def test_tile_display_drive_modulation_shading_in_both_modes():
         palette["modulation"],
         palette["line"],
     ]
+
+
+def test_tile_display_palette_maps_semantic_roles_to_rgb():
+    """Changing themes recolors roles without changing their geometry."""
+    dut = RezoTileDisplay(h_active=1280)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6, domain="sync")
+    sim.add_clock(1e-6, domain="dvi")
+    samples = []
+
+    async def sample(ctx, panel_x, panel_y):
+        ctx.set(dut.x, dut.x_offset + panel_x)
+        ctx.set(dut.y, panel_y)
+        ctx.set(dut.de, 1)
+        for _ in range(8):
+            await ctx.tick("dvi")
+        samples.append((ctx.get(dut.r), ctx.get(dut.g), ctx.get(dut.b)))
+
+    async def bench(ctx):
+        # The first illuminated pixel of the R in REZO has the text role.
+        for palette_id in range(len(dut.RGB_PALETTES)):
+            ctx.set(dut.palette, palette_id)
+            await sample(ctx, 32, 48)
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    expected = []
+    text_role = dut.PALETTE_ROLES.index("text")
+    for theme in dut.RGB_PALETTES:
+        rgb = theme[text_role]
+        expected.append(((rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff))
+    assert samples == expected

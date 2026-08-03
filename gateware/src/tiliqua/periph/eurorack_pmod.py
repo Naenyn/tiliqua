@@ -26,6 +26,23 @@ from . import i2c
 
 R35_OUTPUT_ALWAYS_MUTE = os.getenv('R35_OUTPUT_ALWAYS_MUTE', '0')
 
+
+def _crc32_bzip2(data):
+    """Return the CRC used by ``EepromManager``'s postcard records."""
+    crc = 0xffffffff
+    for byte in data:
+        crc ^= byte << 24
+        for _ in range(8):
+            crc = ((crc << 1) ^ (0x04c11db7 if crc & 0x80000000 else 0)) & 0xffffffff
+    return crc ^ 0xffffffff
+
+
+def _boot_slot_record(slot):
+    # postcard encodes Some(u8) as the option tag followed by the byte. Its CRC
+    # flavor appends the configured CRC little-endian.
+    payload = bytes((1, slot))
+    return payload + _crc32_bzip2(payload).to_bytes(4, "little")
+
 class I2SSignature(wiring.Signature):
     """
     Standard I2S inter-chip audio bus.
@@ -445,6 +462,15 @@ class I2CMaster(wiring.Component):
     AK4619VN_ADDR       = 0x10
     CY8CMBR3108_ADDR    = 0x37
     EEPROM_24AA025_ADDR = 0x52
+    # 0x00..0x3f contains calibration. The 24AA025UID's upper half
+    # (0x80..0xff) is hardware write-protected on the audio board, so reserve
+    # byte immediately after a 32-byte lower-half boot-config allocation for
+    # one tiny no-SoC preference. eeprominfo.rs limits boot config to
+    # 0x40..0x5f. The sparse 0x60 constant also synthesizes materially smaller
+    # than dense addresses in this shared state-machine mux.
+    EEPROM_USER_BYTE_ADDR = 0x60
+    EEPROM_BOOT_CONFIG_ADDR = 0x40
+    N_BOOT_SLOTS = 8
 
     N_JACKS   = 8
     N_LEDS    = N_JACKS * 2
@@ -506,9 +532,14 @@ class I2CMaster(wiring.Component):
         0xFF, # LEDOUT3
     ]
 
-    def __init__(self, audio_192):
-        self.i2c_stream   = i2c.I2CStreamer(period_cyc=256) # 200kHz-ish at 60MHz sync
+    def __init__(self, audio_192, with_user_nvm=False, with_boot_slot=False,
+                 i2c_period_cyc=256):
+        # Default is 200kHz-ish at 60MHz sync. The period is injectable so
+        # protocol-level simulation can run the complete startup sequence.
+        self.i2c_stream   = i2c.I2CStreamer(period_cyc=i2c_period_cyc)
         self.audio_192    = audio_192
+        self.with_user_nvm = with_user_nvm
+        self.with_boot_slot = with_boot_slot or with_user_nvm
         self.ak4619vn_cfg = self.AK4619VN_CFG_192KHZ if audio_192 else self.AK4619VN_CFG_48KHZ
         super().__init__({
             "pins":           Out(vendor_i2c.I2CPinSignature()),
@@ -524,6 +555,18 @@ class I2CMaster(wiring.Component):
             "codec_mute":     In(1, init=1),
             # I2C override from SoC, not used unless written to.
             "i2c_override":  In(i2c.I2CStreamerControl()),
+            # One persistent application byte for lean/no-SoC bitstreams.
+            "nvm_value":         Out(unsigned(8)),
+            "nvm_valid":         Out(1),
+            "nvm_write_value":   In(unsigned(8)),
+            "nvm_write_request": In(1),
+            "nvm_write_done":    Out(1),
+            # Validated slot selected by the bootloader immediately before it
+            # handed control to this bitstream. Never use boot_slot unless
+            # boot_slot_valid is asserted.
+            "boot_slot":         Out(unsigned(3)),
+            "boot_slot_valid":   Out(1),
+            "boot_slot_checked": Out(1),
         })
 
     def elaborate(self, platform):
@@ -534,6 +577,7 @@ class I2CMaster(wiring.Component):
         wiring.connect(m, wiring.flipped(self.pins), self.i2c_stream.pins)
         l_i2c_address = Signal.like(i2c.address)
         m.d.comb += i2c.address.eq(l_i2c_address)
+        m.d.sync += self.nvm_write_done.eq(0)
 
         def state_id(ix):
             return (f"i2c_state{ix}", f"i2c_state{ix+1}", ix+1)
@@ -706,6 +750,65 @@ class I2CMaster(wiring.Component):
             _,   _,   ix  = i2c_w_arr(m, ix, self.PCA9635_CFG)
             _,   _,   ix  = i2c_wait (m, ix)
 
+            if self.with_user_nvm:
+                # Read the persistent user byte once at startup. An erased
+                # EEPROM returns 0xff; the consumer validates its value range.
+                _,   _,   ix = i2c_addr(m, ix, self.EEPROM_24AA025_ADDR)
+                # Keep the address write and data read in one transaction,
+                # matching EepromDriver::read_bytes_bounded(). The streamer
+                # inserts the required repeated START when rw changes.
+                _,   _,   ix = i2c_write(
+                    m, ix, self.EEPROM_USER_BYTE_ADDR, last=False)
+                _,   _,   ix = i2c_read(m, ix, last=True)
+                _, read_user_byte, ix = i2c_wait(m, ix)
+                with m.State(read_user_byte):
+                    with m.If(~i2c.status.error):
+                        m.d.sync += [
+                            self.nvm_value.eq(i2c.o.payload),
+                            self.nvm_valid.eq(1),
+                        ]
+                        m.d.comb += i2c.o.ready.eq(1)
+                    m.next = f"i2c_state{ix + 1}"
+                ix += 1
+
+            if self.with_boot_slot:
+                # Read and validate the bootloader's postcard+CRC record. The
+                # complete six-byte Some(u8) encoding is compared against the
+                # eight legal records, so a damaged EEPROM value can never
+                # redirect a lean bitstream into another slot's flash window.
+                _,   _,   ix = i2c_addr(m, ix, self.EEPROM_24AA025_ADDR)
+                _,   _,   ix = i2c_write(
+                    m, ix, self.EEPROM_BOOT_CONFIG_ADDR, last=False)
+                for n in range(6):
+                    _, _, ix = i2c_read(m, ix, last=(n == 5))
+                _, boot_read_begin, ix = i2c_wait(m, ix)
+                boot_record = [Signal(unsigned(8), name=f"boot_record{n}")
+                               for n in range(6)]
+                next_state = boot_read_begin
+                for n in range(6):
+                    cur = next_state
+                    next_state = f"i2c_state{ix + 1}"
+                    with m.State(cur):
+                        with m.If(i2c.o.valid):
+                            m.d.sync += boot_record[n].eq(i2c.o.payload)
+                            m.d.comb += i2c.o.ready.eq(1)
+                            m.next = next_state
+                    ix += 1
+                with m.State(next_state):
+                    record_value = Cat(*boot_record)
+                    with m.Switch(record_value):
+                        for slot in range(self.N_BOOT_SLOTS):
+                            expected = int.from_bytes(
+                                _boot_slot_record(slot), "little")
+                            with m.Case(expected):
+                                m.d.sync += [
+                                    self.boot_slot.eq(slot),
+                                    self.boot_slot_valid.eq(1),
+                                ]
+                    m.d.sync += self.boot_slot_checked.eq(1)
+                    m.next = f"i2c_state{ix + 1}"
+                ix += 1
+
             #
             # BEGIN MAIN LOOP
             #
@@ -778,12 +881,59 @@ class I2CMaster(wiring.Component):
                         m.d.sync += mute_count.eq(mute_count+1)
                 with m.Else():
                     m.d.sync += mute_count.eq(0)
-                with m.If(self.i2c_override.i.valid):
-                    # Pending transaction from SoC?
-                    m.next = "I2C-OVERRIDE"
-                with m.Else():
-                    # Go back to LED brightness update
-                    m.next = s_loop_begin
+                if self.with_user_nvm:
+                    with m.If(self.nvm_write_request):
+                        m.next = "NVM-WRITE-BEGIN"
+                    with m.Elif(self.i2c_override.i.valid):
+                        # Pending transaction from SoC?
+                        m.next = "I2C-OVERRIDE"
+                    with m.Else():
+                        # Go back to LED brightness update
+                        m.next = s_loop_begin
+                else:
+                    with m.If(self.i2c_override.i.valid):
+                        # Pending transaction from SoC?
+                        m.next = "I2C-OVERRIDE"
+                    with m.Else():
+                        # Go back to LED brightness update
+                        m.next = s_loop_begin
+
+            if self.with_user_nvm:
+                # Write the persistent user byte. The request remains asserted
+                # until done, so it cannot be missed by the polling loop.
+                # A NACK is retried instead of being incorrectly reported as
+                # success. The top-level 100 ms coalescing interval is much
+                # longer than the EEPROM's 5 ms self-programming cycle, so a
+                # separate wide commit-delay counter is unnecessary.
+                with m.State("NVM-WRITE-BEGIN"):
+                    m.d.sync += l_i2c_address.eq(self.EEPROM_24AA025_ADDR)
+                    m.next = "NVM-WRITE-ADDR"
+
+                with m.State("NVM-WRITE-ADDR"):
+                    m.d.comb += [
+                        i2c.i.valid.eq(1),
+                        i2c.i.payload.rw.eq(0),
+                        i2c.i.payload.data.eq(self.EEPROM_USER_BYTE_ADDR),
+                        i2c.i.payload.last.eq(0),
+                    ]
+                    m.next = "NVM-WRITE-VALUE"
+
+                with m.State("NVM-WRITE-VALUE"):
+                    m.d.comb += [
+                        i2c.i.valid.eq(1),
+                        i2c.i.payload.rw.eq(0),
+                        i2c.i.payload.data.eq(self.nvm_write_value),
+                        i2c.i.payload.last.eq(1),
+                    ]
+                    m.next = "NVM-WRITE-WAIT"
+
+                with m.State("NVM-WRITE-WAIT"):
+                    with m.If(~i2c.status.busy):
+                        with m.If(i2c.status.error):
+                            m.next = "NVM-WRITE-BEGIN"
+                        with m.Else():
+                            m.d.sync += self.nvm_write_done.eq(1)
+                            m.next = s_loop_begin
 
             #
             # I2C OVERRIDE
@@ -828,6 +978,16 @@ class EurorackPmod(wiring.Component):
     codec_mute: In(1) # Hold at 1 to soft mute CODEC
     hard_reset: In(1) # Strobe a 1 to hard reset the CODEC (pops!)
 
+    # One EEPROM-backed application byte for no-SoC preferences.
+    nvm_value:         Out(unsigned(8))
+    nvm_valid:         Out(1)
+    nvm_write_value:   In(unsigned(8))
+    nvm_write_request: In(1)
+    nvm_write_done:    Out(1)
+    boot_slot:         Out(unsigned(3))
+    boot_slot_valid:   Out(1)
+    boot_slot_checked: Out(1)
+
     # Indicates audio MCLK is changing, we should be held in reset
     aclk_unstable: In(1, reset=0)
 
@@ -836,10 +996,13 @@ class EurorackPmod(wiring.Component):
     # If an LED is in manual, this is signed i8 from -green to +red.
     led: In(8).array(8)
 
-    def __init__(self, audio_clock):
+    def __init__(self, audio_clock, with_user_nvm=False,
+                 with_boot_slot=False):
         is_192 = audio_clock.is_192khz()
         self.i2stdm = I2STDM(audio_192=is_192)
-        self.i2c_master = I2CMaster(audio_192=is_192)
+        self.i2c_master = I2CMaster(
+            audio_192=is_192, with_user_nvm=with_user_nvm,
+            with_boot_slot=with_boot_slot)
         self.calibrator = I2SCalibrator()
         super().__init__()
 
@@ -883,6 +1046,14 @@ class EurorackPmod(wiring.Component):
             self.touch_err.eq(i2c_master.touch_err),
             # Hook up coded mute control
             i2c_master.codec_mute.eq(self.codec_mute),
+            self.nvm_value.eq(i2c_master.nvm_value),
+            self.nvm_valid.eq(i2c_master.nvm_valid),
+            i2c_master.nvm_write_value.eq(self.nvm_write_value),
+            i2c_master.nvm_write_request.eq(self.nvm_write_request),
+            self.nvm_write_done.eq(i2c_master.nvm_write_done),
+            self.boot_slot.eq(i2c_master.boot_slot),
+            self.boot_slot_valid.eq(i2c_master.boot_slot_valid),
+            self.boot_slot_checked.eq(i2c_master.boot_slot_checked),
         ]
 
         #

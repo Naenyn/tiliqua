@@ -7,7 +7,10 @@ use serde;
 const EEPROM_CALIBRATION_ADDR: u8 = 0x00;
 const EEPROM_CALIBRATION_SIZE: usize = 0x40;
 const EEPROM_CONFIG_ADDR: u8 = 0x40;
-const EEPROM_CONFIG_SIZE: usize = 0x40;
+// Keep 0x60 available to lean/no-SoC bitstreams. The 24AA025UID upper half
+// is hardware write-protected, and the serialized boot config is currently
+// only a few bytes long, so 32 bytes remains ample expansion room.
+const EEPROM_CONFIG_SIZE: usize = 0x20;
 const CRC_ALGORITHM: Crc<u32> = Crc::<u32>::new(&CRC_32_BZIP2);
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]

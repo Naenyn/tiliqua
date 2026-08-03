@@ -42,6 +42,7 @@ from amaranth.lib.cdc import FFSynchronizer
 from amaranth.lib.memory import Memory
 from amaranth.lib.wiring import In, Out, connect, flipped
 from amaranth_soc import csr
+from luna_soc.gateware.core import spiflash
 
 from amaranth_future import fixed
 
@@ -54,6 +55,10 @@ from tiliqua.periph import encoder, eurorack_pmod
 from tiliqua.platform import RebootProvider
 from tiliqua.tiliqua_soc import TiliquaSoc
 from tiliqua.video import dvi
+try:
+    from .persistence import RezoStateJournal, SPIFlashTransfer
+except ImportError:  # top_level_cli executes this file directly.
+    from persistence import RezoStateJournal, SPIFlashTransfer
 
 
 class RezoCore(wiring.Component):
@@ -1281,6 +1286,7 @@ class RezoSoc(TiliquaSoc):
         wiring.connect(m, pmod0.o_cal, rezo.i)
         m.submodules.audio_out_fifo = audio_out_fifo = dsp.SyncFIFOBuffered(
             shape=data.ArrayLayout(ASQ, 4), depth=4)
+
         wiring.connect(m, rezo.o, audio_out_fifo.i)
         wiring.connect(m, audio_out_fifo.o, pmod0.i_cal)
 
@@ -1314,13 +1320,46 @@ class RezoHardwareUI(wiring.Component):
     TARGET_FILTER_WIDTH = RezoCore.N_BANDS + 54
     TARGET_FILTER_CV_BASE = RezoCore.N_BANDS + 55
     TARGET_FEEDBACK_SEND_BASE = RezoCore.N_BANDS + 70
-    N_TARGETS = RezoCore.N_BANDS + 80
+    TARGET_PALETTE = RezoCore.N_BANDS + 80
+    TARGET_SAVE_DEFAULT = RezoCore.N_BANDS + 81
+    N_TARGETS = RezoCore.N_BANDS + 82
+
+    # Stable, versioned packed state layout. Continuous controls edited in
+    # 1/256 steps store their significant high byte; input gains retain all
+    # 16 bits because their exact unity point is 0xCCCC. Matrix/routing fields
+    # are bit-packed at their native widths. V1 therefore uses only 42 of the
+    # reserved 1024 words and restores every user-visible setting exactly.
+    STATE_LEVELS_BASE = 0       # 5 words: ten signed high bytes
+    STATE_DRIVES = 5            # bank, filter high bytes
+    STATE_RESONANCE_FEEDBACK = 6
+    STATE_CUTOFF_SLOPE = 7
+    STATE_WIDTH_KNEE = 8
+    STATE_CAP_FLAGS = 9         # cap high byte + damp/mode/type
+    STATE_FILTER_CV_BASE = 10   # 8 words: fifteen signed bytes
+    STATE_INPUT_GAIN_BASE = 18  # 4 full-width words
+    STATE_CV_DEPTH_BASE = 22    # 2 words: four signed high bytes
+    STATE_INPUT_CONFIG = 24     # four modes + four 3-bit targets
+    STATE_BANK_GROUP_BASE = 25  # 3 words: ten 4-bit indices
+    STATE_FEEDBACK_PRESET = 28  # ten sends + preset + palette
+    STATE_OUTPUT_BASE = 29      # 13 words: forty 5-bit sends
+    STATE_WORDS_V1 = 42
+    STATE_CAPACITY_WORDS = 1024
 
     def __init__(self):
         super().__init__({
             "enc_i": In(1),
             "enc_q": In(1),
             "button": In(1),
+            "state_read_data": Out(unsigned(16)),
+            "state_write_data": In(unsigned(16)),
+            "state_shift_enable": In(1),
+            "state_shift_load": In(1),
+            "save_default_request": Out(1),
+            "save_default_available": In(1),
+            "save_default_busy": In(1),
+            "save_default_done": In(1),
+            "save_default_error": In(1),
+            "save_default_status": Out(unsigned(2)),
             "levels": Out(data.ArrayLayout(signed(16), RezoCore.N_BANDS)),
             "drive": Out(unsigned(16)),
             "resonance": Out(unsigned(16)),
@@ -1345,6 +1384,7 @@ class RezoHardwareUI(wiring.Component):
             "selected": Out(unsigned(7)),
             "page": Out(unsigned(3)),
             "preset": Out(unsigned(3)),
+            "palette": Out(unsigned(3)),
             "editing": Out(1),
         })
 
@@ -1371,25 +1411,26 @@ class RezoHardwareUI(wiring.Component):
 
     @staticmethod
     def apply_preset(m, preset, levels):
+        preset_level = RezoHardwareUI.PRESET_LEVEL >> 8
         with m.Switch(preset):
             with m.Case(0):  # all bands
                 for level in levels:
-                    m.d.sync += level.eq(RezoHardwareUI.PRESET_LEVEL)
+                    m.d.sync += level.eq(preset_level)
             with m.Case(1):  # odd bands
                 for n, level in enumerate(levels):
-                    m.d.sync += level.eq(RezoHardwareUI.PRESET_LEVEL if n & 1 else 0)
+                    m.d.sync += level.eq(preset_level if n & 1 else 0)
             with m.Case(2):  # even bands
                 for n, level in enumerate(levels):
-                    m.d.sync += level.eq(0 if n & 1 else RezoHardwareUI.PRESET_LEVEL)
+                    m.d.sync += level.eq(0 if n & 1 else preset_level)
             with m.Case(3):  # lows
                 for n, level in enumerate(levels):
-                    m.d.sync += level.eq(RezoHardwareUI.PRESET_LEVEL if n < 4 else 0)
+                    m.d.sync += level.eq(preset_level if n < 4 else 0)
             with m.Case(4):  # mids
                 for n, level in enumerate(levels):
-                    m.d.sync += level.eq(RezoHardwareUI.PRESET_LEVEL if 3 <= n <= 6 else 0)
+                    m.d.sync += level.eq(preset_level if 3 <= n <= 6 else 0)
             with m.Case(5):  # highs
                 for n, level in enumerate(levels):
-                    m.d.sync += level.eq(RezoHardwareUI.PRESET_LEVEL if n >= 6 else 0)
+                    m.d.sync += level.eq(preset_level if n >= 6 else 0)
             with m.Case(6):  # zero
                 for level in levels:
                     m.d.sync += level.eq(0)
@@ -1397,23 +1438,28 @@ class RezoHardwareUI(wiring.Component):
     def elaborate(self, platform):
         m = Module()
 
-        levels = [Signal(signed(16), init=self.PRESET_LEVEL, name=f"ui_level{n}")
+        # Encoder-edited controls move on 1/256 boundaries. Retaining their
+        # coarse positions directly halves comparator/add widths and removes
+        # 152 inactive low-byte registers. Outputs expand back to the original
+        # 16-bit values, including the asymmetric positive endpoints.
+        levels = [Signal(signed(8), init=self.PRESET_LEVEL >> 8,
+                         name=f"ui_level{n}")
                   for n in range(RezoCore.N_BANDS)]
-        bank_drive = Signal(unsigned(16), init=RezoCore.DRIVE_DEFAULT)
-        filter_drive = Signal(unsigned(16), init=RezoCore.DRIVE_DEFAULT)
+        bank_drive = Signal(unsigned(8), init=RezoCore.DRIVE_DEFAULT >> 8)
+        filter_drive = Signal(unsigned(8), init=RezoCore.DRIVE_DEFAULT >> 8)
         drive = Signal(unsigned(16))
-        resonance = Signal(unsigned(16), init=8192)
-        feedback = Signal(unsigned(16), init=0)
+        resonance = Signal(unsigned(8), init=8192 >> 8)
+        feedback = Signal(unsigned(8), init=0)
         filter_mode = Signal(init=0)
         filter_type = Signal(unsigned(2), init=RezoCore.FILTER_LP)
-        filter_cutoff = Signal(unsigned(16), init=16384)
-        filter_slope = Signal(unsigned(16), init=16384)
-        filter_width = Signal(unsigned(16), init=12288)
+        filter_cutoff = Signal(unsigned(8), init=16384 >> 8)
+        filter_slope = Signal(unsigned(8), init=16384 >> 8)
+        filter_width = Signal(unsigned(8), init=12288 >> 8)
         filter_cv_matrix = [Signal(signed(8), init=0,
                                    name=f"ui_filter_cv_matrix{n}")
                             for n in range(15)]
-        limit_knee = Signal(unsigned(16), init=8192)
-        limit_cap = Signal(unsigned(16), init=28672)
+        limit_knee = Signal(unsigned(8), init=8192 >> 8)
+        limit_cap = Signal(unsigned(8), init=28672 >> 8)
         damp_mode = Signal(unsigned(3), init=3)
         input_gains = [Signal(unsigned(16), init=self.INPUT_UNITY_POS if n == 0 else 0,
                               name=f"ui_input_gain{n}")
@@ -1466,10 +1512,16 @@ class RezoHardwareUI(wiring.Component):
         for n in range(20):
             m.d.comb += output_sends[n].eq(
                 Mux(filter_mode, filter_output_sends[n], bank_output_sends[n]))
-        m.d.comb += drive.eq(Mux(filter_mode, filter_drive, bank_drive))
+        drive_position = Signal(unsigned(8))
+        m.d.comb += [
+            drive_position.eq(Mux(filter_mode, filter_drive, bank_drive)),
+            drive.eq(Mux(drive_position == 96, RezoCore.DRIVE_MAX,
+                         drive_position << 8)),
+        ]
         selected = Signal(range(self.N_TARGETS), init=self.TARGET_PAGE)
         page = Signal(unsigned(3), init=0)
         preset = Signal(range(7), init=0)
+        palette = Signal(range(5), init=0)
         next_preset = Signal(range(7))
         next_selected = Signal(range(self.N_TARGETS))
         bank_target_visible = Signal()
@@ -1482,6 +1534,7 @@ class RezoHardwareUI(wiring.Component):
         output_dry_target = Signal()
         filter_target_visible = Signal()
         filter_cv_target_visible = Signal()
+        advanced_target_visible = Signal()
         editing = Signal()
 
         iq_sync = Signal(2)
@@ -1520,8 +1573,18 @@ class RezoHardwareUI(wiring.Component):
 
         m.d.sync += [
             edit_step.eq(0),
+            self.save_default_request.eq(0),
             iq_prev.eq(iq_sync),
         ]
+        # Keep the last explicit-save result visible. The journal's done and
+        # error outputs are intentionally single-cycle pulses, much too short
+        # for either the 15 Hz text refresh or a person to observe directly.
+        with m.If(self.save_default_busy):
+            m.d.sync += self.save_default_status.eq(1)  # SAVING
+        with m.Elif(self.save_default_done):
+            m.d.sync += self.save_default_status.eq(2)  # SAVED
+        with m.Elif(self.save_default_error):
+            m.d.sync += self.save_default_status.eq(3)  # ERROR
         with m.If(detent_timer != (1 << 23) - 1):
             m.d.sync += detent_timer.eq(detent_timer + 1)
         with m.If(iq_sync != iq_prev):
@@ -1620,6 +1683,10 @@ class RezoHardwareUI(wiring.Component):
                 (selected == self.TARGET_PAGE) |
                 ((selected >= self.TARGET_FILTER_CV_BASE) &
                  (selected < self.TARGET_FILTER_CV_BASE + 15))),
+            advanced_target_visible.eq(
+                (selected == self.TARGET_PAGE) |
+                (selected == self.TARGET_PALETTE) |
+                (selected == self.TARGET_SAVE_DEFAULT)),
             next_selected.eq(selected),
         ]
         with m.If(page == 0):
@@ -1830,6 +1897,23 @@ class RezoHardwareUI(wiring.Component):
                     m.d.comb += next_selected.eq(selected - 2)
                 with m.Else():
                     m.d.comb += next_selected.eq(selected - 1)
+        with m.Elif(page == 5):
+            with m.If(edit_direction):
+                with m.If(~advanced_target_visible |
+                          (selected == self.TARGET_PAGE)):
+                    m.d.comb += next_selected.eq(self.TARGET_PALETTE)
+                with m.Elif(selected == self.TARGET_PALETTE):
+                    m.d.comb += next_selected.eq(self.TARGET_SAVE_DEFAULT)
+                with m.Else():
+                    m.d.comb += next_selected.eq(self.TARGET_PAGE)
+            with m.Else():
+                with m.If(~advanced_target_visible |
+                          (selected == self.TARGET_PAGE)):
+                    m.d.comb += next_selected.eq(self.TARGET_SAVE_DEFAULT)
+                with m.Elif(selected == self.TARGET_SAVE_DEFAULT):
+                    m.d.comb += next_selected.eq(self.TARGET_PALETTE)
+                with m.Else():
+                    m.d.comb += next_selected.eq(self.TARGET_PAGE)
         with m.Else():
             m.d.comb += next_selected.eq(self.TARGET_PAGE)
         with m.If(click):
@@ -1838,6 +1922,12 @@ class RezoHardwareUI(wiring.Component):
                     selected - self.TARGET_FEEDBACK_SEND_BASE]
                 m.d.sync += feedback_send.eq(~feedback_send)
                 m.d.sync += editing.eq(0)
+            with m.Elif(selected == self.TARGET_SAVE_DEFAULT):
+                # Saving is an explicit one-click action, matching Tiliqua's
+                # other bitstreams. Musical state is never auto-saved.
+                with m.If(self.save_default_available &
+                          ~self.save_default_busy):
+                    m.d.sync += self.save_default_request.eq(1)
             with m.Elif(editing):
                 with m.If(selected == self.TARGET_PRESET):
                     self.apply_preset(m, preset, levels)
@@ -1848,7 +1938,7 @@ class RezoHardwareUI(wiring.Component):
         # One detent changes a continuous control by 1/128 of its nominal
         # unipolar span (and 1/128 of a band's bipolar span).  The DSP and CV
         # paths retain their full underlying 16-bit precision.
-        step_amount = 256
+        step_amount = 1
         with m.If(edit_step):
             with m.If(~editing):
                 m.d.sync += selected.eq(next_selected)
@@ -1876,6 +1966,11 @@ class RezoHardwareUI(wiring.Component):
                             with m.Default(): m.d.sync += page.eq(0)
                 with m.Elif(selected == self.TARGET_MODE):
                     m.d.sync += filter_mode.eq(~filter_mode)
+                with m.Elif(selected == self.TARGET_PALETTE):
+                    with m.If(edit_direction):
+                        m.d.sync += palette.eq(Mux(palette == 4, 0, palette + 1))
+                    with m.Else():
+                        m.d.sync += palette.eq(Mux(palette == 0, 4, palette - 1))
                 with m.Elif(selected == self.TARGET_FILTER_TYPE):
                     with m.If(edit_direction):
                         m.d.sync += filter_type.eq(filter_type + 1)
@@ -1883,19 +1978,19 @@ class RezoHardwareUI(wiring.Component):
                         m.d.sync += filter_type.eq(filter_type - 1)
                 with m.Elif(selected == self.TARGET_FILTER_CUTOFF):
                     with m.If(edit_direction):
-                        self.clamp_add(m, filter_cutoff, step_amount, 0, 32768)
+                        self.clamp_add(m, filter_cutoff, step_amount, 0, 128)
                     with m.Else():
-                        self.clamp_add(m, filter_cutoff, -step_amount, 0, 32768)
+                        self.clamp_add(m, filter_cutoff, -step_amount, 0, 128)
                 with m.Elif(selected == self.TARGET_FILTER_SLOPE):
                     with m.If(edit_direction):
-                        self.clamp_add(m, filter_slope, step_amount, 0, 32768)
+                        self.clamp_add(m, filter_slope, step_amount, 0, 128)
                     with m.Else():
-                        self.clamp_add(m, filter_slope, -step_amount, 0, 32768)
+                        self.clamp_add(m, filter_slope, -step_amount, 0, 128)
                 with m.Elif(selected == self.TARGET_FILTER_WIDTH):
                     with m.If(edit_direction):
-                        self.clamp_add(m, filter_width, step_amount, 0, 32768)
+                        self.clamp_add(m, filter_width, step_amount, 0, 128)
                     with m.Else():
-                        self.clamp_add(m, filter_width, -step_amount, 0, 32768)
+                        self.clamp_add(m, filter_width, -step_amount, 0, 128)
                 with m.Elif((selected >= self.TARGET_FILTER_CV_BASE) &
                             (selected < self.TARGET_FILTER_CV_BASE + 15)):
                     matrix_value = Array(filter_cv_matrix)[
@@ -1922,39 +2017,39 @@ class RezoHardwareUI(wiring.Component):
                             self.clamp_add(m, bank_send, -1, 0, 16)
                 with m.Elif(selected == self.TARGET_RESONANCE):
                     with m.If(edit_direction):
-                        self.clamp_add(m, resonance, step_amount, 0, 32768)
+                        self.clamp_add(m, resonance, step_amount, 0, 128)
                     with m.Else():
-                        self.clamp_add(m, resonance, -step_amount, 0, 32768)
+                        self.clamp_add(m, resonance, -step_amount, 0, 128)
                 with m.Elif(selected == self.TARGET_DRIVE):
                     with m.If(filter_mode):
                         with m.If(edit_direction):
                             self.clamp_add(m, filter_drive, step_amount, 0,
-                                           RezoCore.DRIVE_MAX)
+                                           96)
                         with m.Else():
                             self.clamp_add(m, filter_drive, -step_amount, 0,
-                                           RezoCore.DRIVE_MAX)
+                                           96)
                     with m.Else():
                         with m.If(edit_direction):
                             self.clamp_add(m, bank_drive, step_amount, 0,
-                                           RezoCore.DRIVE_MAX)
+                                           96)
                         with m.Else():
                             self.clamp_add(m, bank_drive, -step_amount, 0,
-                                           RezoCore.DRIVE_MAX)
+                                           96)
                 with m.Elif(selected == self.TARGET_FEEDBACK):
                     with m.If(edit_direction):
-                        self.clamp_add(m, feedback, step_amount, 0, 32768)
+                        self.clamp_add(m, feedback, step_amount, 0, 128)
                     with m.Else():
-                        self.clamp_add(m, feedback, -step_amount, 0, 32768)
+                        self.clamp_add(m, feedback, -step_amount, 0, 128)
                 with m.Elif(selected == self.TARGET_LIMIT_KNEE):
                     with m.If(edit_direction):
-                        self.clamp_add(m, limit_knee, step_amount, 4096, 32768)
+                        self.clamp_add(m, limit_knee, step_amount, 16, 128)
                     with m.Else():
-                        self.clamp_add(m, limit_knee, -step_amount, 4096, 32768)
+                        self.clamp_add(m, limit_knee, -step_amount, 16, 128)
                 with m.Elif(selected == self.TARGET_LIMIT_CAP):
                     with m.If(edit_direction):
-                        self.clamp_add(m, limit_cap, step_amount, 4096, 32768)
+                        self.clamp_add(m, limit_cap, step_amount, 16, 128)
                     with m.Else():
-                        self.clamp_add(m, limit_cap, -step_amount, 4096, 32768)
+                        self.clamp_add(m, limit_cap, -step_amount, 16, 128)
                 with m.Elif(selected == self.TARGET_DAMP):
                     with m.If(edit_direction):
                         self.clamp_add(m, damp_mode, 1, 0, 4)
@@ -1966,9 +2061,9 @@ class RezoHardwareUI(wiring.Component):
                     with m.Elif(selected == self.TARGET_INPUT_BASE + n * 3 + 1):
                         with m.If(input_modes[n] == RezoCore.INPUT_MODE_AUDIO):
                             with m.If(edit_direction):
-                                self.clamp_add(m, input_gains[n], step_amount, 0, self.INPUT_MAX)
+                                self.clamp_add(m, input_gains[n], 256, 0, self.INPUT_MAX)
                             with m.Else():
-                                self.clamp_add(m, input_gains[n], -step_amount, 0, self.INPUT_MAX)
+                                self.clamp_add(m, input_gains[n], -256, 0, self.INPUT_MAX)
                         with m.Else():
                             with m.If(edit_direction):
                                 m.d.sync += cv_targets[n].eq(Mux(cv_targets[n] == 6, 0,
@@ -1978,9 +2073,9 @@ class RezoHardwareUI(wiring.Component):
                                                                  cv_targets[n] - 1))
                     with m.Elif(selected == self.TARGET_INPUT_BASE + n * 3 + 2):
                         with m.If(edit_direction):
-                            self.clamp_add(m, cv_depths[n], step_amount, -32768, 32767)
+                            self.clamp_add(m, cv_depths[n], 256, -32768, 32767)
                         with m.Else():
-                            self.clamp_add(m, cv_depths[n], -step_amount, -32768, 32767)
+                            self.clamp_add(m, cv_depths[n], -256, -32768, 32767)
                 with m.Elif((selected >= self.TARGET_GROUP_BASE) &
                             (selected < self.TARGET_GROUP_BASE + RezoCore.N_BANDS)):
                     bank_group_index = Array(bank_group_indices)[
@@ -1998,13 +2093,58 @@ class RezoHardwareUI(wiring.Component):
                         with m.If(selected == self.TARGET_BAND_BASE + n):
                             with m.If(edit_direction):
                                 self.clamp_add(m, level, step_amount,
-                                               -16384, 16383)
+                                               -64, 64)
                             with m.Else():
                                 self.clamp_add(m, level, -step_amount,
-                                               -16384, 16383)
+                                               -64, 64)
+        # Packed 16-bit state scan port, sampled sequentially by the journal.
+        # Packing at each field's native precision is materially smaller than
+        # a 114-way 16-bit mux and leaves space for musical features.
+        level_bytes = Cat(*(level.as_unsigned() for level in levels))
+        cap_flags_pad = Signal(2)
+        filter_cv_pad = Signal(8)
+        bank_group_pad = Signal(8)
+        output_send_pad = Signal(8)
+        filter_cv_bits = Cat(*(value.as_unsigned() for value in filter_cv_matrix),
+                             filter_cv_pad)
+        cv_depth_bytes = Cat(*(value[8:16] for value in cv_depths))
+        input_config_bits = Cat(*input_modes, *cv_targets)
+        bank_group_bits = Cat(*bank_group_indices, bank_group_pad)
+        feedback_preset_bits = Cat(*feedback_sends, preset, palette)
+        output_send_bits = Cat(*bank_output_sends, *filter_output_sends,
+                               output_send_pad)
+        # The packed state is a circular stream. This temporal interface costs
+        # one local shift mux per retained bit instead of a 42-way read mux and
+        # a separate 42-way restore decoder. A complete SAVE rotation returns
+        # every live register to its original location; LOAD replaces the
+        # trailing word on each shift with validated journal data.
+        state_bits = Cat(
+            level_bytes,
+            bank_drive, filter_drive,
+            resonance, feedback,
+            filter_cutoff, filter_slope,
+            filter_width, limit_knee,
+            limit_cap, damp_mode, filter_mode, filter_type, cap_flags_pad,
+            filter_cv_bits,
+            *input_gains,
+            cv_depth_bytes,
+            input_config_bits,
+            bank_group_bits,
+            feedback_preset_bits,
+            output_send_bits,
+        )
+        assert len(state_bits) == self.STATE_WORDS_V1 * 16
+        m.d.comb += self.state_read_data.eq(state_bits[:16])
+        with m.If(self.state_shift_enable):
+            m.d.sync += state_bits.eq(Cat(
+                state_bits[16:],
+                Mux(self.state_shift_load,
+                    self.state_write_data, state_bits[:16]),
+            ))
 
         for n, level in enumerate(levels):
-            m.d.comb += self.levels[n].eq(level)
+            m.d.comb += self.levels[n].eq(Mux(
+                level == 64, 16383, level << 8))
         for n, input_gain in enumerate(input_gains):
             m.d.comb += self.input_gains[n].eq(input_gain)
         for n in range(4):
@@ -2025,19 +2165,20 @@ class RezoHardwareUI(wiring.Component):
             m.d.comb += self.filter_cv_matrix[n].eq(depth)
         m.d.comb += [
             self.drive.eq(drive),
-            self.resonance.eq(resonance),
-            self.feedback.eq(feedback),
+            self.resonance.eq(resonance << 8),
+            self.feedback.eq(feedback << 8),
             self.filter_mode.eq(filter_mode),
             self.filter_type.eq(filter_type),
-            self.filter_cutoff.eq(filter_cutoff),
-            self.filter_slope.eq(filter_slope),
-            self.filter_width.eq(filter_width),
-            self.limit_knee.eq(limit_knee),
-            self.limit_cap.eq(limit_cap),
+            self.filter_cutoff.eq(filter_cutoff << 8),
+            self.filter_slope.eq(filter_slope << 8),
+            self.filter_width.eq(filter_width << 8),
+            self.limit_knee.eq(limit_knee << 8),
+            self.limit_cap.eq(limit_cap << 8),
             self.damp_mode.eq(damp_mode),
             self.selected.eq(selected),
             self.page.eq(page),
             self.preset.eq(preset),
+            self.palette.eq(palette),
             self.editing.eq(editing),
         ]
 
@@ -2462,6 +2603,28 @@ class RezoTileDisplay(wiring.Component):
         "blank": 0x00,
     }
 
+    PALETTE_ROLES = (
+        "selected", "text", "control", "modulation",
+        "line", "panel", "background", "blank",
+    )
+    RGB_PALETTES = (
+        # LCD: preserve the existing grayscale renderer bit-for-bit.
+        (0xFFFFFF, 0xEEEEEE, 0xB8B8B8, 0x787878,
+         0x888888, 0x323232, 0x141414, 0x000000),
+        # Warm controls with a cool modulation accent.
+        (0xFFF4CC, 0xFFD166, 0xC98A20, 0x4EA5D9,
+         0x9A6A22, 0x35270F, 0x171006, 0x000000),
+        # Cool controls with a coral modulation accent.
+        (0xF4FFFF, 0xC8F7F8, 0x55CBCD, 0xFF7F6A,
+         0x2A9D9F, 0x16383A, 0x071718, 0x000000),
+        # Green LCD family with a magenta modulation accent.
+        (0xF3FFF6, 0xD8F3DC, 0x74C69D, 0xE56BCE,
+         0x40916C, 0x1B4332, 0x081C15, 0x000000),
+        # Violet controls with a gold modulation accent.
+        (0xFFF8DA, 0xE7DCF5, 0x9D7AD2, 0xF2C14E,
+         0x6C4AA3, 0x2B1D3A, 0x100A18, 0x000000),
+    )
+
     CHARS = " 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     CHAR_CODES = {ch: i for i, ch in enumerate(CHARS)}
 
@@ -2506,6 +2669,10 @@ class RezoTileDisplay(wiring.Component):
             "selected": In(unsigned(7)),
             "page": In(unsigned(3)),
             "preset": In(unsigned(3)),
+            "palette": In(unsigned(3)),
+            "save_default_available": In(1),
+            "save_default_busy": In(1),
+            "save_default_status": In(unsigned(2)),
             "editing": In(1),
             "r": Out(8),
             "g": Out(8),
@@ -2665,7 +2832,8 @@ class RezoTileDisplay(wiring.Component):
         for n in range(4):
             put(4, f"OUT{n}", 3, 21 + n * 5)
         put(5, "STATE AND DISPLAY", 2, 11)
-        put(5, "OPTIONS COMING SOON", 2, 15)
+        put(5, "PALETTE", 3, 15)
+        put(5, "SAVE DEFAULT", 3, 19)
         put(6, "TYPE", 2, 6)
         put(6, "BANDS", 2, 11)
         put(6, "FREQ", 2, 34)
@@ -2703,6 +2871,10 @@ class RezoTileDisplay(wiring.Component):
         editing_sync = Signal()
         filter_mode_sync = Signal()
         filter_type_sync = Signal(unsigned(2))
+        palette_sync = Signal(unsigned(3))
+        save_available_sync = Signal()
+        save_busy_sync = Signal()
+        save_status_sync = Signal(unsigned(2))
         input_modes_sync = [Signal(name=f"text_input_mode{n}") for n in range(4)]
         cv_targets_sync = [Signal(unsigned(3), name=f"text_cv_target{n}") for n in range(4)]
         m.submodules += [
@@ -2712,6 +2884,10 @@ class RezoTileDisplay(wiring.Component):
             FFSynchronizer(self.editing, editing_sync),
             FFSynchronizer(self.filter_mode, filter_mode_sync),
             FFSynchronizer(self.filter_type, filter_type_sync),
+            FFSynchronizer(self.palette, palette_sync),
+            FFSynchronizer(self.save_default_available, save_available_sync),
+            FFSynchronizer(self.save_default_busy, save_busy_sync),
+            FFSynchronizer(self.save_default_status, save_status_sync),
         ]
         for n in range(4):
             m.submodules += FFSynchronizer(self.input_modes[n], input_modes_sync[n])
@@ -2730,7 +2906,7 @@ class RezoTileDisplay(wiring.Component):
             m.d.comb += feedback_selected_band.eq(
                 selected_sync - RezoHardwareUI.TARGET_FEEDBACK_SEND_BASE)
 
-        update_index = Signal(range(46))
+        update_index = Signal(range(59))
         update_active = Signal(init=1)
         refresh_counter = Signal(range(4_000_000))
         writer_address = Signal(unsigned(14))
@@ -2769,6 +2945,21 @@ class RezoTileDisplay(wiring.Component):
         filter_type_chars = [Array(Const(self.code(name[pos]), 6)
                                    for name in filter_type_names)
                              for pos in range(4)]
+        palette_names = ("LCD   ", "AMBER ", "CYAN  ", "GREEN ", "VIOLET")
+        palette_chars = [Array(Const(self.code(name[pos]), 6)
+                               for name in palette_names)
+                         for pos in range(6)]
+        save_names = ("SAVE   ", "SAVING ", "SAVED  ", "ERROR  ",
+                      "NO SLOT")
+        save_chars = [Array(Const(self.code(name[pos]), 6)
+                            for name in save_names)
+                      for pos in range(7)]
+        save_name_index = Signal(range(len(save_names)))
+        m.d.comb += save_name_index.eq(
+            Mux(~save_available_sync, 4,
+                Mux(save_busy_sync | (save_status_sync == 1), 1,
+                    Mux(save_status_sync == 2, 2,
+                        Mux(save_status_sync == 3, 3, 0)))))
         with m.Switch(update_index):
             for pos in range(4):
                 with m.Case(pos):
@@ -2831,8 +3022,20 @@ class RezoTileDisplay(wiring.Component):
                             feedback_selected_valid,
                             frequency_chars[pos][feedback_selected_band], 0)),
                     ]
+            for pos in range(6):
+                with m.Case(46 + pos):
+                    m.d.comb += [
+                        writer_address.eq(5 * page_cells + 15 * 45 + 15 + pos),
+                        writer_char.eq(palette_chars[pos][palette_sync]),
+                    ]
+            for pos in range(7):
+                with m.Case(52 + pos):
+                    m.d.comb += [
+                        writer_address.eq(5 * page_cells + 19 * 45 + 15 + pos),
+                        writer_char.eq(save_chars[pos][save_name_index]),
+                    ]
         with m.If(update_active):
-            with m.If(update_index == 45):
+            with m.If(update_index == 58):
                 m.d.sync += [update_active.eq(0), refresh_counter.eq(0)]
             with m.Else():
                 m.d.sync += update_index.eq(update_index + 1)
@@ -2917,6 +3120,14 @@ class RezoTileDisplay(wiring.Component):
             self.rect(x, y, 118, 606, 650, 626) |
             self.rect(x, y, 118, 638, 650, 658) |
             self.rect(x, y, 118, 670, 650, 690))
+        palette_chip = advanced_page & self.rect(x, y, 232, 232, 360, 272)
+        palette_select = advanced_page & (
+            self.selected == RezoHardwareUI.TARGET_PALETTE) & self.outline(
+                x, y, 228, 228, 364, 276, t=3)
+        save_default_chip = advanced_page & self.rect(x, y, 232, 296, 376, 336)
+        save_default_select = advanced_page & (
+            self.selected == RezoHardwareUI.TARGET_SAVE_DEFAULT) & self.outline(
+                x, y, 228, 292, 380, 340, t=3)
 
         preset_chip = Signal()
         preset_select = Signal()
@@ -3703,6 +3914,7 @@ class RezoTileDisplay(wiring.Component):
         input_selected_q = Signal()
         routing_selected_q = Signal()
         filter_cv_selected_q = Signal()
+        advanced_selected_q = Signal()
         page_selected_q = Signal()
         m.d.dvi += [
             bank_selected_q.eq(preset_select | preset_group_select | band_select_q0 |
@@ -3714,11 +3926,13 @@ class RezoTileDisplay(wiring.Component):
             input_selected_q.eq(input_select_q0),
             routing_selected_q.eq(group_select_q0 | output_select_q0),
             filter_cv_selected_q.eq(filter_cv_select_q0),
+            advanced_selected_q.eq(palette_select | save_default_select),
             page_selected_q.eq(page_select),
         ]
         selected = active & (bank_selected_q | filter_selected_q |
                              input_selected_q | routing_selected_q |
                              filter_cv_selected_q |
+                             advanced_selected_q |
                              page_selected_q)
 
         selected_q = Signal()
@@ -3742,7 +3956,8 @@ class RezoTileDisplay(wiring.Component):
                 filter_control_mod_marker | border),
             geometry_mod_q0.eq(band_mod_fill | bank_control_mod_fill |
                                filter_control_mod_fill),
-            geometry_panel_q0.eq(preset_chip | filter_type_chip | mode_chip | band_slot_q0 |
+            geometry_panel_q0.eq(preset_chip | filter_type_chip | mode_chip |
+                                 palette_chip | save_default_chip | band_slot_q0 |
                                  meter_panel | filter_meter_panel),
         ]
         m.d.dvi += [
@@ -3760,30 +3975,33 @@ class RezoTileDisplay(wiring.Component):
             active_q.eq(active),
         ]
 
-        mono = Signal(8)
+        palette_role = Signal(unsigned(3), init=7)
         with m.If(selected_q):
-            m.d.comb += mono.eq(self.PALETTE["selected"])
+            m.d.comb += palette_role.eq(0)
         with m.Elif(text_q):
-            m.d.comb += mono.eq(self.PALETTE["text"])
+            m.d.comb += palette_role.eq(1)
         with m.Elif(mod_q):
-            m.d.comb += mono.eq(self.PALETTE["modulation"])
+            m.d.comb += palette_role.eq(3)
         with m.Elif(fill_q):
-            m.d.comb += mono.eq(self.PALETTE["control"])
+            m.d.comb += palette_role.eq(2)
         with m.Elif(line_q):
-            m.d.comb += mono.eq(self.PALETTE["line"])
+            m.d.comb += palette_role.eq(4)
         with m.Elif(panel_q):
-            m.d.comb += mono.eq(self.PALETTE["panel"])
+            m.d.comb += palette_role.eq(5)
         with m.Elif(background_q):
-            m.d.comb += mono.eq(self.PALETTE["background"])
-        with m.Elif(active_q):
-            m.d.comb += mono.eq(self.PALETTE["blank"])
-        with m.Else():
-            m.d.comb += mono.eq(0)
+            m.d.comb += palette_role.eq(6)
 
-        m.d.dvi += [
-            self.r.eq(mono),
-            self.g.eq(mono),
-            self.b.eq(mono),
+        palette_init = [color for theme in self.RGB_PALETTES for color in theme]
+        m.submodules.palette_mem = palette_mem = Memory(
+            shape=unsigned(24), depth=len(palette_init), init=palette_init,
+            attrs={"ram_style": "block"})
+        palette_rport = palette_mem.read_port(domain="dvi")
+        m.d.comb += palette_rport.addr.eq(Cat(palette_role, self.palette))
+
+        m.d.comb += [
+            self.r.eq(palette_rport.data[16:24]),
+            self.g.eq(palette_rport.data[8:16]),
+            self.b.eq(palette_rport.data[0:8]),
         ]
 
         return m
@@ -3814,7 +4032,8 @@ class RezoBeamTop(Elaboratable):
     def __init__(self, clock_settings):
         assert clock_settings.modeline is not None
         self.clock_settings = clock_settings
-        self.pmod0 = eurorack_pmod.EurorackPmod(self.clock_settings.audio_clock)
+        self.pmod0 = eurorack_pmod.EurorackPmod(
+            self.clock_settings.audio_clock, with_boot_slot=True)
 
     def elaborate(self, platform):
         m = Module()
@@ -3827,7 +4046,6 @@ class RezoBeamTop(Elaboratable):
                 enc_pins.s.i, reboot.button)
             m.submodules.pmod0_provider = pmod0_provider = eurorack_pmod.FFCProvider()
             wiring.connect(m, self.pmod0.pins, pmod0_provider.pins)
-            m.d.comb += self.pmod0.codec_mute.eq(reboot.mute)
         else:
             m.submodules.car = sim.FakeTiliquaDomainGenerator()
             enc_pins = None
@@ -3835,8 +4053,50 @@ class RezoBeamTop(Elaboratable):
         m.submodules.pmod0 = pmod0 = self.pmod0
         m.submodules.rezo = rezo = RezoCore(fs=self.clock_settings.audio_clock.fs())
         m.submodules.ui = ui = RezoHardwareUI()
+        m.submodules.state_journal = state_journal = RezoStateJournal(
+            RezoHardwareUI.STATE_WORDS_V1)
+        m.submodules.spi_transfer = spi_transfer = SPIFlashTransfer()
+        m.submodules.spi_phy = spi_phy = spiflash.SPIPHYController(
+            domain="sync", divisor=1)
+        wiring.connect(m, spi_transfer.spi, spi_phy.ctrl)
+        if sim.is_hw(platform):
+            m.submodules.spi_provider = spi_provider = \
+                spiflash.ECP5ConfigurationFlashProvider()
+            wiring.connect(m, spi_phy.pins, spi_provider.pins)
         m.submodules.audio_out_fifo = audio_out_fifo = dsp.SyncFIFOBuffered(
             shape=data.ArrayLayout(ASQ, 4), depth=4)
+
+        # Persistent defaults live in the running slot's option window.
+        # Palette is part of that explicit state record rather than an
+        # independently auto-saved EEPROM preference.
+        m.d.comb += [
+            state_journal.boot_slot.eq(pmod0.boot_slot),
+            state_journal.boot_slot_valid.eq(pmod0.boot_slot_valid),
+            state_journal.boot_slot_checked.eq(pmod0.boot_slot_checked),
+            state_journal.state_read_data.eq(ui.state_read_data),
+            state_journal.save_request.eq(ui.save_default_request),
+            ui.state_write_data.eq(state_journal.state_write_data),
+            ui.state_shift_enable.eq(state_journal.state_shift_enable),
+            ui.state_shift_load.eq(state_journal.state_shift_load),
+            ui.save_default_available.eq(state_journal.available),
+            ui.save_default_busy.eq(state_journal.busy),
+            ui.save_default_done.eq(state_journal.save_done),
+            ui.save_default_error.eq(state_journal.save_error),
+
+            spi_transfer.start.eq(state_journal.xfer_start),
+            spi_transfer.chip_select.eq(state_journal.xfer_cs),
+            spi_transfer.tx_data.eq(state_journal.xfer_tx),
+            spi_transfer.length.eq(state_journal.xfer_length),
+            spi_transfer.output_mask.eq(state_journal.xfer_mask),
+            state_journal.xfer_rx.eq(spi_transfer.rx_data),
+            state_journal.xfer_done.eq(spi_transfer.done),
+        ]
+
+        if sim.is_hw(platform):
+            # Do not expose factory defaults or a partially restored state as
+            # an audible startup transient.
+            m.d.comb += pmod0.codec_mute.eq(
+                reboot.mute | ~state_journal.startup_done)
 
         if sim.is_hw(platform):
             m.d.comb += [
@@ -4002,6 +4262,13 @@ class RezoBeamTop(Elaboratable):
             FFSynchronizer(i=ui.selected, o=display.selected, o_domain="dvi"),
             FFSynchronizer(i=ui.page, o=display.page, o_domain="dvi"),
             FFSynchronizer(i=ui.preset, o=display.preset, o_domain="dvi"),
+            FFSynchronizer(i=ui.palette, o=display.palette, o_domain="dvi"),
+            FFSynchronizer(i=ui.save_default_available,
+                           o=display.save_default_available, o_domain="dvi"),
+            FFSynchronizer(i=ui.save_default_busy,
+                           o=display.save_default_busy, o_domain="dvi"),
+            FFSynchronizer(i=ui.save_default_status,
+                           o=display.save_default_status, o_domain="dvi"),
             FFSynchronizer(i=ui.editing, o=display.editing, o_domain="dvi"),
         ]
         for n in range(4):
@@ -4053,4 +4320,6 @@ class RezoBeamTop(Elaboratable):
 
 if __name__ == "__main__":
     this_path = os.path.dirname(os.path.realpath(__file__))
-    top_level_cli(RezoBeamTop, path=this_path)
+    top_level_cli(
+        RezoBeamTop, path=this_path,
+        archiver_callback=lambda archiver: archiver.with_option_storage())
