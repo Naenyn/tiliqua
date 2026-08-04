@@ -301,6 +301,7 @@ def top_level_cli(
             "verbose": args.verbose,
             "debug_verilog": args.debug_verilog,
             "nextpnr_opts": getattr(fragment, "nextpnr_opts", "--timing-allow-fail"),
+            "synth_opts": getattr(fragment, "synth_opts", ""),
             "ecppack_opts": f"--freq 38.8 --compress --bootaddr {args.bootaddr}"
         }
 

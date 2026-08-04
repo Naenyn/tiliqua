@@ -60,6 +60,10 @@ also passing every constrained clock.
 | **OPT-JOURNAL-FOLDED-ADDR-S8** | Reuse scan validity/sector/address state for boot selection and inactive save target | **8** | **19,742** | **23,206** | **1,082** | **6,373** | **13** | **411.18** | **75.60** | **65.42** | **77.41** | **PASS; final optimization candidate** |
 | OPT-JOURNAL-FOLDED-ADDR-S4 | Exact `top.json` reroute of final candidate | 4 | 19,742 | 23,206 | 1,082 | 6,373 | 13 | 389.71 | 74.59 | 65.31 | 77.57 | PASS |
 | OPT-JOURNAL-FOLDED-ADDR-S2 | Exact `top.json` reroute of final candidate | 2 | 19,742 | 23,206 | 1,082 | 6,373 | 13 | 488.28 | 73.17 | 67.74 | 76.60 | PASS |
+| BANDS-PINNED-ABC9 | Editable BANDS page synthesized by pinned Yosys 0.52 | 8 | 20,918 | 24,498 | -210 | 6,501 | 18 | — | — | — | — | FAIL capacity |
+| BANDS-SYNC-ROM-S8 | Shared band outline and synchronous cutoff ROM | 8 | 20,705 | 24,231 | 57 | 6,501 | 18 | 436.11 | 72.32 | 68.43 | 81.59 | FAIL functional; cutoff lagged one band |
+| BANDS-ABC2-S4 | Asynchronous cutoff ROM, native Yosys `abc2` experiment | 4 | 20,608 | 24,238 | 50 | 6,501 | 18 | 357.02 | 78.69 | 62.30 | 74.27 | FAIL DVI5X |
+| **BANDS-ASYNC-ROM-S8** | Four layouts, per-band enable/frequency edit, exact persistence | **8** | **20,722** | **24,250** | **38** | **6,501** | **18** | **382.56** | **71.93** | **65.89** | **75.84** | **PASS; hardware candidate** |
 
 ## Notes
 
@@ -151,3 +155,29 @@ also passing every constrained clock.
   after their detailed routers entered prolonged congestion searches. Their
   pre-route placement clock estimates are deliberately omitted from the
   table; they are not final timing results.
+- BANDS implements ten enable toggles and exact stepped editing across a
+  29-frequency union. Factory layouts are LEGACY, OCTAVE, and PERCEPT; editing
+  or selecting USER snapshots the currently active vector, so USER never
+  recalls a stale hidden shape. Version 2 expands the record from 42 to 46
+  words and restores frequencies, enables, and the selected layout exactly;
+  version-1 records migrate to LEGACY with every band enabled.
+- Several source-level reductions were counterproductive after mapping:
+  shortened layout labels, compact target IDs, small/wide label ROM variants,
+  and removal of apparently redundant bounds all increased packed-cell use.
+  Current-vector implementations using parallel preset muxes, sequential
+  selectors, and a block-ROM loader ranged from 24,524 to 24,620 packed cells.
+  The retained UI renders one frequency label and one shared selection outline.
+- The project's pinned YoWASP Yosys 0.52 cannot fit the BANDS design even with
+  `abc9`. The final candidate was synthesized with native Yosys 0.66+152 and
+  `synth_ecp5 -abc9`; this toolchain distinction must be preserved when
+  reproducing the archive. Native mapping infers five additional DP16KD blocks
+  for the editable frequency/coefficient and display tables.
+- The synchronous cutoff-ROM candidate fitted slightly better, but the added
+  cycle selected the previous band's coefficient and failed the known-good DSP
+  vector. The final unregistered block-ROM output is functionally exact. The
+  `abc2` candidate left 50 cells free but missed the independent DVI5X clock,
+  so it was not retained.
+- BANDS consumes 1,044 of the 1,082 cells recovered by the preceding journal
+  optimization. The final design has only 38 packed cells free; clocked sample
+  and hold, shift, rotate, and random-walk features are therefore assigned to
+  a separate alternate bitstream rather than this one.

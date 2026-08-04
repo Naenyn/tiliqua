@@ -5,53 +5,56 @@ it together with [`BUILD_PERFORMANCE.md`](BUILD_PERFORMANCE.md) and
 [`Rezo_Feature_Ideas_By_Complexity.md`](Rezo_Feature_Ideas_By_Complexity.md)
 before changing the design.
 
-## 2026-08-03 optimization update
+## 2026-08-03 BANDS update
 
-The behavior-preserving journal optimization pass is complete. The final
-netlist preserves the version-1 record bytes, slot-local addressing, dual-sector
-selection, CRC verification, UI/DSP behavior, and four-cycle physical CS# gap.
-It replaces retained header metadata and wide byte muxes with streamed
-validation/serialization, and reuses otherwise idle journal registers for
-pending generation, CRC, validity, sector, and address state.
+The journal optimization first increased free space from 504 to 1,082 packed
+cells. That room now carries a complete editable BANDS page:
 
-Final measured resources (`OPT-JOURNAL-FOLDED-ADDR`):
+- LEGACY: `29, 61, 115, 218, 411, 777, 1500, 2800, 5200, 11000 Hz`
+- OCTAVE: `31, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000 Hz`
+- PERCEPT: `50, 150, 300, 500, 770, 1150, 1700, 2700, 5300, 12000 Hz`
+- USER: an editable snapshot of the active layout
+- A separate enable/disable toggle for each of the ten bands
 
-- LUT4: 19,742 (570 fewer than SAVE-ONE-CLICK-S4)
-- Packed cells: 23,206 / 24,288
-- Free packed cells: **1,082** (578 more than SAVE-ONE-CLICK-S4)
-- FF: 6,373 (206 fewer)
-- BRAM: 13 / 56 (unchanged)
+Frequency editing is intentionally stepped through the exact 29-value union of
+the factory frequencies. Click a band frequency, rotate, then click to apply.
+Any edit selects USER automatically. Selecting USER from a factory layout
+snapshots that layout; it does not recall an older hidden USER vector. SAVE
+DEFAULT persists and restores the active frequencies and enables exactly.
 
-The exact same synthesized `top.json` passed all clocks at three seeds:
+Final measured resources (`BANDS-ASYNC-ROM-S8`):
 
-| Seed | DVI5X MHz | AUDIO MHz | SYNC MHz | DVI MHz |
-|---:|---:|---:|---:|---:|
-| 8 | 411.18 | 75.60 | 65.42 | 77.41 |
-| 4 | 389.71 | 74.59 | 65.31 | 77.57 |
-| 2 | 488.28 | 73.17 | 67.74 | 76.60 |
+- LUT4: 20,722
+- Packed cells: 24,250 / 24,288
+- Free packed cells: **38**
+- FF: 6,501
+- BRAM: 18 / 56
+- DVI5X: 382.56 MHz (required 371.33)
+- AUDIO: 71.93 MHz (required 49.15)
+- SYNC: 65.89 MHz (required 60.00)
+- DVI: 75.84 MHz (required 74.25)
 
-The user powered down the rack during this task and explicitly requested no
-flash. **Do not claim this optimization has been hardware-tested or flashed.**
-The next hardware action is a supervised slot-4 flash followed by boot,
-audio/UI, restore, and SAVE DEFAULT smoke tests.
+This candidate requires native Yosys 0.66+152 with `synth_ecp5 -abc9`. The
+project's pinned YoWASP Yosys 0.52 mapped the same feature over capacity. A
+synchronous cutoff ROM fitted with 57 cells free but was rejected because its
+one-band coefficient lag failed the known-good DSP test; the final asynchronous
+block-ROM output is bit-exact.
 
-No roadmap feature was implemented in this pass. With 1,082 free cells, a
-minimal forward-only shift-register prototype is now reasonable, but it should
-be introduced incrementally: clock threshold/hysteresis, one CV source, ten
-values, atomic publication, and no reverse/ping-pong/random/reset extensions.
-See the new capacity checkpoint in `Rezo_Feature_Ideas_By_Complexity.md`.
+The clocked sample-and-hold, shift-register, rotate, and random-walk family is
+now assigned to a separate alternate bitstream. Do not attempt to squeeze those
+features into the 38 cells remaining here. They should share one clocked,
+control-rate transformation engine built from the optimized pre-BANDS commit.
 
 ## Repository state
 
 - Repository: `/Users/naenyn/git/tiliqua`
 - Branch: `rezo`
-- Optimization parent: `6a4a4ab1 rezo: persist default state in active slot`
+- BANDS parent: `b89759ef rezo: optimize persistent state journal`
 - `Erica Resonant FB Notes.txt` is an untracked, user-owned reference file at
   the repository root. Do not delete, stage, or commit it unless explicitly
   requested.
-- The optimization parent commit adds the tested full-state default journal, active-slot
-  discovery, flash timing recovery, persistence tests, one-click SAVE DEFAULT,
-  and the latest build-log entries.
+- The parent commit is the optimized, behavior-preserving version-1 journal
+  baseline with 1,082 free packed cells.
 
 ## User working preferences and safety rules
 
@@ -76,6 +79,8 @@ REZO is a CPU-free, lean 1280x720p60 Tiliqua R5 bitstream running audio at
 192 kHz. Its major implemented features are:
 
 - Ten time-multiplexed resonator bands.
+- A BANDS page with three factory center-frequency layouts, a USER layout,
+  stepped per-band frequency editing, and per-band enable controls.
 - BANK mode with editable bipolar band levels, factory shapes/presets,
   resonance, feedback, and resonator drive.
 - FILTER mode that uses the ten bandpass resonators to approximate low-pass,
@@ -118,9 +123,11 @@ must be treated carefully.
 - An invalid or unavailable boot-slot record disables saving safely.
 - Records are dual-sector, generation-numbered, versioned, CRC-checked, and
   verified after programming.
-- Version 1 currently saves 42 16-bit state words (84 payload bytes), while the
-  on-flash format reserves room for up to 2 KiB of future state.
-- State capture/restore uses a circular 42-cycle scan stream to avoid a large
+- Version 2 saves 46 16-bit state words. Its four-word tail packs ten 5-bit
+  frequency indices, ten enable bits, and the selected layout. Version-1
+  42-word records remain readable and migrate to LEGACY with all bands enabled.
+  The on-flash format still reserves room for up to 2 KiB of future state.
+- State capture/restore uses a circular 46-cycle scan stream to avoid a large
   addressable UI-state mux.
 - The snapshot memory must remain inferred as block RAM. Distributed RAM cost
   roughly 700 packed cells in an earlier experiment.
@@ -180,19 +187,18 @@ Previous one-click-save build (`SAVE-ONE-CLICK-S4`, seed 4):
 - SYNC: 64.87 MHz (pass)
 - DVI: 78.11 MHz (pass)
 
-The optimized build passes at seeds 8, 4, and 2 with 1,082 free cells. This is
-enough to begin a deliberately minimal clocked-mode prototype, but not enough
-to accumulate multiple roadmap items without measuring each one. Packed-cell
-use and routing success are
-not monotonic with source-code size. Seed 8 became pathological for the final
-one-click netlist; routing the exact synthesized `top.json` with seed 4 passed.
+The pre-BANDS optimized build passes at seeds 8, 4, and 2 with 1,082 free
+cells. BANDS uses 1,044 of those cells and the final seed-8 candidate leaves 38.
+Packed-cell use is not monotonic with source-code size: shortening labels and
+several apparently simpler lookup structures mapped substantially worse.
 DVI5X is largely the existing TMDS serializer and is highly seed-sensitive,
 but overall packing congestion is also a real constraint.
 
 ## Test baseline
 
-The complete targeted regression set now contains 27 passing tests, including
-an explicit record-programming test across a 256-byte flash page boundary:
+The complete targeted regression set contains 29 tests, including exact USER
+snapshot semantics, all ten persisted frequencies/enables, version-1 migration,
+the known-good DSP vector, and programming across a 256-byte flash page:
 
 ```sh
 pdm run pytest \
@@ -212,6 +218,19 @@ Normal build command:
 TILIQUA_REZO_SEED=<seed> pdm run rezo build --fs-192khz
 ```
 
+That command uses the pinned Yosys and currently exceeds capacity. To reproduce
+the BANDS candidate, generate `top.il`, then use the native OSS CAD Suite tools:
+
+```sh
+source ~/.zshrc
+yosys -l top.rpt -p \
+  'read_rtlil top.il; proc; splitnets; synth_ecp5 -abc9 -top top; write_json top.json'
+nextpnr-ecp5 --timing-allow-fail --seed 8 --25k --package CABGA256 --speed 6 \
+  --json top.json --lpf top.lpf --textcfg top.config --log top.tim
+ecppack --freq 38.8 --compress --bootaddr 0x0 \
+  --input top.config --bit top.bit --svf top.svf
+```
+
 Normal flash command from `gateware/`:
 
 ```sh
@@ -223,17 +242,15 @@ seeds of an unchanged synthesized design, reuse the exact `top.json` for direct
 nextpnr routing so synthesis variation is not confused with placement
 variation.
 
-## Immediate next task: supervised hardware validation
+## Immediate next task: hardware validation
 
-1. Flash the final passing archive to slot 4 only when the user is present and
-   the rack is powered.
+1. Flash the final passing archive to slot 4 when the rack is powered.
 2. Confirm boot, audio, all pages, palette rendering, and modulation display.
-3. Confirm the previously saved version-1 default restores unchanged; the
-   optimization intentionally kept the on-flash format byte-identical.
-4. Exercise SAVE DEFAULT, reboot slot 4, and confirm the complete state restores.
-5. If hardware passes, begin the minimal clocked shift-register foundation as
-   a separate measured feature build. Do not add the later direction/random/
-   reset extensions in the same netlist.
+3. Confirm a previous version-1 default restores as LEGACY/all-enabled while
+   preserving every pre-BANDS setting.
+4. Exercise every layout, frequency editing, enable toggles, and FILTER mode.
+5. SAVE DEFAULT, reboot slot 4, and confirm the complete version-2 state restores.
+6. Develop clocked modes only as a separately measured alternate bitstream.
 
 ## Desired next functionality
 

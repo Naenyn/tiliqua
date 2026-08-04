@@ -107,7 +107,8 @@ class RezoStateJournal(wiring.Component):
     """Two-sector, CRC-checked, power-loss-safe REZO default-state journal."""
 
     MAGIC = 0x4f5a4552  # little-endian bytes spell "REZO"
-    VERSION = 1
+    VERSION = 2
+    LEGACY_VERSION = 1
     HEADER_BYTES = 16
     SECTOR_BYTES = 0x1000
     OPTION_BYTES = 0x2000
@@ -120,10 +121,18 @@ class RezoStateJournal(wiring.Component):
     PURPOSE_LOAD = 2
     PURPOSE_VERIFY = 3
 
-    def __init__(self, state_words):
+    def __init__(self, state_words, *, legacy_state_words=None,
+                 legacy_tail_words=()):
         if not 0 < state_words <= self.MAX_STATE_WORDS:
             raise ValueError("state_words exceeds the reserved 2 KiB payload")
+        if legacy_state_words is not None:
+            if not 0 < legacy_state_words < state_words:
+                raise ValueError("legacy_state_words must precede current state")
+            if len(legacy_tail_words) != state_words - legacy_state_words:
+                raise ValueError("legacy tail must fill the current state")
         self.state_words = state_words
+        self.legacy_state_words = legacy_state_words
+        self.legacy_tail_words = tuple(legacy_tail_words)
         self.record_bytes = self.HEADER_BYTES + state_words * 2
         super().__init__({
             "boot_slot": In(unsigned(3)),
@@ -156,13 +165,15 @@ class RezoStateJournal(wiring.Component):
         })
 
     @staticmethod
-    def _header_prefix_byte(index, state_words):
+    def _header_prefix_byte(index, state_words, version=None):
+        if version is None:
+            version = RezoStateJournal.VERSION
         header = Array([
             Const((RezoStateJournal.MAGIC >> (8 * n)) & 0xff, 8)
             for n in range(4)
         ] + [
-            Const(RezoStateJournal.VERSION & 0xff, 8),
-            Const((RezoStateJournal.VERSION >> 8) & 0xff, 8),
+            Const(version & 0xff, 8),
+            Const((version >> 8) & 0xff, 8),
             Const(state_words & 0xff, 8),
             Const((state_words >> 8) & 0xff, 8),
         ])
@@ -174,8 +185,11 @@ class RezoStateJournal(wiring.Component):
         # Allocate only the current payload in BRAM. MAX_STATE_WORDS reserves
         # on-flash format capacity for future features; synthesizing all 1024
         # words now would widen every RAM address for storage we cannot yet use.
+        state_init = [0] * self.state_words
+        if self.legacy_state_words is not None:
+            state_init[self.legacy_state_words:] = self.legacy_tail_words
         state_mem = Memory(shape=unsigned(16), depth=self.state_words,
-                           init=[], attrs={"ram_style": "block"})
+                           init=state_init, attrs={"ram_style": "block"})
         m.submodules.state_mem = state_mem
         state_r = state_mem.read_port()
         state_w = state_mem.write_port(granularity=8)
@@ -193,6 +207,9 @@ class RezoStateJournal(wiring.Component):
         scan_index = Signal(range(self.record_bytes + 1))
         scan_crc = Signal(unsigned(32), init=0xffffffff)
         scan_header_valid = Signal(init=1)
+        scan_version = Signal(unsigned(16))
+        scan_declared_words = Signal(unsigned(16))
+        scan_record_words = Signal(unsigned(16), init=self.state_words)
         scan_generation = Signal(unsigned(32))
         scan_stored_crc = Signal(unsigned(32))
         scan_valid = Signal()
@@ -254,7 +271,8 @@ class RezoStateJournal(wiring.Component):
             m.d.comb += crc_r.addr.eq(scan_crc[24:32] ^ byte_value)
 
         def finish_scan_byte():
-            with m.If(scan_index == self.record_bytes - 1):
+            scan_record_bytes = self.HEADER_BYTES + (scan_record_words << 1)
+            with m.If(scan_index == scan_record_bytes - 1):
                 m.d.sync += cs_active.eq(0)
                 m.next = "SCAN-VALIDATE"
             with m.Else():
@@ -288,6 +306,9 @@ class RezoStateJournal(wiring.Component):
                     scan_index.eq(0),
                     scan_crc.eq(0xffffffff),
                     scan_header_valid.eq(1),
+                    scan_version.eq(0),
+                    scan_declared_words.eq(0),
+                    scan_record_words.eq(self.state_words),
                     scan_generation.eq(0),
                     scan_stored_crc.eq(0),
                     cs_active.eq(1),
@@ -306,11 +327,31 @@ class RezoStateJournal(wiring.Component):
             with m.State("SCAN-BYTE-WAIT"):
                 with m.If(self.xfer_done):
                     byte = self.xfer_rx[:8]
-                    with m.If(scan_index < 8):
-                        expected_prefix = self._header_prefix_byte(
+                    with m.If(scan_index < 4):
+                        expected_magic = self._header_prefix_byte(
                             scan_index, self.state_words)
-                        with m.If(byte != expected_prefix):
+                        with m.If(byte != expected_magic):
                             m.d.sync += scan_header_valid.eq(0)
+                    with m.Elif(scan_index == 4):
+                        m.d.sync += scan_version[:8].eq(byte)
+                    with m.Elif(scan_index == 5):
+                        m.d.sync += scan_version[8:16].eq(byte)
+                    with m.Elif(scan_index == 6):
+                        m.d.sync += scan_declared_words[:8].eq(byte)
+                    with m.Elif(scan_index == 7):
+                        record_words = Cat(scan_declared_words[:8], byte)
+                        current_header = ((scan_version == self.VERSION) &
+                                          (record_words == self.state_words))
+                        if self.legacy_state_words is None:
+                            valid_header = current_header
+                        else:
+                            valid_header = current_header | (
+                                (scan_version == self.LEGACY_VERSION) &
+                                (record_words == self.legacy_state_words))
+                        with m.If(~valid_header):
+                            m.d.sync += scan_header_valid.eq(0)
+                        with m.Else():
+                            m.d.sync += scan_record_words.eq(record_words)
                     with m.Elif(scan_index < 12):
                         m.d.sync += scan_generation.eq(Cat(
                             scan_generation[8:], byte))

@@ -5,10 +5,11 @@ from top.rezo.persistence import RezoStateJournal, SPIFlashTransfer
 from tiliqua.periph.eurorack_pmod import _crc32_bzip2, _boot_slot_record
 
 
-def make_record(words, generation=1, corrupt_at=None):
+def make_record(words, generation=1, corrupt_at=None,
+                version=RezoStateJournal.VERSION):
     payload = b"".join(int(word & 0xffff).to_bytes(2, "little")
                        for word in words)
-    header = (b"REZO" + (1).to_bytes(2, "little") +
+    header = (b"REZO" + version.to_bytes(2, "little") +
               len(words).to_bytes(2, "little") +
               generation.to_bytes(4, "little"))
     crc = _crc32_bzip2(header + payload).to_bytes(4, "little")
@@ -95,8 +96,9 @@ class FlashModel:
             await ctx.tick()
 
 
-def run_boot(contents, expected_words=None, slot=2):
-    dut = RezoStateJournal(4)
+def run_boot(contents, expected_words=None, slot=2, state_words=4,
+             journal_kwargs=None):
+    dut = RezoStateJournal(state_words, **(journal_kwargs or {}))
     m = Module()
     m.submodules.dut = dut
     flash = FlashModel(dut, contents)
@@ -238,6 +240,19 @@ def test_corrupted_only_record_keeps_factory_state():
     corrupt = make_record([1, 2, 3, 4], generation=1, corrupt_at=0)
     contents = {base + n: byte for n, byte in enumerate(corrupt)}
     run_boot(contents, expected_words=None, slot=slot)
+
+
+def test_version_one_record_loads_with_current_tail_defaults():
+    slot = 4
+    base = 0x0e0000 + ((slot + 1) << 20)
+    old_words = [0x1234, 0x5678, 0x9abc, 0xdef0]
+    tail = (0x1357, 0x2468)
+    record = make_record(old_words, generation=5,
+                         version=RezoStateJournal.LEGACY_VERSION)
+    contents = {base + n: byte for n, byte in enumerate(record)}
+    run_boot(contents, old_words + list(tail), slot=slot, state_words=6,
+             journal_kwargs={"legacy_state_words": 4,
+                             "legacy_tail_words": tail})
 
 
 def test_explicit_save_is_bounded_to_active_slot_option_sector():

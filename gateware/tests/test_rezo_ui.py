@@ -1,6 +1,6 @@
 from amaranth.sim import Simulator
 
-from top.rezo.top import RezoHardwareUI
+from top.rezo.top import RezoCore, RezoHardwareUI
 
 
 class FastClickRezoUI(RezoHardwareUI):
@@ -55,6 +55,8 @@ def test_ui_shared_matrix_and_output_edit_paths():
         endpoint = await _turn(ctx, dut, endpoint, 0)
         assert ctx.get(dut.selected) == dut.TARGET_PAGE
         await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.page) == 6
         endpoint = await _turn(ctx, dut, endpoint, 1)
         assert ctx.get(dut.page) == 2
         await _click(ctx, dut)
@@ -147,9 +149,19 @@ def test_ui_state_scan_round_trips_independent_mode_values():
     )
 
     async def bench(ctx):
-        state = [0] * dut.STATE_WORDS_V1
+        state = [0] * dut.STATE_WORDS_V2
         for address, value in writes:
             state[address] = value
+        saved_frequencies = tuple(range(RezoCore.N_BANDS))
+        band_config = 0
+        for n, frequency in enumerate(saved_frequencies):
+            band_config |= frequency << (n * RezoCore.FREQ_INDEX_WIDTH)
+        saved_enables = 0b1011010011
+        band_config |= saved_enables << 50
+        band_config |= RezoCore.LAYOUT_USER << 60
+        for n in range(4):
+            state[dut.STATE_BAND_CONFIG_BASE + n] = \
+                (band_config >> (16 * n)) & 0xffff
 
         # LOAD shifts a complete validated record into the circular stream.
         ctx.set(dut.state_shift_load, 1)
@@ -162,7 +174,7 @@ def test_ui_state_scan_round_trips_independent_mode_values():
         await ctx.tick()
 
         # SAVE presents words in order and rotates the entire state back to
-        # its starting position after exactly STATE_WORDS_V1 cycles.
+        # its starting position after exactly STATE_WORDS_V2 cycles.
         captured = []
         ctx.set(dut.state_shift_enable, 1)
         for _ in state:
@@ -178,6 +190,86 @@ def test_ui_state_scan_round_trips_independent_mode_values():
         assert ctx.get(dut.levels[5]) == -0x1C00
         assert ctx.get(dut.input_gains[3]) == 0xCCCC
         assert ctx.get(dut.palette) == 3
+        assert ctx.get(dut.frequency_layout) == RezoCore.LAYOUT_USER
+        assert tuple(ctx.get(dut.band_frequencies[n]) for n in range(10)) == \
+            saved_frequencies
+        assert tuple(ctx.get(dut.band_enables[n]) for n in range(10)) == \
+            tuple((saved_enables >> n) & 1 for n in range(10))
+
+    sim.add_testbench(bench)
+    sim.run()
+
+
+def test_ui_band_page_layout_toggle_and_transactional_user_edit():
+    """BANDS applies layouts, toggles masks, and commits edits into USER."""
+    dut = FastClickRezoUI()
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+
+    async def bench(ctx):
+        endpoint = 0b00
+
+        # PAGE edit: BANK -> BANDS.
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.page) == 6
+        await _click(ctx, dut)
+
+        # Select LAYOUT, preview PERCEPT, then commit it.
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_BAND_LAYOUT
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.frequency_layout) == 1  # preview is not live
+        await _click(ctx, dut)
+        for _ in range(RezoCore.N_BANDS + 1):
+            await ctx.tick()
+        assert ctx.get(dut.frequency_layout) == 2
+        percept = [RezoCore.frequency_index(f) for f in RezoCore.PERCEPT_FREQS_HZ]
+        assert [ctx.get(dut.band_frequencies[n]) for n in range(10)] == percept
+
+        # First enable target toggles immediately and retains its band value.
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_BAND_ENABLE_BASE
+        await _click(ctx, dut)
+        assert ctx.get(dut.band_enables[0]) == 0
+
+        # Walk across the enable row to frequency 0. Editing previews without
+        # touching DSP state; commit snapshots PERCEPT into USER and changes
+        # only the selected center.
+        for _ in range(10):
+            endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_BAND_FREQ_BASE
+        old_frequency = ctx.get(dut.band_frequencies[0])
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.band_frequencies[0]) == old_frequency
+        await _click(ctx, dut)
+        for _ in range(RezoCore.N_BANDS + 1):
+            await ctx.tick()
+        assert ctx.get(dut.frequency_layout) == 3
+        assert ctx.get(dut.band_frequencies[0]) == old_frequency + 1
+        assert [ctx.get(dut.band_frequencies[n]) for n in range(1, 10)] == percept[1:]
+
+        # USER is a working state, not a second recalled preset. Select a
+        # factory layout, then select USER again: it snapshots that factory
+        # vector rather than recalling the previous manual edit.
+        endpoint = await _turn(ctx, dut, endpoint, 0)
+        for _ in range(10):
+            endpoint = await _turn(ctx, dut, endpoint, 0)
+        assert ctx.get(dut.selected) == dut.TARGET_BAND_LAYOUT
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)  # USER wraps to LEGACY
+        await _click(ctx, dut)
+        legacy = [RezoCore.frequency_index(f) for f in RezoCore.LEGACY_FREQS_HZ]
+        assert [ctx.get(dut.band_frequencies[n]) for n in range(10)] == legacy
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 0)  # LEGACY wraps to USER
+        await _click(ctx, dut)
+        for _ in range(RezoCore.N_BANDS + 1):
+            await ctx.tick()
+        assert ctx.get(dut.frequency_layout) == RezoCore.LAYOUT_USER
+        assert [ctx.get(dut.band_frequencies[n]) for n in range(10)] == legacy
 
     sim.add_testbench(bench)
     sim.run()
