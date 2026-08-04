@@ -56,6 +56,11 @@ does not contain the polished page or guaranteed synchronous-prefetch fix. Do
 not treat it as the validation candidate. The rack was powered down before this
 pass, so the corrected build must not be flashed until the user is present.
 
+The corrected, unflashed validation archive is
+`gateware/build/rezo-r5/rezo-9fe65f4e-r5.tar.gz`. Its embedded `top.bit` matches
+the locally packed seed-1 bitstream at SHA-256
+`0d6b46064211777831d31c7d49e38ffb162147ff435a1bda718cdea9a38f2e43`.
+
 The clocked sample-and-hold, shift-register, rotate, and random-walk family is
 now assigned to a separate alternate bitstream. Do not attempt to squeeze those
 features into the 33 cells remaining here. They should share one clocked,
