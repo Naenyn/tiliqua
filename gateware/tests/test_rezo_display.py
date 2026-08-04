@@ -1,6 +1,6 @@
 from amaranth.sim import Simulator
 
-from top.rezo.top import RezoTileDisplay
+from top.rezo.top import RezoCore, RezoHardwareUI, RezoTileDisplay
 
 
 def test_tile_display_static_text_uses_expected_glyph_pixels():
@@ -85,6 +85,92 @@ def test_tile_display_band_geometry_and_modulation_shading():
         palette["line"],
         palette["panel"],
     ]
+
+
+def test_bands_page_uses_two_visible_button_rows():
+    """BANDS enable/frequency targets are discrete buttons, not tall faders."""
+    dut = RezoTileDisplay(h_active=1280)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6, domain="sync")
+    sim.add_clock(1e-6, domain="dvi")
+    samples = []
+
+    async def sample(ctx, panel_x, panel_y):
+        ctx.set(dut.x, dut.x_offset + panel_x)
+        ctx.set(dut.y, panel_y)
+        ctx.set(dut.de, 1)
+        for _ in range(8):
+            await ctx.tick("dvi")
+        samples.append(ctx.get(dut.r))
+
+    async def bench(ctx):
+        ctx.set(dut.page, 6)
+        ctx.set(dut.band_enables[0], 1)
+        ctx.set(dut.band_enables[1], 0)
+
+        await sample(ctx, 60, 250)   # enabled button fill
+        await sample(ctx, 126, 250)  # disabled button panel
+        await sample(ctx, 60, 330)   # empty gap between rows
+        await sample(ctx, 60, 410)   # frequency button panel
+
+        # Each row has its own selection outline; selecting ENABLE must not
+        # produce an invisible outline spanning the frequency control.
+        ctx.set(dut.selected, RezoHardwareUI.TARGET_BAND_ENABLE_BASE)
+        await sample(ctx, 41, 250)
+        await sample(ctx, 41, 410)
+        ctx.set(dut.selected, RezoHardwareUI.TARGET_BAND_FREQ_BASE)
+        await sample(ctx, 41, 250)
+        await sample(ctx, 41, 410)
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    palette = RezoTileDisplay.PALETTE
+    assert samples == [
+        palette["control"],
+        palette["panel"],
+        palette["background"],
+        palette["panel"],
+        palette["selected"],
+        palette["background"],
+        palette["background"],
+        palette["selected"],
+    ]
+
+
+def test_bands_page_writes_all_five_frequency_digits():
+    """The selected BANDS value is exact rather than a three-character abbreviation."""
+    dut = RezoTileDisplay(h_active=1280)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6, domain="sync")
+    sim.add_clock(1e-6, domain="dvi")
+    samples = []
+
+    async def sample(ctx, panel_x, panel_y):
+        ctx.set(dut.x, dut.x_offset + panel_x)
+        ctx.set(dut.y, panel_y)
+        ctx.set(dut.de, 1)
+        for _ in range(8):
+            await ctx.tick("dvi")
+        samples.append(ctx.get(dut.r))
+
+    async def bench(ctx):
+        ctx.set(dut.page, 6)
+        ctx.set(dut.selected, RezoHardwareUI.TARGET_BAND_FREQ_BASE + 9)
+        ctx.set(dut.band_frequencies[9], RezoCore.frequency_index(16000))
+        # Let the initial low-rate text refresh reach the BANDS entries.
+        for _ in range(80):
+            await ctx.tick("sync")
+
+        # Row zero, center column is illuminated in every glyph of "16000".
+        for cell in range(14, 19):
+            await sample(ctx, cell * 16 + 4, 22 * 16)
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    text = RezoTileDisplay.PALETTE["text"]
+    assert samples == [text] * 5
 
 
 def test_tile_display_drive_modulation_shading_in_both_modes():

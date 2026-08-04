@@ -5,7 +5,7 @@ it together with [`BUILD_PERFORMANCE.md`](BUILD_PERFORMANCE.md) and
 [`Rezo_Feature_Ideas_By_Complexity.md`](Rezo_Feature_Ideas_By_Complexity.md)
 before changing the design.
 
-## 2026-08-03 BANDS update
+## 2026-08-04 BANDS UI update
 
 The journal optimization first increased free space from 504 to 1,082 packed
 cells. That room now carries a complete editable BANDS page:
@@ -22,41 +22,50 @@ Any edit selects USER automatically. Selecting USER from a factory layout
 snapshots that layout; it does not recall an older hidden USER vector. SAVE
 DEFAULT persists and restores the active frequencies and enables exactly.
 
-Final measured resources (`BANDS-ASYNC-ROM-S8`):
+The hardware photo of the first implementation exposed an ambiguous tall-fader
+metaphor and overlapping text. The polished page now has a labeled PRESET
+selector, a row of ten ENABLE buttons, and a separate row of ten SET FREQ
+buttons. It removes redundant band numbers and shows the selected value as an
+exact five-digit Hz readout. When no band target is selected, the readout is
+blank.
 
-- LUT4: 20,722
-- Packed cells: 24,250 / 24,288
-- Free packed cells: **38**
-- FF: 6,501
+Final measured resources (`BANDS-UI-W150-S1`):
+
+- LUT4: 20,581
+- Packed cells: 24,255 / 24,288
+- Free packed cells: **33**
+- FF: 6,505
 - BRAM: 18 / 56
-- DVI5X: 382.56 MHz (required 371.33)
-- AUDIO: 71.93 MHz (required 49.15)
-- SYNC: 65.89 MHz (required 60.00)
-- DVI: 75.84 MHz (required 74.25)
+- DVI5X: 431.78 MHz (required 371.33)
+- AUDIO: 74.28 MHz (required 49.15)
+- SYNC: 60.23 MHz (required 60.00)
+- DVI: 75.56 MHz (required 74.25)
 
-This candidate requires native Yosys 0.66+152 with `synth_ecp5 -abc9`. The
-project's pinned YoWASP Yosys 0.52 mapped the same feature over capacity. A
-synchronous cutoff ROM fitted with 57 cells free but was rejected because its
-one-band coefficient lag failed the known-good DSP test; the final asynchronous
-block-ROM output is bit-exact.
+This candidate requires native Yosys 0.66+152 and the staged mapping recipe in
+`RezoBeamTop.script_after_synth`: an initial density-oriented `abc`, followed by
+`abc9 -W 150`, then ECP5 cell mapping. The project's pinned YoWASP Yosys 0.52
+maps the fresh source 132 cells over capacity. The cutoff table is a synchronous
+block ROM; the next band is explicitly prefetched after the current band's two
+SVF passes, preserving the known-good DSP vector without an illegal asynchronous
+block-RAM port.
 
-Archive `rezo-69904c1e-r5.tar.gz` was flashed successfully to slot 4 on
-2026-08-04. Its embedded `top.bit` SHA-256 is
-`406287ddef43da1a6823abc3f2d9746072aae713703d11b6a050dc4a53a12857`.
-The flash command wrote only the bitstream and manifest; the slot-4 option
-storage was preserved for version-1 migration. Programming and FPGA refresh
-completed without error, but physical audio/UI/save-reboot validation remains.
+The previously flashed `rezo-69904c1e-r5.tar.gz` contains the initial UI seen in
+the hardware photo, but it was packaged after `--skip-build` reused an older
+generated RTL/bitstream. Its source provenance is therefore not exact, and it
+does not contain the polished page or guaranteed synchronous-prefetch fix. Do
+not treat it as the validation candidate. The rack was powered down before this
+pass, so the corrected build must not be flashed until the user is present.
 
 The clocked sample-and-hold, shift-register, rotate, and random-walk family is
 now assigned to a separate alternate bitstream. Do not attempt to squeeze those
-features into the 38 cells remaining here. They should share one clocked,
+features into the 33 cells remaining here. They should share one clocked,
 control-rate transformation engine built from the optimized pre-BANDS commit.
 
 ## Repository state
 
 - Repository: `/Users/naenyn/git/tiliqua`
 - Branch: `rezo`
-- BANDS parent: `b89759ef rezo: optimize persistent state journal`
+- Initial BANDS implementation: `69904c1e rezo: add editable band layouts`
 - `Erica Resonant FB Notes.txt` is an untracked, user-owned reference file at
   the repository root. Do not delete, stage, or commit it unless explicitly
   requested.
@@ -195,7 +204,8 @@ Previous one-click-save build (`SAVE-ONE-CLICK-S4`, seed 4):
 - DVI: 78.11 MHz (pass)
 
 The pre-BANDS optimized build passes at seeds 8, 4, and 2 with 1,082 free
-cells. BANDS uses 1,044 of those cells and the final seed-8 candidate leaves 38.
+cells. BANDS plus the polished editor uses 1,049 of those cells and the final
+seed-1 candidate leaves 33.
 Packed-cell use is not monotonic with source-code size: shortening labels and
 several apparently simpler lookup structures mapped substantially worse.
 DVI5X is largely the existing TMDS serializer and is highly seed-sensitive,
@@ -203,9 +213,10 @@ but overall packing congestion is also a real constraint.
 
 ## Test baseline
 
-The complete targeted regression set contains 29 tests, including exact USER
+The complete targeted regression set contains 31 tests, including exact USER
 snapshot semantics, all ten persisted frequencies/enables, version-1 migration,
-the known-good DSP vector, and programming across a 256-byte flash page:
+the known-good DSP vector, two-row BANDS geometry, a five-digit frequency
+readout, and programming across a 256-byte flash page:
 
 ```sh
 pdm run pytest \
@@ -225,14 +236,14 @@ Normal build command:
 TILIQUA_REZO_SEED=<seed> pdm run rezo build --fs-192khz
 ```
 
-That command uses the pinned Yosys and currently exceeds capacity. To reproduce
-the BANDS candidate, generate `top.il`, then use the native OSS CAD Suite tools:
+That command uses the pinned Yosys and currently exceeds capacity, but it does
+generate a fresh `top.il` and a `top.ys` containing the staged recipe. Run that
+script with the native OSS CAD Suite Yosys, then route the resulting JSON:
 
 ```sh
 source ~/.zshrc
-yosys -l top.rpt -p \
-  'read_rtlil top.il; proc; splitnets; synth_ecp5 -abc9 -top top; write_json top.json'
-nextpnr-ecp5 --timing-allow-fail --seed 8 --25k --package CABGA256 --speed 6 \
+yosys -l top-native.rpt top.ys
+nextpnr-ecp5 --timing-allow-fail --seed 1 --25k --package CABGA256 --speed 6 \
   --json top.json --lpf top.lpf --textcfg top.config --log top.tim
 ecppack --freq 38.8 --compress --bootaddr 0x0 \
   --input top.config --bit top.bit --svf top.svf
@@ -249,14 +260,16 @@ seeds of an unchanged synthesized design, reuse the exact `top.json` for direct
 nextpnr routing so synthesis variation is not confused with placement
 variation.
 
-## Immediate next task: hardware validation
+## Immediate next task: flash and hardware validation
 
-1. Confirm boot, audio, all pages, palette rendering, and modulation display.
-2. Confirm a previous version-1 default restores as LEGACY/all-enabled while
+1. With the rack powered and the user present, flash the corrected archive to
+   slot 4. Do not flash the old `69904c1e` archive again.
+2. Confirm boot, audio, all pages, palette rendering, and modulation display.
+3. Confirm a previous version-1 default restores as LEGACY/all-enabled while
    preserving every pre-BANDS setting.
-3. Exercise every layout, frequency editing, enable toggles, and FILTER mode.
-4. SAVE DEFAULT, reboot slot 4, and confirm the complete version-2 state restores.
-5. Develop clocked modes only as a separately measured alternate bitstream.
+4. Exercise every layout, frequency editing, enable toggles, and FILTER mode.
+5. SAVE DEFAULT, reboot slot 4, and confirm the complete version-2 state restores.
+6. Develop clocked modes only as a separately measured alternate bitstream.
 
 ## Desired next functionality
 

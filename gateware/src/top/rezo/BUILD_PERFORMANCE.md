@@ -60,10 +60,17 @@ also passing every constrained clock.
 | **OPT-JOURNAL-FOLDED-ADDR-S8** | Reuse scan validity/sector/address state for boot selection and inactive save target | **8** | **19,742** | **23,206** | **1,082** | **6,373** | **13** | **411.18** | **75.60** | **65.42** | **77.41** | **PASS; final optimization candidate** |
 | OPT-JOURNAL-FOLDED-ADDR-S4 | Exact `top.json` reroute of final candidate | 4 | 19,742 | 23,206 | 1,082 | 6,373 | 13 | 389.71 | 74.59 | 65.31 | 77.57 | PASS |
 | OPT-JOURNAL-FOLDED-ADDR-S2 | Exact `top.json` reroute of final candidate | 2 | 19,742 | 23,206 | 1,082 | 6,373 | 13 | 488.28 | 73.17 | 67.74 | 76.60 | PASS |
-| BANDS-PINNED-ABC9 | Editable BANDS page synthesized by pinned Yosys 0.52 | 8 | 20,918 | 24,498 | -210 | 6,501 | 18 | — | — | — | — | FAIL capacity |
-| BANDS-SYNC-ROM-S8 | Shared band outline and synchronous cutoff ROM | 8 | 20,705 | 24,231 | 57 | 6,501 | 18 | 436.11 | 72.32 | 68.43 | 81.59 | FAIL functional; cutoff lagged one band |
-| BANDS-ABC2-S4 | Asynchronous cutoff ROM, native Yosys `abc2` experiment | 4 | 20,608 | 24,238 | 50 | 6,501 | 18 | 357.02 | 78.69 | 62.30 | 74.27 | FAIL DVI5X |
-| **BANDS-ASYNC-ROM-S8** | Four layouts, per-band enable/frequency edit, exact persistence | **8** | **20,722** | **24,250** | **38** | **6,501** | **18** | **382.56** | **71.93** | **65.89** | **75.84** | **PASS; flashed slot 4, validation pending** |
+| BANDS-PINNED-ABC9 | Initial editable BANDS experiment | 8 | 20,918 | 24,498 | -210 | 6,501 | 18 | — | — | — | — | INVALID for current source; stale generated RTL |
+| BANDS-SYNC-ROM-S8 | Initial synchronous-cutoff experiment | 8 | 20,705 | 24,231 | 57 | 6,501 | 18 | 436.11 | 72.32 | 68.43 | 81.59 | INVALID for current source; stale generated RTL |
+| BANDS-ABC2-S4 | Initial native-Yosys `abc2` experiment | 4 | 20,608 | 24,238 | 50 | 6,501 | 18 | 357.02 | 78.69 | 62.30 | 74.27 | INVALID for current source; stale generated RTL |
+| BANDS-INITIAL-ARCHIVE-S8 | Initial BANDS archive observed on hardware | 8 | 20,722 | 24,250 | 38 | 6,501 | 18 | 382.56 | 71.93 | 65.89 | 75.84 | INVALID source provenance; flashed slot 4 |
+| BANDS-UI-PINNED-S8 | Polished two-row UI; fresh RTL, pinned Yosys 0.52 | 8 | 20,772 | 24,420 | -132 | 6,505 | 18 | — | — | — | — | FAIL capacity |
+| BANDS-UI-W175-S8 | Fresh RTL; staged native Yosys, ABC9 wire weight 175 | 8 | 20,797 | 24,449 | -161 | 6,505 | 18 | — | — | — | — | FAIL capacity |
+| BANDS-UI-W200-S8 | Fresh RTL; staged native Yosys, ABC9 wire weight 200 | 8 | 20,725 | 24,385 | -97 | 6,505 | 18 | — | — | — | — | FAIL capacity |
+| BANDS-UI-W150-S8 | Fresh RTL; staged native Yosys, ABC9 wire weight 150 | 8 | 20,581 | 24,255 | 33 | 6,505 | 18 | 396.04 | 70.48 | 62.80 | 68.51 | FAIL DVI |
+| BANDS-UI-W150-S4 | Exact final synthesized JSON rerouted at seed 4 | 4 | 20,581 | 24,255 | 33 | 6,505 | 18 | 379.79 | 72.45 | 61.82 | 70.06 | FAIL DVI |
+| BANDS-UI-W150-S2 | Exact final synthesized JSON rerouted at seed 2 | 2 | 20,581 | 24,255 | 33 | 6,505 | 18 | 441.11 | 72.30 | 57.63 | 73.11 | FAIL SYNC and DVI |
+| **BANDS-UI-W150-S1** | Polished two-row UI and synchronous cutoff prefetch | **1** | **20,581** | **24,255** | **33** | **6,505** | **18** | **431.78** | **74.28** | **60.23** | **75.56** | **PASS; unflashed hardware candidate** |
 
 ## Notes
 
@@ -167,17 +174,26 @@ also passing every constrained clock.
   Current-vector implementations using parallel preset muxes, sequential
   selectors, and a block-ROM loader ranged from 24,524 to 24,620 packed cells.
   The retained UI renders one frequency label and one shared selection outline.
-- The project's pinned YoWASP Yosys 0.52 cannot fit the BANDS design even with
-  `abc9`. The final candidate was synthesized with native Yosys 0.66+152 and
-  `synth_ecp5 -abc9`; this toolchain distinction must be preserved when
-  reproducing the archive. Native mapping infers five additional DP16KD blocks
-  for the editable frequency/coefficient and display tables.
-- The synchronous cutoff-ROM candidate fitted slightly better, but the added
-  cycle selected the previous band's coefficient and failed the known-good DSP
-  vector. The final unregistered block-ROM output is functionally exact. The
-  `abc2` candidate left 50 cells free but missed the independent DVI5X clock,
-  so it was not retained.
-- BANDS consumes 1,044 of the 1,082 cells recovered by the preceding journal
-  optimization. The final design has only 38 packed cells free; clocked sample
+- The first BANDS archive was accidentally packaged with an older generated
+  `top.il`: `--skip-build` archives an existing `top.bit` and does not regenerate
+  RTL. Its UI was visible on hardware, but its reported resources cannot be
+  attributed to the then-current source. The four initial BANDS rows remain as
+  invalidated diagnostics so they are not mistaken for reproducible builds.
+- The polished BANDS page replaces the ambiguous tall controls with separate
+  ENABLE and SET FREQ button rows, moves and labels the PRESET selector, removes
+  redundant band numbers, and shows the selected frequency as an exact
+  five-digit Hz value. The label table still occupies one shared block RAM.
+- The project's pinned YoWASP Yosys 0.52 maps the fresh polished source 132
+  cells over capacity. The final candidate uses native Yosys 0.66+152 and a
+  staged `abc`/`abc9 -W 150` flow. The build CLI now forwards a fragment's
+  `script_after_synth`, so generated `top.ys` records that recipe. Weights 175
+  and 200 were both larger; seed 1 is the only retained all-clock passing route.
+- The cutoff table is a synchronous block ROM with an explicit next-band
+  prefetch after both current-band SVF passes. This avoids both the illegal
+  asynchronous block-RAM mapping and the earlier one-band lag, and passes the
+  known-good DSP vector.
+- BANDS plus the UI polish consumes 1,049 of the 1,082 cells recovered by the
+  preceding journal optimization. The final design has only 33 packed cells
+  free; clocked sample
   and hold, shift, rotate, and random-walk features are therefore assigned to
   a separate alternate bitstream rather than this one.
