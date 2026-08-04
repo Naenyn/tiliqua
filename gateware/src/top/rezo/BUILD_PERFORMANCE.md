@@ -63,7 +63,7 @@ also passing every constrained clock.
 | BANDS-PINNED-ABC9 | Editable BANDS page synthesized by pinned Yosys 0.52 | 8 | 20,918 | 24,498 | -210 | 6,501 | 18 | — | — | — | — | FAIL capacity |
 | BANDS-SYNC-ROM-S8 | Shared band outline and synchronous cutoff ROM | 8 | 20,705 | 24,231 | 57 | 6,501 | 18 | 436.11 | 72.32 | 68.43 | 81.59 | FAIL functional; cutoff lagged one band |
 | BANDS-ABC2-S4 | Asynchronous cutoff ROM, native Yosys `abc2` experiment | 4 | 20,608 | 24,238 | 50 | 6,501 | 18 | 357.02 | 78.69 | 62.30 | 74.27 | FAIL DVI5X |
-| **BANDS-ASYNC-ROM-S8** | Four layouts, per-band enable/frequency edit, exact persistence | **8** | **20,722** | **24,250** | **38** | **6,501** | **18** | **382.56** | **71.93** | **65.89** | **75.84** | **PASS; hardware candidate** |
+| **BANDS-ASYNC-ROM-S8** | Four layouts, per-band enable/frequency edit, exact persistence | **8** | **20,722** | **24,250** | **38** | **6,501** | **18** | **382.56** | **71.93** | **65.89** | **75.84** | **PASS; flashed slot 4, validation pending** |
 
 ## Notes
 

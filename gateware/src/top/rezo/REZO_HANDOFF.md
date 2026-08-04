@@ -40,6 +40,13 @@ synchronous cutoff ROM fitted with 57 cells free but was rejected because its
 one-band coefficient lag failed the known-good DSP test; the final asynchronous
 block-ROM output is bit-exact.
 
+Archive `rezo-69904c1e-r5.tar.gz` was flashed successfully to slot 4 on
+2026-08-04. Its embedded `top.bit` SHA-256 is
+`406287ddef43da1a6823abc3f2d9746072aae713703d11b6a050dc4a53a12857`.
+The flash command wrote only the bitstream and manifest; the slot-4 option
+storage was preserved for version-1 migration. Programming and FPGA refresh
+completed without error, but physical audio/UI/save-reboot validation remains.
+
 The clocked sample-and-hold, shift-register, rotate, and random-walk family is
 now assigned to a separate alternate bitstream. Do not attempt to squeeze those
 features into the 38 cells remaining here. They should share one clocked,
@@ -244,13 +251,12 @@ variation.
 
 ## Immediate next task: hardware validation
 
-1. Flash the final passing archive to slot 4 when the rack is powered.
-2. Confirm boot, audio, all pages, palette rendering, and modulation display.
-3. Confirm a previous version-1 default restores as LEGACY/all-enabled while
+1. Confirm boot, audio, all pages, palette rendering, and modulation display.
+2. Confirm a previous version-1 default restores as LEGACY/all-enabled while
    preserving every pre-BANDS setting.
-4. Exercise every layout, frequency editing, enable toggles, and FILTER mode.
-5. SAVE DEFAULT, reboot slot 4, and confirm the complete version-2 state restores.
-6. Develop clocked modes only as a separately measured alternate bitstream.
+3. Exercise every layout, frequency editing, enable toggles, and FILTER mode.
+4. SAVE DEFAULT, reboot slot 4, and confirm the complete version-2 state restores.
+5. Develop clocked modes only as a separately measured alternate bitstream.
 
 ## Desired next functionality
 
