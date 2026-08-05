@@ -82,6 +82,9 @@ also passing every constrained clock.
 | **BANDS-FINE-COMMIT-S6** | **Exact committed W160 JSON** | **6** | **20,577** | **24,259** | **29** | **6,510** | **19** | **442.48** | **72.68** | **63.84** | **76.78** | **PASS; flashed slot 4** |
 | BANDS-FINE-COMMIT-S7 | Exact committed W160 JSON | 7 | 20,577 | 24,259 | 29 | 6,510 | 19 | 389.11 | 69.57 | 62.68 | 75.73 | PASS |
 | POLISH-PRECOMMIT-S6 | Centered selectors, OPTIONS layout, disabled-band frames, ordered FEEDBACK navigation, and shared gain slew across mode changes; dirty build ID | 6 | 20,575 | 24,165 | 123 | 6,510 | 19 | 437.06 | 69.37 | 66.14 | 75.32 | PASS; superseded by commit-stamped netlist |
+| POLISH-COMMIT-S6 | `49783e4b`, exact committed W160 JSON | 6 | 20,476 | 24,090 | 198 | 6,350 | 19 | 393.08 | 72.26 | 66.30 | 71.36 | FAIL DVI |
+| **POLISH-COMMIT-S7** | **`49783e4b`, exact committed W160 JSON** | **7** | **20,476** | **24,090** | **198** | **6,350** | **19** | **403.55** | **72.91** | **66.67** | **74.95** | **PASS; flashed slot 4** |
+| POLISH-COMMIT-S8 | `49783e4b`, exact committed W160 JSON | 8 | 20,476 | 24,090 | 198 | 6,350 | 19 | 393.55 | 70.81 | 63.49 | 74.13 | FAIL DVI by 0.12 MHz |
 
 ## Notes
 
@@ -234,3 +237,8 @@ also passing every constrained clock.
   selector labels with fixed padding, and fixes FEEDBACK navigation order.
   This row carries a dirty identifier; the exact commit-stamped result must be
   routed and recorded separately before packaging.
+- The exact `49783e4b` identifier maps another 75 cells smaller than the dirty
+  candidate: 24,090 packed cells, leaving 198 free. That is 169 more free cells
+  than `BANDS-FINE-COMMIT-S6`. Seed 7 passes all clocks and supplies the flashed
+  archive. Seed 6 fails DVI, seed 8 misses DVI by only 0.12 MHz, and seed 1 was
+  stopped after seed 7 completed rather than retained as a partial route.

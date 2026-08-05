@@ -25,10 +25,21 @@ The hardware review led to a consistency and legibility pass:
   avoiding an instantaneous gain-vector change without adding an output
   multiplier or transition counter.
 
-All 35 targeted tests pass. The preliminary native-Yosys W160, seed-6 route
-passes all four clocks with 24,165 packed cells (123 free), 94 fewer cells than
-the prior committed build. This result has a dirty build identifier and must
-still be reproduced from the exact source commit before it is packaged.
+All 35 targeted tests pass. The exact commit-stamped native-Yosys W160 design
+uses 24,090 packed cells (198 free), 169 fewer cells than the prior flashed
+build. Seed 7 passes all four clocks at 403.55 MHz DVI5X, 72.91 MHz AUDIO,
+66.67 MHz SYNC, and 74.95 MHz DVI. Seeds 6 and 8 fail only DVI; seed 8 is short
+by 0.12 MHz.
+
+The validation archive is
+`gateware/build/rezo-r5/rezo-49783e4b-r5.tar.gz`. Its seed-7 `top.bit` and the
+archived copy both have SHA-256
+`d402cf78143865bfed8ec99385d7b1b2bba747232723c550c2aac4bfeeacf715`;
+the archive SHA-256 is
+`4b39ae438b017ecd87ed183afe3e0e05ff620e8bf9f65a3554a55841341e6624`.
+It was flashed successfully to slot 4 on 2026-08-05. Bitstream and manifest
+programming plus FPGA refresh completed without error, and option storage was
+preserved.
 
 ## 2026-08-04 BANDS UI update
 
@@ -313,22 +324,20 @@ seeds of an unchanged synthesized design, reuse the exact `top.json` for direct
 nextpnr routing so synthesis variation is not confused with placement
 variation.
 
-## Immediate next task: package, flash, and hardware validation
+## Immediate next task: hardware validation
 
-1. Rebuild and route the exact committed polish source, then package and flash
-   only an all-clock passing archive.
-2. Confirm boot, audio, all pages, palette rendering, and modulation display.
+1. Confirm boot, audio, all pages, palette rendering, and modulation display.
    Check selector alignment, OPTIONS spacing, disabled-band frames, and the
    corrected FEEDBACK navigation order against the hardware photos.
-3. Exercise BANK/FILTER changes with sustained and transient-rich input. The
+2. Exercise BANK/FILTER changes with sustained and transient-rich input. The
    new shared-gain slew removes the direct band-gain discontinuity; if a pop
    remains, the next candidate should fade the complete four-output mix so
    mode-specific routing and dry sends also transition smoothly.
-4. Confirm a previous version-1 default restores as LEGACY/all-enabled while
+3. Confirm a previous version-1 default restores as LEGACY/all-enabled while
    preserving every pre-BANDS setting.
-5. Exercise every layout, frequency editing, enable toggles, and FILTER mode.
-6. SAVE DEFAULT, reboot slot 4, and confirm the complete version-2 state restores.
-7. Develop clocked modes only as a separately measured alternate bitstream.
+4. Exercise every layout, frequency editing, enable toggles, and FILTER mode.
+5. SAVE DEFAULT, reboot slot 4, and confirm the complete version-2 state restores.
+6. Develop clocked modes only as a separately measured alternate bitstream.
 
 ## Desired next functionality
 
