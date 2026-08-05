@@ -85,6 +85,9 @@ also passing every constrained clock.
 | POLISH-COMMIT-S6 | `49783e4b`, exact committed W160 JSON | 6 | 20,476 | 24,090 | 198 | 6,350 | 19 | 393.08 | 72.26 | 66.30 | 71.36 | FAIL DVI |
 | **POLISH-COMMIT-S7** | **`49783e4b`, exact committed W160 JSON** | **7** | **20,476** | **24,090** | **198** | **6,350** | **19** | **403.55** | **72.91** | **66.67** | **74.95** | **PASS; flashed slot 4** |
 | POLISH-COMMIT-S8 | `49783e4b`, exact committed W160 JSON | 8 | 20,476 | 24,090 | 198 | 6,350 | 19 | 393.55 | 70.81 | 63.49 | 74.13 | FAIL DVI by 0.12 MHz |
+| GROUP-GHOST-FRAMES | `bc6ebc4b`; four full rectangular GROUPS ghosts for every disabled band | 7 | 20,719 | 24,437 | -149 | 6,351 | 19 | — | — | — | — | FAIL capacity |
+| GROUP-GHOST-RAILS-S7 | `b2812acc`; shared top/bottom ghost rails | 7 | 20,611 | 24,223 | 65 | 6,351 | 19 | 404.37 | 72.50 | 62.63 | 72.24 | FAIL DVI |
+| **GROUP-GHOST-RAILS-S6** | **`b2812acc`; exact committed W160 JSON** | **6** | **20,611** | **24,223** | **65** | **6,351** | **19** | **387.00** | **72.22** | **62.50** | **79.25** | **PASS; flashed slot 4** |
 
 ## Notes
 
@@ -242,3 +245,10 @@ also passing every constrained clock.
   than `BANDS-FINE-COMMIT-S6`. Seed 7 passes all clocks and supplies the flashed
   archive. Seed 6 fails DVI, seed 8 misses DVI by only 0.12 MHz, and seed 1 was
   stopped after seed 7 completed rather than retained as a partial route.
+- Extending disabled-band ghosts to GROUPS with forty full rectangular frames
+  costs 347 packed cells over `49783e4b` and exceeds capacity by 149. The
+  retained renderer shares the existing band/row decoder and draws only the
+  top and bottom rails of each absent assignment. It costs 133 packed cells,
+  fits with 65 free, and preserves an unambiguous inactive location. Seed 7
+  fails only DVI; seed 6 passes every clock and supplies the flashed archive.
+  Seed 8 was stopped once seed 6 passed rather than retained as a partial route.

@@ -33,7 +33,7 @@ build. Seed 7 passes all four clocks at 403.55 MHz DVI5X, 72.91 MHz AUDIO,
 66.67 MHz SYNC, and 74.95 MHz DVI. Seeds 6 and 8 fail only DVI; seed 8 is short
 by 0.12 MHz.
 
-The validation archive is
+The first polish archive was
 `gateware/build/rezo-r5/rezo-49783e4b-r5.tar.gz`. Its seed-7 `top.bit` and the
 archived copy both have SHA-256
 `d402cf78143865bfed8ec99385d7b1b2bba747232723c550c2aac4bfeeacf715`;
@@ -41,6 +41,19 @@ the archive SHA-256 is
 `4b39ae438b017ecd87ed183afe3e0e05ff620e8bf9f65a3554a55841341e6624`.
 It was flashed successfully to slot 4 on 2026-08-05. Bitstream and manifest
 programming plus FPGA refresh completed without error, and option storage was
+preserved. It was superseded later the same day by the GROUPS-ghost build below.
+
+Forty full rectangular GROUPS ghosts exceeded capacity by 149 packed cells.
+The final renderer shares one row-edge test across the complete 10x4 grid and
+draws dim top/bottom rails instead. Exact commit `b2812acc` uses 24,223 packed
+cells (65 free), with seed 6 passing at 387.00 MHz DVI5X, 72.22 MHz AUDIO,
+62.50 MHz SYNC, and 79.25 MHz DVI. The final validation archive is
+`gateware/build/rezo-r5/rezo-b2812acc-r5.tar.gz`. Its seed-6 `top.bit` and the
+archived copy both have SHA-256
+`c374120f425c1fca752294a1625611dacb64317732f43c069d4f592cadffae3e`;
+the archive SHA-256 is
+`97f1d5a2fca4bf0fcba4780d3ddf8d94fa329f520c3dc3214f89a3880cc1b21e`.
+It was flashed successfully to slot 4 on 2026-08-05, with option storage
 preserved.
 
 ## 2026-08-04 BANDS UI update
