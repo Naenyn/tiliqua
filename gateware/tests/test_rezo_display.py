@@ -175,8 +175,8 @@ def test_bands_page_writes_all_five_frequency_digits():
     assert samples == [text] * 5
 
 
-def test_disabled_band_has_bank_ghosts_but_filter_remains_active():
-    """Disabled BANK columns and group cells keep frames; FILTER stays active."""
+def test_disabled_band_has_bank_ghosts():
+    """Disabled BANK columns and group cells keep their positional frames."""
     dut = RezoTileDisplay(h_active=1280)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
@@ -198,10 +198,6 @@ def test_disabled_band_has_bank_ghosts_but_filter_remains_active():
         await sample(ctx, 42, 300)  # ghost frame edge
         await sample(ctx, 60, 300)  # blank frame interior
 
-        ctx.set(dut.filter_mode, 1)
-        await sample(ctx, 60, 300)  # FILTER column remains active
-
-        ctx.set(dut.filter_mode, 0)
         ctx.set(dut.page, 3)
         await sample(ctx, 150, 294)  # disabled group-cell top ghost rail
         await sample(ctx, 150, 300)  # empty space between ghost rails
@@ -211,13 +207,13 @@ def test_disabled_band_has_bank_ghosts_but_filter_remains_active():
 
     palette = RezoTileDisplay.PALETTE
     assert samples == [
-        palette["line"], palette["background"], palette["control"],
+        palette["line"], palette["background"],
         palette["line"], palette["background"],
     ]
 
 
-def test_tile_display_drive_modulation_shading_in_both_modes():
-    """DRIVE distinguishes its base setting from CV in BANK and FILTER."""
+def test_tile_display_drive_modulation_shading():
+    """BANK DRIVE distinguishes its base setting from CV modulation."""
     dut = RezoTileDisplay(h_active=1280)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
@@ -242,20 +238,11 @@ def test_tile_display_drive_modulation_shading_in_both_modes():
         await sample(ctx, 450, 560)
         await sample(ctx, 380, 554)
 
-        # FILTER uses the shared fader renderer but must show the same split.
-        ctx.set(dut.filter_mode, 1)
-        await sample(ctx, 300, 646)
-        await sample(ctx, 450, 646)
-        await sample(ctx, 380, 640)
-
     sim.add_testbench(bench)
     sim.run()
 
     palette = RezoTileDisplay.PALETTE
     assert samples == [
-        palette["control"],
-        palette["modulation"],
-        palette["line"],
         palette["control"],
         palette["modulation"],
         palette["line"],

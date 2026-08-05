@@ -34,42 +34,6 @@ async def _turn(ctx, dut, endpoint, direction):
     return states[-1]
 
 
-def test_ui_shared_matrix_and_output_edit_paths():
-    """Dynamic edit decoders update only the selected matrix/send cells."""
-    dut = FastClickRezoUI()
-    sim = Simulator(dut)
-    sim.add_clock(1e-6)
-
-    async def bench(ctx):
-        endpoint = 0b00
-
-        # Select MODE, enter edit, and switch BANK -> FILTER.
-        endpoint = await _turn(ctx, dut, endpoint, 1)
-        assert ctx.get(dut.selected) == dut.TARGET_MODE
-        await _click(ctx, dut)
-        endpoint = await _turn(ctx, dut, endpoint, 1)
-        assert ctx.get(dut.filter_mode) == 1
-        await _click(ctx, dut)
-
-        # Return to PAGE, enter page edit, and move FILTER -> MATRIX.
-        endpoint = await _turn(ctx, dut, endpoint, 0)
-        assert ctx.get(dut.selected) == dut.TARGET_PAGE
-        await _click(ctx, dut)
-        endpoint = await _turn(ctx, dut, endpoint, 1)
-        assert ctx.get(dut.page) == 2
-        await _click(ctx, dut)
-
-        # Select and edit the first modulation-matrix cell.
-        endpoint = await _turn(ctx, dut, endpoint, 1)
-        assert ctx.get(dut.selected) == dut.TARGET_FILTER_CV_BASE
-        await _click(ctx, dut)
-        endpoint = await _turn(ctx, dut, endpoint, 1)
-        assert ctx.get(dut.filter_cv_matrix[0]) > 0
-        assert all(ctx.get(dut.filter_cv_matrix[n]) == 0 for n in range(1, 15))
-
-    sim.add_testbench(bench)
-    sim.run()
-
 def test_ui_shared_feedback_toggle_path():
     """FEEDBACK navigates top-to-bottom and toggles only the selected band."""
     dut = FastClickRezoUI()
@@ -133,8 +97,8 @@ def test_ui_advanced_palette_selection_wraps():
     sim.run()
 
 
-def test_ui_state_scan_round_trips_independent_mode_values():
-    """The versioned scan port restores all representative state families."""
+def test_ui_state_scan_preserves_v2_compatibility_words():
+    """BANK restores correctly while legacy v2 fields round-trip verbatim."""
     dut = FastClickRezoUI()
     sim = Simulator(dut)
     sim.add_clock(1e-6)
@@ -143,7 +107,7 @@ def test_ui_state_scan_round_trips_independent_mode_values():
         (dut.STATE_LEVELS_BASE + 2, 0xE420),
         (dut.STATE_DRIVES, 0x5612),
         (dut.STATE_CAP_FLAGS, 0x2B70),
-        (dut.STATE_FILTER_CV_BASE + 7, 0x00F1),
+        (dut.STATE_LEGACY_CV_BASE + 7, 0x00F1),
         (dut.STATE_INPUT_GAIN_BASE + 3, 0xCCCC),
         (dut.STATE_CV_DEPTH_BASE + 1, 0x7FE0),
         (dut.STATE_INPUT_CONFIG, 0x9A56),
@@ -171,7 +135,7 @@ def test_ui_state_scan_round_trips_independent_mode_values():
                 (band_config >> (16 * n)) & 0xffff
         state[dut.STATE_CAP_FLAGS] |= (saved_frequencies[0] & 3) << 14
         for n in range(1, 5):
-            state[dut.STATE_FILTER_CV_BASE + 7] |= \
+            state[dut.STATE_LEGACY_CV_BASE + 7] |= \
                 (saved_frequencies[n] & 3) << (8 + (n - 1) * 2)
         for n in range(5, 9):
             state[dut.STATE_BANK_GROUP_BASE + 2] |= \
@@ -197,10 +161,9 @@ def test_ui_state_scan_round_trips_independent_mode_values():
         ctx.set(dut.state_shift_enable, 0)
         assert captured == state
 
-        # CAP_FLAGS selected FILTER mode, so the separately stored filter
-        # drive must now be the active drive. Band 5 restores signed 0xE400.
-        assert ctx.get(dut.filter_mode) == 1
-        assert ctx.get(dut.drive) == 0x5600
+        # The removed FILTER fields remain reserved in the version-2 stream,
+        # while BANK drive is always active. Band 5 restores signed 0xE400.
+        assert ctx.get(dut.drive) == 0x1200
         assert ctx.get(dut.levels[5]) == -0x1C00
         assert ctx.get(dut.input_gains[3]) == 0xCCCC
         assert ctx.get(dut.palette) == 3
@@ -322,9 +285,8 @@ def test_ui_disabled_bank_controls_do_not_change_stored_values():
         assert ctx.get(dut.page) == 0
         await _click(ctx, dut)
 
-        # MODE -> PRESET -> band 0. It may be traversed while navigating, but
+        # PRESET -> band 0. It may be traversed while navigating, but
         # entering EDIT and turning cannot alter its hidden stored level.
-        endpoint = await _turn(ctx, dut, endpoint, 1)
         endpoint = await _turn(ctx, dut, endpoint, 1)
         endpoint = await _turn(ctx, dut, endpoint, 1)
         assert ctx.get(dut.selected) == dut.TARGET_BAND_BASE
