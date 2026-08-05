@@ -56,10 +56,13 @@ does not contain the polished page or guaranteed synchronous-prefetch fix. Do
 not treat it as the validation candidate. The rack was powered down before this
 pass, so the corrected build must not be flashed until the user is present.
 
-The corrected, unflashed validation archive is
+The corrected validation archive is
 `gateware/build/rezo-r5/rezo-9fe65f4e-r5.tar.gz`. Its embedded `top.bit` matches
 the locally packed seed-1 bitstream at SHA-256
 `0d6b46064211777831d31c7d49e38ffb162147ff435a1bda718cdea9a38f2e43`.
+It was flashed successfully to slot 4 on 2026-08-04; bitstream and manifest
+programming plus FPGA refresh completed without error, and option storage was
+preserved. Physical UI/audio/save validation is pending.
 
 The clocked sample-and-hold, shift-register, rotate, and random-walk family is
 now assigned to a separate alternate bitstream. Do not attempt to squeeze those
@@ -267,14 +270,12 @@ variation.
 
 ## Immediate next task: flash and hardware validation
 
-1. With the rack powered and the user present, flash the corrected archive to
-   slot 4. Do not flash the old `69904c1e` archive again.
-2. Confirm boot, audio, all pages, palette rendering, and modulation display.
-3. Confirm a previous version-1 default restores as LEGACY/all-enabled while
+1. Confirm boot, audio, all pages, palette rendering, and modulation display.
+2. Confirm a previous version-1 default restores as LEGACY/all-enabled while
    preserving every pre-BANDS setting.
-4. Exercise every layout, frequency editing, enable toggles, and FILTER mode.
-5. SAVE DEFAULT, reboot slot 4, and confirm the complete version-2 state restores.
-6. Develop clocked modes only as a separately measured alternate bitstream.
+3. Exercise every layout, frequency editing, enable toggles, and FILTER mode.
+4. SAVE DEFAULT, reboot slot 4, and confirm the complete version-2 state restores.
+5. Develop clocked modes only as a separately measured alternate bitstream.
 
 ## Desired next functionality
 
