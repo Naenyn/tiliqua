@@ -13,14 +13,16 @@ cells. That room now carries a complete editable BANDS page:
 - LEGACY: `29, 61, 115, 218, 411, 777, 1500, 2800, 5200, 11000 Hz`
 - OCTAVE: `31, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000 Hz`
 - PERCEPT: `50, 150, 300, 500, 770, 1150, 1700, 2700, 5300, 12000 Hz`
-- USER: an editable snapshot of the active layout
+- USER: the editable current working layout
 - A separate enable/disable toggle for each of the ten bands
 
-Frequency editing is intentionally stepped through the exact 29-value union of
-the factory frequencies. Click a band frequency, rotate, then click to apply.
-Any edit selects USER automatically. Selecting USER from a factory layout
-snapshots that layout; it does not recall an older hidden USER vector. SAVE
-DEFAULT persists and restores the active frequencies and enables exactly.
+Frequency editing uses a 116-position logarithmic grid: the exact 29-value
+union of the factory frequencies plus three subdivisions following each
+center. Click a band frequency, rotate, then click to apply. Slow turns advance
+one position for precision; rapid turns advance eight. Any edit selects USER
+automatically. USER is the current working vector rather than a separate hidden
+snapshot, and SAVE DEFAULT persists and restores the active frequencies and
+enables exactly.
 
 The hardware photo of the first implementation exposed an ambiguous tall-fader
 metaphor and overlapping text. The polished page now has a labeled PRESET
@@ -29,22 +31,29 @@ buttons. It removes redundant band numbers and shows the selected value as an
 exact five-digit Hz readout. When no band target is selected, the readout is
 blank.
 
-Final measured resources (`BANDS-UI-W150-S1`):
+The BANDS page is BANK-only and is skipped entirely in FILTER navigation.
+Disabling a band blanks its BANK column and its BANK group/feedback control.
+The blank target can still be traversed for one encoder detent, but clicking it
+cannot enter edit mode or change the hidden value. A full automatic navigation
+skip overflowed the FPGA. FILTER ignores the enable mask and continues to use
+all ten resonators.
 
-- LUT4: 20,581
-- Packed cells: 24,255 / 24,288
-- Free packed cells: **33**
-- FF: 6,505
-- BRAM: 18 / 56
-- DVI5X: 431.78 MHz (required 371.33)
-- AUDIO: 74.28 MHz (required 49.15)
-- SYNC: 60.23 MHz (required 60.00)
-- DVI: 75.56 MHz (required 74.25)
+Final measured resources (`BANDS-FINE-FAST-W160-S1`):
+
+- LUT4: 20,565
+- Packed cells: 24,235 / 24,288
+- Free packed cells: **53**
+- FF: 6,510
+- BRAM: 19 / 56
+- DVI5X: 436.87 MHz (required 371.33)
+- AUDIO: 71.25 MHz (required 49.15)
+- SYNC: 63.71 MHz (required 60.00)
+- DVI: 75.57 MHz (required 74.25)
 
 This candidate requires native Yosys 0.66+152 and the staged mapping recipe in
 `RezoBeamTop.script_after_synth`: an initial density-oriented `abc`, followed by
-`abc9 -W 150`, then ECP5 cell mapping. The project's pinned YoWASP Yosys 0.52
-maps the fresh source 132 cells over capacity. The cutoff table is a synchronous
+`abc9 -W 160`, then ECP5 cell mapping. The project's pinned YoWASP Yosys 0.52
+maps the fresh source over capacity. The cutoff table is a synchronous
 block ROM; the next band is explicitly prefetched after the current band's two
 SVF passes, preserving the known-good DSP vector without an illegal asynchronous
 block-RAM port.
@@ -66,7 +75,7 @@ preserved. Physical UI/audio/save validation is pending.
 
 The clocked sample-and-hold, shift-register, rotate, and random-walk family is
 now assigned to a separate alternate bitstream. Do not attempt to squeeze those
-features into the 33 cells remaining here. They should share one clocked,
+features into the 53 cells remaining here. They should share one clocked,
 control-rate transformation engine built from the optimized pre-BANDS commit.
 
 ## Repository state
@@ -148,7 +157,9 @@ must be treated carefully.
 - Records are dual-sector, generation-numbered, versioned, CRC-checked, and
   verified after programming.
 - Version 2 saves 46 16-bit state words. Its four-word tail packs ten 5-bit
-  frequency indices, ten enable bits, and the selected layout. Version-1
+  coarse frequency indices, ten enable bits, and the selected layout; twenty
+  existing padding bits elsewhere in the record carry two fine bits per band.
+  Version-1
   42-word records remain readable and migrate to LEGACY with all bands enabled.
   The on-flash format still reserves room for up to 2 KiB of future state.
 - State capture/restore uses a circular 46-cycle scan stream to avoid a large
@@ -212,8 +223,8 @@ Previous one-click-save build (`SAVE-ONE-CLICK-S4`, seed 4):
 - DVI: 78.11 MHz (pass)
 
 The pre-BANDS optimized build passes at seeds 8, 4, and 2 with 1,082 free
-cells. BANDS plus the polished editor uses 1,049 of those cells and the final
-seed-1 candidate leaves 33.
+cells. BANDS plus the BANK-only/fine-frequency pass uses 1,029 of those cells
+and the final seed-1 candidate leaves 53.
 Packed-cell use is not monotonic with source-code size: shortening labels and
 several apparently simpler lookup structures mapped substantially worse.
 DVI5X is largely the existing TMDS serializer and is highly seed-sensitive,
@@ -221,10 +232,10 @@ but overall packing congestion is also a real constraint.
 
 ## Test baseline
 
-The complete targeted regression set contains 31 tests, including exact USER
-snapshot semantics, all ten persisted frequencies/enables, version-1 migration,
-the known-good DSP vector, two-row BANDS geometry, a five-digit frequency
-readout, and programming across a 256-byte flash page:
+The complete targeted regression set contains 34 tests, including exact USER
+working-vector semantics, all ten persisted frequencies/enables, version-1
+migration, the known-good DSP vector, two-row BANDS geometry, a five-digit
+frequency readout, and programming across a 256-byte flash page:
 
 ```sh
 pdm run pytest \

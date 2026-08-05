@@ -56,8 +56,6 @@ def test_ui_shared_matrix_and_output_edit_paths():
         assert ctx.get(dut.selected) == dut.TARGET_PAGE
         await _click(ctx, dut)
         endpoint = await _turn(ctx, dut, endpoint, 1)
-        assert ctx.get(dut.page) == 6
-        endpoint = await _turn(ctx, dut, endpoint, 1)
         assert ctx.get(dut.page) == 2
         await _click(ctx, dut)
 
@@ -152,16 +150,26 @@ def test_ui_state_scan_round_trips_independent_mode_values():
         state = [0] * dut.STATE_WORDS_V2
         for address, value in writes:
             state[address] = value
-        saved_frequencies = tuple(range(RezoCore.N_BANDS))
+        saved_frequencies = tuple((n << RezoCore.FREQ_FINE_WIDTH) | (n & 3)
+                                  for n in range(RezoCore.N_BANDS))
         band_config = 0
         for n, frequency in enumerate(saved_frequencies):
-            band_config |= frequency << (n * RezoCore.FREQ_INDEX_WIDTH)
+            band_config |= (frequency >> RezoCore.FREQ_FINE_WIDTH) << (
+                n * RezoCore.FREQ_COARSE_WIDTH)
         saved_enables = 0b1011010011
         band_config |= saved_enables << 50
         band_config |= RezoCore.LAYOUT_USER << 60
+        band_config |= (saved_frequencies[9] & 3) << 62
         for n in range(4):
             state[dut.STATE_BAND_CONFIG_BASE + n] = \
                 (band_config >> (16 * n)) & 0xffff
+        state[dut.STATE_CAP_FLAGS] |= (saved_frequencies[0] & 3) << 14
+        for n in range(1, 5):
+            state[dut.STATE_FILTER_CV_BASE + 7] |= \
+                (saved_frequencies[n] & 3) << (8 + (n - 1) * 2)
+        for n in range(5, 9):
+            state[dut.STATE_BANK_GROUP_BASE + 2] |= \
+                (saved_frequencies[n] & 3) << (8 + (n - 5) * 2)
 
         # LOAD shifts a complete validated record into the circular stream.
         ctx.set(dut.state_shift_load, 1)
@@ -261,6 +269,8 @@ def test_ui_band_page_layout_toggle_and_transactional_user_edit():
         await _click(ctx, dut)
         endpoint = await _turn(ctx, dut, endpoint, 1)  # USER wraps to LEGACY
         await _click(ctx, dut)
+        for _ in range(RezoCore.N_BANDS + 1):
+            await ctx.tick()
         legacy = [RezoCore.frequency_index(f) for f in RezoCore.LEGACY_FREQS_HZ]
         assert [ctx.get(dut.band_frequencies[n]) for n in range(10)] == legacy
         await _click(ctx, dut)
@@ -273,6 +283,64 @@ def test_ui_band_page_layout_toggle_and_transactional_user_edit():
 
     sim.add_testbench(bench)
     sim.run()
+
+
+def test_ui_disabled_bank_controls_do_not_change_stored_values():
+    """Muted bands remain configurable on BANDS but are inert on BANK."""
+    dut = FastClickRezoUI()
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+
+    async def bench(ctx):
+        endpoint = 0b00
+
+        # Enter BANDS and disable the first two bands.
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)  # layout
+        endpoint = await _turn(ctx, dut, endpoint, 1)  # enable 0
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)  # enable 1
+        await _click(ctx, dut)
+        assert ctx.get(dut.band_enables[0]) == 0
+        assert ctx.get(dut.band_enables[1]) == 0
+
+        # Navigate back through BANDS controls to PAGE, then return to BANK.
+        endpoint = await _turn(ctx, dut, endpoint, 0)
+        endpoint = await _turn(ctx, dut, endpoint, 0)
+        endpoint = await _turn(ctx, dut, endpoint, 0)
+        assert ctx.get(dut.selected) == dut.TARGET_PAGE
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 0)
+        assert ctx.get(dut.page) == 0
+        await _click(ctx, dut)
+
+        # MODE -> PRESET -> band 0. It may be traversed while navigating, but
+        # entering EDIT and turning cannot alter its hidden stored level.
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_BAND_BASE
+        old_level = ctx.get(dut.levels[0])
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.levels[0]) == old_level
+
+    sim.add_testbench(bench)
+    sim.run()
+
+
+def test_frequency_grid_preserves_factory_centers_and_adds_fine_steps():
+    """Every old five-bit index maps to its exact center at fine position zero."""
+    assert len(RezoCore.COARSE_FREQUENCIES_HZ) == 29
+    assert len(RezoCore.FREQUENCIES_HZ) == 116
+    for coarse_index, frequency in enumerate(RezoCore.COARSE_FREQUENCIES_HZ):
+        fine_index = coarse_index << RezoCore.FREQ_FINE_WIDTH
+        assert RezoCore.FREQUENCIES_HZ[fine_index] == frequency
+        assert RezoCore.frequency_index(frequency) == fine_index
+    assert all(a <= b for a, b in zip(
+        RezoCore.FREQUENCIES_HZ, RezoCore.FREQUENCIES_HZ[1:]))
 
 
 def test_ui_save_default_click_requests_once():

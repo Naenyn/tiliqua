@@ -60,6 +60,8 @@ def test_tile_display_band_geometry_and_modulation_shading():
     async def bench(ctx):
         # Band 5 spans x=378..419. A base value of 16 reaches y=190;
         # its effective value of 24 reaches y=102.
+        for enable in dut.band_enables:
+            ctx.set(enable, 1)
         ctx.set(dut.levels[5], 16)
         ctx.set(dut.effective_levels[5], 24)
         # The column ROM intentionally prefetches x+1 to compensate for its
@@ -171,6 +173,38 @@ def test_bands_page_writes_all_five_frequency_digits():
 
     text = RezoTileDisplay.PALETTE["text"]
     assert samples == [text] * 5
+
+
+def test_disabled_band_is_hidden_only_on_bank_pages():
+    """BANK masking blanks a column while FILTER continues using all resonators."""
+    dut = RezoTileDisplay(h_active=1280)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6, domain="sync")
+    sim.add_clock(1e-6, domain="dvi")
+    samples = []
+
+    async def sample(ctx, panel_x, panel_y):
+        ctx.set(dut.x, dut.x_offset + panel_x)
+        ctx.set(dut.y, panel_y)
+        ctx.set(dut.de, 1)
+        for _ in range(8):
+            await ctx.tick("dvi")
+        samples.append(ctx.get(dut.r))
+
+    async def bench(ctx):
+        ctx.set(dut.levels[0], 16)
+        ctx.set(dut.effective_levels[0], 16)
+        ctx.set(dut.band_enables[0], 0)
+        await sample(ctx, 60, 300)  # blank BANK column
+
+        ctx.set(dut.filter_mode, 1)
+        await sample(ctx, 60, 300)  # FILTER column remains active
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    palette = RezoTileDisplay.PALETTE
+    assert samples == [palette["background"], palette["control"]]
 
 
 def test_tile_display_drive_modulation_shading_in_both_modes():

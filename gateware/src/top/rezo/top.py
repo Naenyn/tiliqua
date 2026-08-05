@@ -97,12 +97,34 @@ class RezoCore(wiring.Component):
     LEGACY_FREQS_HZ = (29, 61, 115, 218, 411, 777, 1500, 2800, 5200, 11000)
     OCTAVE_FREQS_HZ = (31, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000)
     PERCEPT_FREQS_HZ = (50, 150, 300, 500, 770, 1150, 1700, 2700, 5300, 12000)
-    # Manual editing walks the exact union of the factory layouts. This keeps
-    # all presets lossless while providing 29 musically useful centers in a
-    # compact five-bit index.
-    FREQUENCIES_HZ = tuple(sorted(set((
+    # Factory centers form the coarse grid retained by the version-2 save
+    # format. Manual editing inserts three logarithmic subdivisions between
+    # adjacent centers. The low five bits previously saved for each band still
+    # identify the same exact factory-union value; two former padding bits per
+    # band persist the new fine position without growing the record.
+    COARSE_FREQUENCIES_HZ = tuple(sorted(set((
         *LEGACY_FREQS_HZ, *OCTAVE_FREQS_HZ, *PERCEPT_FREQS_HZ,
     ))))
+    FREQ_COARSE_WIDTH = 5
+    FREQ_FINE_WIDTH = 2
+    FREQ_SUBDIVISIONS = 1 << FREQ_FINE_WIDTH
+
+    frequencies = []
+    for index, frequency in enumerate(COARSE_FREQUENCIES_HZ):
+        if index + 1 < len(COARSE_FREQUENCIES_HZ):
+            next_frequency = COARSE_FREQUENCIES_HZ[index + 1]
+        else:
+            next_frequency = round(
+                frequency * frequency / COARSE_FREQUENCIES_HZ[index - 1])
+        for subdivision in range(FREQ_SUBDIVISIONS):
+            interpolated = round(
+                frequency * (next_frequency / frequency) **
+                (subdivision / FREQ_SUBDIVISIONS))
+            if index + 1 < len(COARSE_FREQUENCIES_HZ):
+                interpolated = min(interpolated, next_frequency - 1)
+            frequencies.append(max(frequency, interpolated))
+    FREQUENCIES_HZ = tuple(frequencies)
+    del frequencies, index, frequency, next_frequency, subdivision, interpolated
     FREQ_INDEX_WIDTH = (len(FREQUENCIES_HZ) - 1).bit_length()
     LAYOUT_LEGACY = 0
     LAYOUT_OCTAVE = 1
@@ -1403,8 +1425,9 @@ class RezoHardwareUI(wiring.Component):
         packed = 0
         shift = 0
         for frequency in RezoCore.LEGACY_FREQS_HZ:
-            packed |= RezoCore.frequency_index(frequency) << shift
-            shift += RezoCore.FREQ_INDEX_WIDTH
+            packed |= (RezoCore.frequency_index(frequency) >>
+                       RezoCore.FREQ_FINE_WIDTH) << shift
+            shift += RezoCore.FREQ_COARSE_WIDTH
         packed |= ((1 << RezoCore.N_BANDS) - 1) << shift
         shift += RezoCore.N_BANDS
         packed |= RezoCore.LAYOUT_LEGACY << shift
@@ -1524,31 +1547,65 @@ class RezoHardwareUI(wiring.Component):
                                for frequency in RezoCore.LEGACY_FREQS_HZ)
         percept_indices = tuple(RezoCore.frequency_index(frequency)
                                 for frequency in RezoCore.PERCEPT_FREQS_HZ)
-        user_frequencies = [
+        band_frequencies = [
             Signal(unsigned(RezoCore.FREQ_INDEX_WIDTH), init=octave_indices[n],
-                   name=f"ui_user_frequency{n}")
+                   name=f"ui_band_frequency{n}")
             for n in range(RezoCore.N_BANDS)
         ]
         frequency_layout = Signal(unsigned(2), init=RezoCore.LAYOUT_OCTAVE)
         layout_preview = Signal(unsigned(2), init=RezoCore.LAYOUT_OCTAVE)
         frequency_preview = Signal(unsigned(RezoCore.FREQ_INDEX_WIDTH))
-        user_snapshot_active = Signal()
-        user_snapshot_index = Signal(range(RezoCore.N_BANDS + 1))
-        active_frequencies = [
-            Signal(unsigned(RezoCore.FREQ_INDEX_WIDTH),
-                   name=f"ui_active_frequency{n}")
-            for n in range(RezoCore.N_BANDS)
+        layout_load_active = Signal()
+        layout_load_index = Signal(range(RezoCore.N_BANDS + 1))
+        layout_load_target = Signal(unsigned(2))
+        layout_load_prefetched = Signal()
+        state_shift_load_q = Signal()
+        layout_frequency_init = [0] * 48
+        for layout, table in enumerate(
+                (legacy_indices, octave_indices, percept_indices)):
+            for band, frequency in enumerate(table):
+                layout_frequency_init[(layout << 4) | band] = frequency
+        m.submodules.layout_frequency_mem = layout_frequency_mem = Memory(
+            shape=unsigned(RezoCore.FREQ_INDEX_WIDTH),
+            depth=len(layout_frequency_init), init=layout_frequency_init,
+            attrs={"ram_style": "block"})
+        layout_frequency_rport = layout_frequency_mem.read_port()
+        layout_frequency_addr_band = Signal(unsigned(4))
+        m.d.comb += [
+            layout_frequency_addr_band.eq(Mux(
+                layout_load_prefetched,
+                layout_load_index + 1,
+                layout_load_index)),
+            layout_frequency_rport.addr.eq(Cat(
+                layout_frequency_addr_band, layout_load_target)),
         ]
-        for n in range(RezoCore.N_BANDS):
-            with m.Switch(frequency_layout):
-                with m.Case(RezoCore.LAYOUT_LEGACY):
-                    m.d.comb += active_frequencies[n].eq(legacy_indices[n])
-                with m.Case(RezoCore.LAYOUT_OCTAVE):
-                    m.d.comb += active_frequencies[n].eq(octave_indices[n])
-                with m.Case(RezoCore.LAYOUT_PERCEPT):
-                    m.d.comb += active_frequencies[n].eq(percept_indices[n])
-                with m.Default():
-                    m.d.comb += active_frequencies[n].eq(user_frequencies[n])
+        with m.If(layout_load_active):
+            with m.If(layout_load_index == RezoCore.N_BANDS):
+                m.d.sync += [
+                    layout_load_active.eq(0),
+                    layout_load_prefetched.eq(0),
+                    frequency_layout.eq(layout_load_target),
+                ]
+            with m.Elif(~layout_load_prefetched):
+                m.d.sync += layout_load_prefetched.eq(1)
+            with m.Else():
+                m.d.sync += [
+                    Array(band_frequencies)[layout_load_index].eq(
+                        layout_frequency_rport.data),
+                    layout_load_index.eq(layout_load_index + 1),
+                ]
+        m.d.sync += state_shift_load_q.eq(self.state_shift_load)
+        # Older V2 factory-layout records retained a dormant USER vector.
+        # Materialize the selected factory vector after restore so the working
+        # registers always contain the frequencies that the DSP is using.
+        with m.If(state_shift_load_q & ~self.state_shift_load &
+                  (frequency_layout != RezoCore.LAYOUT_USER)):
+            m.d.sync += [
+                layout_load_active.eq(1),
+                layout_load_index.eq(0),
+                layout_load_target.eq(frequency_layout),
+                layout_load_prefetched.eq(0),
+            ]
         bank_drive = Signal(unsigned(8), init=RezoCore.DRIVE_DEFAULT >> 8)
         filter_drive = Signal(unsigned(8), init=RezoCore.DRIVE_DEFAULT >> 8)
         drive = Signal(unsigned(16))
@@ -1642,6 +1699,9 @@ class RezoHardwareUI(wiring.Component):
         band_edit_target_visible = Signal()
         band_enable_target = Signal()
         band_frequency_target = Signal()
+        bank_band_target = Signal()
+        bank_band_index = Signal(range(RezoCore.N_BANDS))
+        bank_band_enabled = Signal(init=1)
         editing = Signal()
 
         iq_sync = Signal(2)
@@ -1654,8 +1714,8 @@ class RezoHardwareUI(wiring.Component):
         iq_prev_is_detent = Signal()
         edit_step = Signal()
         edit_direction = Signal()
-        detent_timer = Signal(unsigned(23), init=(1 << 23) - 1)
-        matrix_edit_step = Signal(unsigned(4), init=1)
+        detent_timer = Signal(unsigned(21), init=(1 << 21) - 1)
+        accelerated_edit_step = Signal(unsigned(4), init=1)
         m.submodules += FFSynchronizer(Cat(self.enc_i, self.enc_q), iq_sync, init=0)
 
         forward_transition = (
@@ -1692,7 +1752,7 @@ class RezoHardwareUI(wiring.Component):
             m.d.sync += self.save_default_status.eq(2)  # SAVED
         with m.Elif(self.save_default_error):
             m.d.sync += self.save_default_status.eq(3)  # ERROR
-        with m.If(detent_timer != (1 << 23) - 1):
+        with m.If(detent_timer != (1 << 21) - 1):
             m.d.sync += detent_timer.eq(detent_timer + 1)
         with m.If(iq_sync != iq_prev):
             with m.If(transition_delta != 0):
@@ -1704,10 +1764,8 @@ class RezoHardwareUI(wiring.Component):
                 with m.Elif(iq_is_detent & detent_armed):
                     m.d.sync += [
                         detent_timer.eq(0),
-                        matrix_edit_step.eq(
-                            Mux(detent_timer < 1_200_000, 8,
-                                Mux(detent_timer < 3_000_000, 4,
-                                    Mux(detent_timer < 7_200_000, 2, 1)))),
+                        accelerated_edit_step.eq(
+                            Mux(detent_timer < 1_200_000, 8, 1)),
                     ]
                     with m.If(next_detent_acc > 0):
                         m.d.sync += [
@@ -1727,7 +1785,8 @@ class RezoHardwareUI(wiring.Component):
                     m.d.sync += detent_acc.eq(next_detent_acc)
 
         # Slow turns retain single-step precision. Faster turns accelerate
-        # only high-resolution matrix edits, never navigation or toggles.
+        # high-resolution frequency and matrix edits, never navigation or
+        # toggles.
         button_sync = Signal()
         button_last = Signal()
         click = Signal()
@@ -1804,8 +1863,32 @@ class RezoHardwareUI(wiring.Component):
                 (selected == self.TARGET_PAGE) |
                 (selected == self.TARGET_BAND_LAYOUT) |
                 band_enable_target | band_frequency_target),
+            bank_band_target.eq(0),
+            bank_band_index.eq(0),
             next_selected.eq(selected),
         ]
+        with m.If((page == 0) &
+                  (selected >= self.TARGET_BAND_BASE) &
+                  (selected < self.TARGET_BAND_BASE + RezoCore.N_BANDS)):
+            m.d.comb += [
+                bank_band_target.eq(1),
+                bank_band_index.eq(selected - self.TARGET_BAND_BASE),
+            ]
+        with m.Elif((page == 1) & feedback_send_target):
+            m.d.comb += [
+                bank_band_target.eq(1),
+                bank_band_index.eq(selected - self.TARGET_FEEDBACK_SEND_BASE),
+            ]
+        with m.Elif((page == 3) &
+                    (selected >= self.TARGET_GROUP_BASE) &
+                    (selected < self.TARGET_GROUP_BASE + RezoCore.N_BANDS)):
+            m.d.comb += [
+                bank_band_target.eq(1),
+                bank_band_index.eq(selected - self.TARGET_GROUP_BASE),
+            ]
+        m.d.comb += bank_band_enabled.eq(
+            filter_mode | ~bank_band_target |
+            Array(band_enables)[bank_band_index])
         with m.If(page == 0):
             with m.If(filter_mode):
                 with m.If(edit_direction):
@@ -2064,28 +2147,12 @@ class RezoHardwareUI(wiring.Component):
         with m.Else():
             m.d.comb += next_selected.eq(self.TARGET_PAGE)
 
-        with m.If(user_snapshot_active):
-            with m.If(user_snapshot_index == RezoCore.N_BANDS):
-                with m.If(selected != self.TARGET_BAND_LAYOUT):
-                    edited_frequency = Array(user_frequencies)[
-                        selected - self.TARGET_BAND_FREQ_BASE]
-                    m.d.sync += edited_frequency.eq(frequency_preview)
-                m.d.sync += [
-                    user_snapshot_active.eq(0),
-                    frequency_layout.eq(RezoCore.LAYOUT_USER),
-                ]
-            with m.Else():
-                snapshot_frequency = Array(active_frequencies)[
-                    user_snapshot_index]
-                snapshot_target = Array(user_frequencies)[user_snapshot_index]
-                m.d.sync += snapshot_target.eq(snapshot_frequency)
-                m.d.sync += user_snapshot_index.eq(user_snapshot_index + 1)
-
         with m.If(click):
             with m.If(feedback_send_target):
                 feedback_send = Array(feedback_sends)[
                     selected - self.TARGET_FEEDBACK_SEND_BASE]
-                m.d.sync += feedback_send.eq(~feedback_send)
+                with m.If(bank_band_enabled):
+                    m.d.sync += feedback_send.eq(~feedback_send)
                 m.d.sync += editing.eq(0)
             with m.Elif(band_enable_target):
                 band_enable = Array(band_enables)[
@@ -2102,34 +2169,40 @@ class RezoHardwareUI(wiring.Component):
                     self.apply_preset(m, preset, levels)
                 with m.Elif(selected == self.TARGET_BAND_LAYOUT):
                     with m.If(layout_preview == RezoCore.LAYOUT_USER):
-                        with m.If(frequency_layout == RezoCore.LAYOUT_USER):
-                            m.d.sync += frequency_layout.eq(
-                                RezoCore.LAYOUT_USER)
-                        with m.Else():
-                            m.d.sync += [
-                                user_snapshot_active.eq(1),
-                                user_snapshot_index.eq(0),
-                            ]
-                    with m.Else():
-                        m.d.sync += frequency_layout.eq(layout_preview)
-                with m.Elif(band_frequency_target):
-                    with m.If(frequency_layout == RezoCore.LAYOUT_USER):
-                        user_frequency = Array(user_frequencies)[
-                            selected - self.TARGET_BAND_FREQ_BASE]
-                        m.d.sync += user_frequency.eq(frequency_preview)
+                        m.d.sync += frequency_layout.eq(
+                            RezoCore.LAYOUT_USER)
                     with m.Else():
                         m.d.sync += [
-                            user_snapshot_active.eq(1),
-                            user_snapshot_index.eq(0),
+                            layout_load_active.eq(1),
+                            layout_load_index.eq(0),
+                            layout_load_target.eq(layout_preview),
+                            layout_load_prefetched.eq(0),
                         ]
+                with m.Elif(band_frequency_target):
+                    m.d.sync += [
+                        Array(band_frequencies)[
+                            selected - self.TARGET_BAND_FREQ_BASE].eq(
+                                frequency_preview),
+                        frequency_layout.eq(RezoCore.LAYOUT_USER),
+                    ]
                 m.d.sync += editing.eq(0)
             with m.Else():
                 with m.If(selected == self.TARGET_BAND_LAYOUT):
                     m.d.sync += layout_preview.eq(frequency_layout)
                 for n in range(RezoCore.N_BANDS):
                     with m.If(selected == self.TARGET_BAND_FREQ_BASE + n):
-                        m.d.sync += frequency_preview.eq(active_frequencies[n])
-                m.d.sync += editing.eq(1)
+                        m.d.sync += frequency_preview.eq(band_frequencies[n])
+                m.d.sync += [
+                    # Disabled BANK controls remain traversable, but cannot be
+                    # entered or changed. This keeps silent parameters inert
+                    # without putting an enable-mask search on the already
+                    # dense navigation path.
+                    editing.eq(bank_band_enabled),
+                    # The first edit detent is always precise. Subsequent
+                    # detents accelerate only if they themselves arrive in a
+                    # rapid sequence; navigation before the click is ignored.
+                    detent_timer.eq((1 << 21) - 1),
+                ]
 
         # One detent changes a continuous control by 1/128 of its nominal
         # unipolar span (and 1/128 of a band's bipolar span).  The DSP and CV
@@ -2146,7 +2219,8 @@ class RezoHardwareUI(wiring.Component):
                     # outputs -> feedback -> advanced.
                     with m.If(edit_direction):
                         with m.Switch(page):
-                            with m.Case(0): m.d.sync += page.eq(6)
+                            with m.Case(0):
+                                m.d.sync += page.eq(Mux(filter_mode, 2, 6))
                             with m.Case(6): m.d.sync += page.eq(2)
                             with m.Case(2): m.d.sync += page.eq(3)
                             with m.Case(3): m.d.sync += page.eq(4)
@@ -2160,7 +2234,8 @@ class RezoHardwareUI(wiring.Component):
                             with m.Case(1): m.d.sync += page.eq(4)
                             with m.Case(4): m.d.sync += page.eq(3)
                             with m.Case(3): m.d.sync += page.eq(2)
-                            with m.Case(2): m.d.sync += page.eq(6)
+                            with m.Case(2):
+                                m.d.sync += page.eq(Mux(filter_mode, 0, 6))
                             with m.Default(): m.d.sync += page.eq(0)
                 with m.Elif(selected == self.TARGET_BAND_LAYOUT):
                     with m.If(edit_direction):
@@ -2169,14 +2244,20 @@ class RezoHardwareUI(wiring.Component):
                         m.d.sync += layout_preview.eq(layout_preview - 1)
                 with m.Elif(band_frequency_target):
                     with m.If(edit_direction):
-                        with m.If(frequency_preview <
-                                  len(RezoCore.FREQUENCIES_HZ) - 1):
+                        with m.If(frequency_preview <=
+                                  len(RezoCore.FREQUENCIES_HZ) - 1 -
+                                  accelerated_edit_step):
                             m.d.sync += frequency_preview.eq(
-                                frequency_preview + 1)
+                                frequency_preview + accelerated_edit_step)
+                        with m.Else():
+                            m.d.sync += frequency_preview.eq(
+                                len(RezoCore.FREQUENCIES_HZ) - 1)
                     with m.Else():
-                        with m.If(frequency_preview > 0):
+                        with m.If(frequency_preview >= accelerated_edit_step):
                             m.d.sync += frequency_preview.eq(
-                                frequency_preview - 1)
+                                frequency_preview - accelerated_edit_step)
+                        with m.Else():
+                            m.d.sync += frequency_preview.eq(0)
                 with m.Elif(selected == self.TARGET_MODE):
                     m.d.sync += filter_mode.eq(~filter_mode)
                 with m.Elif(selected == self.TARGET_PALETTE):
@@ -2209,10 +2290,10 @@ class RezoHardwareUI(wiring.Component):
                     matrix_value = Array(filter_cv_matrix)[
                         selected - self.TARGET_FILTER_CV_BASE]
                     with m.If(edit_direction):
-                        self.clamp_add(m, matrix_value, matrix_edit_step,
+                        self.clamp_add(m, matrix_value, accelerated_edit_step,
                                        -128, 127)
                     with m.Else():
-                        self.clamp_add(m, matrix_value, -matrix_edit_step,
+                        self.clamp_add(m, matrix_value, -accelerated_edit_step,
                                        -128, 127)
                 with m.Elif(output_cell_target):
                     send_index = selected - self.TARGET_OUTPUT_BASE
@@ -2314,21 +2395,28 @@ class RezoHardwareUI(wiring.Component):
         # Packing at each field's native precision is materially smaller than
         # a 114-way 16-bit mux and leaves space for musical features.
         level_bytes = Cat(*(level.as_unsigned() for level in levels))
-        cap_flags_pad = Signal(2)
-        filter_cv_pad = Signal(8)
-        bank_group_pad = Signal(8)
+        # Version 2 already reserved twenty padding bits across the stream.
+        # Reuse them for two fine-frequency bits per band. Old records restore
+        # zero here and therefore retain their exact coarse-grid frequencies.
+        cap_flags_fine = band_frequencies[0][:RezoCore.FREQ_FINE_WIDTH]
+        filter_cv_fine = Cat(*(band_frequencies[n][:RezoCore.FREQ_FINE_WIDTH]
+                               for n in range(1, 5)))
+        bank_group_fine = Cat(*(band_frequencies[n][:RezoCore.FREQ_FINE_WIDTH]
+                                for n in range(5, 9)))
         output_send_pad = Signal(8)
-        band_config_pad = Signal(2)
+        band_config_fine = band_frequencies[9][:RezoCore.FREQ_FINE_WIDTH]
         filter_cv_bits = Cat(*(value.as_unsigned() for value in filter_cv_matrix),
-                             filter_cv_pad)
+                             filter_cv_fine)
         cv_depth_bytes = Cat(*(value[8:16] for value in cv_depths))
         input_config_bits = Cat(*input_modes, *cv_targets)
-        bank_group_bits = Cat(*bank_group_indices, bank_group_pad)
+        bank_group_bits = Cat(*bank_group_indices, bank_group_fine)
         feedback_preset_bits = Cat(*feedback_sends, preset, palette)
         output_send_bits = Cat(*bank_output_sends, *filter_output_sends,
                                output_send_pad)
-        band_config_bits = Cat(*user_frequencies, *band_enables,
-                               frequency_layout, band_config_pad)
+        band_config_bits = Cat(
+            *(frequency[RezoCore.FREQ_FINE_WIDTH:]
+              for frequency in band_frequencies),
+            *band_enables, frequency_layout, band_config_fine)
         # The packed state is a circular stream. This temporal interface costs
         # one local shift mux per retained bit instead of a 42-way read mux and
         # a separate 42-way restore decoder. A complete SAVE rotation returns
@@ -2340,7 +2428,7 @@ class RezoHardwareUI(wiring.Component):
             resonance, feedback,
             filter_cutoff, filter_slope,
             filter_width, limit_knee,
-            limit_cap, damp_mode, filter_mode, filter_type, cap_flags_pad,
+            limit_cap, damp_mode, filter_mode, filter_type, cap_flags_fine,
             filter_cv_bits,
             *input_gains,
             cv_depth_bytes,
@@ -2365,7 +2453,7 @@ class RezoHardwareUI(wiring.Component):
         for n in range(RezoCore.N_BANDS):
             m.d.comb += [
                 self.band_enables[n].eq(band_enables[n]),
-                self.band_frequencies[n].eq(active_frequencies[n]),
+                self.band_frequencies[n].eq(band_frequencies[n]),
             ]
         for n, input_gain in enumerate(input_gains):
             m.d.comb += self.input_gains[n].eq(input_gain)
@@ -3019,7 +3107,7 @@ class RezoTileDisplay(wiring.Component):
             group_page.eq(self.page == 3),
             output_page.eq(self.page == 4),
             advanced_page.eq(self.page == 5),
-            bands_page.eq(self.page == 6),
+            bands_page.eq((self.page == 6) & ~self.filter_mode),
         ]
         page_cells = 45 * 45
         text_init = [0] * (9 * page_cells)
@@ -3220,16 +3308,19 @@ class RezoTileDisplay(wiring.Component):
                         for pos in range(4)]
         # One 18-bit ROM serves both the compact three-character frequency
         # labels used on BANK/FEEDBACK and the full five-digit BANDS readout.
-        # The full value occupies two words at power-of-two offsets, allowing
-        # the existing synchronous port to fetch it without another BRAM.
-        frequency_label_init = [0] * (64 + len(frequency_names))
+        # The 116-entry table uses power-of-two word offsets and still fits in
+        # one DP16KD, keeping the address selection to cheap bitwise ORs.
+        frequency_head_offset = 128
+        frequency_tail_offset = 256
+        frequency_label_init = [0] * (
+            frequency_tail_offset + len(frequency_names))
         for index, name in enumerate(frequency_names):
             full_name = f"{RezoCore.FREQUENCIES_HZ[index]:>5}"
             frequency_label_init[index] = sum(
                 self.code(name[pos]) << (6 * pos) for pos in range(3))
-            frequency_label_init[32 + index] = sum(
+            frequency_label_init[frequency_head_offset + index] = sum(
                 self.code(full_name[pos]) << (6 * pos) for pos in range(3))
-            frequency_label_init[64 + index] = sum(
+            frequency_label_init[frequency_tail_offset + index] = sum(
                 self.code(full_name[pos + 3]) << (6 * pos) for pos in range(2))
         m.submodules.frequency_label_mem = frequency_label_mem = Memory(
             shape=unsigned(18), depth=len(frequency_label_init),
@@ -3252,7 +3343,7 @@ class RezoTileDisplay(wiring.Component):
                         frequency_preview_sync,
                         Array(band_frequencies_sync)[bands_selected_band])
                     m.d.comb += frequency_label_rport.addr.eq(
-                        bands_frequency_index | 32)
+                        bands_frequency_index | frequency_head_offset)
             with m.Case(68, 69, 70):
                 with m.If(bands_selected_valid):
                     bands_frequency_index = Mux(
@@ -3260,7 +3351,7 @@ class RezoTileDisplay(wiring.Component):
                         frequency_preview_sync,
                         Array(band_frequencies_sync)[bands_selected_band])
                     m.d.comb += frequency_label_rport.addr.eq(
-                        bands_frequency_index | 64)
+                        bands_frequency_index | frequency_tail_offset)
         layout_names = ("LEGACY ", "OCTAVE ", "PERCEPT", "USER   ")
         layout_chars = [Array(Const(self.code(name[pos]), 6)
                               for name in layout_names)
@@ -3702,6 +3793,7 @@ class RezoTileDisplay(wiring.Component):
         band_filter_page_q = Signal()
         band_tune_page_q = Signal()
         band_bands_page_q = Signal()
+        band_filter_mode_q = Signal()
         band_selected_target_q = Signal.like(self.selected)
         m.d.dvi += [
             band_y_q.eq(y),
@@ -3711,6 +3803,7 @@ class RezoTileDisplay(wiring.Component):
             band_filter_page_q.eq(filter_page),
             band_tune_page_q.eq(tune_page),
             band_bands_page_q.eq(bands_page),
+            band_filter_mode_q.eq(self.filter_mode),
             band_selected_target_q.eq(self.selected),
         ]
 
@@ -3735,6 +3828,7 @@ class RezoTileDisplay(wiring.Component):
         band_filter_page_value_q = Signal()
         band_tune_page_value_q = Signal()
         band_bands_page_value_q = Signal()
+        band_filter_mode_value_q = Signal()
         band_selected_target_value_q = Signal.like(self.selected)
         m.d.dvi += [
             band_index_q.eq(band_index),
@@ -3758,6 +3852,7 @@ class RezoTileDisplay(wiring.Component):
             band_filter_page_value_q.eq(band_filter_page_q),
             band_tune_page_value_q.eq(band_tune_page_q),
             band_bands_page_value_q.eq(band_bands_page_q),
+            band_filter_mode_value_q.eq(band_filter_mode_q),
             band_selected_target_value_q.eq(band_selected_target_q),
         ]
 
@@ -3810,35 +3905,42 @@ class RezoTileDisplay(wiring.Component):
                (band_y_value_q >= 444)))))
         m.d.comb += [
             band_slot.eq(band_active_value_q &
-                         (band_home_page_value_q | band_tune_page_value_q |
+                         ((band_home_page_value_q &
+                           (band_filter_mode_value_q | band_enable_q)) |
+                          (band_tune_page_value_q &
+                           (band_filter_mode_value_q | band_enable_q)) |
                           band_bands_page_value_q) &
                          band_fill_x_q & band_slot_y),
             band_zero.eq(
                 band_active_value_q & (
-                (band_bank_page_value_q & band_zero_x_q &
+                (band_bank_page_value_q & band_enable_q & band_zero_x_q &
                  (band_y_value_q >= zero_y - 1) &
                  (band_y_value_q < zero_y + 2)) |
                 (band_filter_page_value_q & band_zero_x_q &
                  (band_y_value_q >= 529) & (band_y_value_q < 532)))),
             band_marker.eq(
-                band_active_value_q & band_bank_page_value_q & base_marker),
+                band_active_value_q & band_bank_page_value_q &
+                band_enable_q & base_marker),
             band_fill.eq(
                 band_active_value_q & (
-                (band_bank_page_value_q & base_bank_fill) |
+                (band_bank_page_value_q & band_enable_q & base_bank_fill) |
                 (band_filter_page_value_q & band_fill_x_q & band_positive_q &
                  (band_y_value_q >= band_top_q) &
                  (band_y_value_q < 532)) |
-                (band_tune_page_value_q & band_fill_x_q & band_slot_y &
-                 band_feedback_send_q) |
+                (band_tune_page_value_q &
+                 (band_filter_mode_value_q | band_enable_q) & band_fill_x_q &
+                 band_slot_y & band_feedback_send_q) |
                 (band_bands_page_value_q & band_fill_x_q & band_enable_q &
                  (band_y_value_q >= 238) & (band_y_value_q < 274)))),
             band_mod_fill.eq(
-                band_active_value_q & band_bank_page_value_q &
+                band_active_value_q & band_bank_page_value_q & band_enable_q &
                 (base_bank_fill ^ effective_bank_fill) & ~base_marker),
         ]
         band_select_q0 = (
-            ((band_bank_page_value_q & selected_band) |
-             (band_tune_page_value_q & feedback_band_selected)) &
+            ((band_bank_page_value_q & band_enable_q & selected_band) |
+             (band_tune_page_value_q &
+              (band_filter_mode_value_q | band_enable_q) &
+              feedback_band_selected)) &
             selection_outline) | (
                 band_bands_page_value_q &
                 (enable_band_selected | frequency_band_selected) &
@@ -3919,7 +4021,10 @@ class RezoTileDisplay(wiring.Component):
         group_band_active_q = Signal()
         group_row_active_q = Signal()
         group_page_q = Signal()
+        group_band_enabled_q = Signal()
+        group_filter_mode_q = Signal()
         bank_group_mask_array = Array(self.bank_groups)
+        band_enable_mask_array = Array(self.band_enables)
         m.d.comb += [
             group_band.eq(0),
             group_row.eq(0),
@@ -3943,9 +4048,12 @@ class RezoTileDisplay(wiring.Component):
             group_band_active_q.eq(group_band_active),
             group_row_active_q.eq(group_row_active),
             group_page_q.eq(group_page),
+            group_band_enabled_q.eq(band_enable_mask_array[group_band]),
+            group_filter_mode_q.eq(self.filter_mode),
         ]
         m.d.comb += group_fill.eq(
             group_page_q & group_band_active_q & group_row_active_q &
+            (group_filter_mode_q | group_band_enabled_q) &
             bank_group_mask_array[group_band_q].bit_select(group_row_q, 1))
 
         output_row = Signal(unsigned(2))
@@ -4417,7 +4525,7 @@ class RezoBeamTop(Elaboratable):
     # Yosys.
     synth_opts = "-abc9 -abc2 -run begin:map_luts"
     script_after_synth = (
-        "abc; techmap -map +/lattice/latches_map.v; abc9 -W 150; clean; "
+        "abc; techmap -map +/lattice/latches_map.v; abc9 -W 160; clean; "
         "synth_ecp5 -abc9 -abc2 -top top -run map_cells:check; "
         "autoname; hierarchy -check; stat; check -noinit; "
         "blackbox =A:whitebox"

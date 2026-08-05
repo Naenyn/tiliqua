@@ -71,6 +71,12 @@ also passing every constrained clock.
 | BANDS-UI-W150-S4 | Exact final synthesized JSON rerouted at seed 4 | 4 | 20,581 | 24,255 | 33 | 6,505 | 18 | 379.79 | 72.45 | 61.82 | 70.06 | FAIL DVI |
 | BANDS-UI-W150-S2 | Exact final synthesized JSON rerouted at seed 2 | 2 | 20,581 | 24,255 | 33 | 6,505 | 18 | 441.11 | 72.30 | 57.63 | 73.11 | FAIL SYNC and DVI |
 | **BANDS-UI-W150-S1** | Polished two-row UI and synchronous cutoff prefetch | **1** | **20,581** | **24,255** | **33** | **6,505** | **18** | **431.78** | **74.28** | **60.23** | **75.56** | **PASS; flashed slot 4, validation pending** |
+| BANDS-FINE-W150-S1 | 116-step frequency grid, BANK-only masking, block-ROM factory loader; no disabled-edit guard | 1 | 20,604 | 24,272 | 16 | 6,514 | 19 | 432.90 | 73.65 | 59.85 | 75.68 | FAIL SYNC by 0.15 MHz |
+| BANDS-FINE-INERT-W150-S1 | Add disabled BANK control guard with four-rate acceleration | 1 | 20,621 | 24,297 | -9 | 6,514 | 19 | — | — | — | — | FAIL capacity |
+| BANDS-FINE-FAST-W140-S1 | Two-rate acceleration; native ABC9 wire weight 140 | 1 | 20,618 | 24,288 | 0 | 6,510 | 19 | 378.07 | 72.48 | 61.57 | 70.15 | FAIL DVI |
+| **BANDS-FINE-FAST-W160-S1** | BANK-only page/masking/inert controls; 116-step frequency grid; two-rate acceleration | **1** | **20,565** | **24,235** | **53** | **6,510** | **19** | **436.87** | **71.25** | **63.71** | **75.57** | **PASS; final candidate** |
+| BANDS-FINE-FAST-W160-S2 | Exact final synthesized JSON rerouted at seed 2 | 2 | 20,565 | 24,235 | 53 | 6,510 | 19 | 406.83 | 73.59 | 56.97 | 72.93 | FAIL SYNC and DVI |
+| BANDS-FINE-FAST-W180-S1 | Exact source mapped with ABC9 wire weight 180 | 1 | 20,588 | 24,267 | 21 | 6,510 | 19 | 451.06 | 70.06 | 63.63 | 78.74 | PASS; larger than W160 |
 
 ## Notes
 
@@ -197,3 +203,20 @@ also passing every constrained clock.
   free; clocked sample
   and hold, shift, rotate, and random-walk features are therefore assigned to
   a separate alternate bitstream rather than this one.
+- The follow-up BANK-only pass hides the BANDS page in FILTER mode, blanks
+  disabled BANK columns and group/feedback controls, and makes those controls
+  inert while disabled. Navigation may still traverse a blank disabled target
+  for one detent; a full combinational skip search exceeded capacity. FILTER
+  continues to use and expose all ten resonators.
+- Manual frequency editing now uses 116 logarithmically spaced positions: the
+  exact 29-value factory union plus three subdivisions after every center.
+  Slow turns move one position and rapid turns move eight. The original five
+  coarse bits per band remain byte-compatible in version 2; twenty formerly
+  zero padding bits store the two fine bits per band, so old saves restore the
+  same exact centers. Factory loading uses one additional block ROM rather
+  than ten parallel layout muxes.
+- The four-rate 1/2/4/8 acceleration guard overflowed capacity. A two-rate
+  1/8 implementation retains precise/fast editing and maps materially better.
+  The final staged native recipe uses `abc9 -W 160`; seed 1 passes every clock
+  with 53 packed cells free. Seed 2 fails SYNC and DVI, and seeds 3 and 4 were
+  stopped after prolonged congestion searches.

@@ -32,21 +32,22 @@ of every new transform and keeps most future work out of the audio-rate FSM.
 ## Capacity checkpoint after the BANDS implementation
 
 The optimization pass first recovered 1,082 packed cells, then the editable
-BANDS feature and polished two-row editor used 1,049 of them. The final
-native-Yosys candidate occupies 24,255 of 24,288 packed cells, leaving **33
+BANDS feature, BANK-only masking, and fine-frequency editor used 1,029 of them.
+The final native-Yosys candidate occupies 24,235 of 24,288 packed cells, leaving **53
 free**, and passes every required clock at seed 1. It is intentionally
 feature-complete for this bitstream.
 
 BANDS adds LEGACY, OCTAVE, PERCEPT, and USER layouts; ten band enable toggles;
-and exact stepped center-frequency editing. SAVE DEFAULT persists the full
-frequency vector and enable mask. This is a configuration feature rather than
-the control-rate animation engine proposed below.
+and a 116-position logarithmic center-frequency grid with precise/fast encoder
+rates. SAVE DEFAULT persists the full frequency vector and enable mask. This is
+a configuration feature rather than the control-rate animation engine proposed
+below.
 
 The clocked sample-and-hold/shift-register family is now planned as an
 alternate REZO bitstream. Shift, rotate, and random walk share enough state,
 indexing, clock conditioning, and UI concepts that the alternate build should
 start with one common control-rate transformation engine instead of forcing a
-minimal fragment into the 33 cells left here. Measure that new build from the
+minimal fragment into the 53 cells left here. Measure that new build from the
 optimized pre-BANDS commit as its baseline.
 
 ## Ranked feature list
