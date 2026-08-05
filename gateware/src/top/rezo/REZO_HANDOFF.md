@@ -77,7 +77,9 @@ The new BANK-only/fine-frequency validation archive is
 `gateware/build/rezo-r5/rezo-04dc8771-r5.tar.gz`. Its seed-6 `top.bit` and the
 archived copy both have SHA-256
 `da757347f33706ac317b8559313927b6a136a713a04943d5b418776348c5397e`.
-It has not been flashed.
+It was flashed successfully to slot 4 on 2026-08-04. Bitstream and manifest
+programming plus FPGA refresh completed without error; option storage was
+preserved. Physical UI/audio/save validation is pending.
 
 The clocked sample-and-hold, shift-register, rotate, and random-walk family is
 now assigned to a separate alternate bitstream. Do not attempt to squeeze those
