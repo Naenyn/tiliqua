@@ -88,6 +88,7 @@ also passing every constrained clock.
 | GROUP-GHOST-FRAMES | `bc6ebc4b`; four full rectangular GROUPS ghosts for every disabled band | 7 | 20,719 | 24,437 | -149 | 6,351 | 19 | — | — | — | — | FAIL capacity |
 | GROUP-GHOST-RAILS-S7 | `b2812acc`; shared top/bottom ghost rails | 7 | 20,611 | 24,223 | 65 | 6,351 | 19 | 404.37 | 72.50 | 62.63 | 72.24 | FAIL DVI |
 | **GROUP-GHOST-RAILS-S6** | **`b2812acc`; exact committed W160 JSON** | **6** | **20,611** | **24,223** | **65** | **6,351** | **19** | **387.00** | **72.22** | **62.50** | **79.25** | **PASS; flashed slot 4** |
+| **CLOCKED-BANK-BASE-S1** | **`8a27f1a7`; FILTER DSP/UI/pages removed, v2 state positions reserved** | **1** | **16,512** | **19,508** | **4,780** | **5,578** | **15** | **443.07** | **76.24** | **61.16** | **80.57** | **PASS; clocked-feature baseline, not flashed** |
 
 ## Notes
 
@@ -252,3 +253,12 @@ also passing every constrained clock.
   fits with 65 free, and preserves an unambiguous inactive location. Seed 7
   fails only DVI; seed 6 passes every clock and supplies the flashed archive.
   Seed 8 was stopped once seed 6 passed rather than retained as a partial route.
+- The `rezoclocked` branch begins at `CLOCKED-BANK-BASE-S1`. Removing FILTER's
+  generated response engine, modulation scan, dedicated controls, hidden
+  FILTER/MATRIX text pages, matrix display memory, and mode-dependent routing
+  recovers 4,715 packed cells relative to the flashed release candidate. LUT4
+  demand falls by 4,099, flip-flops by 773, and block RAM by four. The existing
+  46-word version-2 state positions formerly occupied by FILTER remain as inert
+  reserved bits, so established BANK fields and saved frequency fine bits keep
+  their exact on-flash positions. The first configured seed passes all four
+  clocks and is the formal capacity baseline for the shared clock/shift engine.

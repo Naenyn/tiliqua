@@ -6,6 +6,58 @@ it together with [`BUILD_PERFORMANCE.md`](BUILD_PERFORMANCE.md) and
 before changing the design. [`REZO_USER_GUIDE.md`](REZO_USER_GUIDE.md) is the
 simplified operator documentation for the release candidate.
 
+## 2026-08-06 `rezoclocked` BANK-only baseline
+
+Branch `rezoclocked` now has a clean, buildable foundation for replacing
+FILTER with a shared clocked band-transformation mode. Commit `8a27f1a7`:
+
+- removes FILTER response generation and modulation from `RezoCore`;
+- removes FILTER/MATRIX navigation, controls, display pages, faders, and the
+  display-side modulation-matrix RAM;
+- makes BANK input mixing, feedback, enable masking, output sends, and DRY
+  routing unconditional;
+- retains the old FILTER bit positions only as inert version-2 persistence
+  placeholders, preserving every later BANK field and the fine-frequency
+  padding layout byte-for-byte; and
+- removes FILTER-only regressions while retaining the BANK audio-cycle,
+  known-good DSP, UI, display, and persistence coverage.
+
+All 27 REZO tests pass. The exact commit-stamped seed-1 build passes every
+clock and produces
+`gateware/build/rezo-r5/rezo-8a27f1a7-r5.tar.gz`. It was deliberately not
+flashed. The bitstream SHA-256 is
+`cd4471e3034dba751b3cf568fdfbe5b2d78e67d386d6fbaed434b8a1992db2a8`;
+the archive SHA-256 is
+`bc9e97dc693a7dec9a6f88d1e5313737f7a9a8a0f77475f781e07c823df191a6`.
+Its measured resources are 16,512 LUT4, 19,508 packed cells (4,780 free),
+5,578 FF, and 15 BRAM. Final clocks are 443.07 MHz DVI5X, 76.24 MHz AUDIO,
+61.16 MHz SYNC, and 80.57 MHz DVI.
+
+Relative to the flashed `b2812acc` release candidate, this recovers 4,715
+packed cells, 4,099 LUT4, 773 FF, and four BRAM. This is the formal baseline
+for CLOCK work. Do not spend the entire margin at once: preserve enough room
+for physical clock conditioning, a ten-value double buffer, new UI text and
+geometry, tests, and routing variability.
+
+Recommended first CLOCK increment:
+
+1. Reintroduce the top-right BANK/CLOCK selector and use the former FILTER page
+   slot for a compact CLOCK main page.
+2. Establish fixed MVP input roles in CLOCK mode: IN0 audio, IN1 sampled value,
+   IN2 clock, and IN3 reset. Avoid a routing matrix until hardware behavior is
+   proven.
+3. Implement one rising-edge conditioner with hysteresis and minimum spacing.
+4. Feed one shared ten-band state engine with SHIFT first. Add ROTATE and WALK
+   as operations over the same state/indexing only after SHIFT is verified.
+5. Publish a completed vector atomically into the existing smoothed band-level
+   path; keep BANK levels untouched so returning to BANK restores its shape.
+6. Reuse the old persistence positions in a version-3 record only after the
+   CLOCK state and controls are settled.
+
+The existing `REZO_USER_GUIDE.md` continues to document the released `rezo`
+bitstream. Write a separate clocked guide, or revise it, once CLOCK behavior is
+stable enough to test on hardware.
+
 ## 2026-08-05 UI polish pass
 
 The hardware review led to a consistency and legibility pass:

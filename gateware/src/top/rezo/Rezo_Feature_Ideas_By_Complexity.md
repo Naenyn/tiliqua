@@ -47,8 +47,12 @@ The clocked sample-and-hold/shift-register family is now planned as an
 alternate REZO bitstream. Shift, rotate, and random walk share enough state,
 indexing, clock conditioning, and UI concepts that the alternate build should
 start with one common control-rate transformation engine instead of forcing a
-minimal fragment into the 29 cells left here. Measure that new build from the
-optimized pre-BANDS commit as its baseline.
+minimal fragment into the release build.
+
+That alternate branch now has a formal BANK-only baseline at commit
+`8a27f1a7`: 19,508 packed cells, 4,780 free, with all clocks passing. FILTER's
+DSP and UI have been removed while its version-2 persistence positions remain
+reserved. Measure clocked additions against this baseline.
 
 ## Ranked feature list
 
