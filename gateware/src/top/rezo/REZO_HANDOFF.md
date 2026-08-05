@@ -3,7 +3,8 @@
 This file is the starting context for the next Codex task working on REZO. Read
 it together with [`BUILD_PERFORMANCE.md`](BUILD_PERFORMANCE.md) and
 [`Rezo_Feature_Ideas_By_Complexity.md`](Rezo_Feature_Ideas_By_Complexity.md)
-before changing the design.
+before changing the design. [`REZO_USER_GUIDE.md`](REZO_USER_GUIDE.md) is the
+simplified operator documentation for the release candidate.
 
 ## 2026-08-05 UI polish pass
 
