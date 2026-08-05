@@ -203,8 +203,8 @@ def test_disabled_band_has_bank_ghosts_but_filter_remains_active():
 
         ctx.set(dut.filter_mode, 0)
         ctx.set(dut.page, 3)
-        await sample(ctx, 144, 300)  # disabled group-cell frame edge
-        await sample(ctx, 150, 300)  # empty group-cell interior
+        await sample(ctx, 150, 294)  # disabled group-cell top ghost rail
+        await sample(ctx, 150, 300)  # empty space between ghost rails
 
     sim.add_testbench(bench)
     sim.run()

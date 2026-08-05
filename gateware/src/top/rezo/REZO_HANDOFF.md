@@ -17,8 +17,9 @@ The hardware review led to a consistency and legibility pass:
   band toggles, then KNEE, CEIL, and DAMP.
 - ADVANCED is now OPTIONS. PALETTE and SAVE DEFAULT share a right-aligned label
   column, equal button spacing, and centered button text.
-- Disabled BANK bands retain a dim empty frame on BANK and FEEDBACK, plus four
-  empty assignment frames on GROUPS, instead of disappearing completely.
+- Disabled BANK bands retain a dim empty frame on BANK and FEEDBACK, plus dim
+  top/bottom ghost rails at all four GROUPS assignments, instead of
+  disappearing completely.
   FILTER still exposes all ten resonators, and the BANDS page retains its
   explicit enable buttons.
 - BANK/FILTER changes now slew the existing ten shared band gains toward the
