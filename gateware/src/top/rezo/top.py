@@ -4033,6 +4033,9 @@ class RezoTileDisplay(wiring.Component):
         group_row = Signal(unsigned(2))
         group_band_active = Signal()
         group_row_active = Signal()
+        group_band_edge = Signal()
+        group_row_edge = Signal()
+        group_ghost = Signal()
         group_band_q = Signal.like(group_band)
         group_row_q = Signal.like(group_row)
         group_band_active_q = Signal()
@@ -4047,15 +4050,33 @@ class RezoTileDisplay(wiring.Component):
             group_row.eq(0),
             group_band_active.eq(0),
             group_row_active.eq(0),
+            group_band_edge.eq(0),
+            group_row_edge.eq(0),
         ]
         for n in range(RezoCore.N_BANDS):
             x0 = 144 + n * 48
             with m.If((x >= x0) & (x < x0 + 24)):
-                m.d.comb += [group_band.eq(n), group_band_active.eq(1)]
+                m.d.comb += [
+                    group_band.eq(n),
+                    group_band_active.eq(1),
+                    group_band_edge.eq((x < x0 + 2) | (x >= x0 + 22)),
+                ]
         for group in range(RezoCore.N_GROUPS):
             marker_y = 294 + group * 64
             with m.If((y >= marker_y) & (y < marker_y + 24)):
-                m.d.comb += [group_row.eq(group), group_row_active.eq(1)]
+                m.d.comb += [
+                    group_row.eq(group),
+                    group_row_active.eq(1),
+                    group_row_edge.eq(
+                        (y < marker_y + 2) | (y >= marker_y + 22)),
+                ]
+        # On BANK's GROUPS page, retain the four empty assignment frames for
+        # a disabled band. This matches the dim ghost used by the band-column
+        # pages while keeping the disabled target visibly inactive.
+        m.d.comb += group_ghost.eq(
+            group_page & group_band_active & group_row_active &
+            ~self.filter_mode & ~band_enable_mask_array[group_band] &
+            (group_band_edge | group_row_edge))
         # Coordinate decoding is substantially wider than the actual 10x4
         # assignment lookup. Pipeline the two halves so the group page does
         # not put both on one HDMI pixel-clock path.
@@ -4207,6 +4228,7 @@ class RezoTileDisplay(wiring.Component):
         band_slot_q0 = band_slot
         group_cell_q0 = tile_registered_or(group_cell_signals, "group_cell")
         group_fill_q0 = Signal()
+        group_ghost_q0 = Signal()
         group_select_q0 = tile_registered_or(group_select_signals, "group_select")
         output_cell_q0 = Signal()
         output_fill_q0 = Signal()
@@ -4218,6 +4240,7 @@ class RezoTileDisplay(wiring.Component):
         m.d.dvi += [
             output_cell_q0.eq(output_cell),
             output_select_q0.eq(output_select),
+            group_ghost_q0.eq(group_ghost),
         ]
         m.d.dvi += output_fill_q0.eq(output_fill)
         m.d.comb += group_fill_q0.eq(group_fill)
@@ -4476,7 +4499,7 @@ class RezoTileDisplay(wiring.Component):
                       input_fill_q0 | group_fill_q0 | output_fill_q0 |
                       filter_cv_fill_q0),
             line_q.eq(geometry_line_q0 | input_line_q0 | input_unity_q0 |
-                      filter_cv_line_q0),
+                      group_ghost_q0 | filter_cv_line_q0),
             mod_q.eq(geometry_mod_q0),
             panel_q.eq(geometry_panel_q0 | input_panel_q0 | group_cell_q0 |
                        output_cell_q0 | filter_cv_panel_q0),

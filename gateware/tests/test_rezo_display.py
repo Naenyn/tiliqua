@@ -175,8 +175,8 @@ def test_bands_page_writes_all_five_frequency_digits():
     assert samples == [text] * 5
 
 
-def test_disabled_band_has_bank_ghost_but_filter_remains_active():
-    """A disabled BANK column keeps a frame while FILTER uses the resonator."""
+def test_disabled_band_has_bank_ghosts_but_filter_remains_active():
+    """Disabled BANK columns and group cells keep frames; FILTER stays active."""
     dut = RezoTileDisplay(h_active=1280)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
@@ -201,12 +201,18 @@ def test_disabled_band_has_bank_ghost_but_filter_remains_active():
         ctx.set(dut.filter_mode, 1)
         await sample(ctx, 60, 300)  # FILTER column remains active
 
+        ctx.set(dut.filter_mode, 0)
+        ctx.set(dut.page, 3)
+        await sample(ctx, 144, 300)  # disabled group-cell frame edge
+        await sample(ctx, 150, 300)  # empty group-cell interior
+
     sim.add_testbench(bench)
     sim.run()
 
     palette = RezoTileDisplay.PALETTE
     assert samples == [
         palette["line"], palette["background"], palette["control"],
+        palette["line"], palette["background"],
     ]
 
 
