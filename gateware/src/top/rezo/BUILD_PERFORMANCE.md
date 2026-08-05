@@ -74,9 +74,13 @@ also passing every constrained clock.
 | BANDS-FINE-W150-S1 | 116-step frequency grid, BANK-only masking, block-ROM factory loader; no disabled-edit guard | 1 | 20,604 | 24,272 | 16 | 6,514 | 19 | 432.90 | 73.65 | 59.85 | 75.68 | FAIL SYNC by 0.15 MHz |
 | BANDS-FINE-INERT-W150-S1 | Add disabled BANK control guard with four-rate acceleration | 1 | 20,621 | 24,297 | -9 | 6,514 | 19 | — | — | — | — | FAIL capacity |
 | BANDS-FINE-FAST-W140-S1 | Two-rate acceleration; native ABC9 wire weight 140 | 1 | 20,618 | 24,288 | 0 | 6,510 | 19 | 378.07 | 72.48 | 61.57 | 70.15 | FAIL DVI |
-| **BANDS-FINE-FAST-W160-S1** | BANK-only page/masking/inert controls; 116-step frequency grid; two-rate acceleration | **1** | **20,565** | **24,235** | **53** | **6,510** | **19** | **436.87** | **71.25** | **63.71** | **75.57** | **PASS; final candidate** |
+| BANDS-FINE-FAST-W160-PRECOMMIT-S1 | BANK-only page/masking/inert controls; 116-step grid; dirty build identifier | 1 | 20,565 | 24,235 | 53 | 6,510 | 19 | 436.87 | 71.25 | 63.71 | 75.57 | PASS; superseded by commit-stamped netlist |
 | BANDS-FINE-FAST-W160-S2 | Exact final synthesized JSON rerouted at seed 2 | 2 | 20,565 | 24,235 | 53 | 6,510 | 19 | 406.83 | 73.59 | 56.97 | 72.93 | FAIL SYNC and DVI |
 | BANDS-FINE-FAST-W180-S1 | Exact source mapped with ABC9 wire weight 180 | 1 | 20,588 | 24,267 | 21 | 6,510 | 19 | 451.06 | 70.06 | 63.63 | 78.74 | PASS; larger than W160 |
+| BANDS-FINE-COMMIT-S1 | `04dc8771`, exact committed W160 JSON | 1 | 20,577 | 24,259 | 29 | 6,510 | 19 | 382.41 | 74.00 | 58.05 | 77.71 | FAIL SYNC |
+| BANDS-FINE-COMMIT-S5 | Exact committed W160 JSON | 5 | 20,577 | 24,259 | 29 | 6,510 | 19 | 372.16 | 74.98 | 61.85 | 69.57 | FAIL DVI |
+| **BANDS-FINE-COMMIT-S6** | **Exact committed W160 JSON** | **6** | **20,577** | **24,259** | **29** | **6,510** | **19** | **442.48** | **72.68** | **63.84** | **76.78** | **PASS; archived validation candidate** |
+| BANDS-FINE-COMMIT-S7 | Exact committed W160 JSON | 7 | 20,577 | 24,259 | 29 | 6,510 | 19 | 389.11 | 69.57 | 62.68 | 75.73 | PASS |
 
 ## Notes
 
@@ -217,6 +221,9 @@ also passing every constrained clock.
   than ten parallel layout muxes.
 - The four-rate 1/2/4/8 acceleration guard overflowed capacity. A two-rate
   1/8 implementation retains precise/fast editing and maps materially better.
-  The final staged native recipe uses `abc9 -W 160`; seed 1 passes every clock
-  with 53 packed cells free. Seed 2 fails SYNC and DVI, and seeds 3 and 4 were
-  stopped after prolonged congestion searches.
+  The final staged native recipe uses `abc9 -W 160`. Changing the displayed
+  identifier from the dirty tree to commit `04dc8771` perturbed packing from
+  24,235 to 24,259 cells. Seeds 6 and 7 pass every clock with 29 cells free;
+  seed 6 has the best retained margins and supplies the archive. Seeds 1 and 5
+  fail one clock each, seed 2 was measured on the precommit JSON and fails SYNC
+  and DVI, and seeds 3 and 4 were stopped after prolonged congestion searches.

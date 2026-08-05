@@ -38,17 +38,17 @@ cannot enter edit mode or change the hidden value. A full automatic navigation
 skip overflowed the FPGA. FILTER ignores the enable mask and continues to use
 all ten resonators.
 
-Final measured resources (`BANDS-FINE-FAST-W160-S1`):
+Final measured resources (`BANDS-FINE-COMMIT-S6`, commit `04dc8771`):
 
-- LUT4: 20,565
-- Packed cells: 24,235 / 24,288
-- Free packed cells: **53**
+- LUT4: 20,577
+- Packed cells: 24,259 / 24,288
+- Free packed cells: **29**
 - FF: 6,510
 - BRAM: 19 / 56
-- DVI5X: 436.87 MHz (required 371.33)
-- AUDIO: 71.25 MHz (required 49.15)
-- SYNC: 63.71 MHz (required 60.00)
-- DVI: 75.57 MHz (required 74.25)
+- DVI5X: 442.48 MHz (required 371.33)
+- AUDIO: 72.68 MHz (required 49.15)
+- SYNC: 63.84 MHz (required 60.00)
+- DVI: 76.78 MHz (required 74.25)
 
 This candidate requires native Yosys 0.66+152 and the staged mapping recipe in
 `RezoBeamTop.script_after_synth`: an initial density-oriented `abc`, followed by
@@ -73,9 +73,15 @@ It was flashed successfully to slot 4 on 2026-08-04; bitstream and manifest
 programming plus FPGA refresh completed without error, and option storage was
 preserved. Physical UI/audio/save validation is pending.
 
+The new BANK-only/fine-frequency validation archive is
+`gateware/build/rezo-r5/rezo-04dc8771-r5.tar.gz`. Its seed-6 `top.bit` and the
+archived copy both have SHA-256
+`da757347f33706ac317b8559313927b6a136a713a04943d5b418776348c5397e`.
+It has not been flashed.
+
 The clocked sample-and-hold, shift-register, rotate, and random-walk family is
 now assigned to a separate alternate bitstream. Do not attempt to squeeze those
-features into the 53 cells remaining here. They should share one clocked,
+features into the 29 cells remaining here. They should share one clocked,
 control-rate transformation engine built from the optimized pre-BANDS commit.
 
 ## Repository state
@@ -223,8 +229,8 @@ Previous one-click-save build (`SAVE-ONE-CLICK-S4`, seed 4):
 - DVI: 78.11 MHz (pass)
 
 The pre-BANDS optimized build passes at seeds 8, 4, and 2 with 1,082 free
-cells. BANDS plus the BANK-only/fine-frequency pass uses 1,029 of those cells
-and the final seed-1 candidate leaves 53.
+cells. BANDS plus the BANK-only/fine-frequency pass uses 1,053 of those cells
+and the final commit-stamped seed-6 candidate leaves 29.
 Packed-cell use is not monotonic with source-code size: shortening labels and
 several apparently simpler lookup structures mapped substantially worse.
 DVI5X is largely the existing TMDS serializer and is highly seed-sensitive,
