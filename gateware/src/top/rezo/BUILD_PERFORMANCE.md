@@ -81,6 +81,7 @@ also passing every constrained clock.
 | BANDS-FINE-COMMIT-S5 | Exact committed W160 JSON | 5 | 20,577 | 24,259 | 29 | 6,510 | 19 | 372.16 | 74.98 | 61.85 | 69.57 | FAIL DVI |
 | **BANDS-FINE-COMMIT-S6** | **Exact committed W160 JSON** | **6** | **20,577** | **24,259** | **29** | **6,510** | **19** | **442.48** | **72.68** | **63.84** | **76.78** | **PASS; flashed slot 4** |
 | BANDS-FINE-COMMIT-S7 | Exact committed W160 JSON | 7 | 20,577 | 24,259 | 29 | 6,510 | 19 | 389.11 | 69.57 | 62.68 | 75.73 | PASS |
+| POLISH-PRECOMMIT-S6 | Centered selectors, OPTIONS layout, disabled-band frames, ordered FEEDBACK navigation, and shared gain slew across mode changes; dirty build ID | 6 | 20,575 | 24,165 | 123 | 6,510 | 19 | 437.06 | 69.37 | 66.14 | 75.32 | PASS; superseded by commit-stamped netlist |
 
 ## Notes
 
@@ -227,3 +228,9 @@ also passing every constrained clock.
   seed 6 has the best retained margins and supplies the archive. Seeds 1 and 5
   fail one clock each, seed 2 was measured on the precommit JSON and fails SYNC
   and DVI, and seeds 3 and 4 were stopped after prolonged congestion searches.
+- The first UI-polish route unexpectedly maps 94 fewer packed cells than the
+  preceding commit even though it adds disabled-band frames and mode-change
+  gain slewing. It also renames ADVANCED to OPTIONS, centers variable-width
+  selector labels with fixed padding, and fixes FEEDBACK navigation order.
+  This row carries a dirty identifier; the exact commit-stamped result must be
+  routed and recorded separately before packaging.

@@ -71,7 +71,7 @@ def test_ui_shared_matrix_and_output_edit_paths():
     sim.run()
 
 def test_ui_shared_feedback_toggle_path():
-    """The indexed feedback toggle changes exactly the selected band."""
+    """FEEDBACK navigates top-to-bottom and toggles only the selected band."""
     dut = FastClickRezoUI()
     sim = Simulator(dut)
     sim.add_clock(1e-6)
@@ -86,19 +86,25 @@ def test_ui_shared_feedback_toggle_path():
         assert ctx.get(dut.page) == 1
         await _click(ctx, dut)
 
-        # Counter-direction entry selects the final feedback band.
-        endpoint = await _turn(ctx, dut, endpoint, 0)
-        assert ctx.get(dut.selected) == dut.TARGET_FEEDBACK_SEND_BASE + 9
+        # Forward entry reaches the band row before the lower safety faders.
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_FEEDBACK_SEND_BASE
         await _click(ctx, dut)
-        assert ctx.get(dut.feedback_sends[9]) == 0
-        assert all(ctx.get(dut.feedback_sends[n]) == 1 for n in range(9))
+        assert ctx.get(dut.feedback_sends[0]) == 0
+        assert all(ctx.get(dut.feedback_sends[n]) == 1 for n in range(1, 10))
+
+        for _ in range(9):
+            endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_FEEDBACK_SEND_BASE + 9
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_LIMIT_KNEE
 
     sim.add_testbench(bench)
     sim.run()
 
 
 def test_ui_advanced_palette_selection_wraps():
-    """ADVANCED exposes a palette control with five wrapping themes."""
+    """OPTIONS exposes a palette control with five wrapping themes."""
     dut = FastClickRezoUI()
     sim = Simulator(dut)
     sim.add_clock(1e-6)
@@ -106,7 +112,7 @@ def test_ui_advanced_palette_selection_wraps():
     async def bench(ctx):
         endpoint = 0b00
 
-        # PAGE edit: BANK -> ADVANCED.
+        # PAGE edit: BANK -> OPTIONS.
         await _click(ctx, dut)
         endpoint = await _turn(ctx, dut, endpoint, 0)
         assert ctx.get(dut.page) == 5
@@ -353,7 +359,7 @@ def test_ui_save_default_click_requests_once():
         endpoint = 0b00
         ctx.set(dut.save_default_available, 1)
 
-        # PAGE edit: BANK -> ADVANCED.
+        # PAGE edit: BANK -> OPTIONS.
         await _click(ctx, dut)
         endpoint = await _turn(ctx, dut, endpoint, 0)
         assert ctx.get(dut.page) == 5

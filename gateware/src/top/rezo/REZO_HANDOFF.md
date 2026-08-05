@@ -5,6 +5,31 @@ it together with [`BUILD_PERFORMANCE.md`](BUILD_PERFORMANCE.md) and
 [`Rezo_Feature_Ideas_By_Complexity.md`](Rezo_Feature_Ideas_By_Complexity.md)
 before changing the design.
 
+## 2026-08-05 UI polish pass
+
+The hardware review led to a consistency and legibility pass:
+
+- BANK PRESET, BANDS PRESET, and FILTER TYPE now share one selector geometry;
+  their labels are vertically aligned and each value is centered by its own
+  visible width.
+- BANK and FEEDBACK use `FREQ:` instead of the abbreviated `FRQ`.
+- FEEDBACK navigation now follows the screen from top to bottom: page, ten
+  band toggles, then KNEE, CEIL, and DAMP.
+- ADVANCED is now OPTIONS. PALETTE and SAVE DEFAULT share a right-aligned label
+  column, equal button spacing, and centered button text.
+- Disabled BANK bands retain a dim empty frame on BANK and FEEDBACK instead of
+  disappearing completely. FILTER still exposes all ten resonators, and the
+  BANDS page retains its explicit enable buttons.
+- BANK/FILTER changes now slew the existing ten shared band gains toward the
+  new mode's targets. A full-scale transition takes about 1.33 ms at 192 kHz,
+  avoiding an instantaneous gain-vector change without adding an output
+  multiplier or transition counter.
+
+All 35 targeted tests pass. The preliminary native-Yosys W160, seed-6 route
+passes all four clocks with 24,165 packed cells (123 free), 94 fewer cells than
+the prior committed build. This result has a dirty build identifier and must
+still be reproduced from the exact source commit before it is packaged.
+
 ## 2026-08-04 BANDS UI update
 
 The journal optimization first increased free space from 504 to 1,082 packed
@@ -142,7 +167,7 @@ REZO is a CPU-free, lean 1280x720p60 Tiliqua R5 bitstream running audio at
   drive.
 - Five semantic color palettes. The selected palette is now part of the saved
   REZO default state rather than an independently autosaved preference.
-- One-click `SAVE DEFAULT` on the ADVANCED page. There is intentionally no
+- One-click `SAVE DEFAULT` on the OPTIONS page. There is intentionally no
   confirmation state. A successful record restores the complete current REZO
   state when the same bitstream slot is booted again.
 
@@ -240,10 +265,11 @@ but overall packing congestion is also a real constraint.
 
 ## Test baseline
 
-The complete targeted regression set contains 34 tests, including exact USER
+The complete targeted regression set contains 35 tests, including exact USER
 working-vector semantics, all ten persisted frequencies/enables, version-1
 migration, the known-good DSP vector, two-row BANDS geometry, a five-digit
-frequency readout, and programming across a 256-byte flash page:
+frequency readout, mode-change gain slew, disabled-band frames, and programming
+across a 256-byte flash page:
 
 ```sh
 pdm run pytest \
@@ -287,14 +313,22 @@ seeds of an unchanged synthesized design, reuse the exact `top.json` for direct
 nextpnr routing so synthesis variation is not confused with placement
 variation.
 
-## Immediate next task: flash and hardware validation
+## Immediate next task: package, flash, and hardware validation
 
-1. Confirm boot, audio, all pages, palette rendering, and modulation display.
-2. Confirm a previous version-1 default restores as LEGACY/all-enabled while
+1. Rebuild and route the exact committed polish source, then package and flash
+   only an all-clock passing archive.
+2. Confirm boot, audio, all pages, palette rendering, and modulation display.
+   Check selector alignment, OPTIONS spacing, disabled-band frames, and the
+   corrected FEEDBACK navigation order against the hardware photos.
+3. Exercise BANK/FILTER changes with sustained and transient-rich input. The
+   new shared-gain slew removes the direct band-gain discontinuity; if a pop
+   remains, the next candidate should fade the complete four-output mix so
+   mode-specific routing and dry sends also transition smoothly.
+4. Confirm a previous version-1 default restores as LEGACY/all-enabled while
    preserving every pre-BANDS setting.
-3. Exercise every layout, frequency editing, enable toggles, and FILTER mode.
-4. SAVE DEFAULT, reboot slot 4, and confirm the complete version-2 state restores.
-5. Develop clocked modes only as a separately measured alternate bitstream.
+5. Exercise every layout, frequency editing, enable toggles, and FILTER mode.
+6. SAVE DEFAULT, reboot slot 4, and confirm the complete version-2 state restores.
+7. Develop clocked modes only as a separately measured alternate bitstream.
 
 ## Desired next functionality
 

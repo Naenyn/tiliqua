@@ -105,6 +105,42 @@ def test_filter_cv_matrix_modulates_all_five_destinations():
     assert result["drive"] > 16384
 
 
+def test_mode_change_slews_shared_band_gains():
+    """BANK/FILTER changes ramp the gain vector instead of switching it."""
+    dut = RezoCore(fs=192_000)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+    levels = []
+
+    async def send(ctx):
+        ctx.set(dut.i.valid, 1)
+        await ctx.tick().until(dut.i.ready == 1)
+        ctx.set(dut.i.valid, 0)
+        ctx.set(dut.o.ready, 1)
+        await ctx.tick().until(dut.o.valid == 1)
+
+    async def bench(ctx):
+        # The default BANK shape is zero while the default LP response passes
+        # the first band. Its first FILTER sample must move only one slew step.
+        ctx.set(dut.filter_mode, 1)
+        await send(ctx)
+        levels.append(ctx.get(dut.active_levels[0]))
+        await send(ctx)
+        levels.append(ctx.get(dut.active_levels[0]))
+
+        # Returning to BANK takes the same bounded path toward zero.
+        ctx.set(dut.filter_mode, 0)
+        await send(ctx)
+        levels.append(ctx.get(dut.active_levels[0]))
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    assert levels == [dut.PARAM_SLEW_STEP,
+                      2 * dut.PARAM_SLEW_STEP,
+                      dut.PARAM_SLEW_STEP]
+
+
 def test_bank_zero_wet_and_dry_paths():
     dut = RezoCore(fs=192_000)
     sim = Simulator(dut)

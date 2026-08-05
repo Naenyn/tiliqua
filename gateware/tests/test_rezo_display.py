@@ -175,8 +175,8 @@ def test_bands_page_writes_all_five_frequency_digits():
     assert samples == [text] * 5
 
 
-def test_disabled_band_is_hidden_only_on_bank_pages():
-    """BANK masking blanks a column while FILTER continues using all resonators."""
+def test_disabled_band_has_bank_ghost_but_filter_remains_active():
+    """A disabled BANK column keeps a frame while FILTER uses the resonator."""
     dut = RezoTileDisplay(h_active=1280)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
@@ -195,7 +195,8 @@ def test_disabled_band_is_hidden_only_on_bank_pages():
         ctx.set(dut.levels[0], 16)
         ctx.set(dut.effective_levels[0], 16)
         ctx.set(dut.band_enables[0], 0)
-        await sample(ctx, 60, 300)  # blank BANK column
+        await sample(ctx, 42, 300)  # ghost frame edge
+        await sample(ctx, 60, 300)  # blank frame interior
 
         ctx.set(dut.filter_mode, 1)
         await sample(ctx, 60, 300)  # FILTER column remains active
@@ -204,7 +205,9 @@ def test_disabled_band_is_hidden_only_on_bank_pages():
     sim.run()
 
     palette = RezoTileDisplay.PALETTE
-    assert samples == [palette["background"], palette["control"]]
+    assert samples == [
+        palette["line"], palette["background"], palette["control"],
+    ]
 
 
 def test_tile_display_drive_modulation_shading_in_both_modes():
