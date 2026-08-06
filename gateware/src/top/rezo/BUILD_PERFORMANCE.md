@@ -96,6 +96,7 @@ also passing every constrained clock.
 | **CLOCK-TURING-S7** | **Dirty `7f6819a3`; full-resolution looping random register, LCK gate, LENGTH and CHANGE controls** | **7** | **19,135** | **22,307** | **1,981** | **6,051** | **15** | **394.94** | **74.58** | **61.08** | **80.28** | **PASS; packaged/flashed slot 4** |
 | **CLOCK-INTERNAL-AUTO-S8** | **Dirty `7f6819a3`; physical-jack AUTO source, INT/EXT overrides, safe handoff, eight internal BPMs** | **8** | **19,524** | **22,760** | **1,528** | **6,105** | **15** | **399.20** | **72.70** | **63.61** | **80.33** | **PASS; flashed slot 4** |
 | **CLOCK-TARGET-DEPTH-S7** | **Dirty `7f6819a3`; TURING ALL/RANGE targeting, one-based START, shared 17-step CLOCK depth** | **7** | **20,505** | **23,831** | **457** | **6,473** | **15** | **389.11** | **74.71** | **61.17** | **74.81** | **PASS; flashed slot 4** |
+| **CLOCK-TURING-BRAM-S1** | **Dirty `c9be114a`; private TURING loop moved from dynamic register muxes to a sequential block-RAM worker** | **1** | **19,619** | **22,935** | **1,353** | **6,363** | **16** | **415.45** | **73.06** | **61.58** | **76.09** | **PASS; flashed slot 4** |
 
 ## Notes
 

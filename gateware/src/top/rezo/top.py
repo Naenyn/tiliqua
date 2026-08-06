@@ -581,9 +581,18 @@ class RezoCore(wiring.Component):
         lock_high = Signal()
         turing_seeded = Signal()
         turing_fill_count = Signal(range(self.N_BANDS + 1))
-        turing_pattern = [Signal(signed(16), name=f"turing_pattern{n}")
-                          for n in range(self.N_BANDS)]
+        # The private TURING loop is accessed sequentially, so a tiny block RAM
+        # is substantially cheaper than ten registers behind two wide dynamic
+        # muxes. Its synchronous read adds control cycles, not audio latency:
+        # even a ten-step update completes well inside one 192 kHz sample.
+        m.submodules.turing_pattern_mem = turing_pattern_mem = Memory(
+            shape=signed(16), depth=16, init=[0] * 16,
+            attrs={"ram_style": "block"})
+        turing_pattern_rport = turing_pattern_mem.read_port()
+        turing_pattern_wport = turing_pattern_mem.write_port()
         turing_pending = Signal()
+        turing_starting = Signal()
+        turing_read_wait = Signal()
         turing_scan_index = Signal(range(self.N_BANDS))
         turing_search_count = Signal(range(self.N_BANDS + 1))
         turing_carry = Signal(signed(16))
@@ -591,8 +600,11 @@ class RezoCore(wiring.Component):
         turing_effective_length = Signal(range(self.N_BANDS + 1))
         turing_mutate = Signal()
         turing_map_pending = Signal()
+        turing_map_priming = Signal()
         turing_map_index = Signal(range(self.N_BANDS))
         turing_map_pattern_index = Signal(range(self.N_BANDS))
+        turing_clear_pending = Signal()
+        turing_clear_index = Signal(range(self.N_BANDS))
         clock_scale_index = Signal(range(self.N_BANDS))
         clock_scale_product = Signal(signed(21))
         cv_product = Signal(signed(18))
@@ -603,7 +615,6 @@ class RezoCore(wiring.Component):
         band_enable_array = Array(self.band_enables)
         clock_modulation_array = Array(self.clock_modulations)
         clock_scaled_modulation_array = Array(clock_scaled_modulations)
-        turing_pattern_array = Array(turing_pattern)
         natural_level_array = Array(self.levels)
         rotate_origin_array = Array(rotate_origins)
         rotate_snapshot_origin_array = Array(rotate_snapshot_origins)
@@ -824,7 +835,10 @@ class RezoCore(wiring.Component):
             out_ready.eq(~out_valid | self.o.ready),
             self.i.ready.eq((state == state_wait) & out_ready &
                             ~rotate_pending & ~turing_pending &
-                            ~turing_map_pending),
+                            ~turing_map_pending & ~turing_clear_pending),
+            turing_pattern_wport.en.eq(0),
+            turing_pattern_wport.addr.eq(0),
+            turing_pattern_wport.data.eq(0),
         ]
 
         with m.If(self.o.ready):
@@ -886,12 +900,25 @@ class RezoCore(wiring.Component):
                 with m.Else():
                     m.d.sync += rotate_scan_index.eq(rotate_scan_index - 1)
 
+        # Clear the private loop after an algorithm/length change. This keeps
+        # initial fill behavior deterministic while using one RAM write per
+        # control cycle instead of a parallel register reset network.
+        with m.If(turing_clear_pending):
+            m.d.comb += [
+                turing_pattern_wport.en.eq(1),
+                turing_pattern_wport.addr.eq(turing_clear_index),
+                turing_pattern_wport.data.eq(0),
+            ]
+            with m.If(turing_clear_index == self.N_BANDS - 1):
+                m.d.sync += turing_clear_pending.eq(0)
+            with m.Else():
+                m.d.sync += turing_clear_index.eq(turing_clear_index + 1)
+
         # TURING evolves a private full-resolution pattern, then maps it to the
-        # ten physical bands. ALL repeats the pattern across enabled bands;
-        # RANGE places it once starting at the selected physical band. Keeping
-        # pattern evolution separate from mapping makes short loops repeatable
-        # without allowing their output copies to feed back into the register.
-        with m.If(turing_pending):
+        # ten physical bands. Synchronous RAM reads make each shift take two
+        # setup cycles plus one cycle per loop element, still negligible beside
+        # the audio sample interval.
+        with m.Elif(turing_pending):
             with m.If(turing_effective_length == 0):
                 for modulation in self.clock_modulations:
                     m.d.sync += modulation.eq(0)
@@ -901,19 +928,36 @@ class RezoCore(wiring.Component):
                     turing_seeded.eq(0),
                     turing_fill_count.eq(0),
                 ]
-            with m.Else():
+            with m.Elif(turing_read_wait):
+                # The block-RAM read port is synchronous. Its address is a
+                # registered control signal, so allow one worker cycle for the
+                # requested word to reach ``data`` before consuming it.
+                m.d.sync += turing_read_wait.eq(0)
+            with m.Elif(turing_starting):
+                # An unchanged loop needs the departing value as its new carry
+                # before the first destination can be read.
                 m.d.sync += [
-                    turing_pattern_array[turing_scan_index].eq(turing_carry),
-                    turing_carry.eq(
-                        turing_pattern_array[turing_scan_index]),
+                    turing_carry.eq(turing_pattern_rport.data),
+                    turing_pattern_rport.addr.eq(turing_scan_index),
+                    turing_starting.eq(0),
+                    turing_read_wait.eq(1),
                 ]
+            with m.Else():
+                m.d.comb += [
+                    turing_pattern_wport.en.eq(1),
+                    turing_pattern_wport.addr.eq(turing_scan_index),
+                    turing_pattern_wport.data.eq(turing_carry),
+                ]
+                m.d.sync += turing_carry.eq(turing_pattern_rport.data)
                 with m.If(turing_search_count + 1 >=
                           turing_effective_length):
                     m.d.sync += [
                         turing_pending.eq(0),
                         turing_map_pending.eq(1),
+                        turing_map_priming.eq(1),
                         turing_map_index.eq(0),
                         turing_map_pattern_index.eq(0),
+                        turing_pattern_rport.addr.eq(0),
                     ]
                     with m.If(~turing_seeded):
                         with m.If(turing_fill_count + 1 >=
@@ -930,26 +974,45 @@ class RezoCore(wiring.Component):
                     m.d.sync += [
                         turing_scan_index.eq(turing_scan_index + 1),
                         turing_search_count.eq(turing_search_count + 1),
+                        turing_pattern_rport.addr.eq(
+                            turing_scan_index + 1),
+                        turing_read_wait.eq(1),
                     ]
                 with m.Else():
                     m.d.sync += [
                         turing_scan_index.eq(turing_scan_index - 1),
                         turing_search_count.eq(turing_search_count + 1),
+                        turing_pattern_rport.addr.eq(
+                            turing_scan_index - 1),
+                        turing_read_wait.eq(1),
                     ]
 
         with m.If(turing_map_pending):
-            with m.If(self.turing_target == self.TURING_TARGET_ALL):
+            # Prime the synchronous read after a shift or remap. This also
+            # avoids a read/write collision when reverse evolution finishes at
+            # pattern address zero.
+            with m.If(turing_map_priming):
+                m.d.sync += turing_map_priming.eq(0)
+            with m.Elif(self.turing_target == self.TURING_TARGET_ALL):
                 with m.If(band_enable_array[turing_map_index] &
                           (turing_effective_length != 0)):
                     m.d.sync += clock_modulation_array[
-                        turing_map_index].eq(turing_pattern_array[
-                            turing_map_pattern_index])
+                        turing_map_index].eq(turing_pattern_rport.data)
                     with m.If(turing_map_pattern_index + 1 >=
                               turing_effective_length):
-                        m.d.sync += turing_map_pattern_index.eq(0)
+                        m.d.sync += [
+                            turing_map_pattern_index.eq(0),
+                            turing_pattern_rport.addr.eq(0),
+                            turing_map_priming.eq(1),
+                        ]
                     with m.Else():
-                        m.d.sync += turing_map_pattern_index.eq(
-                            turing_map_pattern_index + 1)
+                        m.d.sync += [
+                            turing_map_pattern_index.eq(
+                                turing_map_pattern_index + 1),
+                            turing_pattern_rport.addr.eq(
+                                turing_map_pattern_index + 1),
+                            turing_map_priming.eq(1),
+                        ]
                 with m.Else():
                     m.d.sync += clock_modulation_array[
                         turing_map_index].eq(0)
@@ -960,15 +1023,25 @@ class RezoCore(wiring.Component):
                         (turing_map_index < self.turing_start +
                          turing_effective_length)):
                     m.d.sync += clock_modulation_array[
-                        turing_map_index].eq(turing_pattern_array[
-                            turing_map_index - self.turing_start])
+                        turing_map_index].eq(turing_pattern_rport.data)
                 with m.Else():
                     m.d.sync += clock_modulation_array[
                         turing_map_index].eq(0)
-            with m.If(turing_map_index == self.N_BANDS - 1):
-                m.d.sync += turing_map_pending.eq(0)
-            with m.Else():
-                m.d.sync += turing_map_index.eq(turing_map_index + 1)
+                with m.If((turing_map_index >= self.turing_start) &
+                          (turing_map_index < self.turing_start +
+                           turing_effective_length)):
+                    m.d.sync += [
+                        turing_pattern_rport.addr.eq(
+                            turing_map_index - self.turing_start + 1),
+                        turing_map_priming.eq(1),
+                    ]
+            # A RAM-prime cycle holds the physical destination as well as the
+            # pattern address; otherwise every new word would skip one band.
+            with m.If(~turing_map_priming):
+                with m.If(turing_map_index == self.N_BANDS - 1):
+                    m.d.sync += turing_map_pending.eq(0)
+                with m.Else():
+                    m.d.sync += turing_map_index.eq(turing_map_index + 1)
 
         with m.Switch(state):
             with m.Case(state_wait):
@@ -1022,8 +1095,10 @@ class RezoCore(wiring.Component):
                                (self.turing_start != turing_start_q))):
                         m.d.sync += [
                             turing_map_pending.eq(1),
+                            turing_map_priming.eq(1),
                             turing_map_index.eq(0),
                             turing_map_pattern_index.eq(0),
+                            turing_pattern_rport.addr.eq(0),
                         ]
                     with m.If(self.clock_mode &
                               ((self.clock_algorithm != clock_algorithm_q) |
@@ -1034,7 +1109,6 @@ class RezoCore(wiring.Component):
                             m.d.sync += [
                                 modulation.eq(0),
                                 rotate_origins[n].eq(n),
-                                turing_pattern[n].eq(0),
                             ]
                         m.d.sync += [
                             clock_algorithm_q.eq(self.clock_algorithm),
@@ -1045,6 +1119,8 @@ class RezoCore(wiring.Component):
                             turing_fill_count.eq(0),
                             turing_pending.eq(0),
                             turing_map_pending.eq(0),
+                            turing_clear_pending.eq(1),
+                            turing_clear_index.eq(0),
                             ping_pong_forward.eq(1),
                             ping_pong_steps.eq(0),
                         ]
@@ -1138,11 +1214,6 @@ class RezoCore(wiring.Component):
                         with m.Else():
                             turing_forward = (
                                 self.shift_direction == self.SHIFT_FORWARD)
-                            turing_departing = Mux(
-                                turing_forward,
-                                turing_pattern_array[
-                                    turing_effective_length - 1],
-                                turing_pattern_array[0])
                             m.d.sync += [
                                 rotate_seeded.eq(0),
                                 shift_lfsr.eq(Cat(
@@ -1155,11 +1226,18 @@ class RezoCore(wiring.Component):
                                     turing_effective_length - 1)),
                                 turing_search_count.eq(0),
                                 turing_worker_forward.eq(turing_forward),
-                                turing_carry.eq(Mux(
+                                turing_starting.eq(~turing_mutate),
+                                turing_read_wait.eq(1),
+                                turing_pattern_rport.addr.eq(Mux(
                                     turing_mutate,
-                                    shift_lfsr.as_signed() >> 1,
-                                    turing_departing)),
+                                    Mux(turing_forward, 0,
+                                        turing_effective_length - 1),
+                                    Mux(turing_forward,
+                                        turing_effective_length - 1, 0))),
                             ]
+                            with m.If(turing_mutate):
+                                m.d.sync += turing_carry.eq(
+                                    shift_lfsr.as_signed() >> 1)
                     for n, diff in enumerate(level_diffs):
                         with m.If(diff > self.PARAM_SLEW_STEP):
                             m.d.sync += smooth_levels[n].eq(

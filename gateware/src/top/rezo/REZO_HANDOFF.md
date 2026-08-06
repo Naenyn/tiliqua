@@ -6,6 +6,35 @@ it together with [`BUILD_PERFORMANCE.md`](BUILD_PERFORMANCE.md) and
 before changing the design. [`REZO_USER_GUIDE.md`](REZO_USER_GUIDE.md) is the
 simplified operator documentation for the release candidate.
 
+## 2026-08-06 TURING block-RAM optimization candidate
+
+Commit `c9be114a` checkpoints the tested and flashed TURING targeting/depth
+feature. The current working tree makes a behavior-preserving area trade:
+
+- the private 10-by-16-bit TURING loop now uses one synchronous block RAM
+  instead of ten registers behind large dynamic read/write muxes;
+- a short sequential clear/read/write/prime worker preserves deterministic
+  initial fill, mutation, forward/reverse locked rotation, ALL repetition,
+  disabled-band skipping, and RANGE remapping; and
+- CLOCK input acceptance pauses while that worker is active, so no partially
+  shifted pattern can reach the audio path. A ten-step update remains far
+  shorter than one 192 kHz audio sample interval.
+
+All 33 REZO tests pass. The exact seed-1 route uses 19,619 LUT4, 22,935 packed
+cells (1,353 free), 6,363 FF, and 16 BRAM. Relative to the flashed
+CLOCK-TARGET-DEPTH-S7 build, it recovers 886 LUT4, 896 packed cells, and 110 FF
+at the cost of one BRAM. It passes at 415.45 MHz DVI5X, 73.06 MHz AUDIO,
+61.58 MHz SYNC, and 76.09 MHz DVI. Seeds 2, 6, and 8 were rejected for small
+timing misses; longer seed-4 and seed-7 congestion searches were stopped once
+seed 1 passed.
+
+The archive is `gateware/build/rezo-r5/rezo-c9be114a-r5.tar.gz` and was flashed
+to slot 4. The seed-1
+`top.bit` SHA-256 is
+`27a40d83c4eefb714c9b138000ec254f46cc377009c5b563c0d2f8f95ba9a957` and
+the archive SHA-256 is
+`12a3fb6dfc2de15e78c61be14d2dfe64b4fbe47079c8d0bcd78a44f2b141647f`.
+
 ## 2026-08-06 TURING target and shared CLOCK depth candidate
 
 The current working tree extends every CLOCK algorithm with a shared DEPTH
