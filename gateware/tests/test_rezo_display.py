@@ -250,7 +250,7 @@ def test_tile_display_drive_modulation_shading():
 
 
 def test_clock_main_reuses_bank_view_and_settings_page_is_discrete():
-    """CLOCK main is BANK-like; its settings page contains direction only."""
+    """CLOCK main is BANK-like; TURING adds discrete loop controls."""
     dut = RezoTileDisplay(h_active=1280)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
@@ -282,6 +282,31 @@ def test_clock_main_reuses_bank_view_and_settings_page_is_discrete():
         await sample(ctx, 230, 174)  # direction chip interior
         await sample(ctx, 60, 250)   # no band pipeline on settings page
 
+        ctx.set(dut.selected, RezoHardwareUI.TARGET_CLOCK_SOURCE)
+        await sample(ctx, 230, 238)  # source chip interior
+        await sample(ctx, 211, 238)  # selected source outline
+        ctx.set(dut.selected, RezoHardwareUI.TARGET_CLOCK_RATE)
+        await sample(ctx, 230, 302)  # BPM chip interior
+        await sample(ctx, 211, 302)  # selected BPM outline
+        ctx.set(dut.selected, RezoHardwareUI.TARGET_CLOCK_DEPTH)
+        await sample(ctx, 230, 366)  # shared depth chip interior
+        await sample(ctx, 211, 366)  # selected depth outline
+
+        ctx.set(dut.clock_algorithm, RezoCore.CLOCK_ALGORITHM_TURING)
+        ctx.set(dut.selected, RezoHardwareUI.TARGET_TURING_TARGET)
+        await sample(ctx, 230, 430)  # target chip interior
+        await sample(ctx, 211, 430)  # selected target outline
+        ctx.set(dut.selected, RezoHardwareUI.TARGET_TURING_LENGTH)
+        await sample(ctx, 230, 494)  # length chip interior
+        await sample(ctx, 211, 494)  # selected length outline
+        ctx.set(dut.turing_target, RezoCore.TURING_TARGET_RANGE)
+        ctx.set(dut.selected, RezoHardwareUI.TARGET_TURING_START)
+        await sample(ctx, 230, 558)  # start chip interior
+        await sample(ctx, 211, 558)  # selected start outline
+        ctx.set(dut.selected, RezoHardwareUI.TARGET_TURING_CHANGE)
+        await sample(ctx, 230, 622)  # change chip interior
+        await sample(ctx, 211, 622)  # selected change outline
+
     sim.add_testbench(bench)
     sim.run()
 
@@ -293,6 +318,20 @@ def test_clock_main_reuses_bank_view_and_settings_page_is_discrete():
         palette["selected"],
         palette["panel"],
         palette["background"],
+        palette["panel"],
+        palette["selected"],
+        palette["panel"],
+        palette["selected"],
+        palette["panel"],
+        palette["selected"],
+        palette["panel"],
+        palette["selected"],
+        palette["panel"],
+        palette["selected"],
+        palette["panel"],
+        palette["selected"],
+        palette["panel"],
+        palette["selected"],
     ]
 
 

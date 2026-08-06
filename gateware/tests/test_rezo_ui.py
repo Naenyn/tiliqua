@@ -316,7 +316,7 @@ def test_ui_disabled_bank_controls_do_not_change_stored_values():
 
 
 def test_ui_clock_mode_defaults_and_control_navigation():
-    """CLOCK reuses BANK controls and puts direction on its own page."""
+    """CLOCK exposes source, tempo, direction, and TURING loop controls."""
     dut = FastClickRezoUI()
     sim = Simulator(dut)
     sim.add_clock(1e-6)
@@ -326,6 +326,9 @@ def test_ui_clock_mode_defaults_and_control_navigation():
 
         assert ctx.get(dut.clock_mode) == 0
         assert ctx.get(dut.shift_direction) == RezoCore.SHIFT_FORWARD
+        assert ctx.get(dut.clock_source) == RezoCore.CLOCK_SOURCE_AUTO
+        assert RezoCore.INTERNAL_CLOCK_BPMS[
+            ctx.get(dut.internal_clock_rate)] == 120
         assert tuple(ctx.get(dut.cv_targets[n]) for n in range(4)) == (
             RezoCore.CV_TARGET_RESONANCE,
             RezoCore.CV_TARGET_RESET,
@@ -370,6 +373,83 @@ def test_ui_clock_mode_defaults_and_control_navigation():
         assert ctx.get(dut.shift_direction) == RezoCore.SHIFT_BACKWARD
         endpoint = await _turn(ctx, dut, endpoint, 1)
         assert ctx.get(dut.shift_direction) == RezoCore.SHIFT_PING_PONG
+
+        # Return to MODE and advance ROTATE -> TURING. TURING restricts
+        # direction to FWD/REV and adds LENGTH and CHANGE after shared source
+        # and tempo controls.
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 0)
+        assert ctx.get(dut.selected) == dut.TARGET_CLOCK_ALGORITHM
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.clock_algorithm) == RezoCore.CLOCK_ALGORITHM_TURING
+        assert ctx.get(dut.shift_direction) == RezoCore.SHIFT_FORWARD
+        await _click(ctx, dut)
+
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_SHIFT_DIRECTION
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.shift_direction) == RezoCore.SHIFT_BACKWARD
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.shift_direction) == RezoCore.SHIFT_FORWARD
+        await _click(ctx, dut)
+
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_CLOCK_SOURCE
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.clock_source) == RezoCore.CLOCK_SOURCE_INTERNAL
+        await _click(ctx, dut)
+
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_CLOCK_RATE
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert RezoCore.INTERNAL_CLOCK_BPMS[
+            ctx.get(dut.internal_clock_rate)] == 180
+        await _click(ctx, dut)
+
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_CLOCK_DEPTH
+        assert ctx.get(dut.clock_depth) == 16
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 0)
+        assert ctx.get(dut.clock_depth) == 15
+        await _click(ctx, dut)
+
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_TURING_TARGET
+        assert ctx.get(dut.turing_target) == RezoCore.TURING_TARGET_ALL
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.turing_target) == RezoCore.TURING_TARGET_RANGE
+        await _click(ctx, dut)
+
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_TURING_LENGTH
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.turing_length) == 2
+        await _click(ctx, dut)
+
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_TURING_START
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.turing_start) == 1
+        await _click(ctx, dut)
+
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_TURING_CHANGE
+        assert ctx.get(dut.turing_change_index) == 3
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.turing_change_index) == 4
+        assert ctx.get(dut.turing_change) == 64
+
+        # LOCK is a routable gate role beyond the legacy version-2 targets.
+        assert RezoCore.CV_TARGET_MAX == RezoCore.CV_TARGET_LOCK
 
     sim.add_testbench(bench)
     sim.run()

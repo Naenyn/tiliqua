@@ -6,7 +6,106 @@ it together with [`BUILD_PERFORMANCE.md`](BUILD_PERFORMANCE.md) and
 before changing the design. [`REZO_USER_GUIDE.md`](REZO_USER_GUIDE.md) is the
 simplified operator documentation for the release candidate.
 
-## 2026-08-06 CLOCK SHIFT/ROTATE MVP (dirty flashed candidate)
+## 2026-08-06 TURING target and shared CLOCK depth candidate
+
+The current working tree extends every CLOCK algorithm with a shared DEPTH
+control and makes short TURING patterns useful in two distinct ways:
+
+- DEPTH scales SHIFT, ROTATE, and TURING modulation from 0 to 100 percent in
+  17 steps without changing the underlying clock pattern;
+- TURING TARGET `ALL` repeats a short pattern across every enabled band,
+  skipping disabled bands without consuming a pattern step;
+- TARGET `RANGE` maps one copy of the pattern onto physical bands starting at
+  the one-based START value, leaving bands outside the range unmodulated; and
+- RANGE length is clamped at the upper edge while target/start edits remap the
+  existing loop rather than regenerating it.
+
+All 33 REZO tests pass. New regressions cover positive and negative shared
+depth scaling, disabled-band-aware ALL repetition, RANGE mapping to bands 6--8,
+and CLOCK-page navigation/display for DEPTH, TARGET, and START.
+
+The exact seed-7 route uses 20,505 LUT4, 23,831 packed cells (457 free), 6,473
+FF, and 15 BRAM. It passes at 389.11 MHz DVI5X, 74.71 MHz AUDIO, 61.17 MHz
+SYNC, and 74.81 MHz DVI. Seeds 3 and 4 failed only SYNC; the initial seed-8
+build failed DVI5X and DVI. The archive is
+`gateware/build/rezo-r5/rezo-7f6819a3-r5.tar.gz` and was flashed to slot 4.
+The seed-7 `top.bit` SHA-256 is
+`2da8bc3dd36e9da855c334706103c7a13dbea9960c777f824341e4b9fe34583b` and
+the archive SHA-256 is
+`600b07f57c73d49978c68f708454d3a3640ccc574578a7a3cb0e06c033eededb`.
+
+This route is tight at 98 percent packed utilization. Treat another substantial
+feature as an optimization task first rather than assuming the remaining 457
+cells are usable routing headroom. CLOCK controls remain transient until a
+version-3 persistence record is designed.
+
+## 2026-08-06 internal clock and AUTO source candidate
+
+The current working tree extends the TURING candidate with a shared internal
+clock source used by SHIFT, ROTATE, and TURING:
+
+- SOURCE choices are AUTO (default), INT, and EXT;
+- AUTO reads the audio board's physical jack detector for whichever INPUT is
+  assigned to CLK, rather than inferring presence from pulse activity;
+- the display reports `AUTO I` or `AUTO E` for the effective source;
+- internal rates are 15, 30, 45, 60, 90, 120, 180, and 240 BPM, defaulting to
+  120 BPM; and
+- cable/source/rate changes cannot generate a clock: internal operation waits
+  a full new interval, while external operation requires a low level followed
+  by a fresh rising edge.
+
+All 33 REZO tests pass. They cover source overrides, physical-patch AUTO
+selection, insertion while the gate is high, unplug fallback timing, the eight
+BPM UI choices, CLOCK-page navigation/display, and every earlier DSP,
+persistence, SHIFT, ROTATE, and TURING regression.
+
+The exact seed-8 route uses 19,524 LUT4, 22,760 packed cells (1,528 free),
+6,105 FF, and 15 BRAM. It passes at 399.20 MHz DVI5X, 72.70 MHz AUDIO,
+63.61 MHz SYNC, and 80.33 MHz DVI. Seed 7 failed only DVI at 71.25 MHz;
+seed 6 failed DVI5X and SYNC. The archive is
+`gateware/build/rezo-r5/rezo-7f6819a3-r5.tar.gz` and was flashed to slot 4.
+The seed-8 `top.bit` SHA-256 is
+`461e4a90d7f7e58de1421204581698df09730c6e977bc3ceafbb2c4c8487667e` and
+the archive SHA-256 is
+`399a368b7b570ccacd65ad8e4035d45a427d5803572feff43e22b59779c2a17a`.
+
+SOURCE and BPM remain transient alongside the other CLOCK settings until a
+version-3 state record is designed. A future internal DATA source should reuse
+this source-selection model but does not need to change the clock engine.
+
+## 2026-08-06 CLOCK TURING candidate
+
+Commit `7f6819a3` checkpoints the tested SHIFT/ROTATE implementation. The current
+working tree adds TURING as a third algorithm:
+
+- a full-resolution internally randomized looping modulation register;
+- an active-high `LCK` INPUT target: high repeats the loop exactly, while low
+  permits mutation according to CHANGE;
+- LENGTH 2..10 over the first enabled bands, skipping disabled bands;
+- CHANGE choices of 1, 3, 6, 12, 25, 50, and 100 percent;
+- forward and reverse directions, with RESET deliberately ignored; and
+- a sequential search/write worker that avoids ten parallel wide value muxes.
+
+The first LENGTH pulses seed the loop even if LCK is already high, so an empty
+loop cannot be locked. Changing algorithm or length starts a fresh fill. TURING
+uses additive modulation over the untouched BANK levels, like ROTATE.
+
+All 32 REZO tests pass, including exact locked repetition, 100% mutation,
+forward/reverse movement, disabled-band skipping, length limiting, RESET
+immunity, UI navigation, and display coverage. The exact seed-7 route uses
+19,135 LUT4, 22,307 packed cells (1,981 free), 6,051 FF, and 15 BRAM. It passes
+at 394.94 MHz DVI5X, 74.58 MHz AUDIO, 61.08 MHz SYNC, and 80.28 MHz DVI. The
+archive is `gateware/build/rezo-r5/rezo-7f6819a3-r5.tar.gz` and was flashed to
+slot 4. The seed-7 `top.bit` SHA-256 is
+`dac028b76ea47585a1ae01d40a5f9e27106b3e4cabc0892c7435fe6fe7d8f7bf` and
+the archive SHA-256 is
+`0f5a865463b67368371b614ca5e6d78dd707850681d473432de5d2f7de12270d`.
+Seed 4 failed SYNC at 56.93 MHz; seed 6 failed DVI5X and SYNC.
+
+An internal LFO/noise DATA source and future WALK mode can build on the shared
+clock engine without changing TURING's self-contained random generator.
+
+## 2026-08-06 CLOCK SHIFT/ROTATE checkpoint
 
 The first external-clock MVP is implemented and documented in
 [`REZO_CLOCKED_USER_GUIDE.md`](REZO_CLOCKED_USER_GUIDE.md):
@@ -22,7 +121,7 @@ The first external-clock MVP is implemented and documented in
 - reset clearing the vector and restarting ping-pong/random state; and
 - automatic exclusion of all CLOCK-role jacks from normal audio/CV routing.
 
-All 31 REZO tests pass, including exact BANK DSP vectors and CLOCK direction,
+All 31 REZO tests passed at this checkpoint, including exact BANK DSP vectors and CLOCK direction,
 hysteresis, reset, INPUT-target routing, navigation, and display coverage. The
 latest dirty seed-4 route uses 18,306 LUT4, 21,448 packed cells (2,840 free),
 5,953 FF, and 15 BRAM. It passes at 449.24 MHz DVI5X, 72.82 MHz AUDIO,
@@ -30,9 +129,7 @@ latest dirty seed-4 route uses 18,306 LUT4, 21,448 packed cells (2,840 free),
 `gateware/build/rezo-r5/rezo-176cfc5e-r5.tar.gz` and was flashed to slot 4.
 
 The CLOCK controls and live vector are intentionally absent from persistence
-until a version-3 record is designed. The next feature increment should add an
-internal source/clock choice without duplicating the shared clock engine,
-followed by WALK over the same ten-band state.
+until a version-3 record is designed.
 
 ## 2026-08-06 `rezoclocked` BANK-only baseline
 

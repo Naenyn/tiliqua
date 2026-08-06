@@ -93,6 +93,9 @@ also passing every constrained clock.
 | **CLOCK-ROUTING-UI-S6** | **Dirty `176cfc5e`; BANK-like CLOCK main, direction page, DAT/CLK/RST INPUT targets** | **6** | **17,448** | **20,575** | **3,713** | **5,855** | **15** | **390.17** | **73.37** | **61.77** | **77.48** | **PASS; hardware candidate, not flashed** |
 | CLOCK-ROTATE-VALUES-S6 | Dirty `176cfc5e`; sequential exact rotation with ten 16-bit value snapshots | 6 | 18,342 | 21,468 | 2,820 | 6,045 | 15 | 388.80 | 74.09 | 63.79 | 72.85 | FAIL DVI |
 | **CLOCK-ROTATE-ORIGINS-S4** | **Dirty `176cfc5e`; SHIFT/ROTATE selector, mode-specific directions, four-bit origin ring, disabled-band skipping** | **4** | **18,306** | **21,448** | **2,840** | **5,953** | **15** | **449.24** | **72.82** | **61.24** | **79.00** | **PASS; flashed slot 4** |
+| **CLOCK-TURING-S7** | **Dirty `7f6819a3`; full-resolution looping random register, LCK gate, LENGTH and CHANGE controls** | **7** | **19,135** | **22,307** | **1,981** | **6,051** | **15** | **394.94** | **74.58** | **61.08** | **80.28** | **PASS; packaged/flashed slot 4** |
+| **CLOCK-INTERNAL-AUTO-S8** | **Dirty `7f6819a3`; physical-jack AUTO source, INT/EXT overrides, safe handoff, eight internal BPMs** | **8** | **19,524** | **22,760** | **1,528** | **6,105** | **15** | **399.20** | **72.70** | **63.61** | **80.33** | **PASS; flashed slot 4** |
+| **CLOCK-TARGET-DEPTH-S7** | **Dirty `7f6819a3`; TURING ALL/RANGE targeting, one-based START, shared 17-step CLOCK depth** | **7** | **20,505** | **23,831** | **457** | **6,473** | **15** | **389.11** | **74.71** | **61.17** | **74.81** | **PASS; flashed slot 4** |
 
 ## Notes
 

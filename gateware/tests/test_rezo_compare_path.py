@@ -174,11 +174,18 @@ def test_clocked_shift_register_directions_hysteresis_roles_and_reset():
             dut.CV_TARGET_DATA,
             dut.CV_TARGET_CLOCK,
         )
+        ctx.set(dut.input_jacks, 1 << 3)
         ctx.set(dut.clock_mode, 1)
 
         # Forward inserts at band 0 and moves older captures upward.
         await pulse(ctx, 8000)
         assert vector(ctx)[:3] == (4000, 0, 0)
+        ctx.set(dut.clock_depth, 8)
+        for _ in range(dut.N_BANDS + 2):
+            await ctx.tick()
+        assert tuple(ctx.get(value) for value in
+                     dut.clock_scaled_modulations)[:3] == (2000, 0, 0)
+        ctx.set(dut.clock_depth, 16)
         # Holding high, including inside the hysteresis window, cannot retrigger.
         await send(ctx, (0, 0, 12000, 7000))
         await send(ctx, (0, 0, 12000, 2000))
@@ -186,6 +193,12 @@ def test_clocked_shift_register_directions_hysteresis_roles_and_reset():
         assert vector(ctx)[:3] == (4000, 0, 0)
         await pulse(ctx, -6000)
         assert vector(ctx)[:3] == (-3000, 4000, 0)
+        ctx.set(dut.clock_depth, 8)
+        for _ in range(dut.N_BANDS + 2):
+            await ctx.tick()
+        assert tuple(ctx.get(value) for value in
+                     dut.clock_scaled_modulations)[:3] == (-1500, 2000, 0)
+        ctx.set(dut.clock_depth, 16)
 
         # Backward mirrors the insertion and shift at the high-band end.
         await clear(ctx)
@@ -212,6 +225,7 @@ def test_clocked_shift_register_directions_hysteresis_roles_and_reset():
         ctx.set(dut.cv_targets[0], dut.CV_TARGET_DATA)
         ctx.set(dut.cv_targets[1], dut.CV_TARGET_CLOCK)
         ctx.set(dut.cv_targets[3], dut.CV_TARGET_RESET)
+        ctx.set(dut.input_jacks, 1 << 1)
         await send(ctx, (6000, 0, 0, 0))
         await send(ctx, (6000, 6000, 0, 0))
         assert vector(ctx)[0] == 3000
@@ -250,6 +264,7 @@ def test_clocked_rotate_uses_bank_levels_skips_disabled_and_ping_pongs():
         return tuple(ctx.get(value) for value in dut.clock_modulations)
 
     async def bench(ctx):
+        ctx.set(dut.input_jacks, 1 << 3)
         ctx.set(dut.clock_mode, 1)
         ctx.set(dut.clock_algorithm, dut.CLOCK_ALGORITHM_ROTATE)
         for n in range(dut.N_BANDS):
@@ -292,6 +307,170 @@ def test_clocked_rotate_uses_bank_levels_skips_disabled_and_ping_pongs():
         assert vector(ctx)[:3] == (1000, 2000, 3000)
         await pulse(ctx)
         assert vector(ctx)[:3] == (2000, 3000, 1000)
+
+    sim.add_testbench(bench)
+    sim.run()
+
+
+def test_internal_clock_auto_jack_detection_and_safe_handoff():
+    """AUTO follows physical patch state without transition double-clocks."""
+    dut = RezoCore(fs=192_000, internal_clock_periods=(3,) * 8)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+
+    async def send(ctx, clock=0, data=8000):
+        for channel, sample in enumerate((0, 0, data, clock)):
+            ctx.set(dut.i.payload[channel].as_value(), sample)
+        ctx.set(dut.i.valid, 1)
+        await ctx.tick().until(dut.i.ready == 1)
+        ctx.set(dut.i.valid, 0)
+        ctx.set(dut.o.ready, 1)
+        await ctx.tick().until(dut.o.valid == 1)
+        ctx.set(dut.o.ready, 0)
+
+    def vector(ctx):
+        return tuple(ctx.get(value) for value in dut.clock_modulations)
+
+    async def bench(ctx):
+        assert ctx.get(dut.clock_source) == dut.CLOCK_SOURCE_AUTO
+        ctx.set(dut.clock_mode, 1)
+
+        # Entering CLOCK starts a complete internal period. With no cable in
+        # the assigned CLK jack, AUTO reports and uses the internal source.
+        await send(ctx)
+        assert ctx.get(dut.clock_external_active) == 0
+        await send(ctx)
+        await send(ctx)
+        assert vector(ctx) == (0,) * dut.N_BANDS
+        await send(ctx)
+        assert vector(ctx)[0] == 4000
+
+        # Inserting a cable while it is high never creates a patch-edge clock.
+        ctx.set(dut.input_jacks, 1 << 3)
+        await send(ctx, clock=6000, data=12000)
+        await send(ctx, clock=6000, data=12000)
+        assert ctx.get(dut.clock_external_active) == 1
+        assert vector(ctx)[0] == 4000
+        await send(ctx, clock=0, data=12000)
+        await send(ctx, clock=6000, data=12000)
+        assert vector(ctx)[:2] == (6000, 4000)
+
+        # Unpatching restarts a full internal period rather than clocking on
+        # the source transition.
+        ctx.set(dut.input_jacks, 0)
+        await send(ctx, data=-6000)
+        assert vector(ctx)[:2] == (6000, 4000)
+        await send(ctx, data=-6000)
+        await send(ctx, data=-6000)
+        assert vector(ctx)[:2] == (6000, 4000)
+        await send(ctx, data=-6000)
+        assert vector(ctx)[:3] == (-3000, 6000, 4000)
+
+        # Overrides are unconditional: INT ignores a patched cable, while EXT
+        # with no cable assigned waits indefinitely instead of timing out.
+        ctx.set(dut.clock_source, dut.CLOCK_SOURCE_INTERNAL)
+        ctx.set(dut.input_jacks, 1 << 3)
+        await send(ctx, clock=6000, data=2000)
+        assert ctx.get(dut.clock_external_active) == 0
+        ctx.set(dut.clock_source, dut.CLOCK_SOURCE_EXTERNAL)
+        ctx.set(dut.input_jacks, 0)
+        await send(ctx, data=14000)
+        for _ in range(5):
+            await send(ctx, data=14000)
+        assert ctx.get(dut.clock_external_active) == 1
+        assert vector(ctx)[:3] == (-3000, 6000, 4000)
+
+    sim.add_testbench(bench)
+    sim.run()
+
+
+def test_clocked_turing_fills_mutates_locks_and_skips_disabled_bands():
+    """TURING evolves internally, then repeats exactly while LOCK is high."""
+    dut = RezoCore(fs=192_000)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+
+    async def send(ctx, inputs):
+        for channel, sample in enumerate(inputs):
+            ctx.set(dut.i.payload[channel].as_value(), sample)
+        ctx.set(dut.i.valid, 1)
+        await ctx.tick().until(dut.i.ready == 1)
+        ctx.set(dut.i.valid, 0)
+        ctx.set(dut.o.ready, 1)
+        await ctx.tick().until(dut.o.valid == 1)
+        ctx.set(dut.o.ready, 0)
+
+    async def pulse(ctx, lock=0):
+        await send(ctx, (0, lock, 0, 0))
+        await send(ctx, (0, lock, 0, 6000))
+
+    def vector(ctx):
+        return tuple(ctx.get(value) for value in dut.clock_modulations)
+
+    async def bench(ctx):
+        ctx.set(dut.input_jacks, 1 << 3)
+        ctx.set(dut.clock_mode, 1)
+        ctx.set(dut.clock_algorithm, dut.CLOCK_ALGORITHM_TURING)
+        ctx.set(dut.turing_length, 3)
+        ctx.set(dut.turing_change, 255)
+        ctx.set(dut.cv_targets[1], dut.CV_TARGET_LOCK)
+        ctx.set(dut.band_enables[1], 0)
+
+        # Initial fill always admits internal random values, even if LOCK is
+        # already high. ALL repeats the short pattern across enabled bands.
+        for _ in range(3):
+            await pulse(ctx, lock=6000)
+        filled = vector(ctx)
+        filled_pattern = (filled[0], filled[2], filled[3])
+        assert all(value != 0 for value in filled_pattern)
+        assert filled == (
+            filled_pattern[0], 0,
+            filled_pattern[1], filled_pattern[2],
+            filled_pattern[0], filled_pattern[1], filled_pattern[2],
+            filled_pattern[0], filled_pattern[1], filled_pattern[2])
+
+        # One forward locked pulse rotates [0, 2, 3] and recycles the departing
+        # value; a complete three-pulse period returns exactly to its start.
+        await pulse(ctx, lock=6000)
+        assert vector(ctx)[:4] == (
+            filled_pattern[2], 0, filled_pattern[0], filled_pattern[1])
+        await pulse(ctx, lock=6000)
+        await pulse(ctx, lock=6000)
+        assert vector(ctx) == filled
+
+        # Low LOCK plus 100% CHANGE injects a fresh internal value while still
+        # shifting the previous loop. DATA is not involved.
+        await pulse(ctx, lock=0)
+        changed = vector(ctx)
+        assert changed[1] == 0
+        assert changed[2] == filled[0]
+        assert changed[3] == filled[2]
+        assert changed[0] != filled[3]
+
+        # Reverse circulates the same selected loop in the opposite direction.
+        await send(ctx, (0, 6000, 0, 0))
+        ctx.set(dut.shift_direction, dut.SHIFT_BACKWARD)
+        before_reverse = vector(ctx)
+        await pulse(ctx, lock=6000)
+        assert vector(ctx)[:4] == (
+            before_reverse[2], 0, before_reverse[3], before_reverse[0])
+
+        # RANGE maps the private pattern once to physical bands 6..8 and
+        # clears every band outside that explicit target window.
+        range_pattern = (vector(ctx)[0], vector(ctx)[2], vector(ctx)[3])
+        ctx.set(dut.turing_target, dut.TURING_TARGET_RANGE)
+        ctx.set(dut.turing_start, 5)
+        await send(ctx, (0, 6000, 0, 0))
+        ranged = vector(ctx)
+        assert ranged[:5] == (0,) * 5
+        assert ranged[5:8] == range_pattern
+        assert ranged[8:] == (0,) * 2
+
+        # RESET is intentionally ignored by TURING.
+        ctx.set(dut.cv_targets[2], dut.CV_TARGET_RESET)
+        before_reset = vector(ctx)
+        await send(ctx, (0, 6000, 6000, 0))
+        assert vector(ctx) == before_reset
 
     sim.add_testbench(bench)
     sim.run()
