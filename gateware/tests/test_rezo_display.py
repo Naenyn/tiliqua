@@ -249,6 +249,53 @@ def test_tile_display_drive_modulation_shading():
     ]
 
 
+def test_clock_main_reuses_bank_view_and_settings_page_is_discrete():
+    """CLOCK main is BANK-like; its settings page contains direction only."""
+    dut = RezoTileDisplay(h_active=1280)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6, domain="sync")
+    sim.add_clock(1e-6, domain="dvi")
+    samples = []
+
+    async def sample(ctx, panel_x, panel_y):
+        ctx.set(dut.x, dut.x_offset + panel_x)
+        ctx.set(dut.y, panel_y)
+        ctx.set(dut.de, 1)
+        for _ in range(8):
+            await ctx.tick("dvi")
+        samples.append(ctx.get(dut.r))
+
+    async def bench(ctx):
+        ctx.set(dut.clock_mode, 1)
+        ctx.set(dut.levels[0], 0)
+        ctx.set(dut.effective_levels[0], 16)
+        ctx.set(dut.band_enables[0], 1)
+
+        await sample(ctx, 60, 250)   # captured modulation in band 0
+        await sample(ctx, 150, 110)  # shared preset chip
+
+        ctx.set(dut.page, 7)
+        ctx.set(dut.selected, RezoHardwareUI.TARGET_CLOCK_ALGORITHM)
+        await sample(ctx, 230, 110)  # algorithm chip interior
+        await sample(ctx, 211, 110)  # selected algorithm outline
+        ctx.set(dut.selected, RezoHardwareUI.TARGET_SHIFT_DIRECTION)
+        await sample(ctx, 230, 174)  # direction chip interior
+        await sample(ctx, 60, 250)   # no band pipeline on settings page
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    palette = RezoTileDisplay.PALETTE
+    assert samples == [
+        palette["modulation"],
+        palette["panel"],
+        palette["panel"],
+        palette["selected"],
+        palette["panel"],
+        palette["background"],
+    ]
+
+
 def test_tile_display_palette_maps_semantic_roles_to_rgb():
     """Changing themes recolors roles without changing their geometry."""
     dut = RezoTileDisplay(h_active=1280)

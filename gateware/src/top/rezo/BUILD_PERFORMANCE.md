@@ -89,6 +89,10 @@ also passing every constrained clock.
 | GROUP-GHOST-RAILS-S7 | `b2812acc`; shared top/bottom ghost rails | 7 | 20,611 | 24,223 | 65 | 6,351 | 19 | 404.37 | 72.50 | 62.63 | 72.24 | FAIL DVI |
 | **GROUP-GHOST-RAILS-S6** | **`b2812acc`; exact committed W160 JSON** | **6** | **20,611** | **24,223** | **65** | **6,351** | **19** | **387.00** | **72.22** | **62.50** | **79.25** | **PASS; flashed slot 4** |
 | **CLOCKED-BANK-BASE-S1** | **`8a27f1a7`; FILTER DSP/UI/pages removed, v2 state positions reserved** | **1** | **16,512** | **19,508** | **4,780** | **5,578** | **15** | **443.07** | **76.24** | **61.16** | **80.57** | **PASS; clocked-feature baseline, not flashed** |
+| **CLOCK-SHIFT-MVP-S6** | **Dirty `176cfc5e`; external DATA/CLOCK/RESET, four directions, CLOCK page** | **6** | **17,573** | **20,713** | **3,575** | **5,868** | **15** | **418.06** | **72.86** | **63.31** | **74.99** | **PASS; hardware candidate, not flashed** |
+| **CLOCK-ROUTING-UI-S6** | **Dirty `176cfc5e`; BANK-like CLOCK main, direction page, DAT/CLK/RST INPUT targets** | **6** | **17,448** | **20,575** | **3,713** | **5,855** | **15** | **390.17** | **73.37** | **61.77** | **77.48** | **PASS; hardware candidate, not flashed** |
+| CLOCK-ROTATE-VALUES-S6 | Dirty `176cfc5e`; sequential exact rotation with ten 16-bit value snapshots | 6 | 18,342 | 21,468 | 2,820 | 6,045 | 15 | 388.80 | 74.09 | 63.79 | 72.85 | FAIL DVI |
+| **CLOCK-ROTATE-ORIGINS-S4** | **Dirty `176cfc5e`; SHIFT/ROTATE selector, mode-specific directions, four-bit origin ring, disabled-band skipping** | **4** | **18,306** | **21,448** | **2,840** | **5,953** | **15** | **449.24** | **72.82** | **61.24** | **79.00** | **PASS; flashed slot 4** |
 
 ## Notes
 
@@ -262,3 +266,11 @@ also passing every constrained clock.
   reserved bits, so established BANK fields and saved frequency fine bits keep
   their exact on-flash positions. The first configured seed passes all four
   clocks and is the formal capacity baseline for the shared clock/shift engine.
+- ROTATE first stored ten parallel 16-bit level snapshots. Converting the
+  circulating state to ten four-bit source-band origins removes 92 FF and 20
+  packed cells from the sequential-value candidate, while retaining exact
+  disabled-band skipping. Each destination reads the current natural BANK
+  level of its circulating origin, so editing the BANK shape updates the
+  rotating modulation source without reseeding the ring. Seed 4 passes every
+  clock and supplies the flashed archive; seed 7 also passed a preceding
+  equivalent synthesis but the final regenerated netlist routed best at 4.

@@ -173,6 +173,21 @@ def test_ui_state_scan_preserves_v2_compatibility_words():
         assert tuple(ctx.get(dut.band_enables[n]) for n in range(10)) == \
             tuple((saved_enables >> n) & 1 for n in range(10))
 
+        # A legacy record has no fourth target bit. First entry into CLOCK
+        # supplies the default roles when none were assigned, without changing
+        # the version-2 stream verified above.
+        endpoint = 0b00
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        await _click(ctx, dut)
+        assert ctx.get(dut.clock_mode) == 1
+        assert tuple(ctx.get(dut.cv_targets[n]) for n in range(1, 4)) == (
+            RezoCore.CV_TARGET_RESET,
+            RezoCore.CV_TARGET_DATA,
+            RezoCore.CV_TARGET_CLOCK,
+        )
+
     sim.add_testbench(bench)
     sim.run()
 
@@ -285,8 +300,9 @@ def test_ui_disabled_bank_controls_do_not_change_stored_values():
         assert ctx.get(dut.page) == 0
         await _click(ctx, dut)
 
-        # PRESET -> band 0. It may be traversed while navigating, but
+        # MODE -> PRESET -> band 0. It may be traversed while navigating, but
         # entering EDIT and turning cannot alter its hidden stored level.
+        endpoint = await _turn(ctx, dut, endpoint, 1)
         endpoint = await _turn(ctx, dut, endpoint, 1)
         endpoint = await _turn(ctx, dut, endpoint, 1)
         assert ctx.get(dut.selected) == dut.TARGET_BAND_BASE
@@ -294,6 +310,66 @@ def test_ui_disabled_bank_controls_do_not_change_stored_values():
         await _click(ctx, dut)
         endpoint = await _turn(ctx, dut, endpoint, 1)
         assert ctx.get(dut.levels[0]) == old_level
+
+    sim.add_testbench(bench)
+    sim.run()
+
+
+def test_ui_clock_mode_defaults_and_control_navigation():
+    """CLOCK reuses BANK controls and puts direction on its own page."""
+    dut = FastClickRezoUI()
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+
+    async def bench(ctx):
+        endpoint = 0b00
+
+        assert ctx.get(dut.clock_mode) == 0
+        assert ctx.get(dut.shift_direction) == RezoCore.SHIFT_FORWARD
+        assert tuple(ctx.get(dut.cv_targets[n]) for n in range(4)) == (
+            RezoCore.CV_TARGET_RESONANCE,
+            RezoCore.CV_TARGET_RESET,
+            RezoCore.CV_TARGET_DATA,
+            RezoCore.CV_TARGET_CLOCK,
+        )
+
+        # PAGE -> MODE, then edit BANK into CLOCK.
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_MODE
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.clock_mode) == 1
+        await _click(ctx, dut)
+
+        # CLOCK main retains BANK's preset, ten bands, and three sliders.
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_PRESET
+
+        # Return to PAGE, then CLOCK's forward page order inserts the new
+        # settings page before BANDS.
+        endpoint = await _turn(ctx, dut, endpoint, 0)
+        endpoint = await _turn(ctx, dut, endpoint, 0)
+        assert ctx.get(dut.selected) == dut.TARGET_PAGE
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.page) == 7
+        await _click(ctx, dut)
+
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_CLOCK_ALGORITHM
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.clock_algorithm) == RezoCore.CLOCK_ALGORITHM_ROTATE
+        assert ctx.get(dut.shift_direction) == RezoCore.SHIFT_FORWARD
+        await _click(ctx, dut)
+
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_SHIFT_DIRECTION
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.shift_direction) == RezoCore.SHIFT_BACKWARD
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.shift_direction) == RezoCore.SHIFT_PING_PONG
 
     sim.add_testbench(bench)
     sim.run()

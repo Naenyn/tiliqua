@@ -6,6 +6,34 @@ it together with [`BUILD_PERFORMANCE.md`](BUILD_PERFORMANCE.md) and
 before changing the design. [`REZO_USER_GUIDE.md`](REZO_USER_GUIDE.md) is the
 simplified operator documentation for the release candidate.
 
+## 2026-08-06 CLOCK SHIFT/ROTATE MVP (dirty flashed candidate)
+
+The first external-clock MVP is implemented and documented in
+[`REZO_CLOCKED_USER_GUIDE.md`](REZO_CLOCKED_USER_GUIDE.md):
+
+- BANK/CLOCK mode selector on the main page;
+- BANK-equivalent CLOCK main controls plus a separate direction settings page;
+- SHIFT and additive BANK-shape ROTATE algorithms with mode-specific directions;
+- DATA, CLOCK, and RESET INPUT-page targets, defaulting to IN2, IN3, and IN1;
+- ten captured bipolar SHIFT values or circulating BANK-level ROTATE origins,
+  overlaid as modulation on the untouched BANK shape;
+- rising-edge clock detection with high/low hysteresis;
+- SHIFT forward/reverse/random and ROTATE forward/reverse/ping-pong directions;
+- reset clearing the vector and restarting ping-pong/random state; and
+- automatic exclusion of all CLOCK-role jacks from normal audio/CV routing.
+
+All 31 REZO tests pass, including exact BANK DSP vectors and CLOCK direction,
+hysteresis, reset, INPUT-target routing, navigation, and display coverage. The
+latest dirty seed-4 route uses 18,306 LUT4, 21,448 packed cells (2,840 free),
+5,953 FF, and 15 BRAM. It passes at 449.24 MHz DVI5X, 72.82 MHz AUDIO,
+61.24 MHz SYNC, and 79.00 MHz DVI. Its archive is
+`gateware/build/rezo-r5/rezo-176cfc5e-r5.tar.gz` and was flashed to slot 4.
+
+The CLOCK controls and live vector are intentionally absent from persistence
+until a version-3 record is designed. The next feature increment should add an
+internal source/clock choice without duplicating the shared clock engine,
+followed by WALK over the same ten-band state.
+
 ## 2026-08-06 `rezoclocked` BANK-only baseline
 
 Branch `rezoclocked` now has a clean, buildable foundation for replacing
