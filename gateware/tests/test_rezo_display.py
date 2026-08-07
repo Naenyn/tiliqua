@@ -291,6 +291,9 @@ def test_clock_main_reuses_bank_view_and_settings_page_is_discrete():
         ctx.set(dut.selected, RezoHardwareUI.TARGET_CLOCK_DEPTH)
         await sample(ctx, 230, 366)  # shared depth chip interior
         await sample(ctx, 211, 366)  # selected depth outline
+        ctx.set(dut.selected, RezoHardwareUI.TARGET_DATA_SOURCE)
+        await sample(ctx, 230, 430)  # SHIFT DATA chip interior
+        await sample(ctx, 211, 430)  # selected DATA outline
 
         ctx.set(dut.clock_algorithm, RezoCore.CLOCK_ALGORITHM_TURING)
         ctx.set(dut.selected, RezoHardwareUI.TARGET_TURING_TARGET)
@@ -318,6 +321,8 @@ def test_clock_main_reuses_bank_view_and_settings_page_is_discrete():
         palette["selected"],
         palette["panel"],
         palette["background"],
+        palette["panel"],
+        palette["selected"],
         palette["panel"],
         palette["selected"],
         palette["panel"],

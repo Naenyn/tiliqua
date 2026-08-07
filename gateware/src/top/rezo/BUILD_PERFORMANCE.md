@@ -97,6 +97,10 @@ also passing every constrained clock.
 | **CLOCK-INTERNAL-AUTO-S8** | **Dirty `7f6819a3`; physical-jack AUTO source, INT/EXT overrides, safe handoff, eight internal BPMs** | **8** | **19,524** | **22,760** | **1,528** | **6,105** | **15** | **399.20** | **72.70** | **63.61** | **80.33** | **PASS; flashed slot 4** |
 | **CLOCK-TARGET-DEPTH-S7** | **Dirty `7f6819a3`; TURING ALL/RANGE targeting, one-based START, shared 17-step CLOCK depth** | **7** | **20,505** | **23,831** | **457** | **6,473** | **15** | **389.11** | **74.71** | **61.17** | **74.81** | **PASS; flashed slot 4** |
 | **CLOCK-TURING-BRAM-S1** | **Dirty `c9be114a`; private TURING loop moved from dynamic register muxes to a sequential block-RAM worker** | **1** | **19,619** | **22,935** | **1,353** | **6,363** | **16** | **415.45** | **73.06** | **61.58** | **76.09** | **PASS; flashed slot 4** |
+| **CLOCK-RANDOM-DATA-S2** | **Dirty `965f4783`; SHIFT DATA CV/RAND/AUTO selector and independent continuous 32-bit internal source** | **2** | **19,664** | **22,980** | **1,308** | **6,409** | **16** | **436.11** | **74.37** | **64.77** | **77.10** | **PASS; flashed slot 4** |
+| **CLOCK-SAVE-V3-S2** | **Dirty `965f4783`; 46-word V3 save, V1/V2 migration, shadowed CLOCK snapshot/restore** | **2** | **19,887** | **23,199** | **1,089** | **6,409** | **16** | **400.00** | **74.92** | **60.76** | **81.78** | **PASS; flashed slot 4** |
+| CLOCK-WALK-WIDE-S2 | Dirty `965f4783`; ten-band reflected random walk using a shared 17-bit add/compare path | 2 | 20,667 | 23,995 | 293 | 6,439 | 16 | 387.45 | 74.60 | 54.38 | 74.25 | FAIL SYNC; DVI at boundary, not flashed |
+| **CLOCK-WALK-COMPACT-S2** | **Dirty `965f4783`; identical reflected WALK in high-byte units plus wrapped algorithm selector** | **2** | **20,417** | **23,747** | **541** | **6,439** | **16** | **443.85** | **72.80** | **62.68** | **77.89** | **PASS; flashed slot 4** |
 
 ## Notes
 
@@ -278,3 +282,23 @@ also passing every constrained clock.
   rotating modulation source without reseeding the ring. Seed 4 passes every
   clock and supplies the flashed archive; seed 7 also passed a preceding
   equivalent synthesis but the final regenerated netlist routed best at 4.
+- Version 3 persistence retains the 46-word V2 payload size by reusing six
+  bytes from FILTER's removed modulation matrix for CLOCK configuration and
+  the fourth bit of each input target. V1/V2 imports replace those repurposed
+  words with safe CLOCK defaults, while every established BANK field retains
+  its address. A shadow snapshot keeps the circular journal mux off the live
+  sequencer paths; directly scanning the live CLOCK controls missed SYNC at
+  seeds 1, 2, 3, 5, and 7. The retained seed-2 shadow route adds 219 packed
+  cells over CLOCK-RANDOM-DATA-S2, keeps FF/BRAM counts unchanged, and leaves
+  1,089 packed cells for follow-up modes.
+- WALK advances all ten enabled bands independently on every accepted clock,
+  choosing a positive or negative step per band and reflecting before either
+  signed modulation rail. Its first direct implementation used a shared
+  17-bit add/subtract and two 17-bit comparisons. It fit, but congestion left
+  only 293 cells and seed 2 failed SYNC. Because every supported step is a
+  multiple of 256, the retained implementation performs the exact same walk
+  in signed high-byte units and restores the zero low byte on writeback. It
+  recovers 250 LUT4 and 248 packed cells from the wide attempt. Replacing the
+  four-way algorithm-selection mux tree with wrapped two-bit arithmetic also
+  shortens the UI path that dominated the failed route. Seed 2 passes every
+  clock with 541 cells free and supplies the flashed archive.

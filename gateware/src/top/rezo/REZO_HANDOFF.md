@@ -6,6 +6,104 @@ it together with [`BUILD_PERFORMANCE.md`](BUILD_PERFORMANCE.md) and
 before changing the design. [`REZO_USER_GUIDE.md`](REZO_USER_GUIDE.md) is the
 simplified operator documentation for the release candidate.
 
+## 2026-08-06 CLOCK WALK candidate
+
+The current working tree adds WALK as the fourth CLOCK algorithm. Each
+accepted clock advances every enabled band independently by one positive or
+negative bipolar modulation step. Requested motion reflects before the
+half-scale signed rails instead of clipping or wrapping, so values remain
+bounded and continue moving at either edge. Disabled bands remain zero, RESET
+clears the complete walk, and shared CLOCK DEPTH scales the result without
+altering the underlying state.
+
+The CLOCK page reuses the `DIR / STEP` row: SHIFT, ROTATE, and TURING continue
+to edit direction there, while WALK offers step values 1, 2, 4, 8, and 16.
+SAVE DEFAULT includes the three-bit WALK step index in the existing 46-word V3
+record. It consumes three formerly zero padding bits, reducing padding from 15
+to 12 bits without moving any established field. A V3 record written by the
+immediately preceding build therefore imports safely with WALK step 1; V1/V2
+records still receive the normal CLOCK defaults and WALK step 4.
+
+The first WALK implementation used a shared 17-bit add/subtract and two 17-bit
+comparisons. It fit with only 293 packed cells free, but seed 2 failed SYNC at
+54.38 MHz and was not flashed. Since all WALK values and steps have eight zero
+low bits, the final implementation performs identical arithmetic in signed
+high-byte units. It also replaces the deep four-algorithm selector mux with a
+wrapped two-bit increment/decrement. This recovers 250 LUT4 and 248 packed
+cells from the failed attempt.
+
+All 38 REZO tests pass. The exact seed-2 route uses 20,417 LUT4, 23,747 packed
+cells (541 free), 6,439 FF, and 16 BRAM. It passes at 443.85 MHz DVI5X,
+72.80 MHz AUDIO, 62.68 MHz SYNC, and 77.89 MHz DVI. The archive is
+`gateware/build/rezo-r5/rezo-965f4783-r5.tar.gz` and was flashed to slot 4.
+The seed-2 `top.bit` SHA-256 is
+`68377a1bb2bb55bd47d27c1b4fccd2e508941fe9942c0fbf2321509c5b3b5e98` and
+the archive SHA-256 is
+`8b058eff7ee0e4bb16e521f43694e0cac74d3b4c9197ebd57e6b664b0483469b`.
+
+## 2026-08-06 CLOCK version-3 persistence checkpoint
+
+The current working tree adds backward-compatible CLOCK persistence on top of
+the SHIFT internal-random candidate. SAVE DEFAULT now retains BANK/CLOCK mode,
+algorithm, direction, clock source and internal BPM, CLOCK depth, SHIFT DATA
+source, TURING length/change/target/start, and all four bits of every INPUT
+target. The live SHIFT/ROTATE/TURING modulation pattern remains transient.
+
+The V3 record remains 46 words, equal to V2. It reuses six bytes of FILTER's
+removed modulation matrix, so all established BANK fields keep their exact
+locations. The journal accepts V1 (42-word) and V2 (46-word) records; during a
+legacy import it replaces the repurposed words with safe CLOCK defaults and
+supplies the established V2 band tail for V1. A same-length V2 regression
+specifically verifies that obsolete FILTER bytes cannot become CLOCK settings.
+
+At this checkpoint, live CLOCK controls were copied to a 33-bit shadow snapshot on SAVE and applied
+from that shadow once after LOAD. This keeps the circular state-scan mux out of
+the clock sequencer's timing paths. Directly scanning the live controls fit but
+missed SYNC across seeds 1, 2, 3, 5, and 7. The retained shadowed seed-2 route
+uses 19,887 LUT4, 23,199 packed cells (1,089 free), 6,409 FF, and 16 BRAM. It
+passes at 400.00 MHz DVI5X, 74.92 MHz AUDIO, 60.76 MHz SYNC, and 81.78 MHz DVI.
+All 36 REZO tests pass. The archive is
+`gateware/build/rezo-r5/rezo-965f4783-r5.tar.gz` and was flashed to slot 4.
+The seed-2 `top.bit` SHA-256 is
+`abb4115d27cc8836bfae3be1fbaa62c263b491e8d83bc36eb3471462eedf318d` and
+the archive SHA-256 is
+`cb0a0fb94f27eb58eadbebba0207f6d961c9e8af65ff23810a5eff6017a3b77e`.
+
+## 2026-08-06 SHIFT internal random DATA candidate
+
+Commit `965f4783` checkpoints the tested and flashed TURING block-RAM
+optimization. The current working tree adds a reusable DATA source selector to
+SHIFT:
+
+- `CV` (default) samples the existing INPUT-page DAT assignment;
+- `RAND` samples an independent 32-bit maximal-length bipolar generator that
+  advances continuously at the accepted 192 kHz audio sample rate; and
+- `AUTO` follows physical patch detection for the assigned DAT jack, selecting
+  external CV while patched and internal random while unpatched. The display
+  reports `A CV` or `A RND` for the effective AUTO choice.
+
+The selector reuses TURING TARGET's y=420 CLOCK-page row because the controls
+are algorithm-exclusive. ROTATE ignores DATA, while TURING retains its own
+independent mutation generator. Shared CLOCK DEPTH scales CV and random SHIFT
+captures identically. The version-3 persistence candidate above saves DATA
+source with the other CLOCK settings.
+
+All 34 REZO tests pass. New coverage verifies CV compatibility, RAND ignoring
+external voltage, AUTO physical-jack switching, selector navigation/cycling,
+and display geometry. The exact seed-2 route uses 19,664 LUT4, 22,980 packed
+cells (1,308 free), 6,409 FF, and 16 BRAM. The complete feature costs only 45
+LUT4, 45 packed cells, and 46 FF over the TURING-BRAM checkpoint, with no new
+BRAM or multiplier. It passes at 436.11 MHz DVI5X, 74.37 MHz AUDIO, 64.77 MHz
+SYNC, and 77.10 MHz DVI. Seed 1 was rejected for DVI5X and DVI misses; seeds 6
+and 8 were stopped after seed 2 passed.
+
+The archive is `gateware/build/rezo-r5/rezo-965f4783-r5.tar.gz` and was flashed
+to slot 4. The seed-2
+`top.bit` SHA-256 is
+`61c614fcd651d973fc35f68093173d50b576cfa838dc3dbbf97a486091827362` and
+the archive SHA-256 is
+`126566148eb630751ea1f08efc9133a213be8ee6b37a84608c2261ae40b42dc4`.
+
 ## 2026-08-06 TURING block-RAM optimization candidate
 
 Commit `c9be114a` checkpoints the tested and flashed TURING targeting/depth
@@ -131,8 +229,9 @@ the archive SHA-256 is
 `0f5a865463b67368371b614ca5e6d78dd707850681d473432de5d2f7de12270d`.
 Seed 4 failed SYNC at 56.93 MHz; seed 6 failed DVI5X and SYNC.
 
-An internal LFO/noise DATA source and future WALK mode can build on the shared
-clock engine without changing TURING's self-contained random generator.
+At this checkpoint, an internal LFO/noise DATA source and future WALK mode
+could build on the shared clock engine without changing TURING's self-contained
+random generator; both were implemented in the later checkpoints above.
 
 ## 2026-08-06 CLOCK SHIFT/ROTATE checkpoint
 
@@ -498,19 +597,18 @@ but overall packing congestion is also a real constraint.
 
 ## Test baseline
 
-The complete targeted regression set contains 35 tests, including exact USER
+The complete targeted regression set now contains 38 tests, including exact USER
 working-vector semantics, all ten persisted frequencies/enables, version-1
 migration, the known-good DSP vector, two-row BANDS geometry, a five-digit
-frequency readout, mode-change gain slew, disabled-band frames, and programming
-across a 256-byte flash page:
+frequency readout, mode-change gain slew, disabled-band frames, programming
+across a 256-byte flash page, and deterministic bounded WALK behavior:
 
 ```sh
 pdm run pytest \
   tests/test_rezo_ui.py \
   tests/test_rezo_display.py \
   tests/test_rezo_persistence.py \
-  tests/test_rezo_compare_path.py \
-  tests/test_i2c.py
+  tests/test_rezo_compare_path.py
 ```
 
 Run from `gateware/` if the repository's PDM command expects that directory.

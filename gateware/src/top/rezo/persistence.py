@@ -107,7 +107,8 @@ class RezoStateJournal(wiring.Component):
     """Two-sector, CRC-checked, power-loss-safe REZO default-state journal."""
 
     MAGIC = 0x4f5a4552  # little-endian bytes spell "REZO"
-    VERSION = 2
+    VERSION = 3
+    PREVIOUS_VERSION = 2
     LEGACY_VERSION = 1
     HEADER_BYTES = 16
     SECTOR_BYTES = 0x1000
@@ -122,17 +123,46 @@ class RezoStateJournal(wiring.Component):
     PURPOSE_VERIFY = 3
 
     def __init__(self, state_words, *, legacy_state_words=None,
-                 legacy_tail_words=()):
+                 legacy_tail_words=(), legacy_records=(),
+                 legacy_word_defaults=()):
         if not 0 < state_words <= self.MAX_STATE_WORDS:
             raise ValueError("state_words exceeds the reserved 2 KiB payload")
+        if legacy_state_words is not None and legacy_records:
+            raise ValueError("use legacy_state_words or legacy_records, not both")
         if legacy_state_words is not None:
-            if not 0 < legacy_state_words < state_words:
-                raise ValueError("legacy_state_words must precede current state")
-            if len(legacy_tail_words) != state_words - legacy_state_words:
+            legacy_records = ((self.LEGACY_VERSION, legacy_state_words),)
+        legacy_records = tuple((int(version), int(words))
+                               for version, words in legacy_records)
+        if legacy_records:
+            versions = tuple(version for version, _ in legacy_records)
+            if len(set(versions)) != len(versions):
+                raise ValueError("legacy record versions must be unique")
+            if any(version == self.VERSION for version in versions):
+                raise ValueError("legacy record version matches current version")
+            if any(not 0 < words <= state_words
+                   for _, words in legacy_records):
+                raise ValueError("legacy state exceeds current state")
+            first_legacy_word = min(words for _, words in legacy_records)
+            if len(legacy_tail_words) != state_words - first_legacy_word:
                 raise ValueError("legacy tail must fill the current state")
+        elif legacy_tail_words:
+            raise ValueError("legacy tail requires a legacy record")
+        legacy_word_defaults = tuple((int(address), int(value) & 0xffff)
+                                     for address, value
+                                     in legacy_word_defaults)
+        default_addresses = tuple(address for address, _
+                                  in legacy_word_defaults)
+        if len(set(default_addresses)) != len(default_addresses):
+            raise ValueError("legacy word default addresses must be unique")
+        if any(not 0 <= address < state_words
+               for address in default_addresses):
+            raise ValueError("legacy word default address outside state")
         self.state_words = state_words
-        self.legacy_state_words = legacy_state_words
+        self.legacy_records = legacy_records
+        self.legacy_state_words = (min((words for _, words in legacy_records),
+                                       default=None))
         self.legacy_tail_words = tuple(legacy_tail_words)
+        self.legacy_word_defaults = legacy_word_defaults
         self.record_bytes = self.HEADER_BYTES + state_words * 2
         super().__init__({
             "boot_slot": In(unsigned(3)),
@@ -188,6 +218,8 @@ class RezoStateJournal(wiring.Component):
         state_init = [0] * self.state_words
         if self.legacy_state_words is not None:
             state_init[self.legacy_state_words:] = self.legacy_tail_words
+        for address, value in self.legacy_word_defaults:
+            state_init[address] = value
         state_mem = Memory(shape=unsigned(16), depth=self.state_words,
                            init=state_init, attrs={"ram_style": "block"})
         m.submodules.state_mem = state_mem
@@ -342,12 +374,11 @@ class RezoStateJournal(wiring.Component):
                         record_words = Cat(scan_declared_words[:8], byte)
                         current_header = ((scan_version == self.VERSION) &
                                           (record_words == self.state_words))
-                        if self.legacy_state_words is None:
-                            valid_header = current_header
-                        else:
-                            valid_header = current_header | (
-                                (scan_version == self.LEGACY_VERSION) &
-                                (record_words == self.legacy_state_words))
+                        valid_header = current_header
+                        for legacy_version, legacy_words in self.legacy_records:
+                            valid_header = valid_header | (
+                                (scan_version == legacy_version) &
+                                (record_words == legacy_words))
                         with m.If(~valid_header):
                             m.d.sync += scan_header_valid.eq(0)
                         with m.Else():
@@ -361,12 +392,19 @@ class RezoStateJournal(wiring.Component):
                     with m.If((scan_purpose == self.PURPOSE_LOAD) &
                               (scan_index >= self.HEADER_BYTES)):
                         payload_index = scan_index - self.HEADER_BYTES
-                        m.d.comb += [
-                            state_w.addr.eq(payload_index >> 1),
-                            state_w.data.eq(Mux(payload_index[0],
-                                               byte << 8, byte)),
-                            state_w.en.eq(Mux(payload_index[0], 0b10, 0b01)),
-                        ]
+                        legacy_default_word = Const(0)
+                        for address, _ in self.legacy_word_defaults:
+                            legacy_default_word = legacy_default_word | (
+                                (payload_index >> 1) == address)
+                        with m.If((scan_version == self.VERSION) |
+                                  ~legacy_default_word):
+                            m.d.comb += [
+                                state_w.addr.eq(payload_index >> 1),
+                                state_w.data.eq(Mux(payload_index[0],
+                                                   byte << 8, byte)),
+                                state_w.en.eq(Mux(payload_index[0],
+                                                  0b10, 0b01)),
+                            ]
                     with m.If((scan_index < 12) | (scan_index >= 16)):
                         start_crc(byte)
                         m.next = "SCAN-CRC-WAIT"

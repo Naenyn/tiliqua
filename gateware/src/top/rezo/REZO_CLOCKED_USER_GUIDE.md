@@ -15,8 +15,9 @@ state until it is cleared or refilled according to the selected algorithm.
 
 The CLOCK main page intentionally matches BANK: it has the same preset picker,
 ten band controls, DRIVE, RES, and FB. The next page in CLOCK mode is a compact
-CLOCK settings page containing MODE, DIRECTION, SOURCE, BPM, and DEPTH. TURING
-also reveals TARGET, LENGTH, optional START, and CHANGE controls on this page.
+CLOCK settings page containing MODE, DIR/STEP, SOURCE, BPM, and DEPTH. SHIFT
+also shows DATA; WALK uses the DIR/STEP row for STEP; TURING instead reveals
+TARGET, LENGTH, optional START, and CHANGE controls on this page.
 
 ## Clock source
 
@@ -43,11 +44,28 @@ percent in seventeen steps. It does not alter the captured or generated
 pattern, so depth can be reduced and later returned to 100 percent without
 losing detail.
 
+## SHIFT data source
+
+DATA chooses what SHIFT captures on each accepted clock edge:
+
+- **CV** samples the jack assigned to DAT. This is the default and preserves
+  the original external sample-and-hold behavior.
+- **RAND** samples an independent internal bipolar pseudo-random source. The
+  generator runs continuously at the audio sample rate, so clock timing
+  selects a new point from the noise stream.
+- **AUTO** samples DAT while its assigned physical jack is patched and uses
+  internal random data otherwise. The display reports `A CV` or `A RND` for
+  the effective source.
+
+The shared CLOCK DEPTH control scales either source. ROTATE and WALK do not
+consume DATA, and TURING retains its own independent random loop generator.
+
 ## Default patch
 
 - Patch audio to **IN0**.
 - Patch a reset gate to **IN1**.
-- Patch the bipolar CV to sample to **IN2**.
+- Patch the bipolar CV to sample to **IN2**, or select DATA RAND/AUTO to use
+  the internal source.
 - Optionally patch a clock to **IN3**. With SOURCE set to AUTO, REZO uses its
   internal 120 BPM clock until that jack is patched.
 
@@ -64,10 +82,10 @@ intentionally ignores RESET.
 
 ## SHIFT mode
 
-On every accepted rising clock edge, REZO samples DATA IN. The full bipolar
-input range maps to the bipolar band-level range. Captured changes pass through
-the existing short parameter slew rather than stepping the resonator gains
-instantaneously.
+On every accepted rising clock edge, REZO samples the selected DATA source.
+The full bipolar input or internal random range maps to the bipolar band-level
+range. Captured changes pass through the existing short parameter slew rather
+than stepping the resonator gains instantaneously.
 
 The sampled value is added to the band's saved BANK level. The CLOCK display
 shows the BANK position as the base marker and the captured difference as
@@ -93,6 +111,19 @@ ROTATE supports **FWD**, **REV**, and **PING**. PING begins forward and reverses
 after a number of pulses equal to the number of enabled bands, then repeats in
 the other direction. Changing between SHIFT and ROTATE clears the transient
 modulation vector so state from one algorithm cannot leak into the other.
+
+## WALK mode
+
+WALK maintains an independent bipolar modulation value for every enabled band.
+On each accepted clock pulse, every enabled value randomly moves up or down by
+the selected STEP. The five STEP choices are `1`, `2`, `4`, `8`, and `16`;
+CLOCK DEPTH then scales the complete vector without changing the stored walk.
+
+At either modulation limit, an outward step reverses and moves inward instead
+of clipping or wrapping. This reflection keeps the motion continuous and
+prevents values from becoming stuck at a rail. Disabled bands are forced to
+zero and begin walking from zero when enabled again. RESET returns the complete
+walk to zero.
 
 ## TURING mode
 
@@ -128,8 +159,8 @@ it must return low before another rising edge is accepted.
 
 ## Reset
 
-A high RESET IN clears all ten SHIFT/ROTATE values immediately on the next audio
-sample. It also returns PING to its forward phase and restarts RAND's sequence.
+A high RESET IN clears all ten SHIFT/ROTATE/WALK values immediately on the next
+audio sample. It also returns PING to its forward phase and restarts RAND's sequence.
 RESET does not alter BANK levels, frequency centers, enables, groups, feedback,
 or output routing. TURING ignores RESET; changing its algorithm or LENGTH starts
 a fresh initial fill.
@@ -143,15 +174,12 @@ band levels.
 
 ## MVP limitations
 
-- SHIFT still requires external DATA; TURING has its own internal random
-  source. Internal LFO and noise DATA sources are planned follow-ups.
-- Mode, algorithm, direction, source, internal BPM, CLOCK depth, TURING target,
-  length, start, and change amount return to their defaults after a reboot. The
-  new DAT/CLK/RST/LCK
-  target values are intentionally not written into the version-2 REZO state
-  record yet, avoiding accidental interpretation of saves made by the released
-  FILTER bitstream. The normal BANK state still saves and restores; after a
-  saved version-2 input configuration is restored, assign CLOCK roles again on
-  the INPUT page.
+- SAVE DEFAULT now stores BANK/CLOCK mode, algorithm, direction, clock source,
+  internal BPM, CLOCK depth, SHIFT DATA source, TURING target, length, start,
+  change amount, WALK step, and the complete DAT/CLK/RST/LCK input assignments. Version-1
+  and version-2 REZO saves still load with safe CLOCK defaults; saving again
+  writes the version-3 format.
+- SHIFT can sample external CV, internal random data, or select between them
+  automatically from physical patch detection. An internal LFO remains a
+  possible follow-up source.
 - The live ten-value modulation register is transient and is not saved.
-- WALK is not part of this MVP.

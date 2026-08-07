@@ -97,8 +97,8 @@ def test_ui_advanced_palette_selection_wraps():
     sim.run()
 
 
-def test_ui_state_scan_preserves_v2_compatibility_words():
-    """BANK restores correctly while legacy v2 fields round-trip verbatim."""
+def test_ui_state_scan_preserves_v3_bank_and_clock_words():
+    """BANK and CLOCK configuration round-trip through the V3 scan stream."""
     dut = FastClickRezoUI()
     sim = Simulator(dut)
     sim.add_clock(1e-6)
@@ -117,7 +117,7 @@ def test_ui_state_scan_preserves_v2_compatibility_words():
     )
 
     async def bench(ctx):
-        state = [0] * dut.STATE_WORDS_V2
+        state = [0] * dut.STATE_WORDS_V3
         for address, value in writes:
             state[address] = value
         saved_frequencies = tuple((n << RezoCore.FREQ_FINE_WIDTH) | (n & 3)
@@ -141,6 +141,37 @@ def test_ui_state_scan_preserves_v2_compatibility_words():
             state[dut.STATE_BANK_GROUP_BASE + 2] |= \
                 (saved_frequencies[n] & 3) << (8 + (n - 5) * 2)
 
+        saved_targets = (2, 8, 9, 10)
+        input_config = 0b1110
+        for n, target in enumerate(saved_targets):
+            input_config |= (target & 7) << (4 + n * 3)
+        state[dut.STATE_INPUT_CONFIG] = input_config
+        clock_fields = (
+            (1, 1),
+            (RezoCore.CLOCK_ALGORITHM_TURING, 2),
+            (RezoCore.SHIFT_BACKWARD, 2),
+            (7, 4),
+            (5, 3),
+            (RezoCore.CLOCK_SOURCE_INTERNAL, 2),
+            (6, 3),
+            (9, 5),
+            (RezoCore.TURING_TARGET_RANGE, 1),
+            (3, 4),
+            (RezoCore.DATA_SOURCE_RANDOM, 2),
+            (sum(((target >> 3) & 1) << n
+                 for n, target in enumerate(saved_targets)), 4),
+            (4, 3),
+        )
+        clock_config = 0
+        shift = 0
+        for value, width in clock_fields:
+            clock_config |= value << shift
+            shift += width
+        assert shift == 36
+        for n in range(3):
+            state[dut.STATE_CLOCK_CONFIG_BASE + n] = \
+                (clock_config >> (16 * n)) & 0xffff
+
         # LOAD shifts a complete validated record into the circular stream.
         ctx.set(dut.state_shift_load, 1)
         ctx.set(dut.state_shift_enable, 1)
@@ -152,7 +183,7 @@ def test_ui_state_scan_preserves_v2_compatibility_words():
         await ctx.tick()
 
         # SAVE presents words in order and rotates the entire state back to
-        # its starting position after exactly STATE_WORDS_V2 cycles.
+        # its starting position after exactly STATE_WORDS_V3 cycles.
         captured = []
         ctx.set(dut.state_shift_enable, 1)
         for _ in state:
@@ -173,20 +204,20 @@ def test_ui_state_scan_preserves_v2_compatibility_words():
         assert tuple(ctx.get(dut.band_enables[n]) for n in range(10)) == \
             tuple((saved_enables >> n) & 1 for n in range(10))
 
-        # A legacy record has no fourth target bit. First entry into CLOCK
-        # supplies the default roles when none were assigned, without changing
-        # the version-2 stream verified above.
-        endpoint = 0b00
-        endpoint = await _turn(ctx, dut, endpoint, 1)
-        await _click(ctx, dut)
-        endpoint = await _turn(ctx, dut, endpoint, 1)
-        await _click(ctx, dut)
         assert ctx.get(dut.clock_mode) == 1
-        assert tuple(ctx.get(dut.cv_targets[n]) for n in range(1, 4)) == (
-            RezoCore.CV_TARGET_RESET,
-            RezoCore.CV_TARGET_DATA,
-            RezoCore.CV_TARGET_CLOCK,
-        )
+        assert ctx.get(dut.clock_algorithm) == RezoCore.CLOCK_ALGORITHM_TURING
+        assert ctx.get(dut.shift_direction) == RezoCore.SHIFT_BACKWARD
+        assert ctx.get(dut.turing_length) == 7
+        assert ctx.get(dut.turing_change_index) == 5
+        assert ctx.get(dut.clock_source) == RezoCore.CLOCK_SOURCE_INTERNAL
+        assert ctx.get(dut.internal_clock_rate) == 6
+        assert ctx.get(dut.clock_depth) == 9
+        assert ctx.get(dut.turing_target) == RezoCore.TURING_TARGET_RANGE
+        assert ctx.get(dut.turing_start) == 3
+        assert ctx.get(dut.data_source) == RezoCore.DATA_SOURCE_RANDOM
+        assert ctx.get(dut.walk_step_index) == 4
+        assert tuple(ctx.get(dut.cv_targets[n]) for n in range(4)) == \
+            saved_targets
 
     sim.add_testbench(bench)
     sim.run()
@@ -450,6 +481,94 @@ def test_ui_clock_mode_defaults_and_control_navigation():
 
         # LOCK is a routable gate role beyond the legacy version-2 targets.
         assert RezoCore.CV_TARGET_MAX == RezoCore.CV_TARGET_LOCK
+
+    sim.add_testbench(bench)
+    sim.run()
+
+
+def test_ui_shift_data_source_navigation_and_choices():
+    """SHIFT exposes CV, RAND, and AUTO after the shared DEPTH control."""
+    dut = FastClickRezoUI()
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+
+    async def bench(ctx):
+        endpoint = 0b00
+        assert ctx.get(dut.data_source) == RezoCore.DATA_SOURCE_CV
+
+        # Enter CLOCK mode, return to PAGE, and open CLOCK settings.
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        endpoint = await _turn(ctx, dut, endpoint, 0)
+        endpoint = await _turn(ctx, dut, endpoint, 0)
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.page) == 7
+        await _click(ctx, dut)
+
+        for expected in (
+                dut.TARGET_CLOCK_ALGORITHM,
+                dut.TARGET_SHIFT_DIRECTION,
+                dut.TARGET_CLOCK_SOURCE,
+                dut.TARGET_CLOCK_RATE,
+                dut.TARGET_CLOCK_DEPTH,
+                dut.TARGET_DATA_SOURCE):
+            endpoint = await _turn(ctx, dut, endpoint, 1)
+            assert ctx.get(dut.selected) == expected
+
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.data_source) == RezoCore.DATA_SOURCE_RANDOM
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.data_source) == RezoCore.DATA_SOURCE_AUTO
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.data_source) == RezoCore.DATA_SOURCE_CV
+
+    sim.add_testbench(bench)
+    sim.run()
+
+
+def test_ui_walk_uses_direction_row_for_step_choices():
+    """WALK replaces direction with a five-choice reflected step size."""
+    dut = FastClickRezoUI()
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+
+    async def bench(ctx):
+        endpoint = 0b00
+
+        # Enter CLOCK mode and open its settings page.
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        endpoint = await _turn(ctx, dut, endpoint, 0)
+        endpoint = await _turn(ctx, dut, endpoint, 0)
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        await _click(ctx, dut)
+
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_CLOCK_ALGORITHM
+        await _click(ctx, dut)
+        # Reverse from SHIFT wraps directly to WALK.
+        endpoint = await _turn(ctx, dut, endpoint, 0)
+        assert ctx.get(dut.clock_algorithm) == RezoCore.CLOCK_ALGORITHM_WALK
+        await _click(ctx, dut)
+
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_SHIFT_DIRECTION
+        assert ctx.get(dut.walk_step_index) == RezoCore.WALK_STEP_DEFAULT
+        assert ctx.get(dut.shift_direction) == RezoCore.SHIFT_FORWARD
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.walk_step_index) == RezoCore.WALK_STEP_DEFAULT + 1
+        assert RezoCore.WALK_STEPS[ctx.get(dut.walk_step_index)] == 2048
+        assert ctx.get(dut.shift_direction) == RezoCore.SHIFT_FORWARD
 
     sim.add_testbench(bench)
     sim.run()

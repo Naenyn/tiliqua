@@ -232,6 +232,32 @@ def test_clocked_shift_register_directions_hysteresis_roles_and_reset():
         await send(ctx, (0, 0, 0, 6000))
         assert vector(ctx) == (0,) * dut.N_BANDS
 
+        # RAND ignores the external DATA voltage and samples an independent
+        # running bipolar noise source. AUTO follows physical patch presence
+        # for the jack currently assigned to DATA.
+        ctx.set(dut.data_source, dut.DATA_SOURCE_RANDOM)
+        ctx.set(dut.input_jacks, 1 << 1)
+        await send(ctx, (0, 0, 0, 0))
+        await send(ctx, (0, 6000, 0, 0))
+        assert ctx.get(dut.data_random_active) == 1
+        assert vector(ctx)[0] != 0
+
+        await send(ctx, (0, 0, 0, 6000))
+        await send(ctx, (0, 0, 0, 0))
+        ctx.set(dut.data_source, dut.DATA_SOURCE_AUTO)
+        await send(ctx, (0, 0, 0, 0))
+        await send(ctx, (0, 6000, 0, 0))
+        assert ctx.get(dut.data_random_active) == 1
+        assert vector(ctx)[0] != 0
+
+        await send(ctx, (0, 0, 0, 6000))
+        await send(ctx, (0, 0, 0, 0))
+        ctx.set(dut.input_jacks, (1 << 0) | (1 << 1))
+        await send(ctx, (6000, 0, 0, 0))
+        await send(ctx, (6000, 6000, 0, 0))
+        assert ctx.get(dut.data_random_active) == 0
+        assert vector(ctx)[0] == 3000
+
     sim.add_testbench(bench)
     sim.run()
 
@@ -307,6 +333,67 @@ def test_clocked_rotate_uses_bank_levels_skips_disabled_and_ping_pongs():
         assert vector(ctx)[:3] == (1000, 2000, 3000)
         await pulse(ctx)
         assert vector(ctx)[:3] == (2000, 3000, 1000)
+
+    sim.add_testbench(bench)
+    sim.run()
+
+
+def test_clocked_walk_steps_reflects_skips_disabled_and_resets():
+    """WALK independently steps enabled bands and reflects at both rails."""
+    dut = RezoCore(fs=192_000)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+
+    async def send(ctx, inputs):
+        for channel, sample in enumerate(inputs):
+            ctx.set(dut.i.payload[channel].as_value(), sample)
+        ctx.set(dut.i.valid, 1)
+        await ctx.tick().until(dut.i.ready == 1)
+        ctx.set(dut.i.valid, 0)
+        ctx.set(dut.o.ready, 1)
+        await ctx.tick().until(dut.o.valid == 1)
+        ctx.set(dut.o.ready, 0)
+
+    async def pulse(ctx):
+        await send(ctx, (0, 0, 0, 0))
+        await send(ctx, (0, 0, 0, 6000))
+
+    def vector(ctx):
+        return tuple(ctx.get(value) for value in dut.clock_modulations)
+
+    async def bench(ctx):
+        ctx.set(dut.input_jacks, 1 << 3)
+        ctx.set(dut.clock_mode, 1)
+        ctx.set(dut.clock_algorithm, dut.CLOCK_ALGORITHM_WALK)
+
+        # The initial 0xACE1 direction word is deterministic. STEP defaults to
+        # four display units, represented by 1024 raw modulation counts.
+        await pulse(ctx)
+        assert vector(ctx) == (
+            1024, -1024, -1024, -1024, -1024,
+            1024, 1024, 1024, -1024, -1024,
+        )
+
+        # Disabled destinations are forced to zero instead of retaining stale
+        # walk state. Re-enabling therefore resumes cleanly from zero.
+        ctx.set(dut.band_enables[1], 0)
+        await pulse(ctx)
+        assert vector(ctx)[1] == 0
+
+        # Either random direction must turn inward at a rail. Use the largest
+        # step so both positive and negative reflection are easy to verify.
+        ctx.set(dut.walk_step_index, len(dut.WALK_STEPS) - 1)
+        ctx.set(dut.clock_modulations[0], dut.WALK_LIMIT)
+        ctx.set(dut.clock_modulations[2], -dut.WALK_LIMIT)
+        await pulse(ctx)
+        assert vector(ctx)[0] == dut.WALK_LIMIT - dut.WALK_STEPS[-1]
+        assert vector(ctx)[2] == -dut.WALK_LIMIT + dut.WALK_STEPS[-1]
+        assert all(-dut.WALK_LIMIT <= value <= dut.WALK_LIMIT
+                   for value in vector(ctx))
+
+        await send(ctx, (0, 6000, 0, 0))
+        await send(ctx, (0, 0, 0, 0))
+        assert vector(ctx) == (0,) * dut.N_BANDS
 
     sim.add_testbench(bench)
     sim.run()
