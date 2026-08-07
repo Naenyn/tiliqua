@@ -102,10 +102,20 @@ class RezoCore(wiring.Component):
     DATA_SOURCE_AUTO = 2
     TURING_TARGET_ALL = 0
     TURING_TARGET_RANGE = 1
-    INTERNAL_CLOCK_BPMS = (15, 30, 45, 60, 90, 120, 180, 240)
-    INTERNAL_CLOCK_DEFAULT = INTERNAL_CLOCK_BPMS.index(120)
+    # The internal clock is continuously adjustable. Keep the former eight
+    # choices only for importing already-saved version-3 records, where the
+    # three-bit field held an index and the following six padding bits were 0.
+    LEGACY_INTERNAL_CLOCK_BPMS = (15, 30, 45, 60, 90, 120, 180, 240)
+    INTERNAL_CLOCK_MIN_BPM = 15
+    INTERNAL_CLOCK_MAX_BPM = 300
+    INTERNAL_CLOCK_DEFAULT = 120
     WALK_STEPS = (256, 512, 1024, 2048, 4096)
     WALK_STEP_DEFAULT = WALK_STEPS.index(1024)
+    WALK_STYLE_ALL = 0
+    WALK_STYLE_HEAD = 1
+    WALK_DRUNK_DEFAULT = 0
+    WALK_CHANCES = (0, 26, 64, 128, 192, 255)
+    WALK_CHANCE_DEFAULT = 2
     WALK_LIMIT = 16384
     CLOCK_HIGH_THRESHOLD = 4096
     CLOCK_LOW_THRESHOLD = 1024
@@ -171,8 +181,11 @@ class RezoCore(wiring.Component):
         if internal_clock_periods is None:
             internal_clock_periods = tuple(
                 max(1, round(fs * 60 / bpm))
-                for bpm in self.INTERNAL_CLOCK_BPMS)
-        if len(internal_clock_periods) != len(self.INTERNAL_CLOCK_BPMS):
+                for bpm in range(self.INTERNAL_CLOCK_MIN_BPM,
+                                 self.INTERNAL_CLOCK_MAX_BPM + 1))
+        if len(internal_clock_periods) != (
+                self.INTERNAL_CLOCK_MAX_BPM -
+                self.INTERNAL_CLOCK_MIN_BPM + 1):
             raise ValueError("one internal clock period is required per BPM")
         self.internal_clock_periods = tuple(internal_clock_periods)
         self.levels = [Signal(signed(16), init=0) for _ in range(self.N_BANDS)]
@@ -211,10 +224,15 @@ class RezoCore(wiring.Component):
         self.clock_depth = Signal(unsigned(5), init=16)
         self.walk_step_index = Signal(
             range(len(self.WALK_STEPS)), init=self.WALK_STEP_DEFAULT)
+        self.walk_style = Signal(init=self.WALK_STYLE_ALL)
+        self.walk_drunk = Signal(unsigned(2), init=self.WALK_DRUNK_DEFAULT)
+        self.walk_chance_index = Signal(
+            range(len(self.WALK_CHANCES)), init=self.WALK_CHANCE_DEFAULT)
         self.clock_source = Signal(unsigned(2), init=self.CLOCK_SOURCE_AUTO)
         self.data_source = Signal(unsigned(2), init=self.DATA_SOURCE_CV)
         self.internal_clock_rate = Signal(
-            range(len(self.INTERNAL_CLOCK_BPMS)),
+            range(self.INTERNAL_CLOCK_MIN_BPM,
+                  self.INTERNAL_CLOCK_MAX_BPM + 1),
             init=self.INTERNAL_CLOCK_DEFAULT)
         self.input_jacks = Signal(unsigned(4))
         self.clock_external_active = Signal()
@@ -558,11 +576,21 @@ class RezoCore(wiring.Component):
         internal_clock_periods = self.internal_clock_periods
         internal_clock_counter = Signal(
             range(max(internal_clock_periods)),
-            init=internal_clock_periods[self.INTERNAL_CLOCK_DEFAULT] - 1)
-        internal_clock_period = Signal.like(internal_clock_counter)
-        internal_clock_period_array = Array(
-            Const(period - 1, internal_clock_counter.shape())
-            for period in internal_clock_periods)
+            init=0)
+        internal_clock_period = Signal.like(
+            internal_clock_counter,
+            init=internal_clock_periods[
+                self.INTERNAL_CLOCK_DEFAULT -
+                self.INTERNAL_CLOCK_MIN_BPM] - 1)
+        # A 15..300 BPM table is large enough that a block ROM is both smaller
+        # and faster than a divider or a 286-way LUT mux. Its one-cycle read
+        # latency is immaterial beside encoder and accepted-audio timing.
+        m.submodules.internal_clock_period_mem = internal_clock_period_mem = \
+            Memory(shape=internal_clock_counter.shape(),
+                   depth=len(internal_clock_periods),
+                   init=[period - 1 for period in internal_clock_periods],
+                   attrs={"ram_style": "block"})
+        internal_clock_period_rport = internal_clock_period_mem.read_port()
         clock_jack_patched = Signal()
         clock_external_requested = Signal()
         clock_source_changed = Signal()
@@ -571,6 +599,7 @@ class RezoCore(wiring.Component):
         clock_pulse = Signal()
         clock_algorithm_q = Signal(unsigned(2),
                                    init=self.CLOCK_ALGORITHM_SHIFT)
+        walk_style_q = Signal(init=self.WALK_STYLE_ALL)
         turing_length_q = Signal(unsigned(4), init=self.N_BANDS)
         turing_target_q = Signal(init=self.TURING_TARGET_ALL)
         turing_start_q = Signal.like(self.turing_start)
@@ -588,6 +617,28 @@ class RezoCore(wiring.Component):
         rotate_worker_forward = Signal(init=1)
         walk_pending = Signal()
         walk_index = Signal(range(self.N_BANDS))
+        walk_cursor = Signal(range(self.N_BANDS))
+        walk_head_direction = Signal()
+        walk_head_next_index = Signal(range(self.N_BANDS))
+        walk_target_index = Signal(range(self.N_BANDS))
+        walk_head_landing = Signal()
+        walk_write_enable = Signal()
+        walk_write_value = Signal(signed(16))
+        walk_burst_remaining = Signal(unsigned(2))
+        # Burst timing only needs musical, not sample-exact, resolution. Store
+        # the quarter interval in units of 16 audio samples; this trims the
+        # scheduler while retaining sub-0.1 ms precision at 192 kHz.
+        walk_burst_period = Signal(unsigned(
+            max(1, internal_clock_counter.shape().width - 6)))
+        walk_burst_quarter = Signal.like(internal_clock_counter)
+        walk_burst_elapsed = Signal(unsigned(
+            max(1, internal_clock_counter.shape().width - 4)))
+        walk_burst_threshold = Signal(unsigned(
+            max(1, internal_clock_counter.shape().width - 4)))
+        walk_burst_phase = Signal(unsigned(2))
+        external_interval_seen = Signal()
+        walk_burst_pulse = Signal()
+        walk_chance_threshold = Signal(unsigned(8))
         walk_random_bits = Signal(unsigned(self.N_BANDS), init=0x155)
         # WALK always starts at zero and moves in multiples of 256, so its
         # low byte contains no information.  Perform the reflected walk in
@@ -674,6 +725,7 @@ class RezoCore(wiring.Component):
             (self.input_modes[n] == self.INPUT_MODE_AUDIO) &
             ~clock_role_flags[n]
             for n in range(4))
+        m.d.sync += internal_clock_period.eq(internal_clock_period_rport.data)
         m.d.comb += [
             clock_sample.eq(0),
             clock_jack_patched.eq(0),
@@ -722,20 +774,53 @@ class RezoCore(wiring.Component):
             walk_step_value.eq(Array(
                 Const(value >> 8, signed(9)) for value in self.WALK_STEPS
             )[self.walk_step_index]),
+            walk_target_index.eq(Mux(
+                self.walk_style == self.WALK_STYLE_HEAD,
+                walk_head_next_index, walk_index)),
+            walk_head_landing.eq(
+                (self.walk_style == self.WALK_STYLE_HEAD) &
+                band_enable_array[walk_head_next_index]),
+            walk_write_enable.eq(
+                walk_pending &
+                ((self.walk_style == self.WALK_STYLE_ALL) |
+                 walk_head_landing)),
+            walk_write_value.eq(Mux(
+                (self.walk_style == self.WALK_STYLE_ALL) &
+                ~band_enable_array[walk_index],
+                0, Cat(Const(0, 8), walk_next[:8]))),
             walk_value.eq(
-                clock_modulation_array[walk_index][8:16].as_signed()),
+                clock_modulation_array[walk_target_index][8:16].as_signed()),
             walk_upper_turn.eq((self.WALK_LIMIT >> 8) - walk_step_value),
             walk_lower_turn.eq(-(self.WALK_LIMIT >> 8) + walk_step_value),
             walk_add.eq(
-                (walk_random_bits[0] & (walk_value < walk_upper_turn)) |
-                (~walk_random_bits[0] & (walk_value <= walk_lower_turn))),
+                (Mux(self.walk_style == self.WALK_STYLE_HEAD,
+                     walk_random_bits[3], walk_random_bits[0]) &
+                 (walk_value < walk_upper_turn)) |
+                (~Mux(self.walk_style == self.WALK_STYLE_HEAD,
+                      walk_random_bits[3], walk_random_bits[0]) &
+                 (walk_value <= walk_lower_turn))),
             walk_next.eq(walk_value + Mux(
                 walk_add, walk_step_value, -walk_step_value)),
+            walk_chance_threshold.eq(Array(
+                Const(value, unsigned(8)) for value in self.WALK_CHANCES
+            )[self.walk_chance_index]),
+            walk_burst_quarter.eq(
+                Mux(clock_external_active_q,
+                    internal_clock_counter, internal_clock_period) >> 2),
+            walk_burst_elapsed.eq(internal_clock_counter >> 4),
+            walk_burst_phase.eq(
+                self.walk_drunk - walk_burst_remaining),
+            walk_burst_pulse.eq(
+                self.clock_mode &
+                (self.clock_algorithm == self.CLOCK_ALGORITHM_WALK) &
+                (self.walk_style == self.WALK_STYLE_HEAD) &
+                (walk_burst_remaining != 0) &
+                (walk_burst_elapsed >= walk_burst_threshold) & ~clock_pulse),
             clock_scale_product.eq(
                 clock_modulation_array[clock_scale_index] *
                 self.clock_depth),
-            internal_clock_period.eq(
-                internal_clock_period_array[self.internal_clock_rate]),
+            internal_clock_period_rport.addr.eq(
+                self.internal_clock_rate - self.INTERNAL_CLOCK_MIN_BPM),
             clock_external_requested.eq(
                 (self.clock_source == self.CLOCK_SOURCE_EXTERNAL) |
                 ((self.clock_source == self.CLOCK_SOURCE_AUTO) &
@@ -755,10 +840,28 @@ class RezoCore(wiring.Component):
                 Mux(clock_external_active_q,
                     ~clock_high &
                     (clock_sample >= self.CLOCK_HIGH_THRESHOLD),
-                    internal_clock_counter == 0)),
+                    internal_clock_counter == internal_clock_period)),
             self.clock_external_active.eq(clock_external_active_q),
             self.data_random_active.eq(data_random_requested),
         ]
+        with m.Switch(walk_burst_phase):
+            with m.Case(0):
+                m.d.comb += walk_burst_threshold.eq(walk_burst_period)
+            with m.Case(1):
+                m.d.comb += walk_burst_threshold.eq(
+                    walk_burst_period << 1)
+            with m.Default():
+                m.d.comb += walk_burst_threshold.eq(
+                    walk_burst_period + (walk_burst_period << 1))
+        # Reflect the spatial cursor at the first and last physical bands.
+        # Disabled bands are skipped by the sequential worker below.
+        with m.If(walk_head_direction):
+            m.d.comb += walk_head_next_index.eq(Mux(
+                walk_index == self.N_BANDS - 1,
+                self.N_BANDS - 2, walk_index + 1))
+        with m.Else():
+            m.d.comb += walk_head_next_index.eq(Mux(
+                walk_index == 0, 1, walk_index - 1))
         # CLOCK roles are ordinary INPUT-page CV targets. If a role is absent
         # its sample remains zero; if it is assigned more than once, the
         # highest-numbered input wins deterministically.
@@ -910,22 +1013,31 @@ class RezoCore(wiring.Component):
         with m.Else():
             m.d.sync += clock_scale_index.eq(clock_scale_index + 1)
 
-        # WALK updates one enabled band's signed modulation per control cycle.
-        # The direction bits are latched on the clock edge, so all ten bands
-        # form one deterministic step while sharing a single add/subtract path.
-        # Approaching either rail reverses the requested step instead of
-        # clipping or wrapping, which keeps motion continuous at the limits.
+        # WALK shares one compact add/reflect path. ALL visits every band after
+        # each clock. HEAD instead searches one spatial stride among enabled
+        # bands and changes only the destination reached by its cursor.
+        with m.If(walk_write_enable):
+            m.d.sync += clock_modulation_array[walk_target_index].eq(
+                walk_write_value)
         with m.If(walk_pending):
-            with m.If(band_enable_array[walk_index]):
-                m.d.sync += clock_modulation_array[walk_index].eq(
-                    Cat(Const(0, 8), walk_next[:8]))
+            with m.If(self.walk_style == self.WALK_STYLE_HEAD):
+                m.d.sync += walk_index.eq(walk_head_next_index)
+                with m.If(
+                        (walk_head_direction &
+                         (walk_index == self.N_BANDS - 1)) |
+                        (~walk_head_direction & (walk_index == 0))):
+                    m.d.sync += walk_head_direction.eq(~walk_head_direction)
+                with m.If(band_enable_array[walk_head_next_index]):
+                    m.d.sync += [
+                        walk_cursor.eq(walk_head_next_index),
+                        walk_pending.eq(0),
+                    ]
             with m.Else():
-                m.d.sync += clock_modulation_array[walk_index].eq(0)
-            m.d.sync += walk_random_bits.eq(walk_random_bits >> 1)
-            with m.If(walk_index == self.N_BANDS - 1):
-                m.d.sync += walk_pending.eq(0)
-            with m.Else():
-                m.d.sync += walk_index.eq(walk_index + 1)
+                m.d.sync += walk_random_bits.eq(walk_random_bits >> 1)
+                with m.If(walk_index == self.N_BANDS - 1):
+                    m.d.sync += walk_pending.eq(0)
+                with m.Else():
+                    m.d.sync += walk_index.eq(walk_index + 1)
 
         # Find the wraparound enabled source, then carry each snapshotted origin
         # through a single pass of the enabled destinations. Keeping source
@@ -1131,6 +1243,14 @@ class RezoCore(wiring.Component):
                         turing_target_q.eq(self.turing_target),
                         turing_start_q.eq(self.turing_start),
                     ]
+                    # The clock counter runs upward for both sources. With an
+                    # external source it also measures the period used by a
+                    # HEAD stumble; internal timing already knows its period.
+                    with m.If(self.clock_mode & clock_external_active_q):
+                        with m.If(clock_pulse):
+                            m.d.sync += external_interval_seen.eq(1)
+                    with m.Else():
+                        m.d.sync += external_interval_seen.eq(0)
                     # AUTO follows physical jack insertion rather than pulse
                     # activity, so stopped and very slow external clocks remain
                     # authoritative. Every handoff waits a complete internal
@@ -1140,7 +1260,7 @@ class RezoCore(wiring.Component):
                         m.d.sync += [
                             clock_external_active_q.eq(
                                 clock_external_requested),
-                            internal_clock_counter.eq(internal_clock_period),
+                            internal_clock_counter.eq(0),
                             # Treat a newly selected external source as already
                             # high until it has crossed the low threshold. This
                             # prevents cable insertion into a high gate from
@@ -1148,19 +1268,25 @@ class RezoCore(wiring.Component):
                             clock_high.eq(
                                 clock_external_requested &
                                 (clock_sample > self.CLOCK_LOW_THRESHOLD)),
+                            walk_burst_remaining.eq(0),
                         ]
                     with m.Elif(self.clock_mode & clock_external_active_q):
                         with m.If(clock_sample >= self.CLOCK_HIGH_THRESHOLD):
                             m.d.sync += clock_high.eq(1)
                         with m.Elif(clock_sample <= self.CLOCK_LOW_THRESHOLD):
                             m.d.sync += clock_high.eq(0)
-                    with m.Elif(self.clock_mode):
-                        with m.If(internal_clock_counter == 0):
+                        with m.If(clock_pulse):
+                            m.d.sync += internal_clock_counter.eq(0)
+                        with m.Elif(internal_clock_counter !=
+                                    max(internal_clock_periods) - 1):
                             m.d.sync += internal_clock_counter.eq(
-                                internal_clock_period)
+                                internal_clock_counter + 1)
+                    with m.Elif(self.clock_mode):
+                        with m.If(clock_pulse):
+                            m.d.sync += internal_clock_counter.eq(0)
                         with m.Else():
                             m.d.sync += internal_clock_counter.eq(
-                                internal_clock_counter - 1)
+                                internal_clock_counter + 1)
                     with m.If(lock_sample >= self.CLOCK_HIGH_THRESHOLD):
                         m.d.sync += lock_high.eq(1)
                     with m.Elif(lock_sample <= self.CLOCK_LOW_THRESHOLD):
@@ -1180,6 +1306,9 @@ class RezoCore(wiring.Component):
                     with m.If(self.clock_mode &
                               ((self.clock_algorithm != clock_algorithm_q) |
                                ((self.clock_algorithm ==
+                                 self.CLOCK_ALGORITHM_WALK) &
+                                (self.walk_style != walk_style_q)) |
+                               ((self.clock_algorithm ==
                                  self.CLOCK_ALGORITHM_TURING) &
                                 (self.turing_length != turing_length_q)))):
                         for n, modulation in enumerate(self.clock_modulations):
@@ -1189,10 +1318,13 @@ class RezoCore(wiring.Component):
                             ]
                         m.d.sync += [
                             clock_algorithm_q.eq(self.clock_algorithm),
+                            walk_style_q.eq(self.walk_style),
                             turing_length_q.eq(self.turing_length),
                             rotate_seeded.eq(0),
                             rotate_pending.eq(0),
                             walk_pending.eq(0),
+                            walk_cursor.eq(0),
+                            walk_burst_remaining.eq(0),
                             turing_seeded.eq(0),
                             turing_fill_count.eq(0),
                             turing_pending.eq(0),
@@ -1215,6 +1347,8 @@ class RezoCore(wiring.Component):
                             rotate_seeded.eq(0),
                             rotate_pending.eq(0),
                             walk_pending.eq(0),
+                            walk_cursor.eq(0),
+                            walk_burst_remaining.eq(0),
                             turing_seeded.eq(0),
                             turing_fill_count.eq(0),
                             turing_pending.eq(0),
@@ -1222,6 +1356,22 @@ class RezoCore(wiring.Component):
                             ping_pong_forward.eq(1),
                             ping_pong_steps.eq(0),
                             shift_lfsr.eq(0xACE1),
+                        ]
+                    with m.Elif(walk_burst_pulse):
+                        # Extra HEAD landings reuse the normal one-step worker
+                        # but occur on quarter-interval subdivisions between
+                        # incoming clocks.
+                        m.d.sync += [
+                            walk_pending.eq(enabled_band_count != 0),
+                            walk_index.eq(walk_cursor),
+                            walk_head_direction.eq(shift_lfsr[2]),
+                            walk_random_bits.eq(shift_lfsr),
+                            walk_burst_remaining.eq(
+                                walk_burst_remaining - 1),
+                            shift_lfsr.eq(Cat(
+                                shift_lfsr[1:],
+                                shift_lfsr[0] ^ shift_lfsr[2] ^
+                                shift_lfsr[3] ^ shift_lfsr[5])),
                         ]
                     with m.Elif(clock_pulse):
                         with m.If(self.clock_algorithm ==
@@ -1262,9 +1412,7 @@ class RezoCore(wiring.Component):
                         with m.Elif(self.clock_algorithm ==
                                     self.CLOCK_ALGORITHM_ROTATE):
                             rotate_forward = (
-                                (self.shift_direction == self.SHIFT_FORWARD) |
-                                ((self.shift_direction == self.SHIFT_PING_PONG) &
-                                 ping_pong_forward))
+                                self.shift_direction == self.SHIFT_FORWARD)
                             for n in range(self.N_BANDS):
                                 m.d.sync += rotate_snapshot_origins[n].eq(Mux(
                                     rotate_seeded,
@@ -1278,33 +1426,51 @@ class RezoCore(wiring.Component):
                                     self.N_BANDS - 1, 0)),
                                 rotate_worker_forward.eq(rotate_forward),
                             ]
-                            with m.If(
-                                    (self.shift_direction == self.SHIFT_PING_PONG) &
-                                    (enabled_band_count != 0)):
-                                with m.If(ping_pong_steps + 1 >=
-                                          enabled_band_count):
-                                    m.d.sync += [
-                                        ping_pong_steps.eq(0),
-                                        ping_pong_forward.eq(~ping_pong_forward),
-                                    ]
-                                with m.Else():
-                                    m.d.sync += ping_pong_steps.eq(
-                                        ping_pong_steps + 1)
                         with m.Elif(self.clock_algorithm ==
                                     self.CLOCK_ALGORITHM_WALK):
                             m.d.sync += [
                                 rotate_seeded.eq(0),
-                                walk_pending.eq(1),
-                                walk_index.eq(0),
                                 walk_random_bits.eq(shift_lfsr),
                                 shift_lfsr.eq(Cat(
                                     shift_lfsr[1:],
                                     shift_lfsr[0] ^ shift_lfsr[2] ^
                                     shift_lfsr[3] ^ shift_lfsr[5])),
                             ]
+                            with m.If(self.walk_style ==
+                                      self.WALK_STYLE_HEAD):
+                                with m.If(enabled_band_count != 0):
+                                    m.d.sync += [
+                                        walk_pending.eq(1),
+                                        walk_index.eq(walk_cursor),
+                                        walk_head_direction.eq(shift_lfsr[2]),
+                                    ]
+                                with m.If(
+                                        (enabled_band_count != 0) &
+                                        (self.walk_drunk != 0) &
+                                        (~clock_external_active_q |
+                                         external_interval_seen) &
+                                        ((walk_chance_threshold == 255) |
+                                         (shift_lfsr[8:16] <
+                                          walk_chance_threshold))):
+                                    m.d.sync += [
+                                        walk_burst_remaining.eq(
+                                            self.walk_drunk),
+                                        walk_burst_period.eq(
+                                            walk_burst_quarter >> 4),
+                                    ]
+                                with m.Else():
+                                    m.d.sync += walk_burst_remaining.eq(0)
+                            with m.Else():
+                                m.d.sync += [
+                                    walk_pending.eq(1),
+                                    walk_index.eq(0),
+                                    walk_burst_remaining.eq(0),
+                                ]
                         with m.Else():
                             turing_forward = (
-                                self.shift_direction == self.SHIFT_FORWARD)
+                                (self.shift_direction == self.SHIFT_FORWARD) |
+                                ((self.shift_direction == self.SHIFT_PING_PONG) &
+                                 ping_pong_forward))
                             m.d.sync += [
                                 rotate_seeded.eq(0),
                                 shift_lfsr.eq(Cat(
@@ -1326,6 +1492,18 @@ class RezoCore(wiring.Component):
                                     Mux(turing_forward,
                                         turing_effective_length - 1, 0))),
                             ]
+                            with m.If(
+                                    self.shift_direction ==
+                                    self.SHIFT_PING_PONG):
+                                with m.If(ping_pong_steps + 1 >=
+                                          turing_effective_length):
+                                    m.d.sync += [
+                                        ping_pong_steps.eq(0),
+                                        ping_pong_forward.eq(~ping_pong_forward),
+                                    ]
+                                with m.Else():
+                                    m.d.sync += ping_pong_steps.eq(
+                                        ping_pong_steps + 1)
                             with m.If(turing_mutate):
                                 m.d.sync += turing_carry.eq(
                                     shift_lfsr.as_signed() >> 1)
@@ -1830,6 +2008,11 @@ class RezoHardwareUI(wiring.Component):
     TARGET_TURING_TARGET = RezoCore.N_BANDS + 58
     TARGET_TURING_START = RezoCore.N_BANDS + 59
     TARGET_DATA_SOURCE = RezoCore.N_BANDS + 60
+    # WALK and TURING never expose these rows together, so sharing target IDs
+    # avoids widening the already timing-sensitive navigation state.
+    TARGET_WALK_STYLE = TARGET_TURING_TARGET
+    TARGET_WALK_DRUNK = TARGET_TURING_LENGTH
+    TARGET_WALK_CHANCE = TARGET_TURING_CHANGE
     TARGET_FEEDBACK_SEND_BASE = RezoCore.N_BANDS + 70
     TARGET_PALETTE = RezoCore.N_BANDS + 80
     TARGET_SAVE_DEFAULT = RezoCore.N_BANDS + 81
@@ -1888,20 +2071,24 @@ class RezoHardwareUI(wiring.Component):
             (RezoCore.N_BANDS, 4),
             (3, 3),
             (RezoCore.CLOCK_SOURCE_AUTO, 2),
-            (RezoCore.INTERNAL_CLOCK_DEFAULT, 3),
+            (RezoCore.LEGACY_INTERNAL_CLOCK_BPMS.index(
+                RezoCore.INTERNAL_CLOCK_DEFAULT), 3),
             (16, 5),
             (RezoCore.TURING_TARGET_ALL, 1),
             (0, 4),
             (RezoCore.DATA_SOURCE_CV, 2),
             (0, 4),
             (RezoCore.WALK_STEP_DEFAULT, 3),
+            (RezoCore.WALK_STYLE_ALL, 1),
+            (RezoCore.WALK_DRUNK_DEFAULT, 2),
+            (RezoCore.WALK_CHANCE_DEFAULT, 3),
         )
         packed = 0
         shift = 0
         for value, width in fields:
             packed |= value << shift
             shift += width
-        assert shift == 36
+        assert shift == 42
         return tuple((packed >> (16 * n)) & 0xffff for n in range(3))
 
     def __init__(self):
@@ -1945,10 +2132,15 @@ class RezoHardwareUI(wiring.Component):
             "clock_source": Out(unsigned(2)),
             "data_source": Out(unsigned(2)),
             "internal_clock_rate": Out(
-                range(len(RezoCore.INTERNAL_CLOCK_BPMS))),
+                range(RezoCore.INTERNAL_CLOCK_MIN_BPM,
+                      RezoCore.INTERNAL_CLOCK_MAX_BPM + 1)),
             "clock_depth": Out(unsigned(5)),
             "walk_step_index": Out(
                 range(len(RezoCore.WALK_STEPS))),
+            "walk_style": Out(1),
+            "walk_drunk": Out(unsigned(2)),
+            "walk_chance_index": Out(
+                range(len(RezoCore.WALK_CHANCES))),
             "turing_target": Out(1),
             "turing_start": Out(range(RezoCore.N_BANDS)),
             "bank_groups": Out(data.ArrayLayout(unsigned(4), RezoCore.N_BANDS)),
@@ -2125,11 +2317,17 @@ class RezoHardwareUI(wiring.Component):
         clock_source = Signal(unsigned(2), init=RezoCore.CLOCK_SOURCE_AUTO)
         data_source = Signal(unsigned(2), init=RezoCore.DATA_SOURCE_CV)
         internal_clock_rate = Signal(
-            range(len(RezoCore.INTERNAL_CLOCK_BPMS)),
+            range(RezoCore.INTERNAL_CLOCK_MIN_BPM,
+                  RezoCore.INTERNAL_CLOCK_MAX_BPM + 1),
             init=RezoCore.INTERNAL_CLOCK_DEFAULT)
         clock_depth = Signal(unsigned(5), init=16)
         walk_step_index = Signal(
             range(len(RezoCore.WALK_STEPS)), init=RezoCore.WALK_STEP_DEFAULT)
+        walk_style = Signal(init=RezoCore.WALK_STYLE_ALL)
+        walk_drunk = Signal(unsigned(2), init=RezoCore.WALK_DRUNK_DEFAULT)
+        walk_chance_index = Signal(
+            range(len(RezoCore.WALK_CHANCES)),
+            init=RezoCore.WALK_CHANCE_DEFAULT)
         turing_target = Signal(init=RezoCore.TURING_TARGET_ALL)
         turing_start = Signal(range(RezoCore.N_BANDS), init=0)
         saved_clock_mode = Signal(init=0)
@@ -2143,12 +2341,19 @@ class RezoHardwareUI(wiring.Component):
             unsigned(2), init=RezoCore.CLOCK_SOURCE_AUTO)
         saved_data_source = Signal(
             unsigned(2), init=RezoCore.DATA_SOURCE_CV)
-        saved_internal_clock_rate = Signal(
-            range(len(RezoCore.INTERNAL_CLOCK_BPMS)),
-            init=RezoCore.INTERNAL_CLOCK_DEFAULT)
+        saved_internal_clock_rate_low = Signal(3, init=
+            RezoCore.INTERNAL_CLOCK_DEFAULT & 0x7)
+        saved_internal_clock_rate_high = Signal(6, init=
+            RezoCore.INTERNAL_CLOCK_DEFAULT >> 3)
         saved_clock_depth = Signal(unsigned(5), init=16)
         saved_walk_step_index = Signal(
             range(len(RezoCore.WALK_STEPS)), init=RezoCore.WALK_STEP_DEFAULT)
+        saved_walk_style = Signal(init=RezoCore.WALK_STYLE_ALL)
+        saved_walk_drunk = Signal(
+            unsigned(2), init=RezoCore.WALK_DRUNK_DEFAULT)
+        saved_walk_chance_index = Signal(
+            range(len(RezoCore.WALK_CHANCES)),
+            init=RezoCore.WALK_CHANCE_DEFAULT)
         saved_turing_target = Signal(init=RezoCore.TURING_TARGET_ALL)
         saved_turing_start = Signal(range(RezoCore.N_BANDS), init=0)
         saved_cv_target_highs = [
@@ -2156,20 +2361,49 @@ class RezoHardwareUI(wiring.Component):
                    name=f"saved_cv_target_high{n}")
             for n in range(4)
         ]
-        saved_clock_pad = Signal(12)
         clock_roles_initialized = Signal()
         with m.If(state_shift_load_q & ~self.state_shift_load):
             m.d.sync += [
                 clock_mode.eq(saved_clock_mode),
                 clock_algorithm.eq(saved_clock_algorithm),
-                shift_direction.eq(saved_shift_direction),
+                # Older CLOCK builds allowed PING PONG in ROTATE and did not
+                # offer it in TURING. Normalize only values that the restored
+                # algorithm no longer exposes; valid SHIFT/TURING directions
+                # remain byte-for-byte compatible.
+                shift_direction.eq(Mux(
+                    ((saved_clock_algorithm ==
+                      RezoCore.CLOCK_ALGORITHM_SHIFT) &
+                     (saved_shift_direction == RezoCore.SHIFT_PING_PONG)) |
+                    ((saved_clock_algorithm ==
+                      RezoCore.CLOCK_ALGORITHM_ROTATE) &
+                     (saved_shift_direction > RezoCore.SHIFT_BACKWARD)) |
+                    ((saved_clock_algorithm ==
+                      RezoCore.CLOCK_ALGORITHM_TURING) &
+                     (saved_shift_direction == RezoCore.SHIFT_RANDOM)),
+                    RezoCore.SHIFT_FORWARD, saved_shift_direction)),
                 turing_length.eq(saved_turing_length),
                 turing_change_index.eq(saved_turing_change_index),
                 clock_source.eq(saved_clock_source),
                 data_source.eq(saved_data_source),
-                internal_clock_rate.eq(saved_internal_clock_rate),
+                internal_clock_rate.eq(Mux(
+                    saved_internal_clock_rate_high == 0,
+                    Array(Const(bpm, unsigned(9)) for bpm in
+                          RezoCore.LEGACY_INTERNAL_CLOCK_BPMS)[
+                              saved_internal_clock_rate_low],
+                    Cat(saved_internal_clock_rate_low,
+                        saved_internal_clock_rate_high))),
                 clock_depth.eq(saved_clock_depth),
-                walk_step_index.eq(saved_walk_step_index),
+                # WALK no longer exposes a step-size row. Normalize legacy
+                # saves to its balanced fixed step so hidden state cannot
+                # change the sound without a corresponding control.
+                walk_step_index.eq(Mux(
+                    saved_clock_algorithm ==
+                    RezoCore.CLOCK_ALGORITHM_WALK,
+                    RezoCore.WALK_STEP_DEFAULT,
+                    saved_walk_step_index)),
+                walk_style.eq(saved_walk_style),
+                walk_drunk.eq(saved_walk_drunk),
+                walk_chance_index.eq(saved_walk_chance_index),
                 turing_target.eq(saved_turing_target),
                 turing_start.eq(saved_turing_start),
             ]
@@ -2188,9 +2422,13 @@ class RezoHardwareUI(wiring.Component):
                 saved_turing_change_index.eq(turing_change_index),
                 saved_clock_source.eq(clock_source),
                 saved_data_source.eq(data_source),
-                saved_internal_clock_rate.eq(internal_clock_rate),
+                saved_internal_clock_rate_low.eq(internal_clock_rate[:3]),
+                saved_internal_clock_rate_high.eq(internal_clock_rate[3:9]),
                 saved_clock_depth.eq(clock_depth),
                 saved_walk_step_index.eq(walk_step_index),
+                saved_walk_style.eq(walk_style),
+                saved_walk_drunk.eq(walk_drunk),
+                saved_walk_chance_index.eq(walk_chance_index),
                 saved_turing_target.eq(turing_target),
                 saved_turing_start.eq(turing_start),
             ]
@@ -2619,75 +2857,92 @@ class RezoHardwareUI(wiring.Component):
                 with m.Else():
                     m.d.comb += next_selected.eq(selected - 1)
         with m.Elif(page == 7):
-            with m.If(selected == self.TARGET_PAGE):
-                m.d.comb += next_selected.eq(Mux(
-                    edit_direction,
-                    self.TARGET_CLOCK_ALGORITHM,
-                    Mux(clock_algorithm == RezoCore.CLOCK_ALGORITHM_TURING,
-                        self.TARGET_TURING_CHANGE,
-                        Mux(clock_algorithm ==
-                            RezoCore.CLOCK_ALGORITHM_SHIFT,
-                            self.TARGET_DATA_SOURCE,
-                            self.TARGET_CLOCK_DEPTH))))
-            with m.Elif(selected == self.TARGET_CLOCK_ALGORITHM):
-                m.d.comb += next_selected.eq(Mux(
-                    edit_direction,
-                    self.TARGET_SHIFT_DIRECTION,
-                    self.TARGET_PAGE))
-            with m.Elif(selected == self.TARGET_SHIFT_DIRECTION):
-                m.d.comb += next_selected.eq(Mux(
-                    edit_direction,
-                    self.TARGET_CLOCK_SOURCE,
-                    self.TARGET_CLOCK_ALGORITHM))
-            with m.Elif(selected == self.TARGET_CLOCK_SOURCE):
-                m.d.comb += next_selected.eq(Mux(
-                    edit_direction,
-                    self.TARGET_CLOCK_RATE,
-                    self.TARGET_SHIFT_DIRECTION))
-            with m.Elif(selected == self.TARGET_CLOCK_RATE):
-                m.d.comb += next_selected.eq(Mux(
-                    edit_direction,
-                    self.TARGET_CLOCK_DEPTH,
-                    self.TARGET_CLOCK_SOURCE))
-            with m.Elif(selected == self.TARGET_CLOCK_DEPTH):
-                m.d.comb += next_selected.eq(Mux(
-                    edit_direction,
-                    Mux(clock_algorithm == RezoCore.CLOCK_ALGORITHM_TURING,
-                        self.TARGET_TURING_TARGET,
-                        Mux(clock_algorithm ==
-                            RezoCore.CLOCK_ALGORITHM_SHIFT,
-                            self.TARGET_DATA_SOURCE,
-                            self.TARGET_PAGE)),
-                    self.TARGET_CLOCK_RATE))
-            with m.Elif(selected == self.TARGET_DATA_SOURCE):
-                m.d.comb += next_selected.eq(Mux(
-                    edit_direction,
-                    self.TARGET_PAGE,
-                    self.TARGET_CLOCK_DEPTH))
-            with m.Elif(selected == self.TARGET_TURING_TARGET):
-                m.d.comb += next_selected.eq(Mux(
-                    edit_direction,
-                    self.TARGET_TURING_LENGTH,
-                    self.TARGET_CLOCK_DEPTH))
-            with m.Elif(selected == self.TARGET_TURING_LENGTH):
-                m.d.comb += next_selected.eq(Mux(
-                    edit_direction,
-                    Mux(turing_target == RezoCore.TURING_TARGET_RANGE,
-                        self.TARGET_TURING_START,
-                        self.TARGET_TURING_CHANGE),
-                    self.TARGET_TURING_TARGET))
-            with m.Elif(selected == self.TARGET_TURING_START):
-                m.d.comb += next_selected.eq(Mux(
-                    edit_direction,
-                    self.TARGET_TURING_CHANGE,
-                    self.TARGET_TURING_LENGTH))
+            with m.If(edit_direction):
+                with m.If(selected == self.TARGET_PAGE):
+                    m.d.comb += next_selected.eq(self.TARGET_CLOCK_ALGORITHM)
+                with m.Elif(selected == self.TARGET_CLOCK_ALGORITHM):
+                    m.d.comb += next_selected.eq(Mux(
+                        clock_algorithm == RezoCore.CLOCK_ALGORITHM_WALK,
+                        self.TARGET_CLOCK_SOURCE,
+                        self.TARGET_SHIFT_DIRECTION))
+                with m.Elif(selected == self.TARGET_SHIFT_DIRECTION):
+                    m.d.comb += next_selected.eq(self.TARGET_CLOCK_SOURCE)
+                with m.Elif(selected == self.TARGET_CLOCK_SOURCE):
+                    m.d.comb += next_selected.eq(self.TARGET_CLOCK_RATE)
+                with m.Elif(selected == self.TARGET_CLOCK_RATE):
+                    m.d.comb += next_selected.eq(self.TARGET_CLOCK_DEPTH)
+                with m.Elif(selected == self.TARGET_CLOCK_DEPTH):
+                    m.d.comb += next_selected.eq(Mux(
+                        clock_algorithm == RezoCore.CLOCK_ALGORITHM_SHIFT,
+                        self.TARGET_DATA_SOURCE,
+                        Mux(clock_algorithm == RezoCore.CLOCK_ALGORITHM_WALK,
+                            self.TARGET_WALK_STYLE,
+                            Mux(clock_algorithm ==
+                                RezoCore.CLOCK_ALGORITHM_TURING,
+                                self.TARGET_TURING_CHANGE,
+                                self.TARGET_PAGE))))
+                with m.Elif(selected == self.TARGET_DATA_SOURCE):
+                    m.d.comb += next_selected.eq(self.TARGET_PAGE)
+                with m.Elif(selected == self.TARGET_TURING_CHANGE):
+                    m.d.comb += next_selected.eq(Mux(
+                        clock_algorithm == RezoCore.CLOCK_ALGORITHM_WALK,
+                        self.TARGET_PAGE, self.TARGET_TURING_TARGET))
+                with m.Elif(selected == self.TARGET_TURING_TARGET):
+                    m.d.comb += next_selected.eq(Mux(
+                        clock_algorithm == RezoCore.CLOCK_ALGORITHM_WALK,
+                        self.TARGET_WALK_DRUNK,
+                        Mux(turing_target == RezoCore.TURING_TARGET_RANGE,
+                            self.TARGET_TURING_START,
+                            self.TARGET_TURING_LENGTH)))
+                with m.Elif(selected == self.TARGET_TURING_START):
+                    m.d.comb += next_selected.eq(self.TARGET_TURING_LENGTH)
+                with m.Else():
+                    m.d.comb += next_selected.eq(Mux(
+                        clock_algorithm == RezoCore.CLOCK_ALGORITHM_WALK,
+                        self.TARGET_WALK_CHANCE, self.TARGET_PAGE))
             with m.Else():
-                m.d.comb += next_selected.eq(Mux(
-                    edit_direction,
-                    self.TARGET_PAGE,
-                    Mux(turing_target == RezoCore.TURING_TARGET_RANGE,
-                        self.TARGET_TURING_START,
-                        self.TARGET_TURING_LENGTH)))
+                with m.If(selected == self.TARGET_PAGE):
+                    m.d.comb += next_selected.eq(Mux(
+                        clock_algorithm == RezoCore.CLOCK_ALGORITHM_SHIFT,
+                        self.TARGET_DATA_SOURCE,
+                        Mux(clock_algorithm == RezoCore.CLOCK_ALGORITHM_WALK,
+                            self.TARGET_WALK_CHANCE,
+                            Mux(clock_algorithm ==
+                                RezoCore.CLOCK_ALGORITHM_TURING,
+                                self.TARGET_TURING_LENGTH,
+                                self.TARGET_CLOCK_DEPTH))))
+                with m.Elif(selected == self.TARGET_CLOCK_ALGORITHM):
+                    m.d.comb += next_selected.eq(self.TARGET_PAGE)
+                with m.Elif(selected == self.TARGET_SHIFT_DIRECTION):
+                    m.d.comb += next_selected.eq(self.TARGET_CLOCK_ALGORITHM)
+                with m.Elif(selected == self.TARGET_CLOCK_SOURCE):
+                    m.d.comb += next_selected.eq(Mux(
+                        clock_algorithm == RezoCore.CLOCK_ALGORITHM_WALK,
+                        self.TARGET_CLOCK_ALGORITHM,
+                        self.TARGET_SHIFT_DIRECTION))
+                with m.Elif(selected == self.TARGET_CLOCK_RATE):
+                    m.d.comb += next_selected.eq(self.TARGET_CLOCK_SOURCE)
+                with m.Elif(selected == self.TARGET_CLOCK_DEPTH):
+                    m.d.comb += next_selected.eq(self.TARGET_CLOCK_RATE)
+                with m.Elif(selected == self.TARGET_DATA_SOURCE):
+                    m.d.comb += next_selected.eq(self.TARGET_CLOCK_DEPTH)
+                with m.Elif(selected == self.TARGET_TURING_CHANGE):
+                    m.d.comb += next_selected.eq(Mux(
+                        clock_algorithm == RezoCore.CLOCK_ALGORITHM_WALK,
+                        self.TARGET_WALK_DRUNK, self.TARGET_CLOCK_DEPTH))
+                with m.Elif(selected == self.TARGET_TURING_TARGET):
+                    m.d.comb += next_selected.eq(Mux(
+                        clock_algorithm == RezoCore.CLOCK_ALGORITHM_WALK,
+                        self.TARGET_CLOCK_DEPTH, self.TARGET_TURING_CHANGE))
+                with m.Elif(selected == self.TARGET_TURING_START):
+                    m.d.comb += next_selected.eq(self.TARGET_TURING_TARGET)
+                with m.Else():
+                    m.d.comb += next_selected.eq(Mux(
+                        clock_algorithm == RezoCore.CLOCK_ALGORITHM_WALK,
+                        self.TARGET_WALK_STYLE,
+                        Mux(turing_target == RezoCore.TURING_TARGET_RANGE,
+                            self.TARGET_TURING_START,
+                            self.TARGET_TURING_TARGET)))
         with m.Else():
             m.d.comb += next_selected.eq(self.TARGET_PAGE)
 
@@ -2930,6 +3185,12 @@ class RezoHardwareUI(wiring.Component):
                                 RezoCore.SHIFT_FORWARD)))
                 with m.Elif(clock_algorithm ==
                             RezoCore.CLOCK_ALGORITHM_ROTATE):
+                    m.d.sync += shift_direction.eq(Mux(
+                        shift_direction == RezoCore.SHIFT_FORWARD,
+                        RezoCore.SHIFT_BACKWARD,
+                        RezoCore.SHIFT_FORWARD))
+                with m.Elif(clock_algorithm ==
+                            RezoCore.CLOCK_ALGORITHM_TURING):
                     with m.If(edit_direction):
                         m.d.sync += shift_direction.eq(Mux(
                             shift_direction == RezoCore.SHIFT_FORWARD,
@@ -2944,22 +3205,6 @@ class RezoHardwareUI(wiring.Component):
                             Mux(shift_direction == RezoCore.SHIFT_PING_PONG,
                                 RezoCore.SHIFT_BACKWARD,
                                 RezoCore.SHIFT_FORWARD)))
-                with m.Elif(clock_algorithm ==
-                            RezoCore.CLOCK_ALGORITHM_WALK):
-                    with m.If(edit_direction):
-                        m.d.sync += walk_step_index.eq(Mux(
-                            walk_step_index == len(RezoCore.WALK_STEPS) - 1,
-                            0, walk_step_index + 1))
-                    with m.Else():
-                        m.d.sync += walk_step_index.eq(Mux(
-                            walk_step_index == 0,
-                            len(RezoCore.WALK_STEPS) - 1,
-                            walk_step_index - 1))
-                with m.Else():
-                    m.d.sync += shift_direction.eq(Mux(
-                        shift_direction == RezoCore.SHIFT_FORWARD,
-                        RezoCore.SHIFT_BACKWARD,
-                        RezoCore.SHIFT_FORWARD))
             with m.If(selected == self.TARGET_CLOCK_ALGORITHM):
                 m.d.sync += [
                     # The four algorithms occupy every value of this two-bit
@@ -2970,32 +3215,48 @@ class RezoHardwareUI(wiring.Component):
                         clock_algorithm + 1,
                         clock_algorithm - 1)),
                     shift_direction.eq(RezoCore.SHIFT_FORWARD),
+                    walk_step_index.eq(RezoCore.WALK_STEP_DEFAULT),
                 ]
             with m.If(selected == self.TARGET_TURING_LENGTH):
-                with m.If(edit_direction):
-                    m.d.sync += turing_length.eq(Mux(
-                        turing_length == RezoCore.N_BANDS,
-                        2, turing_length + 1))
-                    with m.If((turing_length != RezoCore.N_BANDS) &
-                              (turing_start + turing_length >=
-                               RezoCore.N_BANDS)):
-                        m.d.sync += turing_start.eq(
-                            RezoCore.N_BANDS - turing_length - 1)
+                with m.If(clock_algorithm == RezoCore.CLOCK_ALGORITHM_WALK):
+                    m.d.sync += walk_drunk.eq(Mux(
+                        edit_direction, walk_drunk + 1, walk_drunk - 1))
                 with m.Else():
-                    m.d.sync += turing_length.eq(Mux(
-                        turing_length == 2,
-                        RezoCore.N_BANDS, turing_length - 1))
-                    with m.If(turing_length == 2):
-                        m.d.sync += turing_start.eq(0)
+                    with m.If(edit_direction):
+                        m.d.sync += turing_length.eq(Mux(
+                            turing_length == RezoCore.N_BANDS,
+                            2, turing_length + 1))
+                        with m.If((turing_length != RezoCore.N_BANDS) &
+                                  (turing_start + turing_length >=
+                                   RezoCore.N_BANDS)):
+                            m.d.sync += turing_start.eq(
+                                RezoCore.N_BANDS - turing_length - 1)
+                    with m.Else():
+                        m.d.sync += turing_length.eq(Mux(
+                            turing_length == 2,
+                            RezoCore.N_BANDS, turing_length - 1))
+                        with m.If(turing_length == 2):
+                            m.d.sync += turing_start.eq(0)
             with m.If(selected == self.TARGET_TURING_CHANGE):
-                with m.If(edit_direction):
-                    m.d.sync += turing_change_index.eq(Mux(
-                        turing_change_index == 6,
-                        0, turing_change_index + 1))
+                with m.If(clock_algorithm == RezoCore.CLOCK_ALGORITHM_WALK):
+                    with m.If(edit_direction):
+                        m.d.sync += walk_chance_index.eq(Mux(
+                            walk_chance_index == len(RezoCore.WALK_CHANCES) - 1,
+                            0, walk_chance_index + 1))
+                    with m.Else():
+                        m.d.sync += walk_chance_index.eq(Mux(
+                            walk_chance_index == 0,
+                            len(RezoCore.WALK_CHANCES) - 1,
+                            walk_chance_index - 1))
                 with m.Else():
-                    m.d.sync += turing_change_index.eq(Mux(
-                        turing_change_index == 0,
-                        6, turing_change_index - 1))
+                    with m.If(edit_direction):
+                        m.d.sync += turing_change_index.eq(Mux(
+                            turing_change_index == 6,
+                            0, turing_change_index + 1))
+                    with m.Else():
+                        m.d.sync += turing_change_index.eq(Mux(
+                            turing_change_index == 0,
+                            6, turing_change_index - 1))
             with m.If(selected == self.TARGET_CLOCK_SOURCE):
                 with m.If(edit_direction):
                     m.d.sync += clock_source.eq(Mux(
@@ -3016,32 +3277,43 @@ class RezoHardwareUI(wiring.Component):
                         RezoCore.DATA_SOURCE_AUTO, data_source - 1))
             with m.If(selected == self.TARGET_CLOCK_RATE):
                 with m.If(edit_direction):
-                    m.d.sync += internal_clock_rate.eq(Mux(
-                        internal_clock_rate ==
-                        len(RezoCore.INTERNAL_CLOCK_BPMS) - 1,
-                        0, internal_clock_rate + 1))
+                    self.clamp_add(
+                        m, internal_clock_rate, accelerated_edit_step,
+                        RezoCore.INTERNAL_CLOCK_MIN_BPM,
+                        RezoCore.INTERNAL_CLOCK_MAX_BPM)
                 with m.Else():
-                    m.d.sync += internal_clock_rate.eq(Mux(
-                        internal_clock_rate == 0,
-                        len(RezoCore.INTERNAL_CLOCK_BPMS) - 1,
-                        internal_clock_rate - 1))
+                    self.clamp_add(
+                        m, internal_clock_rate, -accelerated_edit_step,
+                        RezoCore.INTERNAL_CLOCK_MIN_BPM,
+                        RezoCore.INTERNAL_CLOCK_MAX_BPM)
             with m.If(selected == self.TARGET_CLOCK_DEPTH):
                 with m.If(edit_direction):
                     self.clamp_add(m, clock_depth, 1, 0, 16)
                 with m.Else():
                     self.clamp_add(m, clock_depth, -1, 0, 16)
             with m.If(selected == self.TARGET_TURING_TARGET):
-                m.d.sync += turing_target.eq(~turing_target)
+                with m.If(clock_algorithm == RezoCore.CLOCK_ALGORITHM_WALK):
+                    m.d.sync += walk_style.eq(~walk_style)
+                with m.Else():
+                    m.d.sync += turing_target.eq(~turing_target)
             with m.If(selected == self.TARGET_TURING_START):
                 with m.If(edit_direction):
-                    m.d.sync += turing_start.eq(Mux(
-                        turing_start >= RezoCore.N_BANDS - turing_length,
-                        0, turing_start + 1))
+                    with m.If(turing_start >= RezoCore.N_BANDS - 2):
+                        m.d.sync += turing_start.eq(0)
+                    with m.Else():
+                        m.d.sync += turing_start.eq(turing_start + 1)
+                        with m.If(turing_start + turing_length >=
+                                  RezoCore.N_BANDS):
+                            m.d.sync += turing_length.eq(
+                                RezoCore.N_BANDS - turing_start - 1)
                 with m.Else():
-                    m.d.sync += turing_start.eq(Mux(
-                        turing_start == 0,
-                        RezoCore.N_BANDS - turing_length,
-                        turing_start - 1))
+                    with m.If(turing_start == 0):
+                        m.d.sync += [
+                            turing_start.eq(RezoCore.N_BANDS - 2),
+                            turing_length.eq(2),
+                        ]
+                    with m.Else():
+                        m.d.sync += turing_start.eq(turing_start - 1)
 
         # Packed 16-bit state scan port, sampled sequentially by the journal.
         # Packing at each field's native precision is materially smaller than
@@ -3076,14 +3348,17 @@ class RezoHardwareUI(wiring.Component):
             saved_turing_length,
             saved_turing_change_index,
             saved_clock_source,
-            saved_internal_clock_rate,
+            saved_internal_clock_rate_low,
             saved_clock_depth,
             saved_turing_target,
             saved_turing_start,
             saved_data_source,
             *saved_cv_target_highs,
             saved_walk_step_index,
-            saved_clock_pad,
+            saved_walk_style,
+            saved_walk_drunk,
+            saved_walk_chance_index,
+            saved_internal_clock_rate_high,
         )
         legacy_cv_bits = Cat(
             clock_config_bits,
@@ -3157,6 +3432,9 @@ class RezoHardwareUI(wiring.Component):
             self.internal_clock_rate.eq(internal_clock_rate),
             self.clock_depth.eq(clock_depth),
             self.walk_step_index.eq(walk_step_index),
+            self.walk_style.eq(walk_style),
+            self.walk_drunk.eq(walk_drunk),
+            self.walk_chance_index.eq(walk_chance_index),
             self.turing_target.eq(turing_target),
             self.turing_start.eq(turing_start),
             self.limit_knee.eq(limit_knee << 8),
@@ -3630,12 +3908,17 @@ class RezoTileDisplay(wiring.Component):
             "clock_algorithm": In(unsigned(2)),
             "shift_direction": In(unsigned(2)),
             "walk_step_index": In(range(len(RezoCore.WALK_STEPS))),
+            "walk_style": In(1),
+            "walk_drunk": In(unsigned(2)),
+            "walk_chance_index": In(
+                range(len(RezoCore.WALK_CHANCES))),
             "turing_length": In(unsigned(4)),
             "turing_change_index": In(unsigned(3)),
             "clock_source": In(unsigned(2)),
             "data_source": In(unsigned(2)),
             "internal_clock_rate": In(
-                range(len(RezoCore.INTERNAL_CLOCK_BPMS))),
+                range(RezoCore.INTERNAL_CLOCK_MIN_BPM,
+                      RezoCore.INTERNAL_CLOCK_MAX_BPM + 1)),
             "clock_external_active": In(1),
             "data_random_active": In(1),
             "clock_depth": In(unsigned(5)),
@@ -3830,20 +4113,22 @@ class RezoTileDisplay(wiring.Component):
         put(6, "SET FREQ", 2, 22)
         put(6, "HZ", 20, 22)
         put(7, "MODE", 2, 7)
-        put(7, "DIR / STEP", 2, 11)
-        put(7, "SOURCE", 2, 15)
-        put(7, "BPM", 2, 19)
-        put(7, "DEPTH", 2, 23)
+        put(7, "DIRECTION", 1, 15)
+        put(7, "SOURCE", 4, 20)
+        put(7, "BPM", 7, 25)
+        put(7, "DEPTH", 5, 30)
         m.submodules.text_mem = text_mem = Memory(
             shape=unsigned(6), depth=len(text_init), init=text_init)
         text_rport = text_mem.read_port(domain="dvi")
         text_wport = text_mem.write_port(domain="sync")
-        page_offsets = Array(Const(page * page_cells, unsigned(14)) for page in range(8))
+        page_offsets = Array(Const(page * page_cells, unsigned(14))
+                             for page in range(8))
         text_address = Signal(unsigned(15))
         text_page_q = Signal(unsigned(3))
         m.d.dvi += text_page_q.eq(self.page)
         m.d.comb += [
-            text_address.eq(page_offsets[text_page_q] + cell_y * 45 + cell_x),
+            text_address.eq(
+                page_offsets[text_page_q] + cell_y * 45 + cell_x),
             text_rport.addr.eq(text_address),
         ]
 
@@ -3857,12 +4142,17 @@ class RezoTileDisplay(wiring.Component):
         clock_algorithm_sync = Signal(unsigned(2))
         shift_direction_sync = Signal(unsigned(2))
         walk_step_index_sync = Signal(range(len(RezoCore.WALK_STEPS)))
+        walk_style_sync = Signal()
+        walk_drunk_sync = Signal(unsigned(2))
+        walk_chance_index_sync = Signal(
+            range(len(RezoCore.WALK_CHANCES)))
         turing_length_sync = Signal(unsigned(4))
         turing_change_index_sync = Signal(unsigned(3))
         clock_source_sync = Signal(unsigned(2))
         data_source_sync = Signal(unsigned(2))
         internal_clock_rate_sync = Signal(
-            range(len(RezoCore.INTERNAL_CLOCK_BPMS)))
+            range(RezoCore.INTERNAL_CLOCK_MIN_BPM,
+                  RezoCore.INTERNAL_CLOCK_MAX_BPM + 1))
         clock_external_active_sync = Signal()
         data_random_active_sync = Signal()
         clock_depth_sync = Signal(unsigned(5))
@@ -3890,6 +4180,9 @@ class RezoTileDisplay(wiring.Component):
             FFSynchronizer(self.clock_algorithm, clock_algorithm_sync),
             FFSynchronizer(self.shift_direction, shift_direction_sync),
             FFSynchronizer(self.walk_step_index, walk_step_index_sync),
+            FFSynchronizer(self.walk_style, walk_style_sync),
+            FFSynchronizer(self.walk_drunk, walk_drunk_sync),
+            FFSynchronizer(self.walk_chance_index, walk_chance_index_sync),
             FFSynchronizer(self.turing_length, turing_length_sync),
             FFSynchronizer(self.turing_change_index,
                            turing_change_index_sync),
@@ -3950,7 +4243,7 @@ class RezoTileDisplay(wiring.Component):
             m.d.comb += bands_selected_band.eq(
                 selected_sync - RezoHardwareUI.TARGET_BAND_ENABLE_BASE)
 
-        update_index = Signal(range(132))
+        update_index = Signal(range(176))
         update_active = Signal(init=1)
         refresh_counter = Signal(range(4_000_000))
         writer_address = Signal(unsigned(15))
@@ -3997,58 +4290,62 @@ class RezoTileDisplay(wiring.Component):
                      for pos in range(4)]
         preset_chars = [Array(Const(self.code(name[pos]), 6) for name in preset_names)
                         for pos in range(4)]
-        direction_names = (" FWD", " REV", "PING", "RAND")
+        direction_names = (" FORWARD  ", " REVERSE  ", "PING PONG ",
+                           "  RANDOM  ")
         direction_chars = [Array(Const(self.code(name[pos]), 6)
                                  for name in direction_names)
-                           for pos in range(4)]
-        walk_step_names = ("  1 ", "  2 ", "  4 ", "  8 ", " 16 ")
-        walk_step_chars = [Array(Const(self.code(name[pos]), 6)
-                                 for name in walk_step_names)
-                           for pos in range(4)]
-        algorithm_names = (" SHIFT", "ROTATE", "TURING", " WALK ")
+                           for pos in range(10)]
+        walk_style_names = ("   ALL    ", "   BAND   ")
+        walk_style_chars = [Array(Const(self.code(name[pos]), 6)
+                                  for name in walk_style_names)
+                            for pos in range(10)]
+        walk_drunk_names = ("    1     ", "    2     ", "    3     ",
+                            "    4     ")
+        walk_drunk_chars = [Array(Const(self.code(name[pos]), 6)
+                                  for name in walk_drunk_names)
+                            for pos in range(10)]
+        walk_chance_names = ("    0     ", "    10    ", "    25    ",
+                             "    50    ", "    75    ", "   100    ")
+        walk_chance_chars = [Array(Const(self.code(name[pos]), 6)
+                                   for name in walk_chance_names)
+                             for pos in range(10)]
+        algorithm_names = (" SHIFT  ", " ROTATE ", " TURING ", "  WALK  ")
         algorithm_chars = [Array(Const(self.code(name[pos]), 6)
                                  for name in algorithm_names)
-                           for pos in range(6)]
-        turing_label_names = ("LENGTH", "CHANGE", "TARGET", "START ")
-        turing_label_chars = [Array(Const(self.code(name[pos]), 6)
-                                    for name in turing_label_names)
-                              for pos in range(6)]
-        turing_length_names = tuple(f"{value:>2}" for value in range(2, 11))
+                           for pos in range(8)]
+        turing_length_names = tuple(f"{value:^10}" for value in range(2, 11))
         turing_length_chars = [Array(Const(self.code(name[pos]), 6)
                                      for name in turing_length_names)
-                               for pos in range(2)]
-        turing_change_names = ("  1", "  3", "  6", " 12", " 25", " 50", "100")
+                               for pos in range(10)]
+        turing_change_names = tuple(
+            f"{value:^10}" for value in (1, 3, 6, 12, 25, 50, 100))
         turing_change_chars = [Array(Const(self.code(name[pos]), 6)
                                      for name in turing_change_names)
-                               for pos in range(3)]
-        clock_source_names = ("AUTO I", "AUTO E", " INT  ", " EXT  ")
+                               for pos in range(10)]
+        clock_source_names = (" AUTO INT ", " AUTO EXT ", " INTERNAL ",
+                              " EXTERNAL ")
         clock_source_chars = [Array(Const(self.code(name[pos]), 6)
                                     for name in clock_source_names)
-                              for pos in range(6)]
-        data_source_names = (" CV  ", "RAND ", "A CV ", "A RND")
+                              for pos in range(10)]
+        data_source_names = ("    CV    ", "  RANDOM  ", " AUTO CV  ",
+                             "AUTO RAND ")
         data_source_chars = [Array(Const(self.code(name[pos]), 6)
                                    for name in data_source_names)
-                             for pos in range(5)]
-        internal_clock_rate_names = tuple(
-            f"{bpm:>3}" for bpm in RezoCore.INTERNAL_CLOCK_BPMS)
-        internal_clock_rate_chars = [Array(Const(self.code(name[pos]), 6)
-                                           for name in
-                                           internal_clock_rate_names)
-                                     for pos in range(3)]
+                             for pos in range(10)]
         clock_depth_names = tuple(
             f"{round(value * 100 / 16):>3}" for value in range(17))
         clock_depth_chars = [Array(Const(self.code(name[pos]), 6)
                                    for name in clock_depth_names)
                              for pos in range(3)]
-        turing_target_names = (" ALL ", "RANGE")
+        turing_target_names = ("   ALL    ", "  RANGE   ")
         turing_target_chars = [Array(Const(self.code(name[pos]), 6)
                                      for name in turing_target_names)
-                               for pos in range(5)]
+                               for pos in range(10)]
         turing_start_names = tuple(
-            f"{value:>2}" for value in range(1, RezoCore.N_BANDS + 1))
+            f"{value:^10}" for value in range(1, RezoCore.N_BANDS + 1))
         turing_start_chars = [Array(Const(self.code(name[pos]), 6)
                                     for name in turing_start_names)
-                              for pos in range(2)]
+                              for pos in range(10)]
         clock_source_display = Signal(unsigned(2))
         data_source_display = Signal(unsigned(2))
         m.d.comb += clock_source_display.eq(Mux(
@@ -4110,6 +4407,18 @@ class RezoTileDisplay(wiring.Component):
                         Array(band_frequencies_sync)[bands_selected_band])
                     m.d.comb += frequency_label_rport.addr.eq(
                         bands_frequency_index | frequency_tail_offset)
+        bpm_label_init = []
+        for bpm in range(RezoCore.INTERNAL_CLOCK_MIN_BPM,
+                         RezoCore.INTERNAL_CLOCK_MAX_BPM + 1):
+            label = f"{bpm:>3}"
+            bpm_label_init.append(sum(
+                self.code(label[pos]) << (6 * pos) for pos in range(3)))
+        m.submodules.bpm_label_mem = bpm_label_mem = Memory(
+            shape=unsigned(18), depth=len(bpm_label_init),
+            init=bpm_label_init, attrs={"ram_style": "block"})
+        bpm_label_rport = bpm_label_mem.read_port()
+        m.d.comb += bpm_label_rport.addr.eq(
+            internal_clock_rate_sync - RezoCore.INTERNAL_CLOCK_MIN_BPM)
         layout_names = (" LEGACY", " OCTAVE", "PERCEPT", "  USER ")
         layout_chars = [Array(Const(self.code(name[pos]), 6)
                               for name in layout_names)
@@ -4131,6 +4440,7 @@ class RezoTileDisplay(wiring.Component):
                 Mux(save_busy_sync | (save_status_sync == 1), 1,
                     Mux(save_status_sync == 2, 2,
                         Mux(save_status_sync == 3, 3, 0)))))
+        clock_text_page_offset_sync = Const(7 * page_cells, unsigned(15))
         with m.Switch(update_index):
             for pos in range(4):
                 with m.Case(pos):
@@ -4153,16 +4463,6 @@ class RezoTileDisplay(wiring.Component):
                             selected_band_valid,
                             frequency_label_rport.data.word_select(pos, 6),
                             0)),
-                    ]
-            for pos in range(4):
-                with m.Case(35 + pos):
-                    m.d.comb += [
-                        writer_address.eq(7 * page_cells + 11 * 45 + 14 + pos),
-                        writer_char.eq(Mux(
-                            clock_algorithm_sync ==
-                            RezoCore.CLOCK_ALGORITHM_WALK,
-                            walk_step_chars[pos][walk_step_index_sync],
-                            direction_chars[pos][shift_direction_sync])),
                     ]
             for pos in range(3):
                 with m.Case(39 + pos):
@@ -4228,122 +4528,152 @@ class RezoTileDisplay(wiring.Component):
                         writer_address.eq(0 * page_cells + 3 * 45 + 29 + pos),
                         writer_char.eq(mode_chars[pos][clock_mode_sync]),
                     ]
-            for pos in range(6):
+            for pos in range(8):
                 with m.Case(77 + pos):
                     m.d.comb += [
-                        writer_address.eq(7 * page_cells + 7 * 45 + 14 + pos),
+                        writer_address.eq(
+                            clock_text_page_offset_sync + 7 * 45 + 9 + pos),
                         writer_char.eq(
                             algorithm_chars[pos][clock_algorithm_sync]),
                     ]
-            for pos in range(6):
-                with m.Case(83 + pos):
+            for pos in range(10):
+                with m.Case(85 + pos):
                     m.d.comb += [
-                        writer_address.eq(7 * page_cells + 31 * 45 + 2 + pos),
+                        writer_address.eq(
+                            clock_text_page_offset_sync + 15 * 45 + 12 + pos),
                         writer_char.eq(Mux(
                             clock_algorithm_sync ==
-                            RezoCore.CLOCK_ALGORITHM_TURING,
-                            turing_label_chars[pos][0], 0)),
+                            RezoCore.CLOCK_ALGORITHM_WALK,
+                            direction_chars[pos][RezoCore.SHIFT_RANDOM],
+                            direction_chars[pos][shift_direction_sync])),
                     ]
-            for pos in range(6):
-                with m.Case(89 + pos):
-                    m.d.comb += [
-                        writer_address.eq(7 * page_cells + 39 * 45 + 2 + pos),
-                        writer_char.eq(Mux(
-                            clock_algorithm_sync ==
-                            RezoCore.CLOCK_ALGORITHM_TURING,
-                            turing_label_chars[pos][1], 0)),
-                    ]
-            for pos in range(2):
+            for pos in range(10):
                 with m.Case(95 + pos):
                     m.d.comb += [
-                        writer_address.eq(7 * page_cells + 31 * 45 + 14 + pos),
-                        writer_char.eq(Mux(
-                            clock_algorithm_sync ==
-                            RezoCore.CLOCK_ALGORITHM_TURING,
-                            turing_length_chars[pos][turing_length_sync - 2],
-                            0)),
-                    ]
-            for pos in range(3):
-                with m.Case(97 + pos):
-                    m.d.comb += [
-                        writer_address.eq(7 * page_cells + 39 * 45 + 14 + pos),
-                        writer_char.eq(Mux(
-                            clock_algorithm_sync ==
-                            RezoCore.CLOCK_ALGORITHM_TURING,
-                            turing_change_chars[pos][turing_change_index_sync],
-                            0)),
-                    ]
-            for pos in range(6):
-                with m.Case(100 + pos):
-                    m.d.comb += [
-                        writer_address.eq(7 * page_cells + 15 * 45 + 14 + pos),
+                        writer_address.eq(
+                            clock_text_page_offset_sync + 20 * 45 + 12 + pos),
                         writer_char.eq(
                             clock_source_chars[pos][clock_source_display]),
                     ]
             for pos in range(3):
-                with m.Case(106 + pos):
+                with m.Case(105 + pos):
                     m.d.comb += [
-                        writer_address.eq(7 * page_cells + 19 * 45 + 14 + pos),
-                        writer_char.eq(internal_clock_rate_chars[pos][
-                            internal_clock_rate_sync]),
+                        writer_address.eq(
+                            clock_text_page_offset_sync + 25 * 45 + 15 + pos),
+                        writer_char.eq(
+                            bpm_label_rport.data.word_select(pos, 6)),
                     ]
             for pos in range(3):
-                with m.Case(109 + pos):
+                with m.Case(108 + pos):
                     m.d.comb += [
-                        writer_address.eq(7 * page_cells + 23 * 45 + 14 + pos),
+                        writer_address.eq(
+                            clock_text_page_offset_sync + 30 * 45 + 15 + pos),
                         writer_char.eq(
                             clock_depth_chars[pos][clock_depth_sync]),
                     ]
-            for pos in range(6):
-                with m.Case(112 + pos):
-                    m.d.comb += [
-                        writer_address.eq(7 * page_cells + 27 * 45 + 2 + pos),
-                        writer_char.eq(Mux(
-                            clock_algorithm_sync ==
-                            RezoCore.CLOCK_ALGORITHM_TURING,
-                            turing_label_chars[pos][2],
-                            Mux(clock_algorithm_sync ==
-                                RezoCore.CLOCK_ALGORITHM_SHIFT,
-                                self.code("DATA  "[pos]), 0))),
-                    ]
-            for pos in range(6):
-                with m.Case(118 + pos):
-                    m.d.comb += [
-                        writer_address.eq(7 * page_cells + 35 * 45 + 2 + pos),
-                        writer_char.eq(Mux(
-                            (clock_algorithm_sync ==
-                             RezoCore.CLOCK_ALGORITHM_TURING) &
-                            (turing_target_sync ==
-                             RezoCore.TURING_TARGET_RANGE),
-                            turing_label_chars[pos][3], 0)),
-                    ]
-            for pos in range(5):
-                with m.Case(124 + pos):
-                    m.d.comb += [
-                        writer_address.eq(7 * page_cells + 27 * 45 + 14 + pos),
-                        writer_char.eq(Mux(
-                            clock_algorithm_sync ==
-                            RezoCore.CLOCK_ALGORITHM_TURING,
-                            turing_target_chars[pos][turing_target_sync],
-                            Mux(clock_algorithm_sync ==
-                                RezoCore.CLOCK_ALGORITHM_SHIFT,
-                                data_source_chars[pos][data_source_display],
-                                0))),
-                    ]
-            for pos in range(2):
-                with m.Case(129 + pos):
-                    m.d.comb += [
-                        writer_address.eq(7 * page_cells + 35 * 45 + 14 + pos),
-                        writer_char.eq(Mux(
-                            (clock_algorithm_sync ==
-                             RezoCore.CLOCK_ALGORITHM_TURING) &
-                            (turing_target_sync ==
-                             RezoCore.TURING_TARGET_RANGE),
-                            turing_start_chars[pos][turing_start_sync], 0)),
-                    ]
+            for row in range(4):
+                for pos in range(6):
+                    with m.Case(111 + row * 6 + pos):
+                        if row == 0:
+                            label_char = Mux(
+                                clock_algorithm_sync ==
+                                RezoCore.CLOCK_ALGORITHM_TURING,
+                                self.code("CHANGE"[pos]),
+                                Mux(clock_algorithm_sync ==
+                                    RezoCore.CLOCK_ALGORITHM_WALK,
+                                    self.code(" STYLE"[pos]),
+                                    Mux(clock_algorithm_sync ==
+                                        RezoCore.CLOCK_ALGORITHM_SHIFT,
+                                        self.code("  DATA"[pos]), 0)))
+                        elif row == 1:
+                            label_char = Mux(
+                                clock_algorithm_sync ==
+                                RezoCore.CLOCK_ALGORITHM_TURING,
+                                self.code(" BANDS"[pos]),
+                                Mux(clock_algorithm_sync ==
+                                    RezoCore.CLOCK_ALGORITHM_WALK,
+                                    self.code(" DRUNK"[pos]), 0))
+                        elif row == 2:
+                            label_char = Mux(
+                                clock_algorithm_sync ==
+                                RezoCore.CLOCK_ALGORITHM_TURING,
+                                Mux(turing_target_sync ==
+                                    RezoCore.TURING_TARGET_RANGE,
+                                    self.code(" START"[pos]),
+                                    self.code("LENGTH"[pos])),
+                                Mux(clock_algorithm_sync ==
+                                    RezoCore.CLOCK_ALGORITHM_WALK,
+                                    self.code("CHANCE"[pos]), 0))
+                        else:
+                            label_char = Mux(
+                                (clock_algorithm_sync ==
+                                 RezoCore.CLOCK_ALGORITHM_TURING) &
+                                (turing_target_sync ==
+                                 RezoCore.TURING_TARGET_RANGE),
+                                self.code("LENGTH"[pos]), 0)
+                        m.d.comb += [
+                            writer_address.eq(
+                                clock_text_page_offset_sync +
+                                (15 + row * 5) * 45 + 24 + pos),
+                            writer_char.eq(label_char),
+                        ]
+            for row in range(4):
+                for pos in range(10):
+                    with m.Case(135 + row * 10 + pos):
+                        if row == 0:
+                            value_char = Mux(
+                                clock_algorithm_sync ==
+                                RezoCore.CLOCK_ALGORITHM_TURING,
+                                turing_change_chars[pos][
+                                    turing_change_index_sync],
+                                Mux(clock_algorithm_sync ==
+                                    RezoCore.CLOCK_ALGORITHM_WALK,
+                                    walk_style_chars[pos][walk_style_sync],
+                                    Mux(clock_algorithm_sync ==
+                                        RezoCore.CLOCK_ALGORITHM_SHIFT,
+                                        data_source_chars[pos][
+                                            data_source_display], 0)))
+                        elif row == 1:
+                            value_char = Mux(
+                                clock_algorithm_sync ==
+                                RezoCore.CLOCK_ALGORITHM_TURING,
+                                turing_target_chars[pos][turing_target_sync],
+                                Mux(clock_algorithm_sync ==
+                                    RezoCore.CLOCK_ALGORITHM_WALK,
+                                    walk_drunk_chars[pos][walk_drunk_sync], 0))
+                        elif row == 2:
+                            value_char = Mux(
+                                clock_algorithm_sync ==
+                                RezoCore.CLOCK_ALGORITHM_TURING,
+                                Mux(turing_target_sync ==
+                                    RezoCore.TURING_TARGET_RANGE,
+                                    turing_start_chars[pos][turing_start_sync],
+                                    turing_length_chars[pos][
+                                        turing_length_sync - 2]),
+                                Mux(clock_algorithm_sync ==
+                                    RezoCore.CLOCK_ALGORITHM_WALK,
+                                    walk_chance_chars[pos][
+                                        walk_chance_index_sync], 0))
+                        else:
+                            value_char = Mux(
+                                (clock_algorithm_sync ==
+                                 RezoCore.CLOCK_ALGORITHM_TURING) &
+                                (turing_target_sync ==
+                                 RezoCore.TURING_TARGET_RANGE),
+                                turing_length_chars[pos][
+                                    turing_length_sync - 2], 0)
+                        m.d.comb += [
+                            writer_address.eq(
+                                clock_text_page_offset_sync +
+                                (15 + row * 5) * 45 + 32 + pos),
+                            writer_char.eq(value_char),
+                        ]
         with m.If(update_active):
-            with m.If(update_index == 130):
-                m.d.sync += [update_active.eq(0), refresh_counter.eq(0)]
+            with m.If(update_index == 174):
+                m.d.sync += [
+                    update_active.eq(0),
+                    refresh_counter.eq(0),
+                ]
             with m.Else():
                 m.d.sync += update_index.eq(update_index + 1)
         with m.Elif(refresh_counter == 3_999_999):
@@ -4455,55 +4785,89 @@ class RezoTileDisplay(wiring.Component):
         mode_select = home_page & (
             self.selected == RezoHardwareUI.TARGET_MODE) & self.outline(
                 x, y, 452, 28, 600, 80, t=3)
-        clock_algorithm_chip = clock_page & self.rect(x, y, 216, 100, 320, 138)
-        clock_direction_chip = clock_page & self.rect(x, y, 216, 164, 296, 202)
-        clock_source_chip = clock_page & self.rect(x, y, 216, 228, 320, 266)
-        clock_rate_chip = clock_page & self.rect(x, y, 216, 292, 280, 330)
-        clock_depth_chip = clock_page & self.rect(x, y, 216, 356, 280, 394)
         clock_turing_active = clock_page & (
             self.clock_algorithm == RezoCore.CLOCK_ALGORITHM_TURING)
         clock_data_active = clock_page & (
             self.clock_algorithm == RezoCore.CLOCK_ALGORITHM_SHIFT)
-        clock_target_chip = (clock_turing_active | clock_data_active) & self.rect(
-            x, y, 216, 420, 304, 458)
-        clock_length_chip = clock_turing_active & self.rect(
-            x, y, 216, 484, 264, 522)
-        clock_start_chip = clock_turing_active & (
+        clock_walk_active = clock_page & (
+            self.clock_algorithm == RezoCore.CLOCK_ALGORITHM_WALK)
+        # MODE names have odd/even glyph widths. Move the shared-width value
+        # box by half a cell for the even-width names so every visible name is
+        # centered, without putting a pixel shifter on the DVI text path.
+        clock_algorithm_chip = (
+            (clock_page &
+             (self.clock_algorithm == RezoCore.CLOCK_ALGORITHM_SHIFT) &
+             self.rect(x, y, 136, 100, 264, 138)) |
+            (clock_page &
+             (self.clock_algorithm != RezoCore.CLOCK_ALGORITHM_SHIFT) &
+             self.rect(x, y, 144, 100, 272, 138)))
+        clock_direction_chip = clock_page & self.rect(
+            x, y, 184, 228, 360, 268)
+        clock_source_chip = clock_page & self.rect(
+            x, y, 184, 308, 360, 348)
+        clock_rate_chip = clock_page & self.rect(
+            x, y, 184, 388, 360, 428)
+        clock_depth_chip = clock_page & self.rect(
+            x, y, 184, 468, 360, 508)
+        clock_right0_chip = (clock_turing_active | clock_data_active |
+                             clock_walk_active) & self.rect(
+            x, y, 504, 228, 680, 268)
+        clock_right1_chip = (clock_turing_active | clock_walk_active) & self.rect(
+            x, y, 504, 308, 680, 348)
+        clock_right2_chip = (clock_turing_active | clock_walk_active) & self.rect(
+            x, y, 504, 388, 680, 428)
+        clock_right3_chip = clock_turing_active & (
             self.turing_target == RezoCore.TURING_TARGET_RANGE) & self.rect(
-                x, y, 216, 548, 264, 586)
-        clock_change_chip = clock_turing_active & self.rect(
-            x, y, 216, 612, 280, 650)
+                x, y, 504, 468, 680, 508)
         clock_chip = (clock_algorithm_chip | clock_direction_chip |
                       clock_source_chip | clock_rate_chip | clock_depth_chip |
-                      clock_target_chip | clock_length_chip |
-                      clock_start_chip | clock_change_chip)
+                      clock_right0_chip | clock_right1_chip |
+                      clock_right2_chip | clock_right3_chip)
         clock_select = clock_page & (
             ((self.selected == RezoHardwareUI.TARGET_CLOCK_ALGORITHM) &
-             self.outline(x, y, 211, 95, 325, 143, t=3)) |
-            ((self.selected == RezoHardwareUI.TARGET_SHIFT_DIRECTION) &
-             self.outline(x, y, 211, 159, 301, 207, t=3)) |
+             (((self.clock_algorithm == RezoCore.CLOCK_ALGORITHM_SHIFT) &
+               self.outline(x, y, 131, 95, 269, 143, t=3)) |
+              ((self.clock_algorithm != RezoCore.CLOCK_ALGORITHM_SHIFT) &
+               self.outline(x, y, 139, 95, 277, 143, t=3)))) |
+            (clock_page & ~clock_walk_active &
+             (self.selected == RezoHardwareUI.TARGET_SHIFT_DIRECTION) &
+             self.outline(x, y, 179, 223, 365, 273, t=3)) |
             ((self.selected == RezoHardwareUI.TARGET_CLOCK_SOURCE) &
-             self.outline(x, y, 211, 223, 325, 271, t=3)) |
+             self.outline(x, y, 179, 303, 365, 353, t=3)) |
             ((self.selected == RezoHardwareUI.TARGET_CLOCK_RATE) &
-             self.outline(x, y, 211, 287, 285, 335, t=3)) |
+             self.outline(x, y, 179, 383, 365, 433, t=3)) |
             ((self.selected == RezoHardwareUI.TARGET_CLOCK_DEPTH) &
-             self.outline(x, y, 211, 351, 285, 399, t=3)) |
+             self.outline(x, y, 179, 463, 365, 513, t=3)) |
             (clock_data_active &
              (self.selected == RezoHardwareUI.TARGET_DATA_SOURCE) &
-             self.outline(x, y, 211, 415, 309, 463, t=3)) |
+             self.outline(x, y, 499, 223, 685, 273, t=3)) |
+            (clock_turing_active &
+             (self.selected == RezoHardwareUI.TARGET_TURING_CHANGE) &
+             self.outline(x, y, 499, 223, 685, 273, t=3)) |
+            (clock_walk_active &
+             (self.selected == RezoHardwareUI.TARGET_WALK_STYLE) &
+             self.outline(x, y, 499, 223, 685, 273, t=3)) |
             (clock_turing_active &
              (self.selected == RezoHardwareUI.TARGET_TURING_TARGET) &
-             self.outline(x, y, 211, 415, 309, 463, t=3)) |
-            (clock_turing_active &
-             (self.selected == RezoHardwareUI.TARGET_TURING_LENGTH) &
-             self.outline(x, y, 211, 479, 269, 527, t=3)) |
+             self.outline(x, y, 499, 303, 685, 353, t=3)) |
+            (clock_walk_active &
+             (self.selected == RezoHardwareUI.TARGET_WALK_DRUNK) &
+             self.outline(x, y, 499, 303, 685, 353, t=3)) |
             (clock_turing_active &
              (self.turing_target == RezoCore.TURING_TARGET_RANGE) &
              (self.selected == RezoHardwareUI.TARGET_TURING_START) &
-             self.outline(x, y, 211, 543, 269, 591, t=3)) |
+             self.outline(x, y, 499, 383, 685, 433, t=3)) |
             (clock_turing_active &
-             (self.selected == RezoHardwareUI.TARGET_TURING_CHANGE) &
-             self.outline(x, y, 211, 607, 285, 655, t=3)))
+             (self.selected == RezoHardwareUI.TARGET_TURING_LENGTH) &
+             self.outline(x, y, 499,
+                          Mux(self.turing_target == RezoCore.TURING_TARGET_RANGE,
+                              463, 383),
+                          685,
+                          Mux(self.turing_target == RezoCore.TURING_TARGET_RANGE,
+                              513, 433), t=3)) |
+            (clock_walk_active &
+             (self.selected == RezoHardwareUI.TARGET_WALK_CHANCE) &
+             self.outline(x, y, 499, 383, 685, 433, t=3)))
 
         preset_chip_signals = []
         preset_select_signals = []
@@ -5185,8 +5549,8 @@ class RezoBeamTop(Elaboratable):
                  'assignable out', 'assignable out'],
         io_right=['', '', 'video out required', '', '', '']
     )
-    # This design's DVI PHY placement is seed-sensitive at 720p60. Seed 1 is
-    # the measured all-clock route for the polished BANDS renderer, while the
+    # This design's DVI PHY placement is seed-sensitive at 720p60. Seed 5 is
+    # the measured all-clock route for the two-column CLOCK editor, while the
     # environment override remains useful for place-and-route experiments.
     # The polished BANDS renderer needs a density pass plus a lower ABC9 wire
     # weight than synth_ecp5's fixed 300 ps. W=150 is the measured balance;
@@ -5200,7 +5564,7 @@ class RezoBeamTop(Elaboratable):
         "autoname; hierarchy -check; stat; check -noinit; "
         "blackbox =A:whitebox"
     )
-    nextpnr_opts = f"--timing-allow-fail --seed {os.getenv('TILIQUA_REZO_SEED', '1')}"
+    nextpnr_opts = f"--timing-allow-fail --seed {os.getenv('TILIQUA_REZO_SEED', '5')}"
 
     def __init__(self, clock_settings):
         assert clock_settings.modeline is not None
@@ -5313,6 +5677,9 @@ class RezoBeamTop(Elaboratable):
             rezo.input_jacks.eq(pmod0.jack[:4]),
             rezo.clock_depth.eq(ui.clock_depth),
             rezo.walk_step_index.eq(ui.walk_step_index),
+            rezo.walk_style.eq(ui.walk_style),
+            rezo.walk_drunk.eq(ui.walk_drunk),
+            rezo.walk_chance_index.eq(ui.walk_chance_index),
             rezo.turing_target.eq(ui.turing_target),
             rezo.turing_start.eq(ui.turing_start),
         ]
@@ -5428,6 +5795,12 @@ class RezoBeamTop(Elaboratable):
                            o=display.shift_direction, o_domain="dvi"),
             FFSynchronizer(i=ui.walk_step_index,
                            o=display.walk_step_index, o_domain="dvi"),
+            FFSynchronizer(i=ui.walk_style,
+                           o=display.walk_style, o_domain="dvi"),
+            FFSynchronizer(i=ui.walk_drunk,
+                           o=display.walk_drunk, o_domain="dvi"),
+            FFSynchronizer(i=ui.walk_chance_index,
+                           o=display.walk_chance_index, o_domain="dvi"),
             FFSynchronizer(i=ui.turing_length,
                            o=display.turing_length, o_domain="dvi"),
             FFSynchronizer(i=ui.turing_change_index,

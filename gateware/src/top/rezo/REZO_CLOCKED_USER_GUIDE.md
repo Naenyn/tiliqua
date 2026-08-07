@@ -15,9 +15,12 @@ state until it is cleared or refilled according to the selected algorithm.
 
 The CLOCK main page intentionally matches BANK: it has the same preset picker,
 ten band controls, DRIVE, RES, and FB. The next page in CLOCK mode is a compact
-CLOCK settings page containing MODE, DIR/STEP, SOURCE, BPM, and DEPTH. SHIFT
-also shows DATA; WALK uses the DIR/STEP row for STEP; TURING instead reveals
-TARGET, LENGTH, optional START, and CHANGE controls on this page.
+CLOCK settings page with shared controls in the left column and
+algorithm-specific controls in the right. Every mode keeps DIRECTION, SOURCE,
+BPM, and DEPTH in the same four rows. DIRECTION is editable in SHIFT, ROTATE,
+and TURING. WALK moves randomly in both directions, so it displays read-only
+RANDOM and skips that row during navigation. SHIFT also shows DATA; TURING
+shows CHANGE, BANDS, LENGTH, and optional START.
 
 ## Clock source
 
@@ -25,9 +28,9 @@ SOURCE offers three choices:
 
 - **AUTO** uses the jack assigned to CLK whenever that physical jack is
   patched, and otherwise runs from the internal clock. The value is displayed
-  as `AUTO E` while external or `AUTO I` while internal.
-- **INT** always runs from the internal clock, even if the CLK jack is patched.
-- **EXT** always waits for the external CLK input.
+  as `AUTO EXT` while external or `AUTO INT` while internal.
+- **INTERNAL** always runs from the internal clock, even if CLK is patched.
+- **EXTERNAL** always waits for the external CLK input.
 
 This decision uses the audio board's physical jack detector, not a pulse
 timeout. A stopped or extremely slow patched clock therefore remains external.
@@ -35,9 +38,10 @@ On a source change, REZO waits for a complete internal interval or for the
 external signal to return low and rise again. Plugging or unplugging a cable
 cannot itself create a clock pulse.
 
-BPM sets the internal clock to `15`, `30`, `45`, `60`, `90`, `120`, `180`, or
-`240` beats per minute. It remains visible while using an external clock so the
-fallback tempo can be prepared before unplugging the cable.
+BPM sets the internal clock to any whole-number tempo from 15 to 300 beats per
+minute. Slow encoder turns change it by 1 BPM; quick turns accelerate through
+the range. It remains visible while using an external clock so the fallback
+tempo can be prepared before unplugging the cable.
 
 DEPTH scales the modulation produced by every CLOCK algorithm from 0 to 100
 percent in seventeen steps. It does not alter the captured or generated
@@ -50,12 +54,12 @@ DATA chooses what SHIFT captures on each accepted clock edge:
 
 - **CV** samples the jack assigned to DAT. This is the default and preserves
   the original external sample-and-hold behavior.
-- **RAND** samples an independent internal bipolar pseudo-random source. The
+- **RANDOM** samples an independent internal bipolar pseudo-random source. The
   generator runs continuously at the audio sample rate, so clock timing
   selects a new point from the noise stream.
-- **AUTO** samples DAT while its assigned physical jack is patched and uses
-  internal random data otherwise. The display reports `A CV` or `A RND` for
-  the effective source.
+- **AUTO CV/AUTO RAND** are the effective AUTO states: AUTO samples DAT while
+  its assigned physical jack is patched and uses internal random data
+  otherwise.
 
 The shared CLOCK DEPTH control scales either source. ROTATE and WALK do not
 consume DATA, and TURING retains its own independent random loop generator.
@@ -64,7 +68,7 @@ consume DATA, and TURING retains its own independent random loop generator.
 
 - Patch audio to **IN0**.
 - Patch a reset gate to **IN1**.
-- Patch the bipolar CV to sample to **IN2**, or select DATA RAND/AUTO to use
+- Patch the bipolar CV to sample to **IN2**, or select DATA RANDOM/AUTO to use
   the internal source.
 - Optionally patch a clock to **IN3**. With SOURCE set to AUTO, REZO uses its
   internal 120 BPM clock until that jack is patched.
@@ -93,10 +97,10 @@ modulation shading.
 
 ### SHIFT direction
 
-- **FWD** inserts the new sample at band 0 and shifts older values toward band
+- **FORWARD** inserts the new sample at band 0 and shifts older values toward band
   9.
-- **REV** inserts at band 9 and shifts toward band 0.
-- **RAND** chooses forward or reverse independently from a deterministic
+- **REVERSE** inserts at band 9 and shifts toward band 0.
+- **RANDOM** chooses forward or reverse independently from a deterministic
   pseudo-random sequence on each pulse.
 
 ## ROTATE mode
@@ -107,29 +111,43 @@ band's natural level moves to the next enabled band. Later pulses continue
 moving that modulation ring. Disabled bands are skipped and receive no rotated
 modulation.
 
-ROTATE supports **FWD**, **REV**, and **PING**. PING begins forward and reverses
-after a number of pulses equal to the number of enabled bands, then repeats in
-the other direction. Changing between SHIFT and ROTATE clears the transient
-modulation vector so state from one algorithm cannot leak into the other.
+ROTATE supports **FORWARD** and **REVERSE**. Changing between SHIFT and ROTATE
+clears the transient modulation vector so state from one algorithm cannot leak
+into the other.
 
 ## WALK mode
 
-WALK maintains an independent bipolar modulation value for every enabled band.
-On each accepted clock pulse, every enabled value randomly moves up or down by
-the selected STEP. The five STEP choices are `1`, `2`, `4`, `8`, and `16`;
-CLOCK DEPTH then scales the complete vector without changing the stored walk.
+WALK provides two related STYLE choices. Both use a fixed moderate step;
+CLOCK DEPTH scales the complete result without changing the stored walk.
+
+- **ALL** maintains an independent bipolar value for every enabled band. On
+  each accepted pulse, every enabled value randomly moves up or down by one
+  fixed step.
+- **BAND** moves one cursor randomly up or down through the enabled bands and
+  changes only the band where it lands. Every move is one enabled band; disabled
+  bands are skipped. DRUNK sets the total length of a possible stumble from 1
+  to 4 landings, while CHANCE selects a `0`, `10`, `25`, `50`, `75`, or `100`
+  percent chance that a clock edge starts one. Extra landings are spaced at
+  quarter-clock intervals, so a four-step stumble under a quarter-note clock
+  has a sixteenth-note feel. The first external pulse learns the clock period;
+  stumbles become available after that interval has been measured. The internal
+  clock already knows its period and can stumble immediately.
 
 At either modulation limit, an outward step reverses and moves inward instead
 of clipping or wrapping. This reflection keeps the motion continuous and
-prevents values from becoming stuck at a rail. Disabled bands are forced to
-zero and begin walking from zero when enabled again. RESET returns the complete
-walk to zero.
+prevents values from becoming stuck at a rail. BAND also reflects its cursor at
+the first and last physical band rather than wrapping around. In ALL, disabled
+bands are forced to zero. In BAND they are skipped and remain inaudible. RESET
+returns the complete walk and the BAND cursor to their starting state. Changing
+STYLE also clears the transient walk so the two behaviors never inherit a
+partially developed pattern from one another.
 
 ## TURING mode
 
 TURING is a full-resolution random looping modulation register inspired by the
-Music Thing Modular Turing Machine. LENGTH selects its pattern length from 2 to
-10. TARGET controls how that private pattern is distributed:
+Music Thing Modular Turing Machine. CHANGE is the probability that an unlocked
+departing loop value mutates. BANDS controls how the private pattern is
+distributed, and LENGTH selects its pattern length from 2 to 10:
 
 - **ALL** repeats the pattern across every enabled band. Disabled bands are
   skipped without consuming a pattern position. A five-step pattern therefore
@@ -150,8 +168,9 @@ loop from being locked forever. After filling:
   recirculated unchanged.
 
 CHANGE offers `1`, `3`, `6`, `12`, `25`, `50`, and `100` percent settings.
-TURING supports **FWD** and **REV**. Its random loop is additive modulation over
-the untouched natural BANK levels.
+TURING supports **FORWARD**, **REVERSE**, and **PING PONG**. PING PONG changes
+direction after each complete LENGTH traversal. Its random loop is additive
+modulation over the untouched natural BANK levels.
 
 The clock input uses separate high and low thresholds so noise near the edge
 cannot create repeated captures. Holding a gate high produces only one shift;
@@ -176,9 +195,9 @@ band levels.
 
 - SAVE DEFAULT now stores BANK/CLOCK mode, algorithm, direction, clock source,
   internal BPM, CLOCK depth, SHIFT DATA source, TURING target, length, start,
-  change amount, WALK step, and the complete DAT/CLK/RST/LCK input assignments. Version-1
-  and version-2 REZO saves still load with safe CLOCK defaults; saving again
-  writes the version-3 format.
+  change amount, WALK style/drunkenness/chance, and the complete
+  DAT/CLK/RST/LCK input assignments. Version-1 and version-2 REZO saves still
+  load with safe CLOCK defaults; saving again writes the version-3 format.
 - SHIFT can sample external CV, internal random data, or select between them
   automatically from physical patch detection. An internal LFO remains a
   possible follow-up source.

@@ -101,6 +101,14 @@ also passing every constrained clock.
 | **CLOCK-SAVE-V3-S2** | **Dirty `965f4783`; 46-word V3 save, V1/V2 migration, shadowed CLOCK snapshot/restore** | **2** | **19,887** | **23,199** | **1,089** | **6,409** | **16** | **400.00** | **74.92** | **60.76** | **81.78** | **PASS; flashed slot 4** |
 | CLOCK-WALK-WIDE-S2 | Dirty `965f4783`; ten-band reflected random walk using a shared 17-bit add/compare path | 2 | 20,667 | 23,995 | 293 | 6,439 | 16 | 387.45 | 74.60 | 54.38 | 74.25 | FAIL SYNC; DVI at boundary, not flashed |
 | **CLOCK-WALK-COMPACT-S2** | **Dirty `965f4783`; identical reflected WALK in high-byte units plus wrapped algorithm selector** | **2** | **20,417** | **23,747** | **541** | **6,439** | **16** | **443.85** | **72.80** | **62.68** | **77.89** | **PASS; flashed slot 4** |
+| CLOCK-HEAD-DUPLICATE-S2 | Dirty `c8706835`; HEAD style and DRUNK 1--4 with a second dynamic modulation write path | 2 | 21,093 | 24,429 | -141 | 6,463 | 16 | — | — | — | — | FAIL capacity |
+| CLOCK-HEAD-SHARED-S2 | Dirty `c8706835`; ALL/HEAD share one dynamic modulation read/write/reflect path | 2 | 20,572 | 23,896 | 392 | 6,463 | 16 | 423.19 | 74.79 | 60.27 | 73.98 | FAIL DVI by 0.27 MHz |
+| **CLOCK-HEAD-SHARED-S8** | **Exact CLOCK-HEAD-SHARED JSON; reflected wandering head, disabled-band skip, random 1--DRUNK stride** | **8** | **20,572** | **23,896** | **392** | **6,463** | **16** | **406.17** | **73.65** | **60.44** | **74.37** | **PASS; flashed slot 4** |
+| CLOCK-HEAD-BURST-WIDE | Dirty `c8706835`; measured external interval plus separate period/countdown counters | 8 | 20,777 | 24,129 | 159 | 6,530 | 16 | — | — | — | — | Routing aborted; excessive congestion |
+| CLOCK-HEAD-BURST-S8 | Dirty `c8706835`; shared upward clock/interval counter, 16-sample burst timing, CHANCE control | 8 | 20,724 | 24,068 | 220 | 6,485 | 16 | 422.12 | 74.42 | 59.18 | 76.78 | FAIL SYNC by 0.82 MHz |
+| **CLOCK-HEAD-BURST-S6** | **Exact optimized burst JSON; DRUNK 1--4 temporal landings and 0--100% CHANCE** | **6** | **20,724** | **24,068** | **220** | **6,485** | **16** | **400.64** | **75.68** | **61.50** | **75.00** | **PASS; hardware candidate** |
+| **CLOCK-UI-BPM-S5** | **Two-column CLOCK editor, readable labels, WALK BAND name, ordered TURING controls, exact 15--300 BPM with accelerated editing** | **5** | **20,783** | **24,103** | **185** | **6,541** | **18** | **449.03** | **73.96** | **60.19** | **75.50** | **PASS; flashed slot 4** |
+| **CLOCK-FIXED-DIRECTION-S8** | **Fixed shared rows; DIRECTION remains visible while WALK reports read-only RANDOM; mode-dependent direction sets retained** | **8** | **20,874** | **24,206** | **82** | **6,529** | **18** | **381.53** | **78.21** | **60.15** | **74.68** | **PASS; flashed slot 4** |
 
 ## Notes
 
@@ -302,3 +310,14 @@ also passing every constrained clock.
   four-way algorithm-selection mux tree with wrapped two-bit arithmetic also
   shortens the UI path that dominated the failed route. Seed 2 passes every
   clock with 541 cells free and supplies the flashed archive.
+- HEAD is implemented as a second WALK style rather than a fifth global
+  algorithm, preserving the compact two-bit algorithm selector. One cursor
+  randomly travels up or down through enabled bands, reflects at the physical
+  ends, and modifies only its landing. DRUNK 1--4 chooses the maximum stride;
+  each pulse draws an actual distance from one through that ceiling. The first
+  RTL version expressed separate dynamic writes for ALL and HEAD and mapped
+  141 cells over capacity. Folding both through the existing indexed
+  read/write/reflect path recovers 533 packed cells and makes the entire
+  feature cost 149 cells over CLOCK-WALK-COMPACT. Seed 2 misses only DVI;
+  seed 1 misses only DVI5X; seed 7 misses DVI5X and SYNC; and seed 8 passes all
+  clocks with 392 cells free and supplies the flashed archive.

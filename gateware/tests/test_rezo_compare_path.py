@@ -262,7 +262,7 @@ def test_clocked_shift_register_directions_hysteresis_roles_and_reset():
     sim.run()
 
 
-def test_clocked_rotate_uses_bank_levels_skips_disabled_and_ping_pongs():
+def test_clocked_rotate_uses_bank_levels_and_skips_disabled_bands():
     """ROTATE moves an additive copy of BANK levels through enabled bands."""
     dut = RezoCore(fs=192_000)
     sim = Simulator(dut)
@@ -318,21 +318,6 @@ def test_clocked_rotate_uses_bank_levels_skips_disabled_and_ping_pongs():
         ctx.set(dut.shift_direction, dut.SHIFT_BACKWARD)
         await pulse(ctx)
         assert vector(ctx)[:4] == (2000, 3000, 4000, 5000)
-
-        # With three enabled bands, PING flips after three pulses and the
-        # fourth pulse traverses the ring in reverse.
-        await reset(ctx)
-        for n in range(3, dut.N_BANDS):
-            ctx.set(dut.band_enables[n], 0)
-        ctx.set(dut.shift_direction, dut.SHIFT_PING_PONG)
-        await pulse(ctx)
-        assert vector(ctx)[:3] == (3000, 1000, 2000)
-        await pulse(ctx)
-        assert vector(ctx)[:3] == (2000, 3000, 1000)
-        await pulse(ctx)
-        assert vector(ctx)[:3] == (1000, 2000, 3000)
-        await pulse(ctx)
-        assert vector(ctx)[:3] == (2000, 3000, 1000)
 
     sim.add_testbench(bench)
     sim.run()
@@ -399,9 +384,116 @@ def test_clocked_walk_steps_reflects_skips_disabled_and_resets():
     sim.run()
 
 
+def test_clocked_head_walk_stumbles_in_time_and_respects_chance():
+    """HEAD takes single spatial steps and can burst between clock pulses."""
+    dut = RezoCore(fs=192_000)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+
+    async def send(ctx, inputs):
+        for channel, sample in enumerate(inputs):
+            ctx.set(dut.i.payload[channel].as_value(), sample)
+        ctx.set(dut.i.valid, 1)
+        await ctx.tick().until(dut.i.ready == 1)
+        ctx.set(dut.i.valid, 0)
+        ctx.set(dut.o.ready, 1)
+        await ctx.tick().until(dut.o.valid == 1)
+        ctx.set(dut.o.ready, 0)
+
+    async def pulse(ctx):
+        await send(ctx, (0, 0, 0, 0))
+        await send(ctx, (0, 0, 0, 6000))
+
+    async def reset(ctx):
+        await send(ctx, (0, 6000, 0, 0))
+        await send(ctx, (0, 0, 0, 0))
+
+    def vector(ctx):
+        return tuple(ctx.get(value) for value in dut.clock_modulations)
+
+    async def bench(ctx):
+        ctx.set(dut.input_jacks, 1 << 3)
+        ctx.set(dut.clock_mode, 1)
+        ctx.set(dut.clock_algorithm, dut.CLOCK_ALGORITHM_WALK)
+        ctx.set(dut.walk_style, dut.WALK_STYLE_HEAD)
+
+        # DRUNK 4 with 100% CHANCE turns the second learned external interval
+        # into four total landings: one on the clock edge and three evenly
+        # spaced extra landings. Each landing still moves exactly one enabled
+        # band rather than choosing a wider spatial stride.
+        ctx.set(dut.walk_drunk, 3)
+        ctx.set(dut.walk_chance_index, len(dut.WALK_CHANCES) - 1)
+        await pulse(ctx)  # Learn the first external edge; no interval yet.
+        for _ in range(12):
+            await send(ctx, (0, 0, 0, 0))
+        before = vector(ctx)
+        await send(ctx, (0, 0, 0, 6000))
+        previous = vector(ctx)
+        changes = int(previous != before)
+        for _ in range(20):
+            await send(ctx, (0, 0, 0, 0))
+            current = vector(ctx)
+            if current != previous:
+                changes += 1
+                previous = current
+        assert changes == 4
+
+        # Zero chance suppresses the stumble while retaining the ordinary
+        # clock-edge landing.
+        await reset(ctx)
+        ctx.set(dut.walk_chance_index, 0)
+        before = vector(ctx)
+        await pulse(ctx)
+        previous = vector(ctx)
+        changes = int(previous != before)
+        for _ in range(20):
+            await send(ctx, (0, 0, 0, 0))
+            current = vector(ctx)
+            if current != previous:
+                changes += 1
+                previous = current
+        assert changes == 1
+
+        ctx.set(dut.walk_drunk, 0)
+        ctx.set(dut.walk_chance_index, dut.WALK_CHANCE_DEFAULT)
+        await reset(ctx)
+
+        # 0xACE1 first requests a move below band zero, which reflects onto
+        # band one. Only that landing changes.
+        await pulse(ctx)
+        assert vector(ctx) == (0, -1024, 0, 0, 0, 0, 0, 0, 0, 0)
+
+        # The next deterministic bit moves back to band zero; the first
+        # landing remains untouched rather than every band advancing.
+        await pulse(ctx)
+        assert vector(ctx) == (-1024, -1024, 0, 0, 0, 0, 0, 0, 0, 0)
+
+        # A one-step move skips disabled band one and lands on band two.
+        await reset(ctx)
+        ctx.set(dut.band_enables[1], 0)
+        await pulse(ctx)
+        assert vector(ctx) == (0, 0, -1024, 0, 0, 0, 0, 0, 0, 0)
+
+        # Value reflection is shared with ALL: a requested negative move at
+        # the lower rail turns inward by exactly one selected step.
+        await reset(ctx)
+        ctx.set(dut.band_enables[1], 1)
+        ctx.set(dut.clock_modulations[1], -dut.WALK_LIMIT)
+        await pulse(ctx)
+        assert vector(ctx)[1] == -dut.WALK_LIMIT + dut.WALK_STEPS[
+            dut.WALK_STEP_DEFAULT]
+
+    sim.add_testbench(bench)
+    sim.run()
+
+
 def test_internal_clock_auto_jack_detection_and_safe_handoff():
     """AUTO follows physical patch state without transition double-clocks."""
-    dut = RezoCore(fs=192_000, internal_clock_periods=(3,) * 8)
+    dut = RezoCore(
+        fs=192_000,
+        internal_clock_periods=(3,) * (
+            RezoCore.INTERNAL_CLOCK_MAX_BPM -
+            RezoCore.INTERNAL_CLOCK_MIN_BPM + 1))
     sim = Simulator(dut)
     sim.add_clock(1e-6)
 
@@ -541,6 +633,20 @@ def test_clocked_turing_fills_mutates_locks_and_skips_disabled_bands():
         await pulse(ctx, lock=6000)
         assert vector(ctx)[:4] == (
             before_reverse[2], 0, before_reverse[3], before_reverse[0])
+
+        # PING PONG begins forward, reverses after one complete loop-length
+        # traversal, and therefore retraces the most recent rotation.
+        ctx.set(dut.shift_direction, dut.SHIFT_PING_PONG)
+        before_ping = (vector(ctx)[0], vector(ctx)[2], vector(ctx)[3])
+        await pulse(ctx, lock=6000)
+        assert (vector(ctx)[0], vector(ctx)[2], vector(ctx)[3]) == (
+            before_ping[2], before_ping[0], before_ping[1])
+        await pulse(ctx, lock=6000)
+        await pulse(ctx, lock=6000)
+        assert (vector(ctx)[0], vector(ctx)[2], vector(ctx)[3]) == before_ping
+        await pulse(ctx, lock=6000)
+        assert (vector(ctx)[0], vector(ctx)[2], vector(ctx)[3]) == (
+            before_ping[1], before_ping[2], before_ping[0])
 
         # RANGE maps the private pattern once to physical bands 6..8 and
         # clears every band outside that explicit target window.

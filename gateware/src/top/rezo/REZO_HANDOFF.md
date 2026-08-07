@@ -6,6 +6,96 @@ it together with [`BUILD_PERFORMANCE.md`](BUILD_PERFORMANCE.md) and
 before changing the design. [`REZO_USER_GUIDE.md`](REZO_USER_GUIDE.md) is the
 simplified operator documentation for the release candidate.
 
+## 2026-08-07 CLOCK UI and continuous-BPM candidate
+
+The current working tree polishes the CLOCK settings page without beginning
+the planned post-UI optimization phase. MODE now uses the same selector
+geometry as BANK's PRESET. Shared controls form the left column (DIRECTION,
+SOURCE, BPM, DEPTH), while algorithm-specific controls form a right column.
+Labels are right-aligned against equal-width value boxes and all values are
+centered. Direction and source names are no longer abbreviated: the UI can
+show FORWARD, REVERSE, PING PONG, RANDOM, AUTO INT, AUTO EXT, INTERNAL, and
+EXTERNAL. SHIFT's AUTO DATA states show AUTO CV and AUTO RAND. WALK's
+user-facing HEAD name is now BAND; internal constant names remain unchanged.
+The shared label is now DIRECTION, and all four shared rows stay fixed in every
+mode. WALK displays read-only RANDOM and navigation skips that row; its hidden
+legacy step field is normalized to the fixed default. ROTATE exposes only
+FORWARD/REVERSE. TURING exposes
+FORWARD/REVERSE/PING PONG, changing direction once per complete loop-length
+traversal. The MODE value box is offset per visible name width so each submode
+is centered without adding a pixel shifter to the timing-sensitive DVI path.
+
+TURING's right column is ordered CHANGE, BANDS, then its range geometry.
+BANDS ALL shows LENGTH in row three. BANDS RANGE shows START in row three and
+moves LENGTH to row four. Navigating forward follows the same visual order.
+Editing START automatically shortens LENGTH when necessary, so a freshly
+selected full-length RANGE is not stuck at START 1.
+
+The internal BPM is now any integer from 15 through 300. A slow encoder detent
+changes one BPM and a rapid detent changes eight. Period and three-digit label
+tables use block ROMs instead of a runtime divider or wide LUT mux. Exact BPM
+uses the former three-bit rate field plus its six trailing padding bits, so the
+46-word V3 record does not grow or move later fields. A saved record from the
+old eight-rate build is recognized by zero high bits and maps its old index to
+15, 30, 45, 60, 90, 120, 180, or 240 BPM. New saves restore their exact BPM.
+All other CLOCK parameters remain saved; transient modulation patterns remain
+deliberately unsaved.
+
+All 27 REZO tests pass. The exact seed-8 route uses 20,874 LUT4, 24,206 packed
+cells (82 free), 6,529 FF, and 18 BRAM. It passes at 381.53 MHz DVI5X, 78.21
+MHz AUDIO, 60.15 MHz SYNC, and 74.68 MHz DVI. The archive is
+`gateware/build/rezo-r5/rezo-c8706835-r5.tar.gz` and was flashed to slot 4.
+The `top.bit` SHA-256 is
+`66907a00859a65295e46684a9350ecd5361adebf78e97fb254edbdc341726621` and
+the archive SHA-256 is
+`a92690006ed7de878052263b267dda95312b90b1c3e8667f62d5513870488bca`.
+
+## 2026-08-06 CLOCK HEAD temporal-stumble candidate
+
+Commit `c8706835` checkpoints the tested and flashed simultaneous WALK. The
+current working tree adds a second WALK STYLE plus temporal drunkenness without
+widening the global two-bit algorithm selector:
+
+- `ALL` is the checkpointed behavior: all enabled bands independently step on
+  every clock;
+- `HEAD` moves one spatial cursor randomly up or down and changes only its
+  landing band;
+- disabled bands are skipped without consuming a cursor step;
+- the cursor reflects at physical bands 1 and 10 rather than wrapping; and
+- every spatial move is exactly one enabled band, while DRUNK 1--4 sets the
+  total number of rapid landings in a possible stumble;
+- CHANCE offers 0, 10, 25, 50, 75, and 100 percent stumble probabilities; and
+- extra landings occur on quarter-interval subdivisions, giving DRUNK 4 a
+  sixteenth-note feel under a quarter-note clock.
+
+Both styles share the existing five WALK step sizes, bipolar value reflection,
+CLOCK DEPTH, and RESET. Changing STYLE clears the transient vector and cursor.
+The first external pulse measures the beginning of an interval; subsequent
+pulses can launch measured stumbles. The internal clock already knows its
+period. The CLOCK page reuses TURING-exclusive rows for STYLE, DRUNK, and
+CHANCE, avoiding new navigation target IDs. SAVE DEFAULT stores one style bit,
+two drunkenness bits, and a three-bit chance index in V3's existing padding;
+the record remains 46 words. A save from `c8706835` therefore restores safely
+as `ALL / DRUNK 1 / CHANCE 25`.
+
+The first temporal scheduler kept three wide counters and left only 159 packed
+cells free, producing pathological routing. The retained form uses the existing
+clock counter for both internal timing and external period measurement, and
+stores burst thresholds at 16-audio-sample resolution (83 microseconds at 192
+kHz). This recovers 61 packed cells and 45 FF without changing musical timing.
+All 39 REZO tests pass, including explicit DRUNK-4/CHANCE-100 and
+DRUNK-4/CHANCE-0 event-count regressions.
+
+The exact seed-6 route uses 20,724 LUT4, 24,068 packed cells (220 free), 6,485
+FF, and 16 BRAM. It passes at 400.64 MHz DVI5X, 75.68 MHz AUDIO, 61.50 MHz
+SYNC, and 75.00 MHz DVI. Seed 8 misses only SYNC at 59.18 MHz and seed 1 is
+substantially worse. The archive is
+`gateware/build/rezo-r5/rezo-c8706835-r5.tar.gz` and was flashed to slot 4.
+The seed-6 `top.bit` SHA-256 is
+`c978dafabd4424fd7ca54391c5157f80cede40b305ade287464743c2b32615c8` and
+the archive SHA-256 is
+`3f75378e6a60f3df9df016ac426a6d4582bd41cf611944a98ed30dffd7e21872`.
+
 ## 2026-08-06 CLOCK WALK candidate
 
 The current working tree adds WALK as the fourth CLOCK algorithm. Each
@@ -597,11 +687,12 @@ but overall packing congestion is also a real constraint.
 
 ## Test baseline
 
-The complete targeted regression set now contains 38 tests, including exact USER
+The complete targeted regression set now contains 39 tests, including exact USER
 working-vector semantics, all ten persisted frequencies/enables, version-1
 migration, the known-good DSP vector, two-row BANDS geometry, a five-digit
 frequency readout, mode-change gain slew, disabled-band frames, programming
-across a 256-byte flash page, and deterministic bounded WALK behavior:
+across a 256-byte flash page, deterministic bounded ALL WALK behavior, and
+HEAD cursor/stride/disabled-band behavior:
 
 ```sh
 pdm run pytest \
