@@ -738,8 +738,14 @@ class RezoCore(wiring.Component):
                 data_lfsr.as_signed() >> 1,
                 data_sample >> 1)),
             level_with_cv.eq(levels[band] + group_cur),
-            band_sample.eq(abp_cur.as_value().as_signed()),
-            term.eq(mac_z.as_value().as_signed() >> (dsp.mac.SQNative.f_bits + 1)),
+            # SVF state carries two fractional guard bits beyond SQNative.
+            # Dropping its raw 20-bit value directly into the 18-bit MAC input
+            # truncated the sign bits instead of rescaling, producing a 4x
+            # signal below |1.0| and a hard sign wrap above it. Rescale first,
+            # then recover the established output gain after multiplication.
+            band_sample.eq(abp_cur.as_value().as_signed() >> 2),
+            term.eq(mac_z.as_value().as_signed() >>
+                    (dsp.mac.SQNative.f_bits - 1)),
             feedback_term.eq(mac_z.as_value().as_signed() >> dsp.mac.SQNative.f_bits),
             dry_gain_term.eq(mac_z.as_value().as_signed() >> dsp.mac.SQNative.f_bits),
             input_mix_next.eq(input_mix_acc + input_gain_product_q),

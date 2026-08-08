@@ -138,6 +138,47 @@ def test_band5_zero_feedback_matches_known_good_drive_scale():
     ]
 
 
+def test_strong_band5_resonance_has_no_guard_bit_sign_wrap():
+    dut = RezoCore(fs=192_000)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+    output = []
+
+    async def send(ctx, sample):
+        ctx.set(dut.i.payload[0].as_value(), sample)
+        for channel in range(1, 4):
+            ctx.set(dut.i.payload[channel].as_value(), 0)
+        ctx.set(dut.i.valid, 1)
+        await ctx.tick().until(dut.i.ready == 1)
+        ctx.set(dut.i.valid, 0)
+        ctx.set(dut.o.ready, 1)
+        values = await ctx.tick().sample(
+            dut.o.payload[0].as_value()).until(dut.o.valid == 1)
+        output.append(values[0])
+
+    async def bench(ctx):
+        for index, level in enumerate(dut.levels):
+            ctx.set(level, 512 if index == 5 else 0)
+        ctx.set(dut.band_frequencies[5], dut.frequency_index(16_000))
+        # Use an upper table entry so the resonator reaches the guard-bit
+        # boundary quickly enough to keep this regression inexpensive.
+        for n in range(1024):
+            sample = int(32_000 * math.sin(2 * math.pi * 4_000 * n / 192_000))
+            await send(ctx, sample)
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    tail = output[-256:]
+    max_step = max(abs(current - previous)
+                   for previous, current in zip(tail, tail[1:]))
+    # A correctly rescaled band state remains continuous at this low output
+    # gain. The old raw-width truncation flipped sign at the guard-bit boundary
+    # and produced a 1,929-count adjacent-sample jump; the corrected 4 kHz
+    # waveform stays below 500 counts while retaining its ordinary slope.
+    assert max_step < 800, (min(tail), max(tail), max_step, tail[-32:])
+
+
 def test_clocked_shift_register_directions_hysteresis_roles_and_reset():
     """CLOCK captures DATA exactly once per rising edge and shifts as selected."""
     dut = RezoCore(fs=192_000)
