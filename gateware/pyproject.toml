@@ -56,6 +56,7 @@ macro_osc          = "src/top/macro_osc/top.py"
 sid                = "src/top/sid/top.py"
 sampler            = "src/top/sampler/top.py"
 rezo               = "src/top/rezo/top.py"
+rezomo             = "src/top/rezo/top.py"
 # (Non-SoC bitstreams)
 dsp                = "src/top/dsp/top.py"
 beamrace           = "src/top/beamrace/top.py"

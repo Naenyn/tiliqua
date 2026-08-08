@@ -1,10 +1,94 @@
-# REZO development handoff
+# REZOMO development handoff
 
-This file is the starting context for the next Codex task working on REZO. Read
+This file is the starting context for the next Codex task working on REZOMO.
+Read
 it together with [`BUILD_PERFORMANCE.md`](BUILD_PERFORMANCE.md) and
 [`Rezo_Feature_Ideas_By_Complexity.md`](Rezo_Feature_Ideas_By_Complexity.md)
-before changing the design. [`REZO_USER_GUIDE.md`](REZO_USER_GUIDE.md) is the
-simplified operator documentation for the release candidate.
+before changing the design. [`REZOMO_USER_GUIDE.md`](REZOMO_USER_GUIDE.md) is
+the complete operator documentation for this clocked variant;
+[`REZO_USER_GUIDE.md`](REZO_USER_GUIDE.md) documents the original BANK/FILTER
+bitstream.
+
+## 2026-08-07 REZOMO release candidate
+
+The clocked variant now has its own operator-facing identity: **REZOMO**. The
+tile header, legacy beam header, bitstream manifest, and help text all use the
+new name. `pdm run rezomo` is the preferred build alias; `pdm run rezo` remains
+available as a source-compatible alias and also defaults to the REZOMO manifest
+name. Internal `Rezo*` class names and the persisted `REZO` record magic remain
+unchanged deliberately, avoiding an unnecessary logic and save-format
+migration.
+
+[`REZOMO_USER_GUIDE.md`](REZOMO_USER_GUIDE.md) is the complete operator guide.
+It documents BANK from signal flow through every supporting page, then CLOCK,
+the shared controls, input roles, all four algorithms, persistence, and patch
+examples. The old partial clocked guide was removed; the original
+[`REZO_USER_GUIDE.md`](REZO_USER_GUIDE.md) remains the guide for the separate
+BANK/FILTER bitstream.
+
+All 39 comparison, display, UI, and persistence tests pass. The pre-commit
+seed-9 REZOMO build uses 20,737 LUT4, 24,081 packed cells (207 free), 6,519 FF,
+and 18 BRAM. Final timing passes at 418.24 MHz DVI5X, 77.02 MHz AUDIO, 60.10 MHz
+SYNC, and 76.07 MHz DVI. The archive is
+`gateware/build/rezomo-r5/rezomo-16da16f7-r5.tar.gz`; it has not been flashed.
+The `top.bit` SHA-256 is
+`672f7fac86ff5b6e0ad57a9b6cd0797535d4e5181e1ef787ab9be3887088275e` and the
+archive SHA-256 is
+`25bbd63b5a434420c4a9aa19b74990b25b6233fab1cf6740f7551bf9f19f2614`.
+
+## 2026-08-07 CLOCK alignment polish candidate
+
+The current working tree corrects the two remaining CLOCK settings-page
+alignment issues found during hardware testing. All four algorithm names now
+share one 136-pixel MODE box centered between the character-grid positions of
+odd- and even-length names. This holds every name within four pixels of the
+same center without adding a mode-dependent pixel shifter. The two parameter
+columns use 160-pixel value boxes instead of 176-pixel boxes. DIRECTION,
+SOURCE, and BPM move one 16-pixel character cell inside the content panel;
+their existing value text becomes naturally centered in the narrower boxes.
+The full-width power-of-two DEPTH slider and its resource savings are retained.
+
+The fixed comparator-friendly MODE rectangle also improves synthesis. Relative
+to CLOCK-DEPTH-SLIDER-S8, this candidate saves another 108 LUT4 and 120 packed
+cells with no FF or BRAM increase. All 27 REZO tests pass. The exact seed-9
+route uses 20,737 LUT4, 24,081 packed cells (207 free), 6,519 FF, and 18 BRAM.
+It passes at 389.11 MHz DVI5X, 76.61 MHz AUDIO, 61.24 MHz SYNC, and 79.29 MHz
+DVI. Seeds 1--6 and 8 were rejected for timing; seed 7 was stopped as a
+congestion outlier. The archive is
+`gateware/build/rezo-r5/rezo-16da16f7-r5.tar.gz`. The `top.bit` SHA-256 is
+`fea0900e3b6c30868d58593334874751d3a786f5dfd31d8e41930365673abc23` and the
+archive SHA-256 is
+`b44cef4757ab3eb067649451cacc58aad2a8d156943b492c9ae809993542ddfb`.
+
+## 2026-08-07 full-width CLOCK DEPTH and optimization candidate
+
+The current working tree replaces CLOCK's numeric DEPTH value box with a
+full-width slider spanning both settings columns. It retains the saved 0--16
+parameter and therefore the same seventeen steps from 0 through 100 percent.
+The 512-pixel interior maps each step to exactly 32 pixels, allowing the fill
+endpoint to use a five-bit shift. The obsolete three-character numeric table,
+its synchronizer, and three text-writer scan slots are removed. The operator
+guide and display regression test describe and verify the new control.
+
+This change is also the retained result of the post-UI optimization pass.
+Relative to the previously flashed CLOCK-FIXED-DIRECTION-S8 candidate it saves
+29 LUT4, 5 packed cells, and 10 FF. Two more aggressive experiments were
+measured and reverted. A shared 60-bit CLOCK-name ROM passed focused tests but
+made routing impractically slow. Fixing WALK's hidden legacy step in the source
+unexpectedly increased the mapped design to 24,289 packed cells, one beyond
+capacity. Removing WALK's now-unread display crossing similarly changed ECP5
+packing to 24,342 cells. The benign crossing is retained because its exact
+structure produces the smaller, timing-clean route; it does not affect the
+display or user-visible behavior.
+
+All 27 REZO tests pass. The exact seed-8 route uses 20,845 LUT4, 24,201 packed
+cells (87 free), 6,519 FF, and 18 BRAM. It passes at 382.70 MHz DVI5X, 74.10
+MHz AUDIO, 60.37 MHz SYNC, and 77.86 MHz DVI. The archive is
+`gateware/build/rezo-r5/rezo-16da16f7-r5.tar.gz`. It was deliberately not
+flashed because the rack was powered down. The `top.bit` SHA-256 is
+`ad9d997be98007c1a97761df22eb0da75d2a6fc8180112d62c78e4301450ef62` and
+the archive SHA-256 is
+`232884b1e41183fe62c77ae86eeb0c16a66810fe2e20eb865892b84309c8d4f6`.
 
 ## 2026-08-07 CLOCK UI and continuous-BPM candidate
 
@@ -325,8 +409,8 @@ random generator; both were implemented in the later checkpoints above.
 
 ## 2026-08-06 CLOCK SHIFT/ROTATE checkpoint
 
-The first external-clock MVP is implemented and documented in
-[`REZO_CLOCKED_USER_GUIDE.md`](REZO_CLOCKED_USER_GUIDE.md):
+The first external-clock MVP was implemented and is now incorporated into
+[`REZOMO_USER_GUIDE.md`](REZOMO_USER_GUIDE.md):
 
 - BANK/CLOCK mode selector on the main page;
 - BANK-equivalent CLOCK main controls plus a separate direction settings page;

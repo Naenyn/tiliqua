@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: CERN-OHL-S-2.0
 """
-REZO is a first pass at a Graphic Resonant Filterbank-inspired Tiliqua
+REZOMO is a clock-oriented Graphic Resonant Filterbank-inspired Tiliqua
 bitstream.
 
     .. code-block:: text
@@ -3660,8 +3660,8 @@ class RezoBeamDisplay(wiring.Component):
             m.d.dvi += frame.eq(frame + 1)
 
         text_signals = [
-            self.fixed_text_pixel(m, x, y, "REZO", 36, 28, scale_shift=2,
-                                  name="lcd_rezo"),
+            self.fixed_text_pixel(m, x, y, "REZOMO", 36, 28, scale_shift=2,
+                                  name="lcd_rezomo"),
             self.fixed_text_pixel(m, x, y, "PRESET", 36, 104,
                                   name="lcd_preset"),
             self.fixed_text_pixel(m, x, y, "BANDS", 36, 168,
@@ -4073,7 +4073,7 @@ class RezoTileDisplay(wiring.Component):
         page_titles = ("BANK", "FEEDBACK", "INPUT", "GROUPS", "OUTPUT",
                        "OPTIONS", "BANDS", "CLOCK")
         for page_number, title in enumerate(page_titles):
-            put(page_number, "REZO", 2, 3)
+            put(page_number, "REZOMO", 2, 3)
             title_x = 29 + max(0, (8 - len(title)) // 2)
             put(page_number, title, title_x, 3)
         put(0, "PRESET", 2, 7)
@@ -4113,9 +4113,9 @@ class RezoTileDisplay(wiring.Component):
         put(6, "SET FREQ", 2, 22)
         put(6, "HZ", 20, 22)
         put(7, "MODE", 2, 7)
-        put(7, "DIRECTION", 1, 15)
-        put(7, "SOURCE", 4, 20)
-        put(7, "BPM", 7, 25)
+        put(7, "DIRECTION", 2, 15)
+        put(7, "SOURCE", 5, 20)
+        put(7, "BPM", 8, 25)
         put(7, "DEPTH", 5, 30)
         m.submodules.text_mem = text_mem = Memory(
             shape=unsigned(6), depth=len(text_init), init=text_init)
@@ -4141,7 +4141,6 @@ class RezoTileDisplay(wiring.Component):
         clock_mode_sync = Signal()
         clock_algorithm_sync = Signal(unsigned(2))
         shift_direction_sync = Signal(unsigned(2))
-        walk_step_index_sync = Signal(range(len(RezoCore.WALK_STEPS)))
         walk_style_sync = Signal()
         walk_drunk_sync = Signal(unsigned(2))
         walk_chance_index_sync = Signal(
@@ -4155,7 +4154,6 @@ class RezoTileDisplay(wiring.Component):
                   RezoCore.INTERNAL_CLOCK_MAX_BPM + 1))
         clock_external_active_sync = Signal()
         data_random_active_sync = Signal()
-        clock_depth_sync = Signal(unsigned(5))
         turing_target_sync = Signal()
         turing_start_sync = Signal(range(RezoCore.N_BANDS))
         palette_sync = Signal(unsigned(3))
@@ -4179,7 +4177,6 @@ class RezoTileDisplay(wiring.Component):
             FFSynchronizer(self.clock_mode, clock_mode_sync),
             FFSynchronizer(self.clock_algorithm, clock_algorithm_sync),
             FFSynchronizer(self.shift_direction, shift_direction_sync),
-            FFSynchronizer(self.walk_step_index, walk_step_index_sync),
             FFSynchronizer(self.walk_style, walk_style_sync),
             FFSynchronizer(self.walk_drunk, walk_drunk_sync),
             FFSynchronizer(self.walk_chance_index, walk_chance_index_sync),
@@ -4194,7 +4191,6 @@ class RezoTileDisplay(wiring.Component):
                            clock_external_active_sync),
             FFSynchronizer(self.data_random_active,
                            data_random_active_sync),
-            FFSynchronizer(self.clock_depth, clock_depth_sync),
             FFSynchronizer(self.turing_target, turing_target_sync),
             FFSynchronizer(self.turing_start, turing_start_sync),
             FFSynchronizer(self.palette, palette_sync),
@@ -4243,7 +4239,7 @@ class RezoTileDisplay(wiring.Component):
             m.d.comb += bands_selected_band.eq(
                 selected_sync - RezoHardwareUI.TARGET_BAND_ENABLE_BASE)
 
-        update_index = Signal(range(176))
+        update_index = Signal(range(172))
         update_active = Signal(init=1)
         refresh_counter = Signal(range(4_000_000))
         writer_address = Signal(unsigned(15))
@@ -4332,11 +4328,6 @@ class RezoTileDisplay(wiring.Component):
         data_source_chars = [Array(Const(self.code(name[pos]), 6)
                                    for name in data_source_names)
                              for pos in range(10)]
-        clock_depth_names = tuple(
-            f"{round(value * 100 / 16):>3}" for value in range(17))
-        clock_depth_chars = [Array(Const(self.code(name[pos]), 6)
-                                   for name in clock_depth_names)
-                             for pos in range(3)]
         turing_target_names = ("   ALL    ", "  RANGE   ")
         turing_target_chars = [Array(Const(self.code(name[pos]), 6)
                                      for name in turing_target_names)
@@ -4563,17 +4554,9 @@ class RezoTileDisplay(wiring.Component):
                         writer_char.eq(
                             bpm_label_rport.data.word_select(pos, 6)),
                     ]
-            for pos in range(3):
-                with m.Case(108 + pos):
-                    m.d.comb += [
-                        writer_address.eq(
-                            clock_text_page_offset_sync + 30 * 45 + 15 + pos),
-                        writer_char.eq(
-                            clock_depth_chars[pos][clock_depth_sync]),
-                    ]
             for row in range(4):
                 for pos in range(6):
-                    with m.Case(111 + row * 6 + pos):
+                    with m.Case(108 + row * 6 + pos):
                         if row == 0:
                             label_char = Mux(
                                 clock_algorithm_sync ==
@@ -4619,7 +4602,7 @@ class RezoTileDisplay(wiring.Component):
                         ]
             for row in range(4):
                 for pos in range(10):
-                    with m.Case(135 + row * 10 + pos):
+                    with m.Case(132 + row * 10 + pos):
                         if row == 0:
                             value_char = Mux(
                                 clock_algorithm_sync ==
@@ -4669,7 +4652,7 @@ class RezoTileDisplay(wiring.Component):
                             writer_char.eq(value_char),
                         ]
         with m.If(update_active):
-            with m.If(update_index == 174):
+            with m.If(update_index == 171):
                 m.d.sync += [
                     update_active.eq(0),
                     refresh_counter.eq(0),
@@ -4791,83 +4774,81 @@ class RezoTileDisplay(wiring.Component):
             self.clock_algorithm == RezoCore.CLOCK_ALGORITHM_SHIFT)
         clock_walk_active = clock_page & (
             self.clock_algorithm == RezoCore.CLOCK_ALGORITHM_WALK)
-        # MODE names have odd/even glyph widths. Move the shared-width value
-        # box by half a cell for the even-width names so every visible name is
-        # centered, without putting a pixel shifter on the DVI text path.
-        clock_algorithm_chip = (
-            (clock_page &
-             (self.clock_algorithm == RezoCore.CLOCK_ALGORITHM_SHIFT) &
-             self.rect(x, y, 136, 100, 264, 138)) |
-            (clock_page &
-             (self.clock_algorithm != RezoCore.CLOCK_ALGORITHM_SHIFT) &
-             self.rect(x, y, 144, 100, 272, 138)))
+        # Odd- and even-length MODE names land on opposite halves of a
+        # 16-pixel character cell. Center one fixed-width box between those
+        # positions. This limits either text offset to four pixels without
+        # adding a mode-dependent pixel shifter to the DVI path.
+        clock_algorithm_chip = clock_page & self.rect(
+            x, y, 136, 100, 272, 138)
         clock_direction_chip = clock_page & self.rect(
-            x, y, 184, 228, 360, 268)
+            x, y, 192, 228, 352, 268)
         clock_source_chip = clock_page & self.rect(
-            x, y, 184, 308, 360, 348)
+            x, y, 192, 308, 352, 348)
         clock_rate_chip = clock_page & self.rect(
-            x, y, 184, 388, 360, 428)
+            x, y, 192, 388, 352, 428)
+        # DEPTH spans both columns. Its 512-pixel interior maps the existing
+        # 0..16 value at exactly 32 pixels per step, so the fill endpoint is a
+        # shift rather than a multiplier or lookup table.
         clock_depth_chip = clock_page & self.rect(
-            x, y, 184, 468, 360, 508)
+            x, y, 164, 476, 684, 500)
+        clock_depth_fill = clock_page & self.rect(
+            x, y, 168, 480, 168 + (self.clock_depth << 5), 496)
         clock_right0_chip = (clock_turing_active | clock_data_active |
                              clock_walk_active) & self.rect(
-            x, y, 504, 228, 680, 268)
+            x, y, 512, 228, 672, 268)
         clock_right1_chip = (clock_turing_active | clock_walk_active) & self.rect(
-            x, y, 504, 308, 680, 348)
+            x, y, 512, 308, 672, 348)
         clock_right2_chip = (clock_turing_active | clock_walk_active) & self.rect(
-            x, y, 504, 388, 680, 428)
+            x, y, 512, 388, 672, 428)
         clock_right3_chip = clock_turing_active & (
             self.turing_target == RezoCore.TURING_TARGET_RANGE) & self.rect(
-                x, y, 504, 468, 680, 508)
+                x, y, 512, 468, 672, 508)
         clock_chip = (clock_algorithm_chip | clock_direction_chip |
                       clock_source_chip | clock_rate_chip | clock_depth_chip |
                       clock_right0_chip | clock_right1_chip |
                       clock_right2_chip | clock_right3_chip)
         clock_select = clock_page & (
             ((self.selected == RezoHardwareUI.TARGET_CLOCK_ALGORITHM) &
-             (((self.clock_algorithm == RezoCore.CLOCK_ALGORITHM_SHIFT) &
-               self.outline(x, y, 131, 95, 269, 143, t=3)) |
-              ((self.clock_algorithm != RezoCore.CLOCK_ALGORITHM_SHIFT) &
-               self.outline(x, y, 139, 95, 277, 143, t=3)))) |
+             self.outline(x, y, 131, 95, 277, 143, t=3)) |
             (clock_page & ~clock_walk_active &
              (self.selected == RezoHardwareUI.TARGET_SHIFT_DIRECTION) &
-             self.outline(x, y, 179, 223, 365, 273, t=3)) |
+             self.outline(x, y, 187, 223, 357, 273, t=3)) |
             ((self.selected == RezoHardwareUI.TARGET_CLOCK_SOURCE) &
-             self.outline(x, y, 179, 303, 365, 353, t=3)) |
+             self.outline(x, y, 187, 303, 357, 353, t=3)) |
             ((self.selected == RezoHardwareUI.TARGET_CLOCK_RATE) &
-             self.outline(x, y, 179, 383, 365, 433, t=3)) |
+             self.outline(x, y, 187, 383, 357, 433, t=3)) |
             ((self.selected == RezoHardwareUI.TARGET_CLOCK_DEPTH) &
-             self.outline(x, y, 179, 463, 365, 513, t=3)) |
+             self.outline(x, y, 164, 476, 684, 500, t=3)) |
             (clock_data_active &
              (self.selected == RezoHardwareUI.TARGET_DATA_SOURCE) &
-             self.outline(x, y, 499, 223, 685, 273, t=3)) |
+             self.outline(x, y, 507, 223, 677, 273, t=3)) |
             (clock_turing_active &
              (self.selected == RezoHardwareUI.TARGET_TURING_CHANGE) &
-             self.outline(x, y, 499, 223, 685, 273, t=3)) |
+             self.outline(x, y, 507, 223, 677, 273, t=3)) |
             (clock_walk_active &
              (self.selected == RezoHardwareUI.TARGET_WALK_STYLE) &
-             self.outline(x, y, 499, 223, 685, 273, t=3)) |
+             self.outline(x, y, 507, 223, 677, 273, t=3)) |
             (clock_turing_active &
              (self.selected == RezoHardwareUI.TARGET_TURING_TARGET) &
-             self.outline(x, y, 499, 303, 685, 353, t=3)) |
+             self.outline(x, y, 507, 303, 677, 353, t=3)) |
             (clock_walk_active &
              (self.selected == RezoHardwareUI.TARGET_WALK_DRUNK) &
-             self.outline(x, y, 499, 303, 685, 353, t=3)) |
+             self.outline(x, y, 507, 303, 677, 353, t=3)) |
             (clock_turing_active &
              (self.turing_target == RezoCore.TURING_TARGET_RANGE) &
              (self.selected == RezoHardwareUI.TARGET_TURING_START) &
-             self.outline(x, y, 499, 383, 685, 433, t=3)) |
+             self.outline(x, y, 507, 383, 677, 433, t=3)) |
             (clock_turing_active &
              (self.selected == RezoHardwareUI.TARGET_TURING_LENGTH) &
-             self.outline(x, y, 499,
+             self.outline(x, y, 507,
                           Mux(self.turing_target == RezoCore.TURING_TARGET_RANGE,
                               463, 383),
-                          685,
+                          677,
                           Mux(self.turing_target == RezoCore.TURING_TARGET_RANGE,
                               513, 433), t=3)) |
             (clock_walk_active &
              (self.selected == RezoHardwareUI.TARGET_WALK_CHANCE) &
-             self.outline(x, y, 499, 383, 685, 433, t=3)))
+             self.outline(x, y, 507, 383, 677, 433, t=3)))
 
         preset_chip_signals = []
         preset_select_signals = []
@@ -5478,7 +5459,8 @@ class RezoTileDisplay(wiring.Component):
         geometry_panel_q0 = Signal()
         m.d.dvi += [
             geometry_fill_q0.eq(band_fill | band_marker | bank_control_fill |
-                                dry_fill | tune_cap_fill | tune_damp_fill),
+                                clock_depth_fill | dry_fill | tune_cap_fill |
+                                tune_damp_fill),
             geometry_line_q0.eq(
                 band_zero_q0 | bank_control_mod_marker | border),
             geometry_mod_q0.eq(band_mod_fill | bank_control_mod_fill),
@@ -5534,7 +5516,7 @@ class RezoTileDisplay(wiring.Component):
 
 
 class RezoBeamTop(Elaboratable):
-    """REZO without the SoC framebuffer path.
+    """REZOMO without the SoC framebuffer path.
 
     This is a timing experiment for a REZO-specific HDMI path.  It keeps the
     audio filterbank in gateware and renders a small status view directly in
@@ -5542,7 +5524,7 @@ class RezoBeamTop(Elaboratable):
     """
 
     bitstream_help = BitstreamHelp(
-        brief="REZO configurable resonant filterbank.",
+        brief="REZOMO clocked resonant filterbank.",
         io_left=['audio / CV input', 'audio / CV input',
                  'audio / CV input', 'audio / CV input',
                  'assignable out', 'assignable out',
@@ -5888,4 +5870,5 @@ if __name__ == "__main__":
     this_path = os.path.dirname(os.path.realpath(__file__))
     top_level_cli(
         RezoBeamTop, path=this_path,
+        argparse_callback=lambda parser: parser.set_defaults(name="REZOMO"),
         archiver_callback=lambda archiver: archiver.with_option_storage())

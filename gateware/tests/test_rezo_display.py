@@ -276,7 +276,7 @@ def test_clock_main_reuses_bank_view_and_settings_page_is_discrete():
 
         ctx.set(dut.page, 7)
         ctx.set(dut.selected, RezoHardwareUI.TARGET_CLOCK_ALGORITHM)
-        await sample(ctx, 150, 110)  # algorithm chip interior
+        await sample(ctx, 150, 110)  # shared algorithm chip interior
         await sample(ctx, 131, 110)  # selected algorithm outline
         ctx.set(dut.selected, RezoHardwareUI.TARGET_SHIFT_DIRECTION)
         await sample(ctx, 200, 240)  # direction chip interior
@@ -284,55 +284,57 @@ def test_clock_main_reuses_bank_view_and_settings_page_is_discrete():
 
         ctx.set(dut.selected, RezoHardwareUI.TARGET_CLOCK_SOURCE)
         await sample(ctx, 200, 320)  # source chip interior
-        await sample(ctx, 179, 320)  # selected source outline
+        await sample(ctx, 187, 320)  # selected source outline
         ctx.set(dut.selected, RezoHardwareUI.TARGET_CLOCK_RATE)
         await sample(ctx, 200, 400)  # BPM chip interior
-        await sample(ctx, 179, 400)  # selected BPM outline
+        await sample(ctx, 187, 400)  # selected BPM outline
         ctx.set(dut.selected, RezoHardwareUI.TARGET_CLOCK_DEPTH)
-        await sample(ctx, 200, 480)  # shared depth chip interior
-        await sample(ctx, 179, 480)  # selected depth outline
+        ctx.set(dut.clock_depth, 8)
+        await sample(ctx, 300, 488)  # filled half of full-width depth slider
+        await sample(ctx, 600, 488)  # unfilled half remains panel-colored
+        await sample(ctx, 164, 488)  # selected depth outline
         ctx.set(dut.selected, RezoHardwareUI.TARGET_DATA_SOURCE)
         await sample(ctx, 520, 240)  # SHIFT DATA chip interior
-        await sample(ctx, 499, 240)  # selected DATA outline
+        await sample(ctx, 507, 240)  # selected DATA outline
 
         ctx.set(dut.clock_algorithm, RezoCore.CLOCK_ALGORITHM_TURING)
         ctx.set(dut.selected, RezoHardwareUI.TARGET_TURING_CHANGE)
         await sample(ctx, 520, 240)  # mutation chance chip interior
-        await sample(ctx, 499, 240)  # selected change outline
+        await sample(ctx, 507, 240)  # selected change outline
         ctx.set(dut.selected, RezoHardwareUI.TARGET_TURING_TARGET)
         await sample(ctx, 520, 320)  # BANDS chip interior
-        await sample(ctx, 499, 320)  # selected BANDS outline
+        await sample(ctx, 507, 320)  # selected BANDS outline
         ctx.set(dut.selected, RezoHardwareUI.TARGET_TURING_LENGTH)
         await sample(ctx, 520, 400)  # ALL length chip interior
-        await sample(ctx, 499, 400)  # selected length outline
+        await sample(ctx, 507, 400)  # selected length outline
         ctx.set(dut.turing_target, RezoCore.TURING_TARGET_RANGE)
         ctx.set(dut.selected, RezoHardwareUI.TARGET_TURING_START)
         await sample(ctx, 520, 400)  # RANGE start chip interior
-        await sample(ctx, 499, 400)  # selected start outline
+        await sample(ctx, 507, 400)  # selected start outline
         ctx.set(dut.selected, RezoHardwareUI.TARGET_TURING_LENGTH)
         await sample(ctx, 520, 480)  # RANGE length chip interior
-        await sample(ctx, 499, 480)  # selected length outline
+        await sample(ctx, 507, 480)  # selected length outline
 
         ctx.set(dut.clock_algorithm, RezoCore.CLOCK_ALGORITHM_WALK)
         ctx.set(dut.selected, RezoHardwareUI.TARGET_CLOCK_SOURCE)
         await sample(ctx, 200, 240)  # read-only RANDOM direction chip
         await sample(ctx, 200, 320)  # source remains in second row
-        await sample(ctx, 179, 320)  # selected source outline
+        await sample(ctx, 187, 320)  # selected source outline
         ctx.set(dut.selected, RezoHardwareUI.TARGET_CLOCK_RATE)
         await sample(ctx, 200, 400)  # BPM remains in third row
-        await sample(ctx, 179, 400)  # selected BPM outline
+        await sample(ctx, 187, 400)  # selected BPM outline
         ctx.set(dut.selected, RezoHardwareUI.TARGET_CLOCK_DEPTH)
-        await sample(ctx, 200, 480)  # depth remains in fourth row
-        await sample(ctx, 179, 480)  # selected depth outline
+        await sample(ctx, 600, 488)  # full-width depth remains fourth row
+        await sample(ctx, 164, 488)  # selected depth outline
         ctx.set(dut.selected, RezoHardwareUI.TARGET_WALK_STYLE)
         await sample(ctx, 520, 240)  # WALK style chip interior
-        await sample(ctx, 499, 240)  # selected style outline
+        await sample(ctx, 507, 240)  # selected style outline
         ctx.set(dut.selected, RezoHardwareUI.TARGET_WALK_DRUNK)
         await sample(ctx, 520, 320)  # drunkenness chip interior
-        await sample(ctx, 499, 320)  # selected drunkenness outline
+        await sample(ctx, 507, 320)  # selected drunkenness outline
         ctx.set(dut.selected, RezoHardwareUI.TARGET_WALK_CHANCE)
         await sample(ctx, 520, 400)  # stumble chance chip interior
-        await sample(ctx, 499, 400)  # selected chance outline
+        await sample(ctx, 507, 400)  # selected chance outline
 
     sim.add_testbench(bench)
     sim.run()
@@ -347,7 +349,11 @@ def test_clock_main_reuses_bank_view_and_settings_page_is_discrete():
         palette["background"],
     ] + [
         palette["panel"], palette["selected"]
-    ] * 9 + [
+    ] * 2 + [
+        palette["control"], palette["panel"], palette["selected"],
+    ] + [
+        palette["panel"], palette["selected"]
+    ] * 6 + [
         palette["panel"],
     ] + [
         palette["panel"], palette["selected"]

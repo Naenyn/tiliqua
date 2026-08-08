@@ -1,4 +1,4 @@
-# REZO build performance log
+# REZO / REZOMO build performance log
 
 This log tracks resource use and final post-route timing for significant REZO
 builds. Keep failed experiments: placement seed sensitivity is material at
@@ -9,7 +9,8 @@ builds. Keep failed experiments: placement seed sensitivity is material at
 - Target: Tiliqua R5 / SoldierCrab R3 (`LFE5U-25F`)
 - Audio rate: 192 kHz
 - Video mode: 1280x720p60
-- Build command: `pdm run rezo build --fs-192khz`
+- Build command: `pdm run rezo build --fs-192khz` or, for the clocked variant,
+  `pdm run rezomo build --fs-192khz`
 - Seed override: `TILIQUA_REZO_SEED=<n>`
 - Resource figures and frequencies come from the final `top.tim` report.
 - Required clocks: DVI5X 371.33 MHz, AUDIO 49.15 MHz, SYNC 60.00 MHz,
@@ -109,6 +110,9 @@ also passing every constrained clock.
 | **CLOCK-HEAD-BURST-S6** | **Exact optimized burst JSON; DRUNK 1--4 temporal landings and 0--100% CHANCE** | **6** | **20,724** | **24,068** | **220** | **6,485** | **16** | **400.64** | **75.68** | **61.50** | **75.00** | **PASS; hardware candidate** |
 | **CLOCK-UI-BPM-S5** | **Two-column CLOCK editor, readable labels, WALK BAND name, ordered TURING controls, exact 15--300 BPM with accelerated editing** | **5** | **20,783** | **24,103** | **185** | **6,541** | **18** | **449.03** | **73.96** | **60.19** | **75.50** | **PASS; flashed slot 4** |
 | **CLOCK-FIXED-DIRECTION-S8** | **Fixed shared rows; DIRECTION remains visible while WALK reports read-only RANDOM; mode-dependent direction sets retained** | **8** | **20,874** | **24,206** | **82** | **6,529** | **18** | **381.53** | **78.21** | **60.15** | **74.68** | **PASS; flashed slot 4** |
+| **CLOCK-DEPTH-SLIDER-S8** | **Full-width 17-step DEPTH slider; numeric depth text table and three writer slots removed** | **8** | **20,845** | **24,201** | **87** | **6,519** | **18** | **382.70** | **74.10** | **60.37** | **77.86** | **PASS; later flashed slot 4** |
+| **CLOCK-UI-ALIGN-S9** | **One shared MODE box, narrower two-column controls, left labels inset one cell; optimized DEPTH slider retained** | **9** | **20,737** | **24,081** | **207** | **6,519** | **18** | **389.11** | **76.61** | **61.24** | **79.29** | **PASS; flashed slot 4** |
+| **REZOMO-RENAME-S9** | **Clocked variant renamed in both renderers and manifest; `rezomo` build alias; no DSP or layout change** | **9** | **20,737** | **24,081** | **207** | **6,519** | **18** | **418.24** | **77.02** | **60.10** | **76.07** | **PASS; pre-commit release candidate, not flashed** |
 
 ## Notes
 
@@ -117,6 +121,25 @@ also passing every constrained clock.
 - DVI5X timing is dominated by the existing TMDS serializer and is highly
   placement-sensitive. A feature can leave REZO logic timing healthy while a
   particular seed fails the independent serializer path.
+- CLOCK-DEPTH-SLIDER-S8 removes the dynamic three-character numeric DEPTH
+  label and its text-writer scan slots. The replacement geometry uses the
+  existing 0--16 value as a five-bit left shift, yielding a 512-pixel interior
+  with exactly 32 pixels per step. Relative to CLOCK-FIXED-DIRECTION-S8 this
+  saves 29 LUT4, 5 packed cells, and 10 FF. Two broader experiments were
+  rejected: sharing CLOCK selector names through a wide ROM made routing
+  impractically slow, while fixing WALK's hidden legacy step increased packing
+  to 24,289 cells and failed capacity. Removing the now-unread WALK display
+  crossing also changed ECP5 packing unfavorably (24,342 cells), so the benign
+  crossing remains to preserve the measured timing-clean result.
+- CLOCK-UI-ALIGN-S9 uses one 136-pixel MODE rectangle spanning the two former
+  parity-specific positions. Odd- and even-length names sit at most four
+  pixels from its center without a DVI pixel shifter. Parameter boxes shrink
+  from 176 to 160 pixels around their existing centers, allowing DIRECTION,
+  SOURCE, and BPM to move one character cell inside the panel without moving
+  value text. Reusing comparator-friendly rectangle boundaries removes the
+  previous mode-dependent geometry and saves another 108 LUT4 and 120 packed
+  cells over CLOCK-DEPTH-SLIDER-S8. Seeds 1--8 were rejected for timing (seed
+  7 was an aborted congestion outlier); seed 9 passes every domain.
 - Sharing the BANK DRIVE/RES/FB row renderer more than offset the added DRIVE
   animation geometry: DRIVE-SHARED uses 20 fewer packed cells than OPT-BASE.
 - PALETTE-RUNTIME adds one block RAM, 130 packed cells, and 63 flip-flops over
