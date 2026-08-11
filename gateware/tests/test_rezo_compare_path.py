@@ -33,6 +33,32 @@ def test_core_meets_192khz_sample_cycle_budget():
     assert result["cycles"] <= 60_000_000 // 192_000
 
 
+def test_input_meters_use_audio_post_value_and_cv_pre_depth():
+    dut = RezoCore(fs=192_000)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+    captured = {}
+
+    async def bench(ctx):
+        ctx.set(dut.o.ready, 1)
+        ctx.set(dut.i.payload[0].as_value(), 12_000)
+        ctx.set(dut.i.payload[2].as_value(), -12_345)
+        # DEPTH must have no bearing on the raw CV telemetry line.
+        ctx.set(dut.cv_depths[2], 0)
+        ctx.set(dut.i.valid, 1)
+        await ctx.tick().until(dut.i.ready == 1)
+        ctx.set(dut.i.valid, 0)
+        await ctx.tick().until(dut.o.valid == 1)
+        captured["audio"] = ctx.get(dut.input_meters[0])
+        captured["cv"] = ctx.get(dut.input_meters[2])
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    assert 5_000 < captured["audio"] < 12_000
+    assert captured["cv"] == -12_345
+
+
 def test_filter_profile_band_tags_do_not_wrap():
     dut = RezoCore(fs=192_000)
     sim = Simulator(dut)
