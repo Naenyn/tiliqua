@@ -113,6 +113,7 @@ also passing every constrained clock.
 | **CLOCK-DEPTH-SLIDER-S8** | **Full-width 17-step DEPTH slider; numeric depth text table and three writer slots removed** | **8** | **20,845** | **24,201** | **87** | **6,519** | **18** | **382.70** | **74.10** | **60.37** | **77.86** | **PASS; later flashed slot 4** |
 | **CLOCK-UI-ALIGN-S9** | **One shared MODE box, narrower two-column controls, left labels inset one cell; optimized DEPTH slider retained** | **9** | **20,737** | **24,081** | **207** | **6,519** | **18** | **389.11** | **76.61** | **61.24** | **79.29** | **PASS; flashed slot 4** |
 | **REZOMO-RENAME-S9** | **Clocked variant renamed in both renderers and manifest; `rezomo` build alias; no DSP or layout change** | **9** | **20,737** | **24,081** | **207** | **6,519** | **18** | **418.24** | **77.02** | **60.10** | **76.07** | **PASS; pre-commit release candidate, not flashed** |
+| **REZOMO-BACKPORT-S8** | **STREZO input meters, eight-bit display telemetry, 1/8 continuous-control acceleration, and serialized OUTPUT row/column edits** | **8** | **20,851** | **24,113** | **175** | **6,931** | **19** | **384.91** | **74.34** | **61.78** | **78.03** | **PASS; flashed slot 4 for validation** |
 
 ## Notes
 

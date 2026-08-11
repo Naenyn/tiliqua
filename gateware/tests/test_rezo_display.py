@@ -58,12 +58,12 @@ def test_tile_display_band_geometry_and_modulation_shading():
         samples.append(ctx.get(dut.r))
 
     async def bench(ctx):
-        # Band 5 spans x=378..419. A base value of 16 reaches y=190;
-        # its effective value of 24 reaches y=102.
+        # Band 5 spans x=378..419. Eight-bit display telemetry preserves
+        # every encoder step; 64/96 are the former 16/24 positions.
         for enable in dut.band_enables:
             ctx.set(enable, 1)
-        ctx.set(dut.levels[5], 16)
-        ctx.set(dut.effective_levels[5], 24)
+        ctx.set(dut.levels[5], 64)
+        ctx.set(dut.effective_levels[5], 96)
         # The column ROM intentionally prefetches x+1 to compensate for its
         # added value-selection stage in the streaming pixel pipeline.
         await sample(ctx, 387, 150)  # desired x=388: modulation extension
@@ -161,7 +161,8 @@ def test_bands_page_writes_all_five_frequency_digits():
         ctx.set(dut.selected, RezoHardwareUI.TARGET_BAND_FREQ_BASE + 9)
         ctx.set(dut.band_frequencies[9], RezoCore.frequency_index(16000))
         # Let the initial low-rate text refresh reach the BANDS entries.
-        for _ in range(80):
+        # Dynamic labels use a three-phase ROM/capture/write pipeline.
+        for _ in range(240):
             await ctx.tick("sync")
 
         # Row zero, center column is illuminated in every glyph of "16000".
@@ -229,8 +230,8 @@ def test_tile_display_drive_modulation_shading():
         samples.append(ctx.get(dut.r))
 
     async def bench(ctx):
-        ctx.set(dut.drive, 16)
-        ctx.set(dut.effective_drive, 24)
+        ctx.set(dut.drive, 64)
+        ctx.set(dut.effective_drive, 96)
 
         # BANK DRIVE occupies y=556..571. The extension beyond the base
         # setting uses the modulation palette role.
@@ -268,7 +269,7 @@ def test_clock_main_reuses_bank_view_and_settings_page_is_discrete():
     async def bench(ctx):
         ctx.set(dut.clock_mode, 1)
         ctx.set(dut.levels[0], 0)
-        ctx.set(dut.effective_levels[0], 16)
+        ctx.set(dut.effective_levels[0], 64)
         ctx.set(dut.band_enables[0], 1)
 
         await sample(ctx, 60, 250)   # captured modulation in band 0
@@ -289,7 +290,7 @@ def test_clock_main_reuses_bank_view_and_settings_page_is_discrete():
         await sample(ctx, 200, 400)  # BPM chip interior
         await sample(ctx, 187, 400)  # selected BPM outline
         ctx.set(dut.selected, RezoHardwareUI.TARGET_CLOCK_DEPTH)
-        ctx.set(dut.clock_depth, 8)
+        ctx.set(dut.clock_depth, 64)
         await sample(ctx, 300, 488)  # filled half of full-width depth slider
         await sample(ctx, 600, 488)  # unfilled half remains panel-colored
         await sample(ctx, 164, 488)  # selected depth outline
@@ -358,6 +359,72 @@ def test_clock_main_reuses_bank_view_and_settings_page_is_discrete():
     ] + [
         palette["panel"], palette["selected"]
     ] * 6
+
+
+def test_input_page_draws_post_value_audio_and_raw_bipolar_cv_meters():
+    """The one-pixel telemetry line distinguishes audio and CV semantics."""
+    dut = RezoTileDisplay(h_active=1280)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6, domain="sync")
+    sim.add_clock(1e-6, domain="dvi")
+    samples = []
+
+    async def sample(ctx, panel_x, panel_y):
+        ctx.set(dut.x, dut.x_offset + panel_x)
+        ctx.set(dut.y, panel_y)
+        ctx.set(dut.de, 1)
+        for _ in range(8):
+            await ctx.tick("dvi")
+        samples.append(ctx.get(dut.r))
+
+    async def bench(ctx):
+        ctx.set(dut.page, 2)
+        ctx.set(dut.input_modes[0], RezoCore.INPUT_MODE_AUDIO)
+        ctx.set(dut.input_meters[0], 20)
+        ctx.set(dut.input_modes[1], RezoCore.INPUT_MODE_CV)
+        ctx.set(dut.input_meters[1], -10)
+
+        await sample(ctx, 400, 259)
+        await sample(ctx, 550, 259)
+        await sample(ctx, 460, 355)
+        await sample(ctx, 520, 355)
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    palette = RezoTileDisplay.PALETTE
+    assert samples == [
+        palette["modulation"], palette["background"],
+        palette["modulation"], palette["background"],
+    ]
+
+
+def test_output_page_draws_standardized_header_selection_bars():
+    dut = RezoTileDisplay(h_active=1280)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6, domain="sync")
+    sim.add_clock(1e-6, domain="dvi")
+    samples = []
+
+    async def sample(ctx, panel_x, panel_y):
+        ctx.set(dut.x, dut.x_offset + panel_x)
+        ctx.set(dut.y, panel_y)
+        ctx.set(dut.de, 1)
+        for _ in range(8):
+            await ctx.tick("dvi")
+        samples.append(ctx.get(dut.r))
+
+    async def bench(ctx):
+        ctx.set(dut.page, 4)
+        ctx.set(dut.selected, RezoHardwareUI.TARGET_OUTPUT_ROW_BASE)
+        await sample(ctx, 28, 340)
+        ctx.set(dut.selected, RezoHardwareUI.TARGET_OUTPUT_COL_BASE)
+        await sample(ctx, 220, 266)
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    assert samples == [RezoTileDisplay.PALETTE["selected"]] * 2
 
 
 def test_tile_display_palette_maps_semantic_roles_to_rgb():

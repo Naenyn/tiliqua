@@ -33,6 +33,32 @@ def test_core_meets_192khz_sample_cycle_budget():
     assert result["cycles"] <= 60_000_000 // 192_000
 
 
+def test_input_meters_use_audio_post_value_and_cv_pre_depth():
+    dut = RezoCore(fs=192_000)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+    captured = {}
+
+    async def bench(ctx):
+        ctx.set(dut.o.ready, 1)
+        ctx.set(dut.i.payload[0].as_value(), 12_000)
+        ctx.set(dut.i.payload[2].as_value(), -12_345)
+        # DEPTH must have no bearing on the CV meter.
+        ctx.set(dut.cv_depths[2], 0)
+        ctx.set(dut.i.valid, 1)
+        await ctx.tick().until(dut.i.ready == 1)
+        ctx.set(dut.i.valid, 0)
+        await ctx.tick().until(dut.o.valid == 1)
+        captured["audio"] = ctx.get(dut.input_meters[0])
+        captured["cv"] = ctx.get(dut.input_meters[2])
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    assert 5_000 < captured["audio"] < 12_000
+    assert captured["cv"] == -12_345
+
+
 def test_bank_zero_wet_and_dry_paths():
     dut = RezoCore(fs=192_000)
     sim = Simulator(dut)
@@ -221,12 +247,12 @@ def test_clocked_shift_register_directions_hysteresis_roles_and_reset():
         # Forward inserts at band 0 and moves older captures upward.
         await pulse(ctx, 8000)
         assert vector(ctx)[:3] == (4000, 0, 0)
-        ctx.set(dut.clock_depth, 8)
+        ctx.set(dut.clock_depth, 64)
         for _ in range(dut.N_BANDS + 2):
             await ctx.tick()
         assert tuple(ctx.get(value) for value in
                      dut.clock_scaled_modulations)[:3] == (2000, 0, 0)
-        ctx.set(dut.clock_depth, 16)
+        ctx.set(dut.clock_depth, 128)
         # Holding high, including inside the hysteresis window, cannot retrigger.
         await send(ctx, (0, 0, 12000, 7000))
         await send(ctx, (0, 0, 12000, 2000))
@@ -234,12 +260,12 @@ def test_clocked_shift_register_directions_hysteresis_roles_and_reset():
         assert vector(ctx)[:3] == (4000, 0, 0)
         await pulse(ctx, -6000)
         assert vector(ctx)[:3] == (-3000, 4000, 0)
-        ctx.set(dut.clock_depth, 8)
+        ctx.set(dut.clock_depth, 64)
         for _ in range(dut.N_BANDS + 2):
             await ctx.tick()
         assert tuple(ctx.get(value) for value in
                      dut.clock_scaled_modulations)[:3] == (-1500, 2000, 0)
-        ctx.set(dut.clock_depth, 16)
+        ctx.set(dut.clock_depth, 128)
 
         # Backward mirrors the insertion and shift at the high-band end.
         await clear(ctx)

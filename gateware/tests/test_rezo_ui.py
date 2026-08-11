@@ -154,7 +154,7 @@ def test_ui_state_scan_preserves_v3_bank_and_clock_words():
             (5, 3),
             (RezoCore.CLOCK_SOURCE_INTERNAL, 2),
             (173 & 7, 3),
-            (9, 5),
+            (73, 8),
             (RezoCore.TURING_TARGET_RANGE, 1),
             (3, 4),
             (RezoCore.DATA_SOURCE_RANDOM, 2),
@@ -170,9 +170,9 @@ def test_ui_state_scan_preserves_v3_bank_and_clock_words():
         for value, width in clock_fields:
             clock_config |= value << shift
             shift += width
-        assert shift == 42
+        assert shift == 45
         clock_config |= (173 >> 3) << shift
-        for n in range(3):
+        for n in range(4):
             state[dut.STATE_CLOCK_CONFIG_BASE + n] = \
                 (clock_config >> (16 * n)) & 0xffff
 
@@ -215,7 +215,7 @@ def test_ui_state_scan_preserves_v3_bank_and_clock_words():
         assert ctx.get(dut.turing_change_index) == 5
         assert ctx.get(dut.clock_source) == RezoCore.CLOCK_SOURCE_INTERNAL
         assert ctx.get(dut.internal_clock_rate) == 173
-        assert ctx.get(dut.clock_depth) == 9
+        assert ctx.get(dut.clock_depth) == 73
         assert ctx.get(dut.turing_target) == RezoCore.TURING_TARGET_RANGE
         assert ctx.get(dut.turing_start) == 3
         assert ctx.get(dut.data_source) == RezoCore.DATA_SOURCE_RANDOM
@@ -451,10 +451,10 @@ def test_ui_clock_mode_defaults_and_control_navigation():
 
         endpoint = await _turn(ctx, dut, endpoint, 1)
         assert ctx.get(dut.selected) == dut.TARGET_CLOCK_DEPTH
-        assert ctx.get(dut.clock_depth) == 16
+        assert ctx.get(dut.clock_depth) == 128
         await _click(ctx, dut)
         endpoint = await _turn(ctx, dut, endpoint, 0)
-        assert ctx.get(dut.clock_depth) == 15
+        assert ctx.get(dut.clock_depth) == 127
         await _click(ctx, dut)
 
         endpoint = await _turn(ctx, dut, endpoint, 1)
