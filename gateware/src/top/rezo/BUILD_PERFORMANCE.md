@@ -9,7 +9,7 @@ builds. Keep failed experiments: placement seed sensitivity is material at
 - Target: Tiliqua R5 / SoldierCrab R3 (`LFE5U-25F`)
 - Audio rate: 192 kHz
 - Video mode: 1280x720p60
-- Build command: `pdm run rezo build --fs-192khz`
+- Build command: `pdm run rezo build --fs-192khz --modeline 1280x720p60`
 - Seed override: `TILIQUA_REZO_SEED=<n>`
 - Resource figures and frequencies come from the final `top.tim` report.
 - Required clocks: DVI5X 371.33 MHz, AUDIO 49.15 MHz, SYNC 60.00 MHz,
@@ -18,6 +18,95 @@ builds. Keep failed experiments: placement seed sensitivity is material at
 The formal optimization baseline is **OPT-BASE** below. New feature builds
 should be compared against its 21,668 packed cells and 2,620 free cells while
 also passing every constrained clock.
+
+### 2026-08-11 through 2026-08-12 compact-display target work
+
+These rows use nextpnr's raw `TRELLIS_COMB` utilization rather than the packed
+cell metric in the historical table. The standard preview renders the same
+native-size 508x508 UI as the circular target, centered in 1280x720 with no
+rotation and no enlargement. Only the 720x720 circular target applies the
+90-degree panel-mount correction.
+
+| ID | Target/change | Seed | TRELLIS_COMB | Raw free | FF | BRAM | DVI5X MHz | AUDIO MHz | SYNC MHz | DVI MHz | Result |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| COMPACT-STD-ACCUM-S9 | 1280x720; independent Bresenham coordinate accumulators | 9 | 24,630 | -342 | — | 22 | — | — | — | — | FAIL placement capacity |
+| COMPACT-STD-ROM-S9 | 1280x720; shared block-RAM coordinate map, direct decode from RAM outputs | 9 | 24,135 | 153 | — | 23 | 396.98 | 67.47 | 59.83 | 57.12 | FAIL SYNC and DVI |
+| **COMPACT-STD-ROM-PIPE-S4** | **1280x720; shared block-RAM map plus registered renderer boundary** | **4** | **24,149** | **139** | **6,913** | **23** | **385.65** | **70.77** | **61.15** | **80.87** | **PASS; flashed slot 4** |
+| ROUND2-IRREG-W140-S4 | Photo-round-2 alignment; irregular FILTER fader geometry, ABC9 W=140 | 4 | 24,383 | -95 | 6,916 | 23 | — | — | — | — | FAIL placement capacity |
+| ROUND2-TEXT-W140-S4 | Same UI with FILTER corrections folded into text ROM, ABC9 W=140 | 4 | 24,314 | -26 | 6,913 | 23 | — | — | — | — | FAIL placement capacity |
+| ROUND2-TEXT-W130-S4 | Same UI, denser ABC9 W=130 mapping | 4 | 24,151 | 137 | 6,913 | 23 | 350.26 | 73.05 | 59.20 | 82.01 | FAIL DVI5X and SYNC |
+| **ROUND2-TEXT-W130-S9** | **Exact W=130 JSON rerouted; second photo-alignment pass** | **9** | **24,151** | **137** | **6,913** | **23** | **401.45** | **71.91** | **63.25** | **77.01** | **PASS; flashed slot 4** |
+| ROUND3-INPUT-W130-S9 | Third photo pass; conditional INPUT CV chips/AUD depth text; initial full build | 9 | 24,150 | 138 | 6,913 | 23 | 394.01 | 74.07 | 53.46 | 76.43 | FAIL SYNC |
+| **ROUND3-INPUT-W130-S4** | **Exact synthesized JSON rerouted; third photo-alignment pass** | **4** | **24,150** | **138** | **6,913** | **23** | **407.17** | **73.08** | **63.30** | **76.91** | **PASS; flashed slot 4** |
+| **ROUND4-MAIN-GRID-W130-S4** | **BANK/FILTER shared five-slot native-row grid; exact label/fader lower-edge alignment** | **4** | **24,017** | **271** | **6,920** | **23** | **392.77** | **75.88** | **62.08** | **78.86** | **PASS; flashed slot 4** |
+| ROUND5-MAIN-SPACED-W130-S4 | Roomy alternate-row MAIN grid, shortened bands, wider faders; initial route | 4 | 24,050 | 238 | 6,921 | 23 | 341.18 | 73.23 | 54.30 | 73.90 | FAIL DVI5X, SYNC, and DVI |
+| ROUND5-MAIN-SPACED-W130-S9 | Exact synthesized JSON rerouted | 9 | 24,050 | 238 | 6,921 | 23 | 364.56 | 70.24 | 53.47 | 73.97 | FAIL DVI5X, SYNC, and DVI |
+| **ROUND5-MAIN-SPACED-W130-S6** | **Exact synthesized JSON rerouted; roomy shared BANK/FILTER grid** | **6** | **24,050** | **238** | **6,921** | **23** | **439.56** | **74.95** | **60.16** | **79.85** | **PASS; flashed slot 4** |
+| **ROUND6-MAIN-COMPACT-W130-S6** | **Bottom-anchored 16-pixel control cadence; corrected BANK/FILTER band scaling and clipping** | **6** | **22,985** | **1,303** | **6,842** | **23** | **416.67** | **73.95** | **66.15** | **77.54** | **PASS; flashed slot 4** |
+| ROUND7-MAIN-EXPANDED-BUNDLED-S6 | Alternate-row controls expanded upward; bundled Yosys 0.52 route | 6 | 23,138 | 1,150 | 6,845 | 23 | 443.85 | 71.01 | 58.68 | 72.07 | FAIL SYNC and DVI |
+| **ROUND7-MAIN-EXPANDED-W130-S6** | **Same geometry; native W130 netlist, last row bottom-anchored** | **6** | **22,978** | **1,310** | **6,845** | **23** | **408.00** | **72.12** | **66.09** | **76.76** | **PASS; flashed slot 4** |
+
+The final archive is `rezo-6f8596b7-r5.tar.gz` with SHA-256
+`34067684bf421d8f7fd72e0f55227c154a079806e771863d633d00f4a71d41d0`.
+Its manifest records `1280x720p60`; this distinguishes it from the earlier
+720x720 circular-panel archive that used the same dirty source identifier.
+The archive was flashed successfully to slot 4 on 2026-08-11.
+
+The second photo-alignment archive is `rezo-6f8596b7-r5.tar.gz` with SHA-256
+`cc46772587c3a24de3f474821f938ad2adaad248697ccbf3fbf53cc8449aeccd`.
+It uses ABC9 wire weight 130 and the all-clock passing seed-9 reroute of the
+exact synthesized JSON. Its manifest also records `1280x720p60`.
+The archive was flashed successfully to slot 4 on 2026-08-11.
+
+The third photo-alignment archive is `rezo-6f8596b7-r5.tar.gz` with SHA-256
+`d1408d8cc4efa04953b4f89ccad8c18bd830a710108bdf3aa475be1b3301af5c`.
+It contains the all-clock passing seed-4 reroute of the exact W=130 JSON; the
+archive's `top.bit` is byte-identical to the separately packed passing route.
+Its manifest records the standard, unrotated `1280x720p60` target. The archive
+was flashed successfully to slot 4 on 2026-08-12.
+
+The shared BANK/FILTER grid archive is `rezo-6f8596b7-r5.tar.gz` with SHA-256
+`2f08dd1b6712d1a2c8a3e7dde00609144da070d0562522673530946a8c103da2`.
+Both modes now derive their lower faders from five native text rows; BANK uses
+the first three slots and FILTER uses all five. Its manifest records the
+standard, unrotated `1280x720p60` target. The archive was flashed successfully
+to slot 4 on 2026-08-12.
+
+The roomy shared-grid archive is `rezo-6f8596b7-r5.tar.gz` with SHA-256
+`61f84215fde31ed5aaab6048be6736c564c05f30a457f5a3d69315a76934165b`.
+Its five control slots use alternate native rows, its faders extend farther
+right, and the compact MAIN band field is shortened symmetrically to preserve
+a clear gutter above the controls. BANK uses the first three slots and FILTER
+uses all five. The retained seed-6 route passes every clock, and its manifest
+records the standard, unrotated `1280x720p60` target. The archive was flashed
+successfully to slot 4 on 2026-08-12.
+
+The corrected compact-grid archive is `rezo-6f8596b7-r5.tar.gz` with SHA-256
+`ac33e24e6aa5c8a9f2d0f4719a36cdf050fed4edc256b1d03720b09b1a90c9b3`.
+Its embedded `top.bit` is byte-identical to the retained passing seed-6 route
+at SHA-256
+`73dfe3dafa46c7840d6de7e4efe00e2faa835d3f7115db78366713d8b36559d2`.
+The horizontal controls retain their bottom anchor but use a 16-physical-pixel
+cadence, exactly half the preceding roomy grid's spacing. The compact band
+field spans logical y=218..474 around zero y=346: BANK maps its signed 0..128
+magnitude one-for-one to each half, while FILTER maps its 0..32 magnitude over
+the full 256-pixel height and clips fills to the field. The manifest records
+the standard, unrotated `1280x720p60` target. Initial slot-4 attempts found no
+debugger and wrote nothing. After reconnecting, the bitstream and manifest
+programmed successfully and FPGA refresh completed on 2026-08-12; option
+storage was preserved.
+
+The expanded-row archive is `rezo-6f8596b7-r5.tar.gz` with SHA-256
+`3b8f9a3556b25de01a1a8ddf37fad4fd196851535acf6fe34376b3baabd41205`.
+Its embedded `top.bit` matches the retained native W130 seed-6 route at
+SHA-256
+`92edffb09a7bf7ae8e6843ec76b451fb8dc420dec180e0d3a77448c3af3e5dba`.
+The five shared MAIN rows occupy alternate native text rows `(28, 30, 32, 34,
+36)` and logical fader starts `(486, 532, 578, 623, 669)`. Thus the final row
+retains the ROUND6 bottom anchor while the preceding rows expand upward into
+the band/control gutter. The band field and its scaling are unchanged. The
+manifest records the standard, unrotated `1280x720p60` target. The archive was
+flashed successfully to slot 4 on 2026-08-12 with option storage preserved.
 
 ## Results
 

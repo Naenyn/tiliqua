@@ -6,6 +6,59 @@ it together with [`BUILD_PERFORMANCE.md`](BUILD_PERFORMANCE.md) and
 before changing the design. [`REZO_USER_GUIDE.md`](REZO_USER_GUIDE.md) is the
 simplified operator documentation for the release candidate.
 
+## Display target invariant (read before changing the renderer)
+
+REZO has one current display layout, authored for the official Tiliqua
+display. That display is a circular 720x720 panel. Its largest wholly visible
+axis-aligned square is 508x508, centered at upright logical coordinates
+`x=106..613`, `y=106..613`. All interactive content, page headers, labels,
+controls, selection outlines, and content-panel backgrounds must remain inside
+that square. The `REZO` identity is the sole intentional exception: it may use
+the top circular arc above the square.
+
+The two output modes differ only in panel placement and mount correction:
+
+| Output | Compact 508x508 layout | Rotation | Scaling/enlargement |
+|---|---|---|---|
+| Official `720x720p60r2` circular display | yes | 90-degree mount correction | none |
+| Standard `1280x720p60` development monitor | yes | none | none |
+
+The standard monitor is a pixel-for-pixel preview of the same compact UI. Its
+720-wide logical panel is centered in the 1280-pixel raster, so the compact UI
+looks physically smaller than the former full-size 720p design. That is
+intentional. Do not rotate the standard output, scale the compact UI up to fill
+it, or restore the legacy full-size layout for that output. The old polished
+720p renderer is the design source currently being reflowed—not a second active
+layout target.
+
+In `RezoBeamTop`, `compact_layout` must therefore remain enabled for both
+modelines, while `rotate_left` is enabled only when both active dimensions are
+720. In `RezoTileDisplay`, `text_x/text_y` are upright native pixel coordinates;
+the official target applies rotation before rendering, and the standard target
+only subtracts its horizontal centering offset.
+
+## 2026-08-12 compact MAIN geometry
+
+BANK and FILTER share one lower-control grid. Following hardware review, its
+final geometry uses alternate native text rows `(28, 30, 32, 34, 36)` and
+logical fader starts `(486, 532, 578, 623, 669)`; BANK occupies the first three
+and FILTER all five. The final row retains the established bottom anchor while
+the preceding rows expand upward into the otherwise empty band/control gutter.
+Do not move the bottom row or alter the band field when tuning this spacing.
+
+The compact band field spans logical y=218..474 with zero at y=346. BANK's
+signed magnitude is 0..128 and maps one logical pixel per step, so the default
+64-level bands are half-height. FILTER's 0..32 response maps eight pixels per
+step, reaching—but never crossing—the 256-pixel field. Keep the explicit
+upper-edge fill clip if the response calculation changes. This division lets
+the bands use the full shaded region with modest top padding while preserving
+the lower controls and their bottom gutter.
+
+The passing standard-monitor candidate is the seed-6 W130 route recorded as
+`ROUND7-MAIN-EXPANDED-W130-S6` in `BUILD_PERFORMANCE.md`. Its archive manifest
+is `1280x720p60` (unrotated, unscaled). It programmed the bitstream and
+manifest to slot 4 and refreshed successfully; option storage was preserved.
+
 ## 2026-08-05 UI polish pass
 
 The hardware review led to a consistency and legibility pass:
