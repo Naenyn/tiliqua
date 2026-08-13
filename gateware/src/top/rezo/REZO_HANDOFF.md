@@ -98,8 +98,8 @@ committed native UI at `736d99f6`. Seed 8 is the retained route. It uses 23,991
 packed cells (297 free), 6,878 FFs, and 22 BRAMs. All clocks pass at the
 circular modeline's requirements: DVI5X 326.80 MHz (required 195.35), AUDIO
 71.40 MHz (required 49.15), SYNC 60.18 MHz (required 60.00), and DVI 75.00 MHz
-(required 39.07). The archive is
-`build/rezo-r5/rezo-736d99f6-r5.tar.gz`; its SHA-256 is
+(required 39.07). The screen-qualified archive is
+`build/rezo-r5/rezo-736d99f6-r5-720x720p60r2.tar.gz`; its SHA-256 is
 `c3c1844006b0d5dcd961f40812f85ce08984d8185ebe0d2a2cd125dca8efdc92`,
 and its embedded `top.bit` SHA-256 is
 `ba9f8b9e2804fdf89c111d4d53673287ad6b2e4f4a81492c423123e715181ed8`.
