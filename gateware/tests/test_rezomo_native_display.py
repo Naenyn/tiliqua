@@ -4,7 +4,8 @@ from top.rezo.top import RezoCore, RezoTileDisplay
 
 
 def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
-                    clock_algorithm=RezoCore.CLOCK_ALGORITHM_SHIFT):
+                    clock_algorithm=RezoCore.CLOCK_ALGORITHM_SHIFT,
+                    band_enables=(), feedback_sends=(), input_gains=()):
     """Render settled pixels from the native REZOMO coordinate space."""
     dut = RezoTileDisplay(
         h_active=h_active,
@@ -19,6 +20,12 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
     async def bench(ctx):
         ctx.set(dut.page, page)
         ctx.set(dut.clock_algorithm, clock_algorithm)
+        for index, value in enumerate(band_enables):
+            ctx.set(dut.band_enables[index], value)
+        for index, value in enumerate(feedback_sends):
+            ctx.set(dut.feedback_sends[index], value)
+        for index, value in enumerate(input_gains):
+            ctx.set(dut.input_gains[index], value)
         ctx.set(dut.de, 1)
         for panel_x, panel_y in points:
             if rotate_left:
@@ -99,3 +106,29 @@ def test_round_rotation_preserves_native_pixels_without_scaling():
         page=7,
     )
     assert circular == preview
+
+
+def test_bands_enable_buttons_reuse_feedback_button_geometry():
+    points = (
+        (140, 283),  # top edge
+        (140, 290),  # body
+        (140, 316),  # bottom edge
+        (140, 317),  # immediately below
+    )
+    kwargs = dict(
+        points=points,
+        band_enables=(1,),
+        feedback_sends=(1,),
+    )
+    assert _render_samples(page=6, **kwargs) == _render_samples(page=1, **kwargs)
+
+
+def test_input_audio_value_fill_stays_inside_its_panel():
+    accent = RezoTileDisplay.PALETTE["control"]
+    pixels = _render_samples(
+        page=2,
+        input_gains=(255,),
+        points=((570, 260), (575, 260)),
+    )
+    assert pixels[0] == (accent, accent, accent)
+    assert pixels[1] != (accent, accent, accent)

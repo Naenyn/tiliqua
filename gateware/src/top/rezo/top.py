@@ -4819,7 +4819,9 @@ class RezoTileDisplay(wiring.Component):
                 with m.Case(4 + pos):
                     m.d.comb += [
                         writer_address.eq(writer_cell(
-                            0, 11, 16 + pos, 7, 11 + pos)),
+                            # Centre the four-cell preset field in its 96px
+                            # selector chip (one native cell of side padding).
+                            0, 11, 17 + pos, 7, 11 + pos)),
                         writer_char.eq(preset_chars[pos][preset_sync]),
                     ]
             for pos in range(3):
@@ -5196,37 +5198,37 @@ class RezoTileDisplay(wiring.Component):
                           tune_panel_x1,
                           450 if self.compact_layout else 480))))
         palette_chip = advanced_page & self.rect(
-            x, y, 336 if self.compact_layout else 264,
+            x, y, 344 if self.compact_layout else 264,
             260 if self.compact_layout else 228,
-            448 if self.compact_layout else 408,
+            456 if self.compact_layout else 408,
             300 if self.compact_layout else 268)
         palette_select = advanced_page & (
             self.selected == RezoHardwareUI.TARGET_PALETTE) & self.outline(
-                x, y, 332 if self.compact_layout else 260,
+                x, y, 340 if self.compact_layout else 260,
                 256 if self.compact_layout else 224,
-                452 if self.compact_layout else 412,
+                460 if self.compact_layout else 412,
                 304 if self.compact_layout else 272, t=3)
         save_default_chip = advanced_page & self.rect(
-            x, y, 328 if self.compact_layout else 264,
+            x, y, 344 if self.compact_layout else 264,
             324 if self.compact_layout else 292,
-            456 if self.compact_layout else 408,
+            472 if self.compact_layout else 408,
             364 if self.compact_layout else 332)
         save_default_select = advanced_page & (
             self.selected == RezoHardwareUI.TARGET_SAVE_DEFAULT) & self.outline(
-                x, y, 324 if self.compact_layout else 260,
+                x, y, 340 if self.compact_layout else 260,
                 320 if self.compact_layout else 288,
-                460 if self.compact_layout else 412,
+                476 if self.compact_layout else 412,
                 368 if self.compact_layout else 336, t=3)
         damp_chip = tune_page & self.rect(
-            x, y, 268 if self.compact_layout else 156,
+            x, y, 264 if self.compact_layout else 156,
             456 if self.compact_layout else 504,
-            364 if self.compact_layout else 316,
+            360 if self.compact_layout else 316,
             488 if self.compact_layout else 536)
         damp_select = tune_page & (
             self.selected == RezoHardwareUI.TARGET_DAMP) & self.outline(
-                x, y, 264 if self.compact_layout else 150,
+                x, y, 260 if self.compact_layout else 150,
                 452 if self.compact_layout else 500,
-                368 if self.compact_layout else 322,
+                364 if self.compact_layout else 322,
                 492 if self.compact_layout else 540, t=3)
         layout_chip = bands_page & self.rect(
             x, y, 256 if self.compact_layout else 136,
@@ -5437,8 +5439,11 @@ class RezoTileDisplay(wiring.Component):
             if self.compact_layout:
                 m.d.dvi += [
                     input_gain_ends[n].eq(
+                        # Map the complete unsigned 8-bit gain range into the
+                        # 272px VALUE lane [304, 576). The previous 1.5x map
+                        # could extend to x=686 and visibly escaped its box.
                         input_control_x0 + self.input_gains[n] +
-                        (self.input_gains[n] >> 1)),
+                        (self.input_gains[n] >> 4)),
                     input_depth_ends[n].eq(
                         input_control_mid + self.cv_depths[n] +
                         (self.cv_depths[n] >> 2)),
@@ -5668,9 +5673,11 @@ class RezoTileDisplay(wiring.Component):
                 (band_bank_page_value_q & band_enable_q & base_bank_fill) |
                 (band_tune_page_value_q & band_enable_q & band_fill_x_q &
                  band_slot_y & band_feedback_send_q) |
+                # BANDS enable buttons intentionally reuse FEEDBACK's exact
+                # full-height filled-button treatment.
                 (band_bands_page_value_q & band_fill_x_q & band_enable_q &
-                 (band_y_value_q >= bands_enable_y0 + 4) &
-                 (band_y_value_q < bands_enable_y0 + bands_button_h - 4)))),
+                 (band_y_value_q >= bands_enable_y0) &
+                 (band_y_value_q < bands_enable_y0 + bands_button_h)))),
             band_mod_fill.eq(
                 band_active_value_q & band_bank_page_value_q & band_enable_q &
                 (base_bank_fill ^ effective_bank_fill) & ~base_marker),
@@ -5811,7 +5818,7 @@ class RezoTileDisplay(wiring.Component):
                       input_gain_end_q, 48 if self.compact_layout else 57))
         input_unity_coarse = RezoCore.INPUT_UNITY_POS >> 8
         input_unity_x = (304 + input_unity_coarse +
-                         (input_unity_coarse >> 1)) if self.compact_layout else (
+                         (input_unity_coarse >> 4)) if self.compact_layout else (
                              326 + ((RezoCore.INPUT_UNITY_POS >> 11) * 10))
         input_line_q0 = input_visible & (
             (input_is_cv & self.rect(
