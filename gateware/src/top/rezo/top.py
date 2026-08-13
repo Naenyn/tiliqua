@@ -3299,13 +3299,14 @@ class RezoTileDisplay(wiring.Component):
                 base_mag.eq(Mux(base_level < 0, -base_level, base_level)),
             ]
             if self.compact_layout:
-                # The compact bipolar field is 128 logical pixels on either
-                # side of zero, so one telemetry step maps to one pixel. The
-                # FILTER response uses its established 0..32 magnitude range
-                # across the full 256-pixel field.
+                # BANK's editable magnitude is 0..64, so two logical pixels
+                # per step fill the 128-pixel half-field and retain the
+                # established half-height appearance of the +32 default.
+                # FILTER has its own 0..32 response scale across the complete
+                # 256-pixel unipolar field.
                 m.d.comb += [
-                    height.eq(mag),
-                    base_height.eq(base_mag),
+                    height.eq(mag << 1),
+                    base_height.eq(base_mag << 1),
                     filter_height.eq(mag << 3),
                 ]
             else:
@@ -3403,20 +3404,43 @@ class RezoTileDisplay(wiring.Component):
         page_titles = ("BANK", "FEEDBACK", "INPUT", "GROUPS", "OUTPUT",
                        "OPTIONS", "BANDS", "FILTER", "MATRIX")
         compact_input_text_rows = (
-            (17, 19, 20), (22, 24, 25),
-            (27, 29, 30), (32, 34, 35))
-        compact_group_text_rows = (20, 22, 25, 28)
-        compact_output_text_rows = (21, 25, 28, 32)
+            (14, 16, 18), (20, 22, 24),
+            (26, 28, 30), (32, 34, 36))
+        # GROUPS labels and geometry share this native 48px cadence.  Each
+        # 14-scanline glyph has its visual centre at row*16 + 6.5; the rail
+        # occupies the two native pixels surrounding that same half-pixel.
+        compact_group_text_rows = (20, 23, 26, 29)
+        compact_group_centers = tuple(
+            row * 16 + 6 for row in compact_group_text_rows)
+        # Four native text rows apart gives OUTPUT a uniform 64px cadence.
+        # Keep OUT0/OUT1 fixed and place OUT2/OUT3 on the next two positions;
+        # the earlier 21/25/28/32 tuple accidentally produced 64/48/64px gaps.
+        compact_output_text_rows = (21, 25, 29, 33)
+        # OUTPUT headings/labels and their cells share these native visual
+        # centres. A glyph's visual centre is at row*16 + 6.5; a two-character
+        # heading beginning at column N is centred at N*16 + 14.5, while DRY
+        # is centred at N*16 + 22.5. Keeping the upper pixel of each half-pixel
+        # centre here lets the native cells use the exact same centreline.
+        compact_output_row_centers = tuple(
+            row * 16 + 6 for row in compact_output_text_rows)
+        compact_output_col_centers = (
+            16 * 16 + 14, 20 * 16 + 14, 24 * 16 + 14,
+            28 * 16 + 14, 32 * 16 + 22)
         # BANK and FILTER share this bottom-anchored native five-slot grid.
         # Expand upward on alternate 16px text rows while retaining the final
         # row's lower edge. This consumes the otherwise empty band/control
         # gutter without moving the band field or the bottom anchor.
         compact_main_control_text_rows = (28, 30, 32, 34, 36)
         compact_main_control_y0s = (486, 532, 578, 623, 669)
-        # These are the closest native 16px rows to the five 80-logical-pixel
-        # matrix faders.  The alternating 4/4/4/3 row cadence compensates for
-        # the compact viewport's 508/720 vertical mapping.
-        compact_matrix_text_rows = (17, 21, 25, 29, 32)
+        # MATRIX controls use an exact 80-logical-pixel cadence. Five native
+        # 16px text rows match that cadence exactly, so every label retains
+        # the same one-pixel centre offset from its fader instead of accumulating
+        # the former 64/64/64/48px drift down the page.
+        compact_matrix_text_rows = (16, 21, 26, 31, 36)
+        # FEEDBACK safety labels share one right edge. Their value controls
+        # begin seven native pixels later, after the compact geometry lookup.
+        # This keeps the two faders and DAMPING chip on one physical x axis.
+        compact_feedback_label_x = 9
         if self.compact_layout:
             # The compact UI is authored natively for the centered 508px
             # square.  Text and geometry therefore share one coordinate
@@ -3446,24 +3470,24 @@ class RezoTileDisplay(wiring.Component):
             put_native(1, "BANDS", 8, 16)
             put_native(1, "FREQ:", 23, 16)
             put_native(1, "FEEDBACK SAFETY", 8, 22)
-            put_native(1, "KNEE", 13, 25)
-            put_native(1, "CEILING", 10, 27)
-            put_native(1, "DAMPING", 10, 29)
+            put_native(1, "KNEE", compact_feedback_label_x + 3, 25)
+            put_native(1, "CEILING", compact_feedback_label_x, 27)
+            put_native(1, "DAMPING", compact_feedback_label_x, 29)
 
-            # INPUT uses four identical 96-logical-pixel groups separated by
-            # 16 logical pixels. MODE, VALUE and DEPTH retain their three
-            # control lanes, while the blank row between groups makes each
-            # input's ownership visually unambiguous.
-            put_native(2, "INPUT ROUTING", 8, 13)
-            # Each compact input block is 96 logical pixels high, or about
-            # four physical character rows after viewport scaling. Rounding
-            # each lane independently prevents the lower blocks from drifting
-            # upward as the fractional 67.7px row pitch accumulates.
+            # INPUT uses four identical groups. MODE, VALUE and DEPTH are
+            # plain labels; only the editable value beside each label owns a
+            # shaded chip/fader. VALUE and DEPTH occupy consecutive alternate
+            # rows so they remain distinct without pushing the last group out
+            # of the content panel.
+            put_native(2, "INPUT ROUTING", 8, 12)
+            # The six-native-row cadence consumes the field's former empty
+            # bottom margin without pushing the final label outside the
+            # centered 508px viewport.
             for n, (mode_row, value_row, depth_row) in enumerate(
                     compact_input_text_rows):
                 put_native(2, f"IN{n}", 8, mode_row)
-                put_native(2, "MODE", 13, mode_row)
-                put_native(2, "VALUE", 8, value_row)
+                put_native(2, "MODE", 14, mode_row)
+                put_native(2, "VALUE", 13, value_row)
                 # DEPTH is dynamic below: CV inputs show it, while AUD inputs
                 # leave the entire inapplicable lane blank.
 
@@ -3473,11 +3497,9 @@ class RezoTileDisplay(wiring.Component):
             for group, row in enumerate(compact_group_text_rows):
                 put_native(3, f"GRP{group + 1}", 8, row)
 
-            # OUTPUT matrix.  Explicit column starts keep four-character
-            # headings separated despite the native font width.
+            # OUTPUT matrix. Geometry below is centred from these exact text
+            # starts, so labels and cells cannot accumulate scaling drift.
             put_native(4, "OUTPUT ROUTING", 8, 13)
-            # Headings are centered over the scaled logical cell centers
-            # (224 + 96*n), not over their unscaled source x positions.
             for x0, label in zip((16, 20, 24, 28),
                                  ("G1", "G2", "G3", "G4")):
                 put_native(4, label, x0, 18)
@@ -3663,7 +3685,10 @@ class RezoTileDisplay(wiring.Component):
             m.d.comb += bands_selected_band.eq(
                 selected_sync - RezoHardwareUI.TARGET_BAND_ENABLE_BASE)
 
-        update_index = Signal(range(96))
+        # Indices 96..103 extend the four compact INPUT MODE fields from
+        # three to five characters without disturbing the established
+        # writer-address layout below index 96.
+        update_index = Signal(range(104))
         update_active = Signal(init=1)
         refresh_counter = Signal(range(4_000_000))
         writer_address = Signal(unsigned(15))
@@ -3811,14 +3836,20 @@ class RezoTileDisplay(wiring.Component):
                     compact_input_text_rows):
                 for pos in range(3):
                     writer_address_init[11 + n * 3 + pos] = native_text_address(
-                        2, 18, mode_row, pos)
+                        2, 19, mode_row, pos)
                     writer_address_init[23 + n * 3 + pos] = native_text_address(
-                        2, 18, value_row, pos)
+                        2, 19, value_row, pos)
+                for pos in range(2):
+                    writer_address_init[96 + n * 2 + pos] = native_text_address(
+                        2, 19, mode_row, pos + 3)
             for pos in range(4):
                 writer_address_init[35 + pos] = native_text_address(
                     7, 14, 11, pos)
+                # The leading blank begins one cell before DRY, placing the
+                # visible three-character label at x=32 and centring it over
+                # the fifth native OUTPUT column.
                 writer_address_init[39 + pos] = native_text_address(
-                    4, 32, 18, pos)
+                    4, 31, 18, pos)
             for pos in range(3):
                 writer_address_init[43 + pos] = native_text_address(
                     1, 29, 16, pos)
@@ -3834,11 +3865,11 @@ class RezoTileDisplay(wiring.Component):
                 writer_address_init[66 + pos] = native_text_address(
                     6, 20, 22, pos)
                 writer_address_init[71 + pos] = native_text_address(
-                    1, 19, 29, pos)
+                    1, 17, 29, pos)
             for n, (_, _, depth_row) in enumerate(compact_input_text_rows):
                 for pos in range(5):
                     writer_address_init[76 + n * 5 + pos] = native_text_address(
-                        2, 8, depth_row, pos)
+                        2, 13, depth_row, pos)
         else:
             for pos in range(4):
                 writer_address_init[4 + pos] = text_address_for(
@@ -3908,14 +3939,21 @@ class RezoTileDisplay(wiring.Component):
                 row = 13 + n * 6
                 for pos in range(3):
                     with m.Case(11 + n * 3 + pos):
-                        audio_char = self.code("AUD"[pos])
-                        cv_char = self.code("CV "[pos])
+                        audio_char = self.code("AUDIO"[pos])
+                        cv_char = self.code(" CV  "[pos])
                         m.d.comb += writer_char.eq(Mux(
                             input_modes_sync[n], cv_char, audio_char))
                     with m.Case(23 + n * 3 + pos):
                         m.d.comb += writer_char.eq(Mux(
                             input_modes_sync[n],
                             target_chars[pos][cv_targets_sync[n]], 0))
+                if self.compact_layout:
+                    for pos in range(2):
+                        with m.Case(96 + n * 2 + pos):
+                            audio_char = self.code("AUDIO"[pos + 3])
+                            cv_char = self.code(" CV  "[pos + 3])
+                            m.d.comb += writer_char.eq(Mux(
+                                input_modes_sync[n], cv_char, audio_char))
             for pos in range(4):
                 with m.Case(35 + pos):
                     m.d.comb += writer_char.eq(
@@ -3959,8 +3997,9 @@ class RezoTileDisplay(wiring.Component):
                             m.d.comb += writer_char.eq(Mux(
                                 input_modes_sync[n],
                                 Const(self.code("DEPTH"[pos]), 6), 0))
+        writer_last_index = 103 if self.compact_layout else 95
         with m.If(update_active):
-            with m.If(update_index == 95):
+            with m.If(update_index == writer_last_index):
                 m.d.sync += [update_active.eq(0), refresh_counter.eq(0)]
             with m.Else():
                 m.d.sync += update_index.eq(update_index + 1)
@@ -4031,8 +4070,10 @@ class RezoTileDisplay(wiring.Component):
         content_y0 = Signal(unsigned(10), init=190)
         content_y1 = Signal(unsigned(10), init=666)
         m.d.dvi += [
-            content_y0.eq(190),
-            content_y1.eq(Mux(filter_page, 700,
+            # INPUT starts its field immediately above IN0 MODE (y=167), but
+            # below the INPUT ROUTING heading. Other pages retain y=190.
+            content_y0.eq(Mux(input_page, 160, 190)),
+            content_y1.eq(Mux(filter_page | input_page, 700,
                               Mux(tune_page, 684, 666))),
         ]
         content_panel = active & self.rect(
@@ -4040,7 +4081,11 @@ class RezoTileDisplay(wiring.Component):
         control_panel_x0 = 252 if self.compact_layout else 118
         control_panel_x1 = 692 if self.compact_layout else 650
         control_fill_x0 = 260 if self.compact_layout else 124
-        tune_panel_x0 = 252 if self.compact_layout else 144
+        # In compact FEEDBACK, logical x=230 maps to physical x=268.  The
+        # native DAMPING chip starts at that same physical coordinate and the
+        # labels above end at x=261, leaving a consistent seven-pixel gutter.
+        tune_panel_x0 = 230 if self.compact_layout else 144
+        tune_panel_x1 = 654 if self.compact_layout else control_panel_x1
         tune_fill_x0 = 260 if self.compact_layout else 156
         # Native text rows cannot move by less than 16 pixels.  A small shift
         # of the compact FEEDBACK faders instead puts their lower edge on the
@@ -4072,10 +4117,10 @@ class RezoTileDisplay(wiring.Component):
             (bank_page & bank_meter_rows) |
             (tune_page & (
                 self.rect(x, y, tune_panel_x0,
-                          408 + tune_y_shift, control_panel_x1,
+                          408 + tune_y_shift, tune_panel_x1,
                           432 + tune_y_shift) |
                 self.rect(x, y, tune_panel_x0,
-                          456 + tune_y_shift, control_panel_x1,
+                          456 + tune_y_shift, tune_panel_x1,
                           480 + tune_y_shift))))
         filter_meter_panel = active & filter_page & filter_meter_rows
         if self.compact_layout:
@@ -4094,10 +4139,10 @@ class RezoTileDisplay(wiring.Component):
                 self.selected == RezoHardwareUI.TARGET_SAVE_DEFAULT) & self.outline(
                     text_x, text_y, 324, 320, 460, 368, t=3)
             damp_chip = tune_page & self.rect(
-                text_x, text_y, 296, 456, 392, 488)
+                text_x, text_y, 268, 456, 364, 488)
             damp_select = tune_page & (
                 self.selected == RezoHardwareUI.TARGET_DAMP) & self.outline(
-                    text_x, text_y, 292, 452, 396, 492, t=3)
+                    text_x, text_y, 264, 452, 368, 492, t=3)
             layout_chip = bands_page & self.rect(
                 text_x, text_y, 256, 168, 384, 200)
             layout_select = bands_page & (
@@ -4166,24 +4211,50 @@ class RezoTileDisplay(wiring.Component):
         group_cell_signals = []
         group_select_signals = []
 
-        input_gain_ends = [Signal(signed(12), init=326, name=f"input_gain_end{n}")
+        input_control_x0 = 272 if self.compact_layout else 326
+        input_control_mid = 464 if self.compact_layout else 490
+        input_gain_ends = [Signal(signed(12), init=input_control_x0,
+                                  name=f"input_gain_end{n}")
                            for n in range(4)]
-        input_depth_ends = [Signal(signed(12), init=490, name=f"input_depth_end{n}")
+        input_depth_ends = [Signal(signed(12), init=input_control_mid,
+                                   name=f"input_depth_end{n}")
                             for n in range(4)]
-        input_meter_ends = [Signal(signed(12), init=326, name=f"input_meter_end{n}")
+        input_meter_ends = [Signal(signed(12), init=input_control_x0,
+                                   name=f"input_meter_end{n}")
                             for n in range(4)]
         for n in range(4):
-            m.d.dvi += [
-                input_gain_ends[n].eq(
-                    326 + self.input_gains[n] + (self.input_gains[n] >> 2)),
-                input_depth_ends[n].eq(
-                    490 + self.cv_depths[n] + (self.cv_depths[n] >> 2)),
-                input_meter_ends[n].eq(Mux(
-                    self.input_modes[n] == RezoCore.INPUT_MODE_CV,
-                    490 + (self.input_meters[n] << 2) + self.input_meters[n],
-                    326 + (self.input_meters[n] << 3) +
-                          (self.input_meters[n] << 1))),
-            ]
+            if self.compact_layout:
+                # All parameter fields share x=272. Expand the existing
+                # control mappings across the wider 384px lane.
+                m.d.dvi += [
+                    input_gain_ends[n].eq(
+                        272 + self.input_gains[n] +
+                        (self.input_gains[n] >> 1)),
+                    input_depth_ends[n].eq(
+                        464 + self.cv_depths[n] +
+                        (self.cv_depths[n] >> 1)),
+                    input_meter_ends[n].eq(Mux(
+                        self.input_modes[n] == RezoCore.INPUT_MODE_CV,
+                        464 + (self.input_meters[n] << 2) +
+                              (self.input_meters[n] << 1),
+                        272 + (self.input_meters[n] << 3) +
+                              (self.input_meters[n] << 2))),
+                ]
+            else:
+                m.d.dvi += [
+                    input_gain_ends[n].eq(
+                        326 + self.input_gains[n] +
+                        (self.input_gains[n] >> 2)),
+                    input_depth_ends[n].eq(
+                        490 + self.cv_depths[n] +
+                        (self.cv_depths[n] >> 2)),
+                    input_meter_ends[n].eq(Mux(
+                        self.input_modes[n] == RezoCore.INPUT_MODE_CV,
+                        490 + (self.input_meters[n] << 2) +
+                              self.input_meters[n],
+                        326 + (self.input_meters[n] << 3) +
+                              (self.input_meters[n] << 1))),
+                ]
 
         filter_cv_panel_signals = []
         filter_cv_fill_signals = []
@@ -4358,7 +4429,16 @@ class RezoTileDisplay(wiring.Component):
                 attrs={"ram_style": "block"})
             compact_fader_x_rport = compact_fader_x_mem.read_port(
                 domain="dvi")
-            m.d.comb += compact_fader_x_rport.addr.eq(x.as_unsigned())
+            # FEEDBACK's safety block is shifted left without disturbing the
+            # shared BANK/FILTER fader geometry. Looking up x+30 makes the
+            # existing 260..684 threshold span appear at 230..654.
+            compact_fader_lookup_x = Signal(range(self.PANEL_W))
+            m.d.comb += [
+                compact_fader_lookup_x.eq(Mux(
+                    tune_page & (x < self.PANEL_W - 30), x + 30,
+                    Mux(x < self.PANEL_W, x, 0))),
+                compact_fader_x_rport.addr.eq(compact_fader_lookup_x),
+            ]
             compact_fader_threshold = compact_fader_x_rport.data[:8]
             compact_fader_x_valid = compact_fader_x_rport.data[8]
 
@@ -4390,7 +4470,17 @@ class RezoTileDisplay(wiring.Component):
             shape=unsigned(8), depth=self.PANEL_W, init=band_x_init,
             attrs={"ram_style": "block"})
         band_x_rport = band_x_mem.read_port(domain="dvi")
-        m.d.comb += band_x_rport.addr.eq(x.as_unsigned())
+        # Centre the ten-button FEEDBACK source row on x=360. The decoder's
+        # one-pixel prefetch makes its fill addresses span [47, 683); sampling
+        # five pixels ahead shifts only FEEDBACK to [42, 678), while other
+        # pages retain their established band geometry.
+        band_lookup_x = Signal(range(self.PANEL_W))
+        m.d.comb += [
+            band_lookup_x.eq(Mux(
+                tune_page & (x < self.PANEL_W - 5), x + 5,
+                Mux(x < self.PANEL_W, x, 0))),
+            band_x_rport.addr.eq(band_lookup_x),
+        ]
 
         band_y_q = Signal.like(y)
         band_active_q = Signal()
@@ -4587,19 +4677,27 @@ class RezoTileDisplay(wiring.Component):
              bands_edit_outline))
 
         # Share the four INPUT groups through one tiny y-coordinate decoder.
-        # Compact groups retain the established 96-logical-pixel internal
-        # geometry but begin every 112 pixels, leaving a visible 16-pixel gap
-        # between inputs. The full-size legacy renderer remains contiguous.
+        # Compact INPUT geometry is decoded directly from the same native
+        # raster coordinate used by its 16px text cells.  The earlier 136-unit
+        # logical cadence became 95.96 physical pixels after the 720->508
+        # lookup, so independently rounded text and panel edges accumulated a
+        # visible one-pixel phase error between groups.  A native 96px cadence
+        # makes every MODE/VALUE/DEPTH row exactly congruent.
+        # The full-size legacy renderer remains in logical coordinates.
         input_y_init = []
         for pixel_y in range(self.PANEL_H):
             encoded_input_y = 0
             for input_index_init in range(4):
-                input_base = 232 + input_index_init * (
-                    112 if self.compact_layout else 96)
-                if input_base <= pixel_y < input_base + 96:
+                # Compact base is three pixels above MODE's glyph cell.  A
+                # 20px value panel therefore has the same 6.5px visual centre
+                # as the fourteen visible glyph scanlines (the final two
+                # lines of each 16px text cell are blank).
+                input_base = (221 if self.compact_layout else 232) + input_index_init * 96
+                if input_base <= pixel_y < input_base + (
+                        96 if self.compact_layout else 96):
                     input_local_init = pixel_y - input_base
                     encoded_input_y = (
-                        input_local_init | (input_index_init << 7) | (1 << 9))
+                        input_local_init | (input_index_init << 8) | (1 << 10))
                     break
             if encoded_input_y:
                 input_y_init.append(
@@ -4607,16 +4705,17 @@ class RezoTileDisplay(wiring.Component):
             else:
                 input_y_init.append(0)
         m.submodules.input_y_mem = input_y_mem = Memory(
-            shape=unsigned(10), depth=self.PANEL_H, init=input_y_init,
+            shape=unsigned(11), depth=self.PANEL_H, init=input_y_init,
             attrs={"ram_style": "block"})
         input_y_rport = input_y_mem.read_port(domain="dvi")
-        m.d.comb += input_y_rport.addr.eq(y)
+        m.d.comb += input_y_rport.addr.eq(
+            text_y if self.compact_layout else y)
 
         input_x_q = Signal.like(x)
         m.d.dvi += input_x_q.eq(x + 1)
-        input_local_y = input_y_rport.data[:7]
-        input_index = input_y_rport.data[7:9]
-        input_row_valid = input_y_rport.data[9]
+        input_local_y = input_y_rport.data[:8]
+        input_index = input_y_rport.data[8:10]
+        input_row_valid = input_y_rport.data[10]
         input_mode = Array(self.input_modes)[input_index]
         input_depth = Array(self.cv_depths)[input_index]
         input_meter = Array(self.input_meters)[input_index]
@@ -4655,71 +4754,128 @@ class RezoTileDisplay(wiring.Component):
         ]
         input_visible = input_page_value_q & input_valid_value_q
         input_is_cv = input_is_cv_value_q
-        input_mode_panel_x0 = 264 if self.compact_layout else 116
-        input_fader_panel_x0 = 268 if self.compact_layout else 116
-        # MODE and CV VALUE are compact text chips. AUD VALUE is a continuous
-        # gain fader, and only CV inputs own the third (DEPTH) lane.
+        input_lane_panel_x0 = 136 if self.compact_layout else 116
+        # Compact labels remain on the unshaded field. Only the editable MODE
+        # value, CV target value, AUD gain fader and CV DEPTH fader receive a
+        # panel, matching the value-only treatment used elsewhere in REZO.
+        # Native column 18 is the common right edge of MODE/VALUE/DEPTH;
+        # column 19 begins every parameter. Their panels and faders therefore
+        # share x=272 after compact coordinate conversion.
+        # Native compact lane bounds all derive from the same three-pixel
+        # top inset relative to their text cells: MODE 3, VALUE 35, DEPTH 67.
+        # This is intentionally one shared grid, not per-input correction.
         input_panel_q0 = input_visible & (
             self.rect(input_x_value_q, input_local_value_q,
-                      input_mode_panel_x0, 4,
-                      336 if self.compact_layout else 304, 32) |
+                      272 if self.compact_layout else input_lane_panel_x0,
+                      0 if self.compact_layout else 4,
+                      408 if self.compact_layout else 304,
+                      20 if self.compact_layout else 32) |
             Mux(input_is_cv,
                 self.rect(input_x_value_q, input_local_value_q,
-                          input_mode_panel_x0, 36,
-                          336 if self.compact_layout else 304, 64),
+                          272 if self.compact_layout else input_lane_panel_x0,
+                          32 if self.compact_layout else 36,
+                          376 if self.compact_layout else 656,
+                          52 if self.compact_layout else 64),
                 self.rect(input_x_value_q, input_local_value_q,
-                          input_fader_panel_x0, 36, 656, 64)) |
+                          272 if self.compact_layout else input_lane_panel_x0,
+                          32 if self.compact_layout else 36,
+                          656, 52 if self.compact_layout else 64)) |
             (input_is_cv & self.rect(
                 input_x_value_q, input_local_value_q,
-                input_fader_panel_x0, 68, 656, 96)))
-        input_mode_select_x0 = 260 if self.compact_layout else 112
-        input_fader_select_x0 = 264 if self.compact_layout else 112
+                272 if self.compact_layout else input_lane_panel_x0,
+                64 if self.compact_layout else 68,
+                656, 84 if self.compact_layout else 96)))
+        input_lane_select_x0 = 132 if self.compact_layout else 112
         input_select_q0 = input_visible & (
             ((input_row_selected_q == input_target_q) &
              self.outline(input_x_value_q, input_local_value_q,
-                          input_mode_select_x0, 0,
-                          340 if self.compact_layout else 308, 36, t=3)) |
-            ((input_row_selected_q == input_target_q + 1) & Mux(
-                input_is_cv,
-                self.outline(input_x_value_q, input_local_value_q,
-                             input_mode_select_x0, 32,
-                             340 if self.compact_layout else 308, 68, t=3),
-                self.outline(input_x_value_q, input_local_value_q,
-                             input_fader_select_x0, 32, 660, 68, t=3))) |
+                          268 if self.compact_layout else input_lane_select_x0, 0,
+                          412 if self.compact_layout else 308,
+                          24 if self.compact_layout else 38, t=3)) |
+            ((input_row_selected_q == input_target_q + 1) &
+             Mux(input_is_cv,
+                 self.outline(input_x_value_q, input_local_value_q,
+                              268 if self.compact_layout else input_lane_select_x0,
+                              28 if self.compact_layout else 32,
+                              380 if self.compact_layout else 660,
+                              56 if self.compact_layout else 68, t=3),
+                 self.outline(input_x_value_q, input_local_value_q,
+                              268 if self.compact_layout else input_lane_select_x0,
+                              28 if self.compact_layout else 32,
+                              660, 56 if self.compact_layout else 68, t=3))) |
             (input_is_cv & (input_row_selected_q == input_target_q + 2) &
              self.outline(input_x_value_q, input_local_value_q,
-                          input_fader_select_x0, 64, 660, 100, t=3)))
+                          268 if self.compact_layout else input_lane_select_x0,
+                          60 if self.compact_layout else 64,
+                          660, 88 if self.compact_layout else 100, t=3)))
         input_fill_q0 = input_visible & Mux(
             input_is_cv,
             Mux(~input_depth_negative_q,
                 self.rect(input_x_value_q, input_local_value_q,
-                          490, 75, input_depth_end_q, 89),
+                          464 if self.compact_layout else 490,
+                          68 if self.compact_layout else 75,
+                          input_depth_end_q, 80 if self.compact_layout else 89),
                 self.rect(input_x_value_q, input_local_value_q,
-                          input_depth_end_q, 75, 490, 89)),
+                          input_depth_end_q, 68 if self.compact_layout else 75,
+                          464 if self.compact_layout else 490,
+                          80 if self.compact_layout else 89)),
             self.rect(input_x_value_q, input_local_value_q,
-                      326, 43, input_gain_end_q, 57))
+                      272 if self.compact_layout else 326,
+                      36 if self.compact_layout else 43,
+                      input_gain_end_q, 48 if self.compact_layout else 57))
         input_unity_coarse = RezoCore.INPUT_UNITY_POS >> 8
-        input_unity_x = 326 + input_unity_coarse + (input_unity_coarse >> 2)
+        input_unity_x = (272 + input_unity_coarse +
+                         (input_unity_coarse >> 1)) if self.compact_layout else (
+                             326 + input_unity_coarse +
+                             (input_unity_coarse >> 2))
         input_line_q0 = input_visible & (
             (input_is_cv & self.rect(
-                input_x_value_q, input_local_value_q, 489, 71, 492, 93)) |
+                input_x_value_q, input_local_value_q,
+                463 if self.compact_layout else 489,
+                66 if self.compact_layout else 71,
+                466 if self.compact_layout else 492,
+                86 if self.compact_layout else 93)) |
             (~input_is_cv & self.rect(
                 input_x_value_q, input_local_value_q, input_unity_x,
-                39, input_unity_x + 3, 61)))
+                34 if self.compact_layout else 39,
+                input_unity_x + 3,
+                54 if self.compact_layout else 61)))
+        # Two logical scanlines collapse to a stable single-pixel physical
+        # monitor in the 508px compact viewport. Audio telemetry follows the
+        # VALUE/gain lane; raw bipolar CV telemetry follows the DEPTH lane.
+        input_audio_meter_y0 = 50 if self.compact_layout else 65
+        input_audio_meter_y1 = 52 if self.compact_layout else 66
+        input_cv_meter_y0 = 82 if self.compact_layout else 65
+        input_cv_meter_y1 = 84 if self.compact_layout else 66
         input_meter_q0 = input_visible & Mux(
             input_is_cv,
             Mux(~input_meter_negative_q,
                 self.rect(input_x_value_q, input_local_value_q,
-                          490, 65, input_meter_end_q, 66),
+                          464 if self.compact_layout else 490,
+                          input_cv_meter_y0,
+                          input_meter_end_q, input_cv_meter_y1),
                 self.rect(input_x_value_q, input_local_value_q,
-                          input_meter_end_q, 65, 490, 66)),
+                          input_meter_end_q, input_cv_meter_y0,
+                          464 if self.compact_layout else 490,
+                          input_cv_meter_y1)),
             self.rect(input_x_value_q, input_local_value_q,
-                      326, 65, input_meter_end_q, 66))
+                      272 if self.compact_layout else 326,
+                      input_audio_meter_y0,
+                      input_meter_end_q, input_audio_meter_y1))
 
         for group in range(RezoCore.N_GROUPS):
-            rail_y = 305 + group * 64
-            group_cell_signals.append(
-                group_page & self.rect(x, y, 128, rail_y, 640, rail_y + 3))
+            if self.compact_layout:
+                # ``compact_group_centers`` is the upper pixel of a 2px rail;
+                # its centre is therefore exactly the glyph centre at +0.5.
+                rail_y = compact_group_centers[group]
+                group_cell_signals.append(
+                    group_page & self.rect(
+                        x, text_y, 128, rail_y, 640, rail_y + 2))
+            else:
+                rail_y = 305 + group * 64
+                group_cell_signals.append(
+                    group_page & self.rect(
+                        x, y, 128, rail_y, 640, rail_y + 3))
 
         group_selected_index = Signal(range(RezoCore.N_BANDS))
         group_selected_x_pre = Signal(unsigned(10), init=144)
@@ -4771,10 +4927,11 @@ class RezoTileDisplay(wiring.Component):
             group_row.eq(0),
             group_band_active.eq(0),
             group_row_active.eq(0),
-            # Every group marker begins at y mod 64 == 38 and is 24 pixels
-            # tall. Two short comparisons shared by all forty cells retain
-            # only its top and bottom ghost rails.
-            group_row_edge.eq((y[:6] < 40) | (y[:6] >= 60)),
+            # Noncompact markers retain the old y-mod-64 edge decoder. The
+            # compact branch is assigned from its native marker bounds below.
+            group_row_edge.eq(
+                0 if self.compact_layout else
+                ((y[:6] < 40) | (y[:6] >= 60))),
         ]
         for n in range(RezoCore.N_BANDS):
             x0 = 144 + n * 48
@@ -4784,12 +4941,27 @@ class RezoTileDisplay(wiring.Component):
                     group_band_active.eq(1),
                 ]
         for group in range(RezoCore.N_GROUPS):
-            marker_y = 294 + group * 64
-            with m.If((y >= marker_y) & (y < marker_y + 24)):
-                m.d.comb += [
-                    group_row.eq(group),
-                    group_row_active.eq(1),
-                ]
+            if self.compact_layout:
+                # A 20px marker is symmetric around the same half-pixel as
+                # the label and rail. Its 2px top/bottom ghost edges remain
+                # visible when a BANK band is disabled.
+                marker_y = compact_group_centers[group] - 9
+                with m.If((text_y >= marker_y) &
+                          (text_y < marker_y + 20)):
+                    m.d.comb += [
+                        group_row.eq(group),
+                        group_row_active.eq(1),
+                        group_row_edge.eq(
+                            (text_y < marker_y + 2) |
+                            (text_y >= marker_y + 18)),
+                    ]
+            else:
+                marker_y = 294 + group * 64
+                with m.If((y >= marker_y) & (y < marker_y + 24)):
+                    m.d.comb += [
+                        group_row.eq(group),
+                        group_row_active.eq(1),
+                    ]
         # Coordinate decoding is substantially wider than the actual 10x4
         # assignment lookup. Pipeline the two halves so the group page does
         # not put both on one HDMI pixel-clock path.
@@ -4836,6 +5008,11 @@ class RezoTileDisplay(wiring.Component):
         output_cell_x0 = Signal(unsigned(10))
         output_cell_y0 = Signal(unsigned(10))
         output_send_index = Signal(unsigned(5))
+        # Compact OUTPUT is authored entirely in native pixels. This is the
+        # same coordinate system as its text, avoiding the progressive drift
+        # caused by comparing scaled geometry with native glyph positions.
+        output_geom_x = text_x if self.compact_layout else x
+        output_geom_y = text_y if self.compact_layout else y
         m.d.comb += [
             output_row.eq(0),
             output_source.eq(0),
@@ -4850,42 +5027,58 @@ class RezoTileDisplay(wiring.Component):
             output_send_index.eq(0),
         ]
         for output in range(4):
-            row_y = 326 + output * 80
-            with m.If((y >= row_y) & (y < row_y + 28)):
+            row_y = (
+                compact_output_row_centers[output] - 13
+                if self.compact_layout else 326 + output * 80)
+            with m.If((output_geom_y >= row_y) &
+                      (output_geom_y < row_y + 28)):
                 m.d.comb += [
                     output_row.eq(output),
                     output_row_active.eq(1),
-                    output_row_edge.eq((y < row_y + 2) | (y >= row_y + 26)),
-                    output_row_inner.eq((y >= row_y + 5) & (y < row_y + 23)),
+                    output_row_edge.eq(
+                        (output_geom_y < row_y + 2) |
+                        (output_geom_y >= row_y + 26)),
+                    output_row_inner.eq(
+                        (output_geom_y >= row_y + 5) &
+                        (output_geom_y < row_y + 23)),
                     output_cell_y0.eq(row_y),
                 ]
         for source in range(5):
-            # Each 72-pixel send is centered beneath its 64-pixel GRP#/DRY
-            # heading. The 64-pixel interior maps the 0..16 send range at
-            # exactly four pixels per step.
-            cell_x0 = 188 + source * 96
-            with m.If((x >= cell_x0) & (x < cell_x0 + 72)):
+            # Compact sends retain their prior physical size: a 56px cell
+            # leaves an 8px gutter on the 64px G1..G4 cadence and maps its
+            # 48px interior at exactly three pixels per 0..16 send step.
+            # Noncompact keeps the original 72px/64px geometry.
+            cell_width = 56 if self.compact_layout else 72
+            cell_x0 = (
+                compact_output_col_centers[source] - 27
+                if self.compact_layout else 188 + source * 96)
+            with m.If((output_geom_x >= cell_x0) &
+                      (output_geom_x < cell_x0 + cell_width)):
                 m.d.comb += [
                     output_source.eq(source),
                     output_col_active.eq(Const(source != 4) | ~self.filter_mode),
-                    output_col_edge.eq((x < cell_x0 + 2) | (x >= cell_x0 + 70)),
-                    output_col_inner.eq((x >= cell_x0 + 4) & (x < cell_x0 + 68)),
+                    output_col_edge.eq(
+                        (output_geom_x < cell_x0 + 2) |
+                        (output_geom_x >= cell_x0 + cell_width - 2)),
+                    output_col_inner.eq(
+                        (output_geom_x >= cell_x0 + 4) &
+                        (output_geom_x < cell_x0 + cell_width - 4)),
                     output_cell_x0.eq(cell_x0),
                 ]
         m.d.comb += [
             output_send_index.eq(output_source + (output_row << 2) + output_row),
             output_send_rport.addr.eq(output_send_index),
         ]
-        output_x_q = Signal.like(x)
-        output_y_q = Signal.like(y)
+        output_x_q = Signal.like(output_geom_x)
+        output_y_q = Signal.like(output_geom_y)
         output_x0_q = Signal.like(output_cell_x0)
         output_y0_q = Signal.like(output_cell_y0)
         output_row_active_q = Signal()
         output_col_active_q = Signal()
         output_page_q = Signal()
         m.d.dvi += [
-            output_x_q.eq(x),
-            output_y_q.eq(y),
+            output_x_q.eq(output_geom_x),
+            output_y_q.eq(output_geom_y),
             output_x0_q.eq(output_cell_x0),
             output_y0_q.eq(output_cell_y0),
             output_row_active_q.eq(output_row_active),
@@ -4893,8 +5086,13 @@ class RezoTileDisplay(wiring.Component):
             output_page_q.eq(output_page),
         ]
         output_send_end = Signal(unsigned(10))
-        m.d.comb += output_send_end.eq(
-            output_x0_q + 4 + (output_send_rport.data << 2))
+        if self.compact_layout:
+            m.d.comb += output_send_end.eq(
+                output_x0_q + 4 + output_send_rport.data +
+                (output_send_rport.data << 1))
+        else:
+            m.d.comb += output_send_end.eq(
+                output_x0_q + 4 + (output_send_rport.data << 2))
         m.d.comb += [
             output_cell.eq(output_page & output_row_active & output_col_active &
                            (output_row_edge | output_col_edge)),
@@ -5126,7 +5324,7 @@ class RezoTileDisplay(wiring.Component):
                       (self.selected == RezoHardwareUI.TARGET_LIMIT_KNEE)) & Mux(
             self.compact_layout,
             self.outline(x, y, tune_panel_x0,
-                         408 + tune_y_shift, control_panel_x1,
+                         408 + tune_y_shift, tune_panel_x1,
                          432 + tune_y_shift, t=3),
             self.rect(x, y, 144, 408, 148, 432))
         res_select = ((bank_page & (self.selected == RezoHardwareUI.TARGET_RESONANCE)) |
@@ -5138,7 +5336,7 @@ class RezoTileDisplay(wiring.Component):
             (tune_page & Mux(
                 self.compact_layout,
                 self.outline(x, y, tune_panel_x0,
-                             456 + tune_y_shift, control_panel_x1,
+                             456 + tune_y_shift, tune_panel_x1,
                              480 + tune_y_shift, t=3),
                 self.rect(x, y, 144, 456, 148, 480))))
         fb_select = (

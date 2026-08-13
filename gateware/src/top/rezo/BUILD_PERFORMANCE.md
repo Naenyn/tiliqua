@@ -45,6 +45,162 @@ rotation and no enlargement. Only the 720x720 circular target applies the
 | **ROUND6-MAIN-COMPACT-W130-S6** | **Bottom-anchored 16-pixel control cadence; corrected BANK/FILTER band scaling and clipping** | **6** | **22,985** | **1,303** | **6,842** | **23** | **416.67** | **73.95** | **66.15** | **77.54** | **PASS; flashed slot 4** |
 | ROUND7-MAIN-EXPANDED-BUNDLED-S6 | Alternate-row controls expanded upward; bundled Yosys 0.52 route | 6 | 23,138 | 1,150 | 6,845 | 23 | 443.85 | 71.01 | 58.68 | 72.07 | FAIL SYNC and DVI |
 | **ROUND7-MAIN-EXPANDED-W130-S6** | **Same geometry; native W130 netlist, last row bottom-anchored** | **6** | **22,978** | **1,310** | **6,845** | **23** | **408.00** | **72.12** | **66.09** | **76.76** | **PASS; flashed slot 4** |
+| ROUND8-INPUT-LANES-BUNDLED-S6 | INPUT groups moved upward; unified MODE/VALUE/DEPTH lanes; bundled Yosys 0.52 route | 6 | 23,010 | 1,278 | 6,845 | 23 | 396.51 | 72.17 | 58.70 | 81.14 | FAIL SYNC |
+| ROUND8-INPUT-LANES-W130-S6 | Same INPUT geometry; native W130 netlist | 6 | 22,915 | 1,373 | 6,845 | 23 | 412.03 | 74.02 | 61.59 | 73.61 | FAIL DVI by 0.64 MHz |
+| ROUND8-INPUT-LANES-W130-S7 | Exact native W130 JSON rerouted | 7 | 22,915 | 1,373 | 6,845 | 23 | 363.90 | 69.99 | 64.22 | 76.62 | FAIL DVI5X |
+| **ROUND8-INPUT-LANES-W130-S4** | **Exact native W130 JSON rerouted; STREZO-style INPUT lane alignment** | **4** | **22,915** | **1,373** | **6,845** | **23** | **393.08** | **69.30** | **61.87** | **78.25** | **PASS; flashed slot 4** |
+| ROUND9-INPUT-ALIGN-BUNDLED-S4 | Align VALUE/DEPTH backgrounds to native text; restore compact level monitor; bundled Yosys 0.52 | 4 | 23,044 | 1,244 | 6,845 | 23 | — | — | — | — | Routing aborted after pathological final congestion |
+| **ROUND9-INPUT-ALIGN-W130-S4** | **Same geometry; native W130 mapping and exact VALUE-target spacing** | **4** | **22,960** | **1,328** | **6,845** | **23** | **399.20** | **74.46** | **62.38** | **76.61** | **PASS; flashed slot 4** |
+| ROUND10-INPUT-LANES-BANK-SCALE-BUNDLED-S4 | Taller INPUT lanes and restored half-height BANK default; bundled Yosys 0.52 | 4 | 23,152 | 1,136 | 6,844 | 23 | — | — | — | — | Routing aborted after pathological final congestion |
+| **ROUND10-INPUT-LANES-BANK-SCALE-W130-S4** | **Same geometry; native W130 mapping** | **4** | **23,046** | **1,242** | **6,844** | **23** | **422.12** | **70.34** | **66.12** | **74.79** | **PASS; flashed slot 4** |
+| ROUND11-INPUT-VALUES-BUNDLED-S4 | INPUT value-only shading, 136px groups, and mode-dependent level-monitor placement; bundled Yosys 0.52 | 4 | 23,288 | 1,000 | 6,845 | 23 | — | — | — | — | Routing aborted after pathological final congestion |
+| ROUND11-INPUT-VALUES-W130-S4 | Same geometry; native W130 mapping | 4 | 23,091 | 1,197 | 6,845 | 23 | 368.19 | 77.07 | 62.61 | 81.39 | FAIL DVI5X by 3.14 MHz |
+| **ROUND11-INPUT-VALUES-W130-S6** | **Exact native W130 JSON rerouted** | **6** | **23,091** | **1,197** | **6,845** | **23** | **385.95** | **70.71** | **63.88** | **76.14** | **PASS; flashed slot 4** |
+| ROUND12-INPUT-BOUNDS-BUNDLED-S4 | Compact VALUE/DEPTH gap, centered value chips, and INPUT content panel extended to y=700; bundled Yosys 0.52 | 4 | 23,352 | 936 | 6,845 | 23 | — | — | — | — | Routing aborted after pathological final congestion |
+| ROUND12-INPUT-BOUNDS-W130-S4 | Same geometry; native W130 mapping | 4 | 23,373 | 915 | 6,845 | 23 | — | — | — | — | Routing aborted after pathological final congestion |
+| ROUND12-INPUT-BOUNDS-W130-S6 | Exact native W130 JSON rerouted | 6 | 23,373 | 915 | 6,845 | 23 | 355.37 | 74.32 | 63.49 | 69.68 | FAIL DVI5X and DVI |
+| ROUND12-INPUT-BOUNDS-W130-S9 | Exact native W130 JSON rerouted | 9 | 23,373 | 915 | 6,845 | 23 | 401.77 | 71.50 | 64.97 | 72.54 | FAIL DVI |
+| ROUND12-INPUT-BOUNDS-W130-S8 | Exact native W130 JSON rerouted | 8 | 23,373 | 915 | 6,845 | 23 | 386.25 | 72.87 | 59.97 | 71.24 | FAIL SYNC by 0.03 MHz and DVI |
+| **ROUND12-INPUT-BOUNDS-W130-S1** | **Exact native W130 JSON rerouted; compact INPUT bounds correction** | **1** | **23,373** | **915** | **6,845** | **23** | **391.24** | **73.00** | **62.32** | **77.32** | **PASS; flashed slot 4** |
+| **ROUND13-INPUT-COLUMNS-BUNDLED-S1** | **INPUT panel begins above IN0; right-aligned labels and one left-aligned parameter/fader column** | **1** | **23,210** | **1,078** | **6,846** | **23** | **414.94** | **71.65** | **61.25** | **78.55** | **PASS; flashed slot 4** |
+| ROUND14-INPUT-AUDIO-BUNDLED-S1 | Five-character INPUT MODE fields; bundled Yosys 0.52 route | 1 | 23,218 | 1,070 | 6,846 | 23 | — | — | — | — | Routing aborted after pathological final congestion |
+| **ROUND14-INPUT-AUDIO-W130-S1** | **Five-character AUDIO/CV mode chips, centered vertically and horizontally** | **1** | **23,163** | **1,125** | **6,846** | **23** | **434.03** | **74.21** | **66.33** | **75.67** | **PASS; flashed slot 4** |
+| ROUND15-INPUT-NATIVE-Y-BUNDLED-S1 | INPUT vertical geometry moved onto the native 16px text raster; bundled Yosys 0.52 route | 1 | 23,173 | 1,115 | 6,845 | 23 | 395.73 | 74.04 | 56.72 | 69.47 | FAIL SYNC and DVI |
+| ROUND15-INPUT-NATIVE-Y-W130-S1 | Exact native W130 JSON rerouted | 1 | 23,092 | 1,196 | 6,845 | 23 | 360.36 | 73.94 | 65.68 | 75.34 | FAIL DVI5X by 10.97 MHz |
+| **ROUND15-INPUT-NATIVE-Y-W130-S4** | **Native 96px INPUT cadence and mathematically centered MODE/VALUE/DEPTH lanes** | **4** | **23,092** | **1,196** | **6,845** | **23** | **406.17** | **75.53** | **60.45** | **75.48** | **PASS; flashed slot 4** |
+| ROUND16-GROUPS-NATIVE-Y-BUNDLED-S1 | GROUPS labels, rails, and markers share four native row centers; bundled Yosys 0.52 route | 1 | 23,337 | 951 | 6,845 | 23 | 456.41 | 74.67 | 57.58 | 65.74 | FAIL SYNC and DVI |
+| **ROUND16-GROUPS-NATIVE-Y-W130-S1** | **Exact native W130 route; four 48px GROUPS rows with coincident label/rail/marker centers** | **1** | **23,253** | **1,035** | **6,845** | **23** | **393.24** | **77.31** | **61.63** | **80.62** | **PASS; flashed slot 4** |
+| ROUND17-OUTPUT-NATIVE-XY-BUNDLED-S1 | OUTPUT row/column labels and cells share native centers; bundled Yosys 0.52 route | 1 | 23,365 | 923 | 6,860 | 23 | — | — | — | — | Routing aborted after pathological final congestion |
+| ROUND17-OUTPUT-NATIVE-XY-W130-S1 | Same OUTPUT geometry; native W130 mapping | 1 | 23,281 | 1,007 | 6,860 | 23 | 371.47 | 77.11 | 64.75 | 72.79 | FAIL DVI by 1.46 MHz |
+| **ROUND17-OUTPUT-NATIVE-XY-W130-S2** | **Exact native W130 JSON rerouted; five centered columns and four centered rows** | **2** | **23,281** | **1,007** | **6,860** | **23** | **413.22** | **73.29** | **66.34** | **82.44** | **PASS; flashed slot 4** |
+| ROUND18-OUTPUT-EVEN-ROWS-BUNDLED-S2 | OUTPUT centers corrected from 64/48/64px to a uniform 64px cadence; bundled Yosys 0.52 route | 2 | 23,423 | 865 | 6,861 | 23 | 406.17 | 74.11 | 62.94 | 73.57 | FAIL DVI by 0.68 MHz |
+| ROUND18-OUTPUT-EVEN-ROWS-W130-S1 | Same geometry; native W130 mapping | 1 | 23,256 | 1,032 | 6,861 | 23 | 337.15 | 74.21 | 62.20 | 69.08 | FAIL DVI5X and DVI |
+| ROUND18-OUTPUT-EVEN-ROWS-W130-S4 | Exact native W130 JSON rerouted | 4 | 23,256 | 1,032 | 6,861 | 23 | 364.03 | 72.69 | 64.41 | 79.20 | FAIL DVI5X by 7.30 MHz |
+| ROUND18-OUTPUT-EVEN-ROWS-W130-S8 | Exact native W130 JSON rerouted | 8 | 23,256 | 1,032 | 6,861 | 23 | 331.90 | 76.24 | 62.20 | 78.33 | FAIL DVI5X |
+| **ROUND18-OUTPUT-EVEN-ROWS-W130-S10** | **Exact native W130 JSON rerouted; four OUTPUT rows on one uniform 64px center cadence** | **10** | **23,256** | **1,032** | **6,861** | **23** | **390.93** | **72.76** | **65.61** | **79.50** | **PASS; flashed slot 4** |
+| ROUND19-FEEDBACK-ALIGN-BUNDLED-S1 | FEEDBACK source row centered and safety controls moved onto one shared left edge; bundled Yosys 0.52 | 1 | — | — | 6,868 | 23 | — | — | — | — | Routing stopped after pathological congestion at 107k iterations |
+| **ROUND19-FEEDBACK-ALIGN-W130-S1** | **Native W130 mapping; centered ten-source group and aligned KNEE/CEILING/DAMPING controls** | **1** | **23,361** | **927** | **6,868** | **23** | **395.88** | **70.70** | **62.08** | **75.00** | **PASS; flashed slot 4** |
+| ROUND20-FEEDBACK-SOURCE-CENTER-BUNDLED-S1 | Correct FEEDBACK source decoder prefetch offset from six to five logical pixels; bundled Yosys 0.52 | 1 | — | — | 6,868 | 23 | — | — | — | — | Routing stopped after pathological congestion beyond 113k iterations |
+| **ROUND20-FEEDBACK-SOURCE-CENTER-W130-S1** | **Native W130 mapping; ten-button rendered interval [42,678) centered exactly on x=360** | **1** | **23,443** | **845** | **6,861** | **23** | **390.32** | **71.64** | **64.83** | **79.56** | **PASS; flashed slot 4** |
+| ROUND21-MATRIX-ROWS-BUNDLED-S1 | MATRIX labels moved to one exact 80px native cadence; bundled Yosys 0.52 | 1 | — | — | 6,868 | 23 | — | — | — | — | Route stopped after prolonged congestion; not retained |
+| ROUND21-MATRIX-ROWS-W130-S1 | Native W130 mapping; exact MATRIX row centers | 1 | 23,374 | 914 | 6,861 | 23 | 389.11 | 68.84 | 61.23 | 70.56 | FAIL DVI |
+| **ROUND21-MATRIX-ROWS-W130-S6** | **Exact native W130 JSON rerouted; MATRIX labels share the five fader-row centers** | **6** | **23,374** | **914** | **6,861** | **23** | **346.02** | **72.88** | **63.91** | **76.17** | **DVI5X timing miss; packaged for hardware UI validation** |
+
+ROUND21 also explored native seeds 2, 3, 4, 5, 7, 8, 9, 10, and 11.
+Seeds 2 and 3 entered prolonged final-router congestion; seeds 4, 5, 7, 8,
+9, 10, and 11 had materially worse pre-route timing than seed 6 and their
+detailed routes were stopped once that was clear. Seed 6 is the retained
+artifact because its primary DVI, SYNC, and AUDIO clocks all pass and it has
+the best aggregate timing of the completed candidates, though its DVI5X
+serializer clock remains 25.31 MHz short. This is an explicit exception to
+the normal all-clocks rule for the requested hardware UI validation; do not
+use this row as a release-quality timing baseline.
+
+The ROUND21 archive is `rezo-4b874e18-r5.tar.gz` with SHA-256
+`c4297940060f637ccd7683afe4c1ba0941b5666efbf3f1395a60f7d1f822c44a`.
+Its embedded `top.bit` SHA-256 is
+`dd62cf9bba095e858b1d6100b95ee9591f2e8528341b596bb14ef3d94a4b1664`.
+The manifest records the standard, unrotated and unscaled `1280x720p60`
+target. It was flashed successfully to slot 4 on 2026-08-13; option storage
+was preserved.
+
+The ROUND20 archive is `rezo-4b874e18-r5.tar.gz` with SHA-256
+`863f4965e2e39c9e7481becb735b25ddd2eff84887eeca6fbc6d60c1689e4d28`.
+Its embedded `top.bit` SHA-256 is
+`ed8fff27b8b1ee33d4f40658669b94d67b467ed25ea122fc58bd85b35c6cbe50`.
+The manifest records the standard, unrotated and unscaled `1280x720p60`
+target. It was flashed successfully to slot 4 on 2026-08-12; option storage
+was preserved.
+
+The ROUND19 archive is `rezo-4b874e18-r5.tar.gz` with SHA-256
+`f7d324bdd97ed5058ba839516cbb2de5708b0e7cbf67a8da0128f4240a2c2e98`.
+Its embedded `top.bit` is byte-identical to the separately packed passing
+seed-1 route (SHA-256
+`675040a62133562b0913e889ebf1994311786d746e207ae1c1bb63e29e71805b`).
+The manifest records the standard, unrotated and unscaled `1280x720p60`
+target. It was flashed successfully to slot 4 on 2026-08-12; option storage
+was preserved.
+
+The ROUND18 archive is `rezo-4b874e18-r5.tar.gz` with SHA-256
+`30e6747434d65cd4c2328c5645247e1dde75ca10ae5450341a2f1f5caa10340c`.
+Its embedded `top.bit` is byte-identical to the separately packed passing
+seed-10 route (SHA-256
+`d0249cd27b41df2ee985e4c91dfeb6e02026fccb9965754de2627a12a4523293`).
+The manifest records the standard, unrotated and unscaled `1280x720p60`
+target. It was flashed successfully to slot 4 on 2026-08-12; option storage
+was preserved.
+
+The ROUND17 archive is `rezo-4b874e18-r5.tar.gz` with SHA-256
+`7bafc4508a64b7fb35fa993a30cbd40c62f55a3aa5ed442387e85d76ff46e794`.
+Its embedded `top.bit` is byte-identical to the separately packed passing
+seed-2 route (SHA-256
+`f85f2714d35441db069a5a3ac015810118371d5fa2e52782972eeec0ddc8ccea`).
+The manifest records the standard, unrotated and unscaled `1280x720p60`
+target. It was flashed successfully to slot 4 on 2026-08-12; option storage
+was preserved.
+
+The ROUND16 archive is `rezo-4b874e18-r5.tar.gz` with SHA-256
+`98087b13b23f541b50bf7835b151ab57bf06ba2d01e9580cf368bec1be9e1536`.
+Its embedded `top.bit` is byte-identical to the separately packed passing
+seed-1 route (SHA-256
+`db69e9ee34534655a32a98cae0ef3c4e0fd47f375f87ec6e88ac5ce2684ccb5e`).
+The manifest records the standard, unrotated and unscaled `1280x720p60`
+target. It was flashed successfully to slot 4 on 2026-08-12; option storage
+was preserved.
+
+The ROUND15 archive is `rezo-4b874e18-r5.tar.gz` with SHA-256
+`11de9592f89c60c14b865e9a9ac2d1fe40f88c24590a563a36e36ddecf110dca`.
+Its embedded `top.bit` is byte-identical to the separately packed passing
+seed-4 route (SHA-256
+`3985bc741c953195627e10deda7b77aa1e702e4680140d4b74cae546350fd1d7`).
+The manifest records the standard, unrotated and unscaled `1280x720p60`
+target. It was flashed successfully to slot 4 on 2026-08-12; option storage
+was preserved.
+
+The ROUND14 archive is `rezo-4b874e18-r5.tar.gz` with SHA-256
+`e3eb7c4abb4dfa5e0bda224094f0d4508ac5a50ef788563391e623ef8aa574ac`.
+Its embedded `top.bit` is byte-identical to the separately generated passing
+seed-1 route (SHA-256
+`7210dbe78e24db4c628a71d6f087044612bd752b99a86001c1594ee3a72ea3c6`).
+The manifest records the standard, unrotated `1280x720p60` target. It was
+flashed successfully to slot 4 on 2026-08-12; option storage was preserved.
+
+The ROUND13 archive is `rezo-4b874e18-r5.tar.gz` with SHA-256
+`2acab5802a39aa6759038636c5e5f09d958625500e4cb2ddfdcf2134aed2c1f6`.
+Its embedded `top.bit` is byte-identical to the separately generated passing
+seed-1 route (SHA-256
+`8d66a88a842377ef816bf46b46d884cbdfb0989871e04826f8070889b9f4af1c`).
+The manifest records the standard, unrotated `1280x720p60` target.
+It was flashed successfully to slot 4 on 2026-08-12; option storage was
+preserved.
+
+The ROUND12 archive is `rezo-4b874e18-r5.tar.gz` with SHA-256
+`5af320b5e424854f5df38ce71ec09f0a563dbe2bb4e0f5b85cce0ad59f944b04`.
+Its embedded `top.bit` is byte-identical to the separately packed passing
+seed-1 route (SHA-256
+`c10f501e943ba357a1e05964d136b5e9ef754b63cca272e7ae22f07dff79e02e`).
+The manifest records the standard, unrotated `1280x720p60` target. Seed 7 and
+the native seed-4 route were stopped after prolonged final congestion; seed 2
+was likewise stopped after its placement timing and final congestion were both
+substantially worse. Seed 10 was stopped once seed 1 passed all clocks.
+The archive was flashed successfully to slot 4 on 2026-08-12; option storage
+was preserved.
+
+The ROUND11 archive is `rezo-4b874e18-r5.tar.gz` with SHA-256
+`69459d31308aab0a2f2565183faaf252cd5ab4f76dda4eca11d739e62e3e21b9`.
+Its embedded `top.bit` is byte-identical to the separately packed passing
+seed-6 route (SHA-256
+`70706ef5729dab959cce0039a3f9393202b4acc1bf5947ab8dc4eadbdb7fcb05`).
+The manifest records the standard, unrotated `1280x720p60` target. It was
+flashed successfully to slot 4 on 2026-08-12; option storage was preserved.
+
+The ROUND10 archive is `rezo-4b874e18-r5.tar.gz` with SHA-256
+`26bf4237d916b5350e0a6a2885cc2b1798ed77138db9b8704a22a45ef1a93a70`.
+Its embedded `top.bit` is byte-identical to the separately packed passing
+seed-4 route (SHA-256
+`819ad9f92ca82460c0b9f3cd0aa0830f77fbb64f78cf99a79865ec493ab075db`).
+The manifest records the standard, unrotated `1280x720p60` target. It was
+flashed successfully to slot 4 on 2026-08-12; option storage was preserved.
 
 The final archive is `rezo-6f8596b7-r5.tar.gz` with SHA-256
 `34067684bf421d8f7fd72e0f55227c154a079806e771863d633d00f4a71d41d0`.
@@ -107,6 +263,30 @@ retains the ROUND6 bottom anchor while the preceding rows expand upward into
 the band/control gutter. The band field and its scaling are unchanged. The
 manifest records the standard, unrotated `1280x720p60` target. The archive was
 flashed successfully to slot 4 on 2026-08-12 with option storage preserved.
+
+The compact INPUT-lane archive is `rezo-4b874e18-r5.tar.gz` with SHA-256
+`ea00a34124f071f1fed3a43d1232399fa7741d01dffa4301d26a15293b905f2d`.
+Its embedded `top.bit` is byte-identical to the retained native W130 seed-4
+route at SHA-256
+`bab77e70e57a058d54c9c8664e1f809facb2213646e86c8e645d2c985cb7a6b0`.
+The four INPUT groups use complete shaded lanes that include their labels;
+AUD VALUE remains a gain fader with its attached one-pixel level monitor,
+while an AUD DEPTH lane is absent and skipped by navigation. The manifest
+records the standard, unrotated and unscaled `1280x720p60` target. The archive
+was flashed successfully to slot 4 on 2026-08-12 with option storage
+preserved.
+
+The aligned INPUT-lane archive is `rezo-4b874e18-r5.tar.gz` with SHA-256
+`e8d4dd71f32923761fdc392313c05894eba0c785b4060a5a65a0b6f755ac6ec8`.
+Its embedded `top.bit` is byte-identical to the retained native W130 seed-4
+route at SHA-256
+`0713947852f1194ca116624b201c18ef4dce6831676090d172aca983147d3672`.
+VALUE and DEPTH backgrounds now begin on their native text rows, CV target
+text has a full-cell gap after VALUE, and two logical monitor scanlines
+downsample to a stable one-pixel physical level indicator attached to VALUE.
+The manifest records the standard, unrotated and unscaled `1280x720p60`
+target. The archive was flashed successfully to slot 4 on 2026-08-12 with
+option storage preserved.
 
 ## Results
 

@@ -59,6 +59,186 @@ The passing standard-monitor candidate is the seed-6 W130 route recorded as
 is `1280x720p60` (unrotated, unscaled). It programmed the bitstream and
 manifest to slot 4 and refreshed successfully; option storage was preserved.
 
+## 2026-08-12 compact INPUT geometry
+
+The four INPUT groups use native text-row triples `(14, 16, 18)`, `(20, 22,
+24)`, `(26, 28, 30)`, and `(32, 34, 36)`. Compact vertical geometry is now
+decoded from native `text_y`, not the 720-to-508 logical lookup coordinate.
+Group bases are `221 + input*96` native pixels, exactly three pixels above the
+MODE text-cell top. Each group occupies exactly six 16px character rows. Do
+not convert these vertical bounds through the logical viewport lookup: the old
+136-logical-pixel cadence became 95.96 physical pixels, and independently
+rounded text and rectangles accumulated the apparent group-dependent drift.
+
+MODE, VALUE, and DEPTH are plain labels. Only editable values are shaded:
+MODE uses a small value chip, CV VALUE uses a small destination chip, AUD
+VALUE uses the gain-fader lane, and CV DEPTH uses the bipolar depth-fader
+lane. Relative to each native group base, the MODE, VALUE, and DEPTH boxes
+begin at y=0, 32, and 64 and are 20 physical pixels high. Their visible
+14-scanline glyphs begin at y=3, 35, and 67 respectively, giving each glyph
+and its box the exact same vertical center. Selection outlines use local
+y=0..24, 28..56, and 60..88. Keep these bounds derived from the shared lane
+constants instead of applying per-row correction offsets.
+MODE begins at native x=14 while VALUE and DEPTH begin at x=13, giving all
+three labels the same exclusive right edge at native column 18. Every dynamic
+parameter begins at native column 19. The MODE and CV target chips, AUD VALUE
+fader, and CV DEPTH fader all begin at logical x=272; small text chips extend
+to x=376 so three-character values have consistent padding. AUD VALUE retains
+its unity marker and
+one-pixel post-VALUE monitor. The raw bipolar CV monitor is conditionally
+drawn on DEPTH instead of VALUE. In AUD mode DEPTH is wholly absent and
+navigation skips it; do not render a disabled box for that lane.
+
+The shared INPUT content panel spans logical y=160..700. Its top is immediately
+above IN0 MODE at y=167 but below the INPUT ROUTING heading; its bottom leaves
+an 8px gutter before the centered 508x508 viewport border at y=708. The final
+DEPTH control and selection outline must remain above that gutter.
+
+The MODE value field is five native character cells wide. AUDIO is rendered as
+`AUDIO`; CV is padded as ` CV  ` so both values are centered in the same fixed
+chip. The chip's compact lower edge is trimmed independently of the MODE text
+baseline so the glyph is also vertically centered. The writer refresh cycle
+uses indices 96..103 for the fourth and fifth MODE characters; noncompact
+writer timing remains capped at index 95.
+
+The passing standard-monitor candidate is the native W130 seed-4 route
+recorded as `ROUND15-INPUT-NATIVE-Y-W130-S4` in `BUILD_PERFORMANCE.md`. Its archive
+manifest is `1280x720p60` (unrotated, unscaled). The archive SHA-256 is
+`11de9592f89c60c14b865e9a9ac2d1fe40f88c24590a563a36e36ddecf110dca`;
+its embedded `top.bit` SHA-256 is
+`3985bc741c953195627e10deda7b77aa1e702e4680140d4b74cae546350fd1d7`.
+It programmed the bitstream and manifest to slot 4 and refreshed successfully;
+option storage was preserved.
+
+## 2026-08-12 compact FEEDBACK geometry
+
+The compact FEEDBACK page now derives its horizontal alignment from shared
+edges instead of independent visual offsets.  The ten source buttons are
+translated five logical pixels left after the decoder's one-pixel prefetch,
+giving the complete group half-open logical bounds of x=[42,678) and an exact
+panel center of x=360.  This translation applies
+only to FEEDBACK; the shared band geometry on other pages is unchanged.
+
+Treat that ten-button row as the canonical compact band-button component.
+Pages exposing the same ten-band toggle/source control (including BANDS
+ENABLE) should reuse its button size, inter-button spacing, and centered
+arrangement rather than defining a page-specific approximation. Visual state
+may differ, but geometry should not.
+
+The KNEE and CEILING faders share logical bounds x=230..654.  On the standard
+unrotated 1280x720 output these map to approximately physical x=268..567,
+comfortably inside the compact frame whose right edge is near physical x=594.
+Their labels are right-aligned at physical x=261, leaving a consistent 7px
+gutter.  DAMPING's value chip shares the physical x=268 left edge, spans
+x=268..364, and its dynamic value begins at native column 17 (visible near
+x=272).  The compact fader and source translations are gated by FEEDBACK so
+BANK and FILTER retain their established layout.
+
+The passing standard-monitor candidate is the native W130 seed-1 route
+recorded as `ROUND19-FEEDBACK-ALIGN-W130-S1` in `BUILD_PERFORMANCE.md`. Its
+archive manifest is `1280x720p60` (unrotated, unscaled). The archive SHA-256 is
+`f7d324bdd97ed5058ba839516cbb2de5708b0e7cbf67a8da0128f4240a2c2e98`;
+its embedded `top.bit` SHA-256 is
+`675040a62133562b0913e889ebf1994311786d746e207ae1c1bb63e29e71805b`.
+It programmed the bitstream and manifest to slot 4 and refreshed successfully;
+option storage was preserved.
+
+## 2026-08-13 compact MATRIX geometry
+
+The MATRIX controls and column headings retain their established geometry.
+Only the row-label table changed: the five labels now occupy native text rows
+`(16, 21, 26, 31, 36)`, an exact 80-logical-pixel cadence matching the five
+fader rows at y=`250 + 80*n`. All labels keep a common exclusive right edge at
+native column 17, so FREQUENCY and RESONANCE begin at column 8 while WIDTH,
+SLOPE, and DRIVE begin at column 12. The visible glyph center carries the
+font's documented one-pixel optical offset relative to the 28px fader panel.
+
+Keep the row centers and the exclusive label edge in shared tables. Do not
+restore the former `(17, 21, 25, 29, 32)` rows: those produced 64/64/64/48px
+spacing and made the apparent error vary down the page. The display regression
+checks exact 80px cadence, the common right edge, and the one-pixel optical
+offset without moving any fader or column heading.
+
+The retained hardware-validation candidate is the native W130 seed-6 route
+recorded as `ROUND21-MATRIX-ROWS-W130-S6` in `BUILD_PERFORMANCE.md`. Its archive
+manifest is `1280x720p60` (unrotated, unscaled). The archive SHA-256 is
+`c4297940060f637ccd7683afe4c1ba0941b5666efbf3f1395a60f7d1f822c44a`;
+its embedded `top.bit` SHA-256 is
+`dd62cf9bba095e858b1d6100b95ee9591f2e8528341b596bb14ef3d94a4b1664`.
+Primary DVI, SYNC, and AUDIO timing pass, but DVI5X reaches only 346.02 MHz
+against 371.33 MHz, so this artifact is for UI validation rather than a clean
+release timing baseline. It programmed the bitstream and manifest to slot 4
+and refreshed successfully; option storage was preserved.
+
+The final source-row centering correction accounts explicitly for the shared
+decoder's one-pixel ROM prefetch. FEEDBACK now samples five logical pixels
+ahead, so the aggregate rendered button interval is exactly x=[42,678) and
+its center is x=360. The passing standard-monitor candidate is the native
+W130 seed-1 route recorded as `ROUND20-FEEDBACK-SOURCE-CENTER-W130-S1` in
+`BUILD_PERFORMANCE.md`. Its archive manifest is `1280x720p60` (unrotated,
+unscaled). The archive SHA-256 is
+`863f4965e2e39c9e7481becb735b25ddd2eff84887eeca6fbc6d60c1689e4d28`;
+its embedded `top.bit` SHA-256 is
+`ed8fff27b8b1ee33d4f40658669b94d67b467ed25ea122fc58bd85b35c6cbe50`.
+It programmed the bitstream and manifest to slot 4 and refreshed successfully;
+option storage was preserved.
+
+## 2026-08-12 compact OUTPUT geometry
+
+OUTPUT uses the same native-center rule as GROUPS. Its row labels occupy native
+text rows `(21, 25, 29, 33)`, whose visible centers are logical y `(342.5,
+406.5, 470.5, 534.5)`. Their uniform 64px cadence avoids the former
+64/48/64px row gaps. Each 28px send cell is placed symmetrically around the
+same half-pixel center, so OUT0 through OUT3 cannot accumulate vertical drift.
+
+The five column centers are logical x `(270.5, 334.5, 398.5, 462.5, 534.5)`.
+G1 through G4 retain their native text starts at columns `(16, 20, 24, 28)`;
+the dynamic DRY writer starts one cell earlier so its three visible glyphs
+center on the fifth value column. Compact send cells are 56px wide on the
+64px G-column cadence, with a 48px interior and three pixels per 0..16 fill
+step. Noncompact OUTPUT geometry is unchanged.
+
+Keep headings, row labels, and cell bounds derived from the shared center
+tables. Do not restore the former scaled logical positions independently: the
+text raster remains native while scaled rectangles round differently, which
+causes both progressive row drift and the visibly displaced DRY heading. The
+display regression samples every row and column center and both cell edges.
+
+The passing standard-monitor candidate is the native W130 seed-10 route
+recorded as `ROUND18-OUTPUT-EVEN-ROWS-W130-S10` in `BUILD_PERFORMANCE.md`. Its
+archive manifest is `1280x720p60` (unrotated, unscaled). The archive SHA-256 is
+`30e6747434d65cd4c2328c5645247e1dde75ca10ae5450341a2f1f5caa10340c`;
+its embedded `top.bit` SHA-256 is
+`d0249cd27b41df2ee985e4c91dfeb6e02026fccb9965754de2627a12a4523293`.
+It programmed the bitstream and manifest to slot 4 and refreshed successfully;
+option storage was preserved.
+
+## 2026-08-12 compact GROUPS geometry
+
+GROUPS vertical geometry is native, like INPUT. The four labels occupy native
+text rows `(20, 23, 26, 29)`, a uniform 48px cadence. Because the font has 14
+visible scanlines followed by two blank scanlines, each glyph's visual center
+is at `row*16 + 6.5`. The corresponding rail occupies native y=`row*16+6..7`,
+so its two-pixel center is the same half-pixel. Each 20px assignment marker is
+symmetrical around that center, spanning y=`center-9..center+10`; its disabled
+ghost edges are the first and final two pixels.
+
+Do not restore the old `305 + group*64` logical rails or `294 + group*64`
+logical markers. The compact lookup turns that 64-logical-pixel cadence into
+45.16 physical pixels while labels remain constrained to a 16px native text
+grid, making progressive row misalignment unavoidable. Keep the label rows,
+rail centers, marker bounds, and the GROUPS geometry regression test derived
+from the shared native center table.
+
+The passing standard-monitor candidate is the native W130 seed-1 route
+recorded as `ROUND16-GROUPS-NATIVE-Y-W130-S1` in `BUILD_PERFORMANCE.md`. Its
+archive manifest is `1280x720p60` (unrotated, unscaled). The archive SHA-256 is
+`98087b13b23f541b50bf7835b151ab57bf06ba2d01e9580cf368bec1be9e1536`;
+its embedded `top.bit` SHA-256 is
+`db69e9ee34534655a32a98cae0ef3c4e0fd47f375f87ec6e88ac5ce2684ccb5e`.
+It programmed the bitstream and manifest to slot 4 and refreshed successfully;
+option storage was preserved.
+
 ## 2026-08-05 UI polish pass
 
 The hardware review led to a consistency and legibility pass:
