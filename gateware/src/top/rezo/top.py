@@ -4421,14 +4421,15 @@ class RezoTileDisplay(wiring.Component):
             put(6, "HZ", 26, 22)
 
             # CLOCK is REZOMO-specific, but follows the same native row grid
-            # as the shared pages.  Stack the conditional controls below the
-            # common controls so no two-column legacy geometry can escape the
-            # 508px safe square.
-            put(7, "MODE", 14, 14)
-            put(7, "DIRECTION", 10, 17)
-            put(7, "SOURCE", 13, 20)
-            put(7, "BPM", 16, 23)
-            put(7, "DEPTH", 13, 26)
+            # as the shared pages.  Every possible control occupies one row
+            # of a 32px-pitch stack.  Labels end at column 18 and values begin
+            # at column 19, so neither field depends on the label's length.
+            put(7, "CLOCKED SETTINGS", 8, 12)
+            put(7, "MODE", 14, 16)
+            put(7, "DIRECTION", 9, 18)
+            put(7, "SOURCE", 12, 20)
+            put(7, "BPM", 15, 22)
+            put(7, "DEPTH", 13, 24)
         else:
             put(0, "PRESET", 2, 7)
             put(0, "BANDS", 2, 11)
@@ -4935,7 +4936,7 @@ class RezoTileDisplay(wiring.Component):
                 with m.Case(77 + pos):
                     m.d.comb += [
                         writer_address.eq(writer_cell(
-                            7, 14, 19 + pos, 7, 9 + pos)),
+                            7, 16, 19 + pos, 7, 9 + pos)),
                         writer_char.eq(
                             algorithm_chars[pos][clock_algorithm_sync]),
                     ]
@@ -4943,7 +4944,7 @@ class RezoTileDisplay(wiring.Component):
                 with m.Case(85 + pos):
                     m.d.comb += [
                         writer_address.eq(writer_cell(
-                            7, 17, 19 + pos, 15, 12 + pos)),
+                            7, 18, 19 + pos, 15, 12 + pos)),
                         writer_char.eq(Mux(
                             clock_algorithm_sync ==
                             RezoCore.CLOCK_ALGORITHM_WALK,
@@ -4962,7 +4963,7 @@ class RezoTileDisplay(wiring.Component):
                 with m.Case(105 + pos):
                     m.d.comb += [
                         writer_address.eq(writer_cell(
-                            7, 23, 19 + pos, 25, 15 + pos)),
+                            7, 22, 19 + pos, 25, 15 + pos)),
                         writer_char.eq(
                             bpm_label_rport.data.word_select(pos, 6)),
                     ]
@@ -5008,7 +5009,7 @@ class RezoTileDisplay(wiring.Component):
                                 self.code("LENGTH"[pos]), 0)
                         m.d.comb += [
                             writer_address.eq(writer_cell(
-                                7, 29 + row * 2, 12 + pos,
+                                7, 26 + row * 2, 12 + pos,
                                 15 + row * 5, 24 + pos)),
                             writer_char.eq(label_char),
                         ]
@@ -5059,7 +5060,7 @@ class RezoTileDisplay(wiring.Component):
                                     turing_length_sync - 2], 0)
                         m.d.comb += [
                             writer_address.eq(writer_cell(
-                                7, 29 + row * 2, 19 + pos,
+                                7, 26 + row * 2, 19 + pos,
                                 15 + row * 5, 32 + pos)),
                             writer_char.eq(value_char),
                         ]
@@ -5277,62 +5278,62 @@ class RezoTileDisplay(wiring.Component):
         clock_value_x1 = 576 if self.compact_layout else 352
         clock_algorithm_chip = clock_page & self.rect(
             x, y, 304 if self.compact_layout else 136,
-            224 if self.compact_layout else 100,
+            252 if self.compact_layout else 100,
             576 if self.compact_layout else 272,
-            244 if self.compact_layout else 138)
+            276 if self.compact_layout else 138)
         clock_direction_chip = clock_page & self.rect(
             x, y, clock_value_x0,
-            272 if self.compact_layout else 228,
+            284 if self.compact_layout else 228,
             clock_value_x1,
-            292 if self.compact_layout else 268)
+            308 if self.compact_layout else 268)
         clock_source_chip = clock_page & self.rect(
             x, y, clock_value_x0,
-            320 if self.compact_layout else 308,
+            316 if self.compact_layout else 308,
             clock_value_x1,
             340 if self.compact_layout else 348)
         clock_rate_chip = clock_page & self.rect(
             x, y, clock_value_x0,
-            368 if self.compact_layout else 388,
+            348 if self.compact_layout else 388,
             clock_value_x1,
-            388 if self.compact_layout else 428)
+            372 if self.compact_layout else 428)
         clock_depth_chip = clock_page & self.rect(
             x, y, 304 if self.compact_layout else 168,
-            416 if self.compact_layout else 476,
+            380 if self.compact_layout else 476,
             576 if self.compact_layout else 680,
-            436 if self.compact_layout else 500)
+            404 if self.compact_layout else 500)
         clock_depth_fill = Mux(
             self.compact_layout,
             clock_page & compact_fader_x_valid &
             (compact_fader_threshold <= self.clock_depth) &
-            (y >= 418) & (y < 434),
+            (y >= 382) & (y < 402),
             clock_page & self.rect(
                 x, y, 168, 480, 168 + (self.clock_depth << 2), 496))
         clock_right0_chip = (clock_turing_active | clock_data_active |
                              clock_walk_active) & self.rect(
             x, y,
             304 if self.compact_layout else 512,
-            464 if self.compact_layout else 228,
+            412 if self.compact_layout else 228,
             576 if self.compact_layout else 672,
-            484 if self.compact_layout else 268)
+            436 if self.compact_layout else 268)
         clock_right1_chip = (clock_turing_active | clock_walk_active) & self.rect(
             x, y,
             304 if self.compact_layout else 512,
-            496 if self.compact_layout else 308,
+            444 if self.compact_layout else 308,
             576 if self.compact_layout else 672,
-            516 if self.compact_layout else 348)
+            468 if self.compact_layout else 348)
         clock_right2_chip = (clock_turing_active | clock_walk_active) & self.rect(
             x, y,
             304 if self.compact_layout else 512,
-            528 if self.compact_layout else 388,
+            476 if self.compact_layout else 388,
             576 if self.compact_layout else 672,
-            548 if self.compact_layout else 428)
+            500 if self.compact_layout else 428)
         clock_right3_chip = clock_turing_active & (
             self.turing_target == RezoCore.TURING_TARGET_RANGE) & self.rect(
                 x, y,
                 304 if self.compact_layout else 512,
-                560 if self.compact_layout else 468,
+                508 if self.compact_layout else 468,
                 576 if self.compact_layout else 672,
-                580 if self.compact_layout else 508)
+                532 if self.compact_layout else 508)
         clock_chip = (clock_algorithm_chip | clock_direction_chip |
                       clock_source_chip | clock_rate_chip | clock_depth_chip |
                       clock_right0_chip | clock_right1_chip |
@@ -5340,28 +5341,28 @@ class RezoTileDisplay(wiring.Component):
         if self.compact_layout:
             clock_select = clock_page & (
                 ((self.selected == RezoHardwareUI.TARGET_CLOCK_ALGORITHM) &
-                 self.outline(x, y, 300, 220, 580, 248, t=3)) |
+                 self.outline(x, y, 300, 248, 580, 280, t=3)) |
                 (~clock_walk_active &
                  (self.selected == RezoHardwareUI.TARGET_SHIFT_DIRECTION) &
-                 self.outline(x, y, 300, 268, 580, 296, t=3)) |
+                 self.outline(x, y, 300, 280, 580, 312, t=3)) |
                 ((self.selected == RezoHardwareUI.TARGET_CLOCK_SOURCE) &
-                 self.outline(x, y, 300, 316, 580, 344, t=3)) |
+                 self.outline(x, y, 300, 312, 580, 344, t=3)) |
                 ((self.selected == RezoHardwareUI.TARGET_CLOCK_RATE) &
-                 self.outline(x, y, 300, 364, 580, 392, t=3)) |
+                 self.outline(x, y, 300, 344, 580, 376, t=3)) |
                 ((self.selected == RezoHardwareUI.TARGET_CLOCK_DEPTH) &
-                 self.outline(x, y, 300, 412, 580, 440, t=3)) |
+                 self.outline(x, y, 300, 376, 580, 408, t=3)) |
                 ((clock_data_active &
                   (self.selected == RezoHardwareUI.TARGET_DATA_SOURCE) |
                   clock_turing_active &
                   (self.selected == RezoHardwareUI.TARGET_TURING_CHANGE) |
                   clock_walk_active &
                   (self.selected == RezoHardwareUI.TARGET_WALK_STYLE)) &
-                 self.outline(x, y, 300, 460, 580, 488, t=3)) |
+                 self.outline(x, y, 300, 408, 580, 440, t=3)) |
                 ((clock_turing_active &
                   (self.selected == RezoHardwareUI.TARGET_TURING_TARGET) |
                   clock_walk_active &
                   (self.selected == RezoHardwareUI.TARGET_WALK_DRUNK)) &
-                 self.outline(x, y, 300, 492, 580, 520, t=3)) |
+                 self.outline(x, y, 300, 440, 580, 472, t=3)) |
                 ((clock_turing_active &
                   (self.turing_target == RezoCore.TURING_TARGET_RANGE) &
                   (self.selected == RezoHardwareUI.TARGET_TURING_START) |
@@ -5370,11 +5371,11 @@ class RezoTileDisplay(wiring.Component):
                   (self.selected == RezoHardwareUI.TARGET_TURING_LENGTH) |
                   clock_walk_active &
                   (self.selected == RezoHardwareUI.TARGET_WALK_CHANCE)) &
-                 self.outline(x, y, 300, 524, 580, 552, t=3)) |
+                 self.outline(x, y, 300, 472, 580, 504, t=3)) |
                 (clock_turing_active &
                  (self.turing_target == RezoCore.TURING_TARGET_RANGE) &
                  (self.selected == RezoHardwareUI.TARGET_TURING_LENGTH) &
-                 self.outline(x, y, 300, 556, 580, 584, t=3)))
+                 self.outline(x, y, 300, 504, 580, 536, t=3)))
         else:
             clock_select = clock_page & (
             ((self.selected == RezoHardwareUI.TARGET_CLOCK_ALGORITHM) &

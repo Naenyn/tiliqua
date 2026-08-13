@@ -5,6 +5,7 @@ from top.rezo.top import RezoCore, RezoTileDisplay
 
 def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
                     clock_algorithm=RezoCore.CLOCK_ALGORITHM_SHIFT,
+                    turing_target=RezoCore.TURING_TARGET_ALL,
                     band_enables=(), feedback_sends=(), input_gains=()):
     """Render settled pixels from the native REZOMO coordinate space."""
     dut = RezoTileDisplay(
@@ -20,6 +21,7 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
     async def bench(ctx):
         ctx.set(dut.page, page)
         ctx.set(dut.clock_algorithm, clock_algorithm)
+        ctx.set(dut.turing_target, turing_target)
         for index, value in enumerate(band_enables):
             ctx.set(dut.band_enables[index], value)
         for index, value in enumerate(feedback_sends):
@@ -72,19 +74,21 @@ def test_interactive_content_stays_inside_the_508_pixel_safe_square():
 
 def test_clock_editor_uses_native_stacked_control_rows():
     points = (
-        (320, 230),  # algorithm value
-        (320, 280),  # direction value
+        (320, 260),  # algorithm value
+        (320, 292),  # direction value
         (320, 328),  # source value
-        (320, 376),  # BPM value
-        (320, 424),  # depth rail
-        (320, 472),  # algorithm-specific row
-        (320, 536),  # third algorithm-specific row
+        (320, 356),  # BPM value
+        (320, 388),  # depth rail
+        (320, 420),  # algorithm-specific row
+        (320, 484),  # third algorithm-specific row
+        (320, 516),  # fourth algorithm-specific row
     )
     panel = RezoTileDisplay.PALETTE["panel"]
     assert _render_samples(
         points=points,
         page=7,
         clock_algorithm=RezoCore.CLOCK_ALGORITHM_TURING,
+        turing_target=RezoCore.TURING_TARGET_RANGE,
     ) == [
         (panel, panel, panel),
     ] * len(points)
