@@ -15,6 +15,8 @@ builds. Keep failed experiments: placement seed sensitivity is material at
 - Resource figures and frequencies come from the final `top.tim` report.
 - Required clocks: DVI5X 371.33 MHz, AUDIO 49.15 MHz, SYNC 60.00 MHz,
   DVI 74.25 MHz.
+- The official circular target uses `720x720p60r2`, requiring DVI5X 195.35
+  MHz, AUDIO 49.15 MHz, SYNC 60.00 MHz, and DVI 39.07 MHz.
 
 The formal optimization baseline is **OPT-BASE** below. New feature builds
 should be compared against its 21,668 packed cells and 2,620 free cells while
@@ -114,6 +116,11 @@ also passing every constrained clock.
 | **CLOCK-UI-ALIGN-S9** | **One shared MODE box, narrower two-column controls, left labels inset one cell; optimized DEPTH slider retained** | **9** | **20,737** | **24,081** | **207** | **6,519** | **18** | **389.11** | **76.61** | **61.24** | **79.29** | **PASS; flashed slot 4** |
 | **REZOMO-RENAME-S9** | **Clocked variant renamed in both renderers and manifest; `rezomo` build alias; no DSP or layout change** | **9** | **20,737** | **24,081** | **207** | **6,519** | **18** | **418.24** | **77.02** | **60.10** | **76.07** | **PASS; pre-commit release candidate, not flashed** |
 | **REZOMO-BACKPORT-S8** | **STREZO input meters, eight-bit display telemetry, 1/8 continuous-control acceleration, and serialized OUTPUT row/column edits** | **8** | **20,851** | **24,113** | **175** | **6,931** | **19** | **384.91** | **74.34** | **61.78** | **78.03** | **PASS; flashed slot 4 for validation** |
+| REZOMO-NATIVE-STANDARD-S8 | Native 720 coordinate renderer; centered, unscaled 1280x720 preview | 8 | 20,784 | 24,076 | 212 | 6,983 | 20 | 331.46 | 75.25 | 58.22 | 69.53 | FAIL DVI5X, SYNC, and DVI |
+| **REZOMO-NATIVE-STANDARD-S9** | **Same native renderer; centered, unscaled 1280x720 preview** | **9** | **20,784** | **24,076** | **212** | **6,983** | **20** | **437.25** | **71.66** | **63.76** | **74.65** | **PASS; retained standard route** |
+| REZOMO-NATIVE-ROUND-S9 | Native renderer; 720x720p60r2 with panel-mount rotation | 9 | 20,784 | 24,076 | 212 | 6,983 | 20 | 432.71 | 70.99 | 59.72 | 77.39 | FAIL SYNC by 0.28 MHz |
+| REZOMO-NATIVE-ROUND-S5 | Same official-screen target | 5 | 20,784 | 24,076 | 212 | 6,983 | 20 | — | — | 59.98 | — | FAIL SYNC by 0.02 MHz |
+| **REZOMO-NATIVE-ROUND-S6** | **Same official-screen target** | **6** | **20,784** | **24,076** | **212** | **6,983** | **20** | **335.23** | **72.78** | **61.41** | **80.85** | **PASS; retained official-screen route** |
 
 ## Notes
 
@@ -122,6 +129,12 @@ also passing every constrained clock.
 - DVI5X timing is dominated by the existing TMDS serializer and is highly
   placement-sensitive. A feature can leave REZO logic timing healthy while a
   particular seed fails the independent serializer path.
+- The native renderer adds two display lookup memories over the backport
+  baseline: one maps shared horizontal-fader pixels to parameter values and
+  one holds INPUT row geometry. Standard and official-screen builds require
+  different measured seeds because their video clocks and rotation paths
+  produce different placement solutions. The normal commands now default to
+  seed 9 and seed 6 respectively.
 - CLOCK-DEPTH-SLIDER-S8 removes the dynamic three-character numeric DEPTH
   label and its text-writer scan slots. The replacement geometry uses the
   existing 0--16 value as a five-bit left shift, yielding a 512-pixel interior

@@ -40,6 +40,24 @@ artifact is to be flashed during this unattended migration. Final archives
 must be qualified by display mode in their filenames and both routes must be
 recorded in `BUILD_PERFORMANCE.md`.
 
+The migration is implemented as of the 2026-08-13 candidate. The native
+renderer owns the 720x720 coordinate system and transforms only its final
+pixel address: standard output adds a 280-pixel horizontal canvas offset,
+while the official target applies the 90-degree panel correction. Neither
+path scales geometry. The native CLOCK page is stacked to keep all controls
+inside the safe square; its values, target IDs, and clock algorithms are
+unchanged. Shared BANK, INPUT, GROUPS, OUTPUT, FEEDBACK, OPTIONS, and BANDS
+pages use the same final-pixel layout rules proven on REZO.
+
+Display regressions cover the safe-square border, blank pixels beyond the
+safe square, native CLOCK row placement, and pixel equivalence between the
+standard preview and the rotated official target. The complete REZO/REZOMO
+regression set passes. The first retained dirty routes are standard seed 9
+(437.25 MHz DVI5X, 71.66 MHz AUDIO, 63.76 MHz SYNC, 74.65 MHz DVI) and round
+seed 6 (335.23 MHz DVI5X, 72.78 MHz AUDIO, 61.41 MHz SYNC, 80.85 MHz DVI).
+Seed defaults are target-specific and encoded in their entry points; an
+explicit `TILIQUA_REZO_SEED` still overrides either for experiments.
+
 ## 2026-08-07 REZOMO release candidate
 
 The clocked variant now has its own operator-facing identity: **REZOMO**. The
