@@ -89,6 +89,11 @@ rotation and no enlargement. Only the 720x720 circular target applies the
 | NATIVE720-U10-W130-S4 | Native page geometry with unsigned 10-bit renderer coordinates | 4 | 24,039 | 249 | 6,878 | 22 | 359.07 | 70.38 | 59.59 | 73.77 | FAIL DVI5X, SYNC, and DVI |
 | NATIVE720-U10-W130-S6 | Exact optimized JSON reroute | 6 | 24,039 | 249 | 6,878 | 22 | 411.86 | 71.06 | 59.16 | 78.09 | FAIL SYNC by 0.84 MHz |
 | **NATIVE720-U10-W130-S1** | Exact optimized JSON reroute; all pages authored in final native coordinates | **1** | **24,039** | **249** | **6,878** | **22** | **414.94** | **71.35** | **63.24** | **77.54** | **PASS; flashed slot 4** |
+| CIRCULAR720-U10-W130-S1 | Official 720x720p60r2 modeline, rotated output; exact circular netlist | 1 | 23,991 | 297 | 6,878 | 22 | 423.19 | 72.19 | 56.21 | 76.50 | FAIL SYNC |
+| CIRCULAR720-U10-W130-S4 | Exact circular JSON reroute | 4 | 23,991 | 297 | 6,878 | 22 | 414.59 | 75.14 | 55.16 | 69.83 | FAIL SYNC |
+| CIRCULAR720-U10-W130-S6 | Exact circular JSON reroute | 6 | 23,991 | 297 | 6,878 | 22 | 386.85 | 69.03 | 57.20 | 75.80 | FAIL SYNC |
+| CIRCULAR720-U10-W130-S2 | Exact circular JSON reroute | 2 | 23,991 | 297 | 6,878 | 22 | — | — | — | — | Route stopped after pathological final congestion; pre-route SYNC 55.87 MHz |
+| **CIRCULAR720-U10-W130-S8** | **Official 720x720p60r2 modeline; exact circular JSON reroute; rotated, unscaled native UI** | **8** | **23,991** | **297** | **6,878** | **22** | **326.80** | **71.40** | **60.18** | **75.00** | **PASS; packaged only, not flashed** |
 
 ROUND21 also explored native seeds 2, 3, 4, 5, 7, 8, 9, 10, and 11.
 Seeds 2 and 3 entered prolonged final-router congestion; seeds 4, 5, 7, 8,

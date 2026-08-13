@@ -93,6 +93,20 @@ its embedded `top.bit` SHA-256 is
 `4e07ea10446c4ff9cf62061e8129a6149e93a7f5e4accef94337f16c7bc50abb`.
 Option storage was preserved.
 
+The official-display `720x720p60r2` archive was then built from the same
+committed native UI at `736d99f6`. Seed 8 is the retained route. It uses 23,991
+packed cells (297 free), 6,878 FFs, and 22 BRAMs. All clocks pass at the
+circular modeline's requirements: DVI5X 326.80 MHz (required 195.35), AUDIO
+71.40 MHz (required 49.15), SYNC 60.18 MHz (required 60.00), and DVI 75.00 MHz
+(required 39.07). The archive is
+`build/rezo-r5/rezo-736d99f6-r5.tar.gz`; its SHA-256 is
+`c3c1844006b0d5dcd961f40812f85ce08984d8185ebe0d2a2cd125dca8efdc92`,
+and its embedded `top.bit` SHA-256 is
+`ba9f8b9e2804fdf89c111d4d53673287ad6b2e4f4a81492c423123e715181ed8`.
+The manifest identifies `720x720p60r2`; the renderer is rotated for the panel
+mount and is not scaled. This archive was packaged and verified but was not
+flashed to the standard-display development unit.
+
 The dated compact-geometry sections below record the photo-driven evolution
 of the UI. Values described as "logical" or as 720-to-508 mappings are
 historical and must not be used as the current renderer architecture.
