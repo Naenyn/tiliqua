@@ -10,7 +10,7 @@ simplified operator documentation for the release candidate.
 
 REZO has one current display layout, authored for the official Tiliqua
 display. That display is a circular 720x720 panel. Its largest wholly visible
-axis-aligned square is 508x508, centered at upright logical coordinates
+axis-aligned square is 508x508, centered at upright native coordinates
 `x=106..613`, `y=106..613`. All interactive content, page headers, labels,
 controls, selection outlines, and content-panel backgrounds must remain inside
 that square. The `REZO` identity is the sole intentional exception: it may use
@@ -36,6 +36,66 @@ modelines, while `rotate_left` is enabled only when both active dimensions are
 720. In `RezoTileDisplay`, `text_x/text_y` are upright native pixel coordinates;
 the official target applies rotation before rendering, and the standard target
 only subtracts its horizontal centering offset.
+
+### Native coordinate architecture (2026-08-13)
+
+The compact renderer no longer compresses a 720-unit logical layout through a
+720-to-508 coordinate lookup. That model mixed scaled rectangle coordinates
+with native 16px text cells, so independently rounded elements could not stay
+aligned. It also obscured the real target: the official panel itself.
+
+The authoritative coordinate space is now a native upright 720x720 canvas:
+
+- safe-square half-open bounds: `x=[106,614)`, `y=[106,614)`;
+- standard preview transform: `raster_x = native_x + 280`,
+  `raster_y = native_y`;
+- circular-panel transform: mount rotation only;
+- layout scaling: none on either current output.
+
+Every active compact page uses final native pixel coordinates for text,
+panels, faders, buttons, rails, markers, selection outlines, and hit geometry.
+The retained noncompact branches are legacy/reference code only and are not
+selected by `RezoBeamTop`. Do not feed new compact geometry through
+`compact_cell()`, a coordinate ROM, or a per-element scale operation. If a
+future output needs enlargement or reduction, apply one transform to the
+completed 720x720 canvas after rendering.
+
+Current native compact page inventory:
+
+| Page | Shared/native layout rule |
+|---|---|
+| MAIN / BANK | ten native band columns plus three rows from the common five-row lower-control grid |
+| MAIN / FILTER | the same band field and all five rows of the common lower-control grid |
+| FEEDBACK | canonical centered ten-button band row; safety controls share one native left edge |
+| INPUT | four 96px groups; text, value chips, faders, meters, and selection bounds share each group base |
+| GROUPS | four label/rail/marker rows derived from the same native centers |
+| OUTPUT | five column centers and four row centers shared by headings, labels, cells, fills, and selection geometry |
+| OPTIONS | native labels and centered value chips wholly inside the safe square |
+| BANDS | reuses the canonical ten-button row used by FEEDBACK |
+| MATRIX | five text/fader rows derived from one native row table; three headings derived from the value-column geometry |
+
+`gateware/tests/test_rezo_display.py` guards the output transform, exact 508px
+border, shared row/column centers, INPUT lane behavior, reusable band-button
+geometry, and representative page bounds. Update those invariants together
+with any intentional geometry change.
+
+The first complete native-page candidate is the `abc9 -W 130` seed-1 route
+recorded as `NATIVE720-U10-W130-S1` in `BUILD_PERFORMANCE.md`. It uses 24,039
+packed cells (249 free), 6,878 FFs, and 22 BRAMs. All four required clocks pass:
+DVI5X 414.94 MHz, AUDIO 71.35 MHz, SYNC 63.24 MHz, and DVI 77.54 MHz. The
+renderer coordinates are deliberately unsigned 10-bit native coordinates;
+making them signed 11-bit values adds nearly one thousand packed cells through
+wider signed comparisons.
+The standard `1280x720p60` archive was flashed successfully to slot 4. Its
+archive SHA-256 is
+`a734edbe15cabbf2290990159786fdb3c0b818b8ee7a739ba8965d07c52f05dd` and
+its embedded `top.bit` SHA-256 is
+`4e07ea10446c4ff9cf62061e8129a6149e93a7f5e4accef94337f16c7bc50abb`.
+Option storage was preserved.
+
+The dated compact-geometry sections below record the photo-driven evolution
+of the UI. Values described as "logical" or as 720-to-508 mappings are
+historical and must not be used as the current renderer architecture.
 
 ## 2026-08-12 compact MAIN geometry
 

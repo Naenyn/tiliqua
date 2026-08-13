@@ -85,6 +85,10 @@ rotation and no enlargement. Only the 720x720 circular target applies the
 | ROUND21-MATRIX-ROWS-BUNDLED-S1 | MATRIX labels moved to one exact 80px native cadence; bundled Yosys 0.52 | 1 | — | — | 6,868 | 23 | — | — | — | — | Route stopped after prolonged congestion; not retained |
 | ROUND21-MATRIX-ROWS-W130-S1 | Native W130 mapping; exact MATRIX row centers | 1 | 23,374 | 914 | 6,861 | 23 | 389.11 | 68.84 | 61.23 | 70.56 | FAIL DVI |
 | **ROUND21-MATRIX-ROWS-W130-S6** | **Exact native W130 JSON rerouted; MATRIX labels share the five fader-row centers** | **6** | **23,374** | **914** | **6,861** | **23** | **346.02** | **72.88** | **63.91** | **76.17** | **DVI5X timing miss; packaged for hardware UI validation** |
+| NATIVE720-PAGES-W130-S4 | All compact pages authored directly in the native 720x720 canvas; coordinate-map BRAM removed | 4 | 24,266 | 22 | 6,888 | 22 | 341.53 | 72.71 | 64.33 | 73.50 | FAIL DVI5X and DVI |
+| NATIVE720-U10-W130-S4 | Native page geometry with unsigned 10-bit renderer coordinates | 4 | 24,039 | 249 | 6,878 | 22 | 359.07 | 70.38 | 59.59 | 73.77 | FAIL DVI5X, SYNC, and DVI |
+| NATIVE720-U10-W130-S6 | Exact optimized JSON reroute | 6 | 24,039 | 249 | 6,878 | 22 | 411.86 | 71.06 | 59.16 | 78.09 | FAIL SYNC by 0.84 MHz |
+| **NATIVE720-U10-W130-S1** | Exact optimized JSON reroute; all pages authored in final native coordinates | **1** | **24,039** | **249** | **6,878** | **22** | **414.94** | **71.35** | **63.24** | **77.54** | **PASS; flashed slot 4** |
 
 ROUND21 also explored native seeds 2, 3, 4, 5, 7, 8, 9, 10, and 11.
 Seeds 2 and 3 entered prolonged final-router congestion; seeds 4, 5, 7, 8,

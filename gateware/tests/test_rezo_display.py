@@ -93,8 +93,48 @@ def test_compact_round_layout_keeps_native_text_and_uses_top_arc():
     ]
 
 
-def test_compact_labels_use_inner_gutter_and_scaled_control_rows():
-    """Compact text remains inside the field and tracks scaled geometry."""
+def test_compact_safe_square_has_exact_native_508px_bounds():
+    """The page outline is authored directly at [106,614), not rescaled."""
+    dut = RezoTileDisplay(
+        h_active=720, rotate_left=False, compact_layout=True)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6, domain="sync")
+    sim.add_clock(1e-6, domain="dvi")
+    samples = []
+
+    async def sample(ctx, native_x, native_y):
+        ctx.set(dut.x, native_x)
+        ctx.set(dut.y, native_y)
+        ctx.set(dut.de, 1)
+        for _ in range(12):
+            await ctx.tick("dvi")
+        samples.append(ctx.get(dut.r))
+
+    async def bench(ctx):
+        await sample(ctx, 105, 360)
+        await sample(ctx, 106, 360)
+        await sample(ctx, 613, 360)
+        await sample(ctx, 614, 360)
+        await sample(ctx, 360, 105)
+        await sample(ctx, 360, 106)
+        await sample(ctx, 360, 613)
+        await sample(ctx, 360, 614)
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    palette = RezoTileDisplay.PALETTE
+    assert 614 - 106 == 508
+    assert samples == [
+        palette["blank"], palette["line"],
+        palette["line"], palette["blank"],
+        palette["blank"], palette["line"],
+        palette["line"], palette["blank"],
+    ]
+
+
+def test_compact_labels_use_native_control_rows():
+    """Compact text and geometry share final 720-canvas pixel coordinates."""
     dut = RezoTileDisplay(
         h_active=720, rotate_left=True, compact_layout=True)
     sim = Simulator(dut)
@@ -117,7 +157,7 @@ def test_compact_labels_use_inner_gutter_and_scaled_control_rows():
         for _ in range(240):
             await ctx.tick("sync")
 
-        # BANK labels share the x=272 right edge of the fader gutter.
+        # BANK labels share the native x=272 right edge of the fader gutter.
         await sample(ctx, 12 * 16, 448)       # DRIVE
         await sample(ctx, 10 * 16, 448)       # old, too-far-left start
 
@@ -127,9 +167,9 @@ def test_compact_labels_use_inner_gutter_and_scaled_control_rows():
         await sample(ctx, 8 * 16, 448)        # FREQUENCY
         await sample(ctx, 160, 592)          # below RESONANCE, inside field
 
-        # MATRIX row rounding follows the scaled 80-logical-pixel cadence.
+        # MATRIX uses the same native 64px row cadence for text and controls.
         ctx.set(dut.page, 2)
-        await sample(ctx, 8 * 16, 16 * 16)   # FREQUENCY
+        await sample(ctx, 8 * 16, 18 * 16)   # FREQUENCY
 
         # Dynamic INPUT targets align with the value-only CV chip. Labels to
         # its left remain on the unshaded field.
@@ -158,13 +198,9 @@ def test_compact_input_groups_and_enable_buttons_share_requested_geometry():
     sim.add_clock(1e-6, domain="dvi")
     samples = []
 
-    def physical(logical):
-        # First physical pixel whose compact lookup reaches ``logical``.
-        return 106 + (logical * 508 + 719) // 720
-
-    async def sample(ctx, logical_x, logical_y):
-        ctx.set(dut.x, physical(logical_x))
-        ctx.set(dut.y, physical(logical_y))
+    async def sample(ctx, native_x, native_y):
+        ctx.set(dut.x, native_x)
+        ctx.set(dut.y, native_y)
         ctx.set(dut.de, 1)
         for _ in range(12):
             await ctx.tick("dvi")
@@ -178,9 +214,9 @@ def test_compact_input_groups_and_enable_buttons_share_requested_geometry():
             await ctx.tick("dvi")
         samples.append(ctx.get(dut.r))
 
-    async def sample_input(ctx, logical_x, native_y):
-        """INPUT x remains logical; its vertical lanes share native text y."""
-        ctx.set(dut.x, physical(logical_x))
+    async def sample_input(ctx, native_x, native_y):
+        """INPUT lanes and text use the same native raster coordinates."""
+        ctx.set(dut.x, native_x)
         ctx.set(dut.y, native_y)
         ctx.set(dut.de, 1)
         for _ in range(12):
@@ -195,24 +231,24 @@ def test_compact_input_groups_and_enable_buttons_share_requested_geometry():
         ctx.set(dut.input_meters[1], -10)
         for _ in range(260):
             await ctx.tick("sync")
-        await sample_input(ctx, 240, 241)  # MODE label lane is unshaded.
-        await sample_input(ctx, 300, 230)  # MODE value has a native chip.
+        await sample_input(ctx, 280, 241)  # MODE label lane is unshaded.
+        await sample_input(ctx, 400, 230)  # MODE chip, clear of text glyphs.
         await sample_input(ctx, 400, 260)  # AUD VALUE fader occupies its lane.
         await sample_input(ctx, 400, 271)  # AUD monitor follows VALUE.
         await sample_input(ctx, 400, 292)  # AUD DEPTH remains absent.
-        await sample_input(ctx, 320, 356)  # CV target has a native chip.
+        await sample_input(ctx, 368, 356)  # CV target chip, clear of glyphs.
         await sample_input(ctx, 400, 390)  # CV DEPTH fader occupies its lane.
-        await sample_input(ctx, 460, 399)  # CV monitor follows DEPTH.
+        await sample_input(ctx, 430, 399)  # CV monitor follows DEPTH.
         await sample_native(ctx, 13 * 16, 18 * 16)  # AUD DEPTH label hidden.
         await sample_native(ctx, 13 * 16, 24 * 16)  # CV DEPTH label visible.
 
         ctx.set(dut.page, 1)
         ctx.set(dut.band_enables[0], 1)
         ctx.set(dut.feedback_sends[0], 1)
-        await sample(ctx, 60, 253)   # FEEDBACK full-height button fill
+        await sample(ctx, 145, 290)  # FEEDBACK full-height button fill
         ctx.set(dut.page, 6)
         ctx.set(dut.band_enables[0], 1)
-        await sample(ctx, 60, 253)   # BANDS now matches FEEDBACK
+        await sample(ctx, 145, 290)  # BANDS now matches FEEDBACK
 
     sim.add_testbench(bench)
     sim.run()
@@ -236,11 +272,8 @@ def test_compact_group_rails_share_native_label_centers():
     sim.add_clock(1e-6, domain="dvi")
     samples = []
 
-    def physical(logical):
-        return 106 + (logical * 508 + 719) // 720
-
-    async def sample(ctx, logical_x, native_y):
-        ctx.set(dut.x, physical(logical_x))
+    async def sample(ctx, native_x, native_y):
+        ctx.set(dut.x, native_x)
         ctx.set(dut.y, native_y)
         ctx.set(dut.de, 1)
         for _ in range(12):
@@ -252,8 +285,8 @@ def test_compact_group_rails_share_native_label_centers():
         # Text rows 20/23/26/29 have visible-glyph centers at +6.5px.
         # Each rail occupies the two pixels straddling that same center.
         for center_y in (326, 374, 422, 470):
-            await sample(ctx, 620, center_y)
-            await sample(ctx, 620, center_y - 2)
+            await sample(ctx, 560, center_y)
+            await sample(ctx, 560, center_y - 2)
 
     sim.add_testbench(bench)
     sim.run()
@@ -276,9 +309,6 @@ def test_compact_feedback_sources_and_safety_share_centered_geometry():
     sim.add_clock(1e-6, domain="dvi")
     samples = []
 
-    def physical(logical):
-        return 106 + (logical * 508 + 719) // 720
-
     async def sample(ctx, physical_x, physical_y):
         ctx.set(dut.x, physical_x)
         ctx.set(dut.y, physical_y)
@@ -293,29 +323,25 @@ def test_compact_feedback_sources_and_safety_share_centered_geometry():
         for _ in range(260):
             await ctx.tick("sync")
 
-        # KNEE and CEILING panels begin at logical x=230 and end at 654.
-        await sample(ctx, physical(230), physical(420))
-        await sample(ctx, physical(229), physical(420))
-        await sample(ctx, physical(653), physical(420))
-        await sample(ctx, physical(654), physical(420))
+        # KNEE and CEILING panels occupy native x=[268,567).
+        await sample(ctx, 268, 405)
+        await sample(ctx, 260, 405)
+        await sample(ctx, 566, 405)
+        await sample(ctx, 574, 405)
 
         # DAMPING's native chip starts on the same physical x edge.
         await sample(ctx, 268, 470)
-        await sample(ctx, 267, 470)
+        await sample(ctx, 260, 470)
 
     sim.add_testbench(bench)
     sim.run()
 
     palette = RezoTileDisplay.PALETTE
-    # The decoder's one-pixel prefetch gives the ten fills an aggregate address
-    # interval [47, 683).  FEEDBACK's five-pixel lookup translation therefore
-    # renders [42, 678), exactly centred on the 720px panel.
-    decoder_x0, decoder_x1 = 47, 683
-    translation = 5
-    rendered_x0 = decoder_x0 - translation
-    rendered_x1 = decoder_x1 - translation
-    assert (rendered_x0, rendered_x1) == (42, 678)
-    assert (rendered_x0 + rendered_x1) // 2 == 360
+    # Ten 30px buttons and nine 17px gutters occupy one reusable native row.
+    rendered_x0, rendered_x1 = 133, 586
+    assert rendered_x1 - rendered_x0 == 10 * 30 + 9 * 17
+    # On an even-width canvas this odd-width row is centred between pixels.
+    assert rendered_x0 + rendered_x1 == 719
     assert samples == [
         palette["panel"], palette["background"],
         palette["panel"], palette["background"],
