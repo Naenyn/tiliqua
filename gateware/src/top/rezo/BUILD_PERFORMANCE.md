@@ -121,6 +121,10 @@ also passing every constrained clock.
 | REZOMO-NATIVE-ROUND-S9 | Native renderer; 720x720p60r2 with panel-mount rotation | 9 | 20,784 | 24,076 | 212 | 6,983 | 20 | 432.71 | 70.99 | 59.72 | 77.39 | FAIL SYNC by 0.28 MHz |
 | REZOMO-NATIVE-ROUND-S5 | Same official-screen target | 5 | 20,784 | 24,076 | 212 | 6,983 | 20 | — | — | 59.98 | — | FAIL SYNC by 0.02 MHz |
 | **REZOMO-NATIVE-ROUND-S6** | **Same official-screen target** | **6** | **20,784** | **24,076** | **212** | **6,983** | **20** | **335.23** | **72.78** | **61.41** | **80.85** | **PASS; retained official-screen route** |
+| REZOMO-UI-POLISH-S9 | `1fe69409`; centered value chips, shared enable-button geometry, bounded INPUT gain fader | 9 | 20,699 | 23,971 | 317 | 6,983 | 20 | — | — | — | 69.50 | FAIL DVI |
+| REZOMO-UI-POLISH-S6 | Exact committed UI-polish RTL | 6 | 20,699 | 23,971 | 317 | 6,983 | 20 | 337.27 | — | — | — | FAIL DVI5X |
+| REZOMO-UI-POLISH-S8 | Exact committed UI-polish RTL | 8 | 20,699 | 23,971 | 317 | 6,983 | 20 | — | — | 54.53 | — | FAIL SYNC |
+| **REZOMO-UI-POLISH-S4** | **`1fe69409`; exact committed UI-polish RTL** | **4** | **20,699** | **23,971** | **317** | **6,983** | **20** | **391.08** | **72.01** | **60.98** | **77.83** | **PASS; standard archive flashed slot 4** |
 
 ## Notes
 
@@ -135,6 +139,12 @@ also passing every constrained clock.
   different measured seeds because their video clocks and rotation paths
   produce different placement solutions. The normal commands now default to
   seed 9 and seed 6 respectively.
+- REZOMO-UI-POLISH-S4 keeps the native coordinate renderer unchanged while
+  centering the BANK, FEEDBACK, and OPTIONS value chips, making BANDS use the
+  FEEDBACK enable-button geometry, and constraining the INPUT audio-gain fill
+  to its native bounding box. Seeds 9, 6, and 8 each missed a different video
+  domain; seed 4 passes all four constrained clocks and is the retained
+  1280x720 route.
 - CLOCK-DEPTH-SLIDER-S8 removes the dynamic three-character numeric DEPTH
   label and its text-writer scan slots. The replacement geometry uses the
   existing 0--16 value as a five-bit left shift, yielding a 512-pixel interior
