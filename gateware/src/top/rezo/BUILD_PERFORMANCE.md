@@ -125,6 +125,7 @@ also passing every constrained clock.
 | REZOMO-UI-POLISH-S6 | Exact committed UI-polish RTL | 6 | 20,699 | 23,971 | 317 | 6,983 | 20 | 337.27 | — | — | — | FAIL DVI5X |
 | REZOMO-UI-POLISH-S8 | Exact committed UI-polish RTL | 8 | 20,699 | 23,971 | 317 | 6,983 | 20 | — | — | 54.53 | — | FAIL SYNC |
 | **REZOMO-UI-POLISH-S4** | **`1fe69409`; exact committed UI-polish RTL** | **4** | **20,699** | **23,971** | **317** | **6,983** | **20** | **391.08** | **72.01** | **60.98** | **77.83** | **PASS; standard archive flashed slot 4** |
+| **REZOMO-CLOCK-LAYOUT-S4** | **`edbc20d9`; one-column CLOCK layout, heading, and uniform row geometry** | **4** | **20,753** | **24,041** | **247** | **6,983** | **20** | **397.14** | **70.67** | **63.77** | **76.45** | **PASS; standard archive flashed slot 4** |
 
 ## Notes
 
@@ -145,6 +146,12 @@ also passing every constrained clock.
   to its native bounding box. Seeds 9, 6, and 8 each missed a different video
   domain; seed 4 passes all four constrained clocks and is the retained
   1280x720 route.
+- REZOMO-CLOCK-LAYOUT-S4 replaces CLOCK's mixed row pitches with one 32-pixel
+  single-column grid. The new CLOCKED SETTINGS heading remains outside the
+  panel, while all common and mode-dependent key/value rows remain inside it.
+  A native-geometry regression test samples every row, including the fourth
+  mode-dependent control. Seed 4 passes every clock and supplies the standard
+  1280x720 archive.
 - CLOCK-DEPTH-SLIDER-S8 removes the dynamic three-character numeric DEPTH
   label and its text-writer scan slots. The replacement geometry uses the
   existing 0--16 value as a five-bit left shift, yielding a 512-pixel interior
