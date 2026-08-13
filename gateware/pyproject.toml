@@ -57,6 +57,7 @@ sid                = "src/top/sid/top.py"
 sampler            = "src/top/sampler/top.py"
 rezo               = "src/top/rezo/top.py"
 rezomo             = "src/top/rezo/top.py"
+rezomo_round       = "src/top/rezo/round.py"
 # (Non-SoC bitstreams)
 dsp                = "src/top/dsp/top.py"
 beamrace           = "src/top/beamrace/top.py"

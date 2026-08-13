@@ -9,6 +9,37 @@ the complete operator documentation for this clocked variant;
 [`REZO_USER_GUIDE.md`](REZO_USER_GUIDE.md) documents the original BANK/FILTER
 bitstream.
 
+## 2026-08-13 native circular-display migration
+
+The REZO renderer at commit `3924b67e` has now been validated successfully on
+the official Tiliqua circular display. Its display contract is therefore the
+authoritative target for REZOMO as well:
+
+- upright native canvas: 720x720 pixels;
+- wholly visible safe square: half-open `x=[106,614)`, `y=[106,614)`, exactly
+  508x508 pixels;
+- standard `1280x720p60`: center the native canvas horizontally, with no
+  rotation and no scaling;
+- official `720x720p60r2`: apply the 90-degree panel-mount correction, with no
+  scaling;
+- the REZOMO identity may occupy the top circular arc, but every interactive
+  page element must remain inside the safe square;
+- all active geometry is authored directly in final native pixel coordinates.
+  Do not reintroduce the historical 720-to-508 coordinate lookup or scale text
+  and rectangles independently.
+
+The migration is intentionally renderer-only. CLOCK DSP, navigation target
+IDs, telemetry, persistence layout, and saved-state migration must remain
+unchanged. Seven shared pages (BANK, FEEDBACK, INPUT, GROUPS, OUTPUT, OPTIONS,
+and BANDS) follow the proven REZO native geometry. CLOCK receives its own
+native slot layout while retaining every algorithm-dependent control.
+
+Build aliases are `pdm run rezomo build --fs-192khz` for the standard preview
+and `pdm run rezomo_round build --fs-192khz` for the official screen. Neither
+artifact is to be flashed during this unattended migration. Final archives
+must be qualified by display mode in their filenames and both routes must be
+recorded in `BUILD_PERFORMANCE.md`.
+
 ## 2026-08-07 REZOMO release candidate
 
 The clocked variant now has its own operator-facing identity: **REZOMO**. The
