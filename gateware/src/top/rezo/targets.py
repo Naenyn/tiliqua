@@ -58,7 +58,7 @@ TARGETS = {
         module="top",
         bitstream_name="REZOMO",
         modeline="1280x720p60",
-        default_seed=3,
+        default_seed=6,
     ),
     "rezomo_round": BuildTarget(
         key="rezomo_round",

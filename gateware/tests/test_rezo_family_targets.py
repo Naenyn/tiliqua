@@ -34,6 +34,10 @@ def test_family_variants_are_selected_before_elaboration():
     assert TARGETS["rezo_round"].module == "rezo_variant"
     assert TARGETS["rezomo"].module == "top"
     assert TARGETS["rezomo_round"].module == "top"
+    assert TARGETS["rezo"].default_seed == 8
+    assert TARGETS["rezo_round"].default_seed == 8
+    assert TARGETS["rezomo"].default_seed == 6
+    assert TARGETS["rezomo_round"].default_seed == 3
 
 
 def test_family_target_lookup_rejects_ambiguous_names():

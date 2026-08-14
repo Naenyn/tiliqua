@@ -22,6 +22,8 @@ artifact through `--skip-build`.
 `TILIQUA_REZO_FAMILY_SEED=<n>` overrides a target's qualified default placement
 seed. The older `TILIQUA_REZO_SEED=<n>` override remains compatible when the
 family-specific variable is unset.
+The qualified defaults are seed 8 for both REZO targets, seed 6 for REZOMO
+standard, and seed 3 for REZOMO circular.
 
 ## Source layout
 
