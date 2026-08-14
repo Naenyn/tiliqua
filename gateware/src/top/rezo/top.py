@@ -6049,14 +6049,40 @@ class RezoTileDisplay(wiring.Component):
             group_page_q & group_band_active_q & group_row_active_q &
             group_row_edge_q & ~group_band_enabled_q)
 
+        # OUTPUT has a fixed 4x5 grid. Decode its column geometry in a small
+        # block ROM instead of keeping five parallel sets of wide
+        # pixel-coordinate comparators in the packed renderer.  The x lookup
+        # prefetches the following pixel, matching the synchronous ROM latency.
+        # Row decoding remains combinational so this change does not add a
+        # second constrained lookup to the floorplan.
+        output_col_init = []
+        for address in range(self.PANEL_W):
+            pixel_x = address + 1
+            encoded = 0
+            for source in range(5):
+                cell_width = 56 if self.compact_layout else 72
+                cell_x0 = (compact_output_col_centers[source] - 27
+                           if self.compact_layout else 188 + source * 96)
+                if cell_x0 <= pixel_x < cell_x0 + cell_width:
+                    encoded = source
+                    encoded |= 1 << 4  # active
+                    if (pixel_x < cell_x0 + 2 or
+                            pixel_x >= cell_x0 + cell_width - 2):
+                        encoded |= 1 << 3  # edge
+                    break
+            output_col_init.append(encoded)
+        m.submodules.output_col_mem = output_col_mem = Memory(
+            shape=unsigned(5), depth=self.PANEL_W, init=output_col_init,
+            attrs={"ram_style": "block"})
+        output_col_rport = output_col_mem.read_port(domain="dvi")
+        m.d.comb += output_col_rport.addr.eq(x.as_unsigned())
+
         output_row = Signal(unsigned(2))
-        output_source = Signal(unsigned(3))
-        output_row_active = Signal()
-        output_col_active = Signal()
+        output_source = output_col_rport.data[:3]
         output_row_edge = Signal()
-        output_col_edge = Signal()
-        output_row_inner = Signal()
-        output_col_inner = Signal()
+        output_row_active = Signal()
+        output_col_edge = output_col_rport.data[3]
+        output_col_active = output_col_rport.data[4]
         m.submodules.output_send_mem = output_send_mem = Memory(
             shape=unsigned(5), depth=20, init=[0] * 20,
             attrs={"ram_style": "block"})
@@ -6072,16 +6098,16 @@ class RezoTileDisplay(wiring.Component):
         output_send_index = Signal(unsigned(5))
         m.d.comb += [
             output_row.eq(0),
-            output_source.eq(0),
             output_row_active.eq(0),
-            output_col_active.eq(0),
             output_row_edge.eq(0),
-            output_col_edge.eq(0),
-            output_row_inner.eq(0),
-            output_col_inner.eq(0),
-            output_cell_x0.eq(188),
+            output_cell_x0.eq(
+                (243 + (output_source << 6) +
+                 Mux(output_source == 4, 8, 0))
+                if self.compact_layout else
+                188 + (output_source << 6) + (output_source << 5)),
             output_cell_y0.eq(326),
-            output_send_index.eq(0),
+            output_send_index.eq(output_source + (output_row << 2) + output_row),
+            output_send_rport.addr.eq(output_send_index),
         ]
         for output in range(4):
             row_y = (compact_output_row_centers[output] - 13
@@ -6091,30 +6117,8 @@ class RezoTileDisplay(wiring.Component):
                     output_row.eq(output),
                     output_row_active.eq(1),
                     output_row_edge.eq((y < row_y + 2) | (y >= row_y + 26)),
-                    output_row_inner.eq((y >= row_y + 5) & (y < row_y + 23)),
                     output_cell_y0.eq(row_y),
                 ]
-        for source in range(5):
-            # Each 72-pixel send is centered beneath its 64-pixel GRP#/DRY
-            # heading. The 64-pixel interior maps the 0..16 send range at
-            # exactly four pixels per step.
-            cell_width = 56 if self.compact_layout else 72
-            cell_x0 = (compact_output_col_centers[source] - 27
-                       if self.compact_layout else 188 + source * 96)
-            with m.If((x >= cell_x0) & (x < cell_x0 + cell_width)):
-                m.d.comb += [
-                    output_source.eq(source),
-                    output_col_active.eq(1),
-                    output_col_edge.eq(
-                        (x < cell_x0 + 2) | (x >= cell_x0 + cell_width - 2)),
-                    output_col_inner.eq(
-                        (x >= cell_x0 + 4) & (x < cell_x0 + cell_width - 4)),
-                    output_cell_x0.eq(cell_x0),
-                ]
-        m.d.comb += [
-            output_send_index.eq(output_source + (output_row << 2) + output_row),
-            output_send_rport.addr.eq(output_send_index),
-        ]
         output_x_q = Signal.like(x)
         output_y_q = Signal.like(y)
         output_x0_q = Signal.like(output_cell_x0)
