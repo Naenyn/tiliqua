@@ -15,9 +15,11 @@ Run commands from `gateware/`:
 | REZOMO | standard 1280x720 | `pdm run rezomo build --fs-192khz` | `rezomo-r5/`, `rezomo-*` |
 | REZOMO | circular 720x720 | `pdm run rezomo_round build --fs-192khz` | `rezomo-round-r5/`, `rezomo-round-*` |
 
-Every target has a distinct manifest name and therefore a distinct build
-directory. A circular `top.bit` cannot be repackaged accidentally as a standard
-artifact through `--skip-build`.
+Every target has a distinct artifact name and therefore a distinct build
+directory and archive filename. Standard and circular builds retain the same
+product name in their manifests and on screen, so output isolation does not
+consume extra FPGA resources. A circular `top.bit` cannot be repackaged
+accidentally as a standard artifact through `--skip-build`.
 
 `TILIQUA_REZO_FAMILY_SEED=<n>` overrides a target's qualified default placement
 seed. The older `TILIQUA_REZO_SEED=<n>` override remains compatible when the

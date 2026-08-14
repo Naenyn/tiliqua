@@ -5964,18 +5964,19 @@ class RezoBeamTop(Elaboratable):
         return m
 
 
-def run_cli(*, name="REZO", modeline=None):
+def run_cli(*, name="REZO", artifact_name=None, modeline=None):
     """Build the non-clocked REZO variant for one explicit display target."""
     this_path = os.path.dirname(os.path.realpath(__file__))
     top_level_cli(
         RezoBeamTop, path=this_path,
         argparse_callback=lambda parser: parser.set_defaults(
-            name=name, modeline=modeline),
+            name=name, artifact_name=artifact_name, modeline=modeline),
         archiver_callback=lambda archiver: archiver.with_option_storage())
 
 
 if __name__ == "__main__":
     run_cli(
         name=os.getenv("TILIQUA_REZO_FAMILY_NAME", "REZO"),
+        artifact_name=os.getenv("TILIQUA_REZO_FAMILY_ARTIFACT_NAME") or None,
         modeline=os.getenv("TILIQUA_REZO_FAMILY_MODELINE") or None,
     )

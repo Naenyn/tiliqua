@@ -109,6 +109,9 @@ def top_level_cli(
     name_default = os.path.normpath(sys.argv[0]).split(os.sep)[2].replace("_", "-").upper()
     parser.add_argument('--name', type=str, default=name_default,
                         help="Bitstream name to display in bootloader and bottom of screen.")
+    parser.add_argument('--artifact-name', type=str, default=None,
+                        help=("Output directory and archive stem. Defaults to --name; useful "
+                              "for keeping multiple builds of one bitstream isolated."))
     parser.add_argument('--brief', type=str, default=None,
                         help="Brief description to display in bootloader.")
     parser.add_argument("--hw",
@@ -173,8 +176,9 @@ def top_level_cli(
             dynamic_modeline=False,
             modeline=None)
 
+    artifact_name = args.artifact_name or args.name
     build_path = os.path.abspath(os.path.join(
-        "build", f"{args.name.lower()}-{args.hw.value}"))
+        "build", f"{artifact_name.lower()}-{args.hw.value}"))
     if not os.path.exists(build_path):
         os.makedirs(build_path)
 
@@ -225,7 +229,8 @@ def top_level_cli(
         name=args.name,
         tag=repo_tag,
         hw_rev=args.hw,
-        bitstream_help=bitstream_help
+        bitstream_help=bitstream_help,
+        artifact_name=artifact_name,
     )
 
     if hw_platform.clock_domain_generator == pll.TiliquaDomainGeneratorPLLExternal:

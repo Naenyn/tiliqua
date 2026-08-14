@@ -18,8 +18,10 @@ def test_family_exposes_complete_product_display_matrix():
     }
 
 
-def test_family_targets_have_isolated_names_and_expected_modelines():
-    assert len({target.bitstream_name for target in TARGETS.values()}) == 4
+def test_family_targets_have_isolated_artifacts_and_expected_modelines():
+    assert len({target.artifact_name for target in TARGETS.values()}) == 4
+    assert TARGETS["rezo_round"].bitstream_name == "REZO"
+    assert TARGETS["rezomo_round"].bitstream_name == "REZOMO"
     for target in TARGETS.values():
         expected = (
             "1280x720p60"
@@ -56,5 +58,6 @@ def test_family_runner_preserves_variant_main_identity(monkeypatch):
     targets.run_target("rezomo_round")
     assert called == {"path": "top.py", "run_name": "__main__"}
     assert targets.os.environ["TILIQUA_REZO_SEED"] == "3"
-    assert targets.os.environ["TILIQUA_REZO_FAMILY_NAME"] == "REZOMO-ROUND"
+    assert targets.os.environ["TILIQUA_REZO_FAMILY_NAME"] == "REZOMO"
+    assert targets.os.environ["TILIQUA_REZO_FAMILY_ARTIFACT_NAME"] == "REZOMO-ROUND"
     assert targets.os.environ["TILIQUA_REZO_FAMILY_MODELINE"] == "720x720p60r2"

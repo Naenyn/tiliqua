@@ -28,6 +28,7 @@ class BuildTarget:
     display: Display
     module: str
     bitstream_name: str
+    artifact_name: str
     modeline: str
     default_seed: int
 
@@ -39,6 +40,7 @@ TARGETS = {
         display=Display.STANDARD,
         module="rezo_variant",
         bitstream_name="REZO",
+        artifact_name="REZO",
         modeline="1280x720p60",
         default_seed=8,
     ),
@@ -47,7 +49,8 @@ TARGETS = {
         product=Product.REZO,
         display=Display.ROUND,
         module="rezo_variant",
-        bitstream_name="REZO-ROUND",
+        bitstream_name="REZO",
+        artifact_name="REZO-ROUND",
         modeline="720x720p60r2",
         default_seed=8,
     ),
@@ -57,6 +60,7 @@ TARGETS = {
         display=Display.STANDARD,
         module="top",
         bitstream_name="REZOMO",
+        artifact_name="REZOMO",
         modeline="1280x720p60",
         default_seed=6,
     ),
@@ -65,7 +69,8 @@ TARGETS = {
         product=Product.REZOMO,
         display=Display.ROUND,
         module="top",
-        bitstream_name="REZOMO-ROUND",
+        bitstream_name="REZOMO",
+        artifact_name="REZOMO-ROUND",
         modeline="720x720p60r2",
         default_seed=3,
     ),
@@ -90,6 +95,7 @@ def run_target(key):
     else:
         os.environ.setdefault("TILIQUA_REZO_SEED", str(target.default_seed))
     os.environ["TILIQUA_REZO_FAMILY_NAME"] = target.bitstream_name
+    os.environ["TILIQUA_REZO_FAMILY_ARTIFACT_NAME"] = target.artifact_name
     os.environ["TILIQUA_REZO_FAMILY_MODELINE"] = target.modeline
     variant_path = Path(__file__).with_name(f"{target.module}.py")
     runpy.run_path(str(variant_path), run_name="__main__")

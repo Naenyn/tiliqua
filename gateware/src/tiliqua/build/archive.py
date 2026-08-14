@@ -33,6 +33,7 @@ class ArchiveBuilder:
     hw_rev: TiliquaRevision
     external_pll_config: Optional[ExternalPLLConfig] = None
     bitstream_help: Optional[BitstreamHelp] = None
+    artifact_name: Optional[str] = None
 
     _regions: List[MemoryRegion] = field(default_factory=list)
     _manifest: Optional[BitstreamManifest] = None
@@ -45,7 +46,8 @@ class ArchiveBuilder:
 
     @property
     def archive_name(self) -> str:
-        return f"{self.name.lower()}-{self.tag}-{self.hw_rev.value}.tar.gz"
+        stem = self.artifact_name or self.name
+        return f"{stem.lower()}-{self.tag}-{self.hw_rev.value}.tar.gz"
 
     @property
     def archive_path(self) -> str:
