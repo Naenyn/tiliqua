@@ -60,7 +60,7 @@ frequencies, enables, group assignments, feedback sources, or output routing.
 |---|---|
 | ALL | Raises every band |
 | ODD | Raises alternating odd-position bands |
-| EVN | Raises alternating even-position bands |
+| EVEN | Raises alternating even-position bands |
 | LOW | Raises the lowest four bands |
 | MID | Raises the middle four bands |
 | HI | Raises the highest four bands |

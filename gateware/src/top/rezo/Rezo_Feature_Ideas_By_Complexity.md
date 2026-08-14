@@ -59,7 +59,7 @@ reserved. Measure clocked additions against this baseline.
 ### 1. Preset shapes — very low complexity
 
 Add fixed band vectors such as flat, smile, telephone, and vowel/formant-like
-curves. This extends the existing ALL/ODD/EVN/LOW/MID/HI/ZERO mechanism and has
+curves. This extends the existing ALL/ODD/EVEN/LOW/MID/HI/ZERO mechanism and has
 negligible DSP cost. A later user-preset implementation can coexist with these
 factory shapes.
 

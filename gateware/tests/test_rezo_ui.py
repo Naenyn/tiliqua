@@ -338,7 +338,7 @@ def test_ui_disabled_bank_controls_do_not_change_stored_values():
         assert ctx.get(dut.page) == 0
         await _click(ctx, dut)
 
-        # MODE -> PRESET -> band 0. It may be traversed while navigating, but
+        # PRESET -> MODE -> band 0. It may be traversed while navigating, but
         # entering EDIT and turning cannot alter its hidden stored level.
         endpoint = await _turn(ctx, dut, endpoint, 1)
         endpoint = await _turn(ctx, dut, endpoint, 1)
@@ -373,7 +373,9 @@ def test_ui_clock_mode_defaults_and_control_navigation():
             RezoCore.CV_TARGET_CLOCK,
         )
 
-        # PAGE -> MODE, then edit BANK into CLOCK.
+        # PAGE -> PRESET -> MODE, then edit BANK into CLOCK.
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_PRESET
         endpoint = await _turn(ctx, dut, endpoint, 1)
         assert ctx.get(dut.selected) == dut.TARGET_MODE
         await _click(ctx, dut)
@@ -381,12 +383,14 @@ def test_ui_clock_mode_defaults_and_control_navigation():
         assert ctx.get(dut.clock_mode) == 1
         await _click(ctx, dut)
 
-        # CLOCK main retains BANK's preset, ten bands, and three sliders.
+        # CLOCK main retains BANK's preset, ten bands, and three sliders. The
+        # next control after MODE is the first band.
         endpoint = await _turn(ctx, dut, endpoint, 1)
-        assert ctx.get(dut.selected) == dut.TARGET_PRESET
+        assert ctx.get(dut.selected) == dut.TARGET_BAND_BASE
 
         # Return to PAGE, then CLOCK's forward page order inserts the new
         # settings page before BANDS.
+        endpoint = await _turn(ctx, dut, endpoint, 0)
         endpoint = await _turn(ctx, dut, endpoint, 0)
         endpoint = await _turn(ctx, dut, endpoint, 0)
         assert ctx.get(dut.selected) == dut.TARGET_PAGE
@@ -507,10 +511,10 @@ def test_ui_shift_data_source_navigation_and_choices():
 
         # Enter CLOCK mode, return to PAGE, and open CLOCK settings.
         endpoint = await _turn(ctx, dut, endpoint, 1)
-        await _click(ctx, dut)
         endpoint = await _turn(ctx, dut, endpoint, 1)
         await _click(ctx, dut)
         endpoint = await _turn(ctx, dut, endpoint, 1)
+        await _click(ctx, dut)
         endpoint = await _turn(ctx, dut, endpoint, 0)
         endpoint = await _turn(ctx, dut, endpoint, 0)
         await _click(ctx, dut)
@@ -551,10 +555,10 @@ def test_ui_walk_skips_direction_and_starts_with_clock_source():
 
         # Enter CLOCK mode and open its settings page.
         endpoint = await _turn(ctx, dut, endpoint, 1)
-        await _click(ctx, dut)
         endpoint = await _turn(ctx, dut, endpoint, 1)
         await _click(ctx, dut)
         endpoint = await _turn(ctx, dut, endpoint, 1)
+        await _click(ctx, dut)
         endpoint = await _turn(ctx, dut, endpoint, 0)
         endpoint = await _turn(ctx, dut, endpoint, 0)
         await _click(ctx, dut)

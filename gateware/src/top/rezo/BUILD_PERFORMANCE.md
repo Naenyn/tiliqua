@@ -126,6 +126,23 @@ also passing every constrained clock.
 | REZOMO-UI-POLISH-S8 | Exact committed UI-polish RTL | 8 | 20,699 | 23,971 | 317 | 6,983 | 20 | — | — | 54.53 | — | FAIL SYNC |
 | **REZOMO-UI-POLISH-S4** | **`1fe69409`; exact committed UI-polish RTL** | **4** | **20,699** | **23,971** | **317** | **6,983** | **20** | **391.08** | **72.01** | **60.98** | **77.83** | **PASS; standard archive flashed slot 4** |
 | **REZOMO-CLOCK-LAYOUT-S4** | **`edbc20d9`; one-column CLOCK layout, heading, and uniform row geometry** | **4** | **20,753** | **24,041** | **247** | **6,983** | **20** | **397.14** | **70.67** | **63.77** | **76.45** | **PASS; standard archive flashed slot 4** |
+| **REZOMO-CLOCK-FIELDS-S4** | **Dirty `e6e5d25b`; bounded BANK mode chip, content-width CLOCK value chips, and corrected DEPTH geometry** | **4** | **20,837** | **24,113** | **175** | **6,983** | **20** | **400.32** | **73.27** | **62.25** | **78.99** | **PASS; standard archive flashed slot 4** |
+| **REZOMO-CHIP-ALIGN-S4** | **Dirty `e6e5d25b`; centered BANK/INPUT chips, row-derived INPUT label alignment, per-field CLOCK widths, and full-width DEPTH** | **4** | **20,675** | **23,983** | **305** | **6,983** | **20** | **391.85** | **70.92** | **61.01** | **79.82** | **PASS; standard archive flashed to slot 4** |
+| REZOMO-GLYPH-NUDGE-S4 | Dirty `e6e5d25b`; exact per-value pixel-coordinate centering | 4 | 21,126 | 24,486 | -198 | 6,979 | 20 | — | — | — | — | FAIL capacity before placement |
+| REZOMO-HALF-CELL-S4 | Dirty `e6e5d25b`; replace pixel subtractor with dynamic half-cell phase | 4 | — | 24,387 | -99 | 6,977 | 20 | — | — | — | — | FAIL capacity before placement |
+| REZOMO-HALF-CELL-NARROW-S4 | Dirty `e6e5d25b`; restrict half-cell phase to photographed fields | 4 | — | 24,452 | -164 | 6,977 | 20 | — | — | — | — | FAIL capacity before placement |
+| **REZOMO-OPTICAL-GEOMETRY-S4** | **Dirty `e6e5d25b`; parity-balanced fixed chips, exact vertical centers, and mode-specific CLOCK widths** | **4** | **20,902** | **24,252** | **36** | **6,976** | **20** | **439.37** | **74.60** | **61.46** | **79.57** | **PASS; standard archive flashed to slot 4** |
+| REZOMO-MODE-DYNAMIC-S9 | Dirty `e6e5d25b`; BANK/CLOCK mode-dependent chip endpoint | 9 | — | — | — | 6,983 | 20 | — | — | — | — | FAIL placement at utilisation limit |
+| REZOMO-BANK-NAV-S9 | Dirty `e6e5d25b`; fixed mode-chip bias and PRESET-before-MODE navigation, pre-simplification | 9 | — | — | — | 6,983 | 20 | 352.49 | 76.79 | 56.20 | 71.02 | FAIL DVI5X, SYNC, and DVI |
+| REZOMO-BANK-NAV-S4-A | Same pre-simplification netlist | 4 | — | — | — | 6,983 | 20 | — | — | — | 72.88 | FAIL DVI by 1.37 MHz |
+| **REZOMO-BANK-NAV-S4** | **Dirty `e6e5d25b`; PAGE/PRESET/MODE order, simplified reverse path, and CLOCK-biased fixed mode chip** | **4** | **20,817** | **24,169** | **119** | **6,976** | **20** | **424.27** | **72.49** | **60.42** | **75.02** | **PASS; standard archive flashed to slot 4** |
+| REZOMO-EVEN-S1 | Dirty `e6e5d25b`; EVN renamed EVEN in both renderers and guides | 1 | 20,835 | 24,193 | 95 | 6,976 | 20 | 349.28 | 76.09 | 59.40 | 79.60 | FAIL DVI5X and SYNC |
+| REZOMO-EVEN-S2 | Exact REZOMO-EVEN JSON | 2 | 20,835 | 24,193 | 95 | 6,976 | 20 | 427.17 | 72.91 | 60.93 | 72.40 | FAIL DVI |
+| **REZOMO-EVEN-S3** | **Exact REZOMO-EVEN JSON** | **3** | **20,835** | **24,193** | **95** | **6,976** | **20** | **426.44** | **74.16** | **62.42** | **78.85** | **PASS; standard archive flashed to slot 4** |
+| REZOMO-EVEN-S4 | Exact REZOMO-EVEN JSON | 4 | 20,835 | 24,193 | 95 | 6,976 | 20 | 368.46 | 73.54 | 59.53 | 73.30 | FAIL DVI5X, SYNC, and DVI |
+| REZOMO-EVEN-S5 | Exact REZOMO-EVEN JSON | 5 | 20,835 | 24,193 | 95 | 6,976 | 20 | 397.14 | 71.47 | 58.28 | 75.32 | FAIL SYNC |
+| REZOMO-EVEN-S7 | Exact REZOMO-EVEN JSON | 7 | 20,835 | 24,193 | 95 | 6,976 | 20 | 373.97 | 75.59 | 59.85 | 70.90 | FAIL SYNC and DVI |
+| REZOMO-EVEN-S8 | Exact REZOMO-EVEN JSON | 8 | 20,835 | 24,193 | 95 | 6,976 | 20 | 339.21 | 74.18 | 60.98 | 75.11 | FAIL DVI5X |
 
 ## Notes
 
@@ -152,6 +169,49 @@ also passing every constrained clock.
   A native-geometry regression test samples every row, including the fourth
   mode-dependent control. Seed 4 passes every clock and supplies the standard
   1280x720 archive.
+- REZOMO-CLOCK-FIELDS-S4 restores the BANK mode chip to the final panel-color
+  composition, sizes each CLOCK text chip from that field's longest value,
+  and maps DEPTH against its own 160-pixel value column instead of the shared
+  300-pixel fader lookup. Two-pixel gaps between CLOCK rows use the existing
+  panel height without changing the fixed text grid. Seed 4 passes every
+  constrained clock for the standard 1280x720 target.
+- REZOMO-CHIP-ALIGN-S4 derives BANK and INPUT text placement from each chip's
+  fixed native-coordinate bounds, so labels and values share the same row
+  centers. CLOCK keeps independent maximum-content widths for each textual
+  field while DEPTH alone consumes the remaining panel width. The standard
+  1280x720 seed-4 route passes all four constrained clocks with 305 packed
+  cells free.
+- REZOMO-GLYPH-NUDGE-S4 centered every glyph bound exactly with a live pixel
+  coordinate offset, but exceeded the device by 198 packed cells. Replacing
+  the subtractor with a one-bit half-cell tile phase still exceeded capacity;
+  narrowing that phase to only the photographed fields also mapped worse due
+  to the design's packing sensitivity. The retained
+  REZOMO-OPTICAL-GEOMETRY-S4 candidate leaves the tile-reader path unchanged.
+  Fixed chip bounds split the two possible character-parity centers, keeping
+  requested values within five native pixels horizontally and exact
+  vertically. TURING, WALK, and SHIFT use independent mode-specific chip
+  widths. The standard seed-4 route passes all clocks with 36 packed cells
+  free; the archive completed at 2026-08-13 19:29:26 EDT after roughly 383 s
+  and was flashed successfully to slot 4.
+- REZOMO-MODE-DYNAMIC-S9 gave BANK and CLOCK independent exact-content chip
+  endpoints, but the live endpoint comparator prevented legal placement.
+  REZOMO-BANK-NAV retains a fixed 100-pixel chip instead: measured visible
+  glyph bounds place BANK within five native pixels of center and CLOCK within
+  three. BANK navigation now advances PAGE, PRESET, MODE, then the first band;
+  reverse navigation follows the exact inverse order. Seed 9 misses DVI5X,
+  SYNC, and DVI, while the first seed-4 form misses only DVI. Letting PRESET's
+  numeric predecessor provide the reverse PAGE transition removes a redundant
+  comparison. The resulting seed-4 route has 119 packed cells free and passes
+  every clock. Its standard archive completed at 2026-08-13 22:07:32 EDT and
+  was flashed successfully to slot 4.
+- REZOMO-EVEN replaces the abbreviated EVN preset label with the full four-
+  character EVEN spelling in both REZO-family renderers and user guides. A
+  native-display regression verifies that all four glyphs remain inside the
+  existing preset chip. The additional dynamic glyph changes packing by 24
+  cells and makes the route seed-sensitive again: seeds 1, 2, 4, 5, 7, and 8
+  each miss at least one clock. Seed 3 passes all four clocks with 95 packed
+  cells free. Its standard archive completed at 2026-08-13 22:50:56 EDT and
+  was flashed successfully to slot 4.
 - CLOCK-DEPTH-SLIDER-S8 removes the dynamic three-character numeric DEPTH
   label and its text-writer scan slots. The replacement geometry uses the
   existing 0--16 value as a five-bit left shift, yielding a 512-pixel interior
