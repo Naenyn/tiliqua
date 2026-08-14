@@ -94,6 +94,14 @@ rotation and no enlargement. Only the 720x720 circular target applies the
 | CIRCULAR720-U10-W130-S6 | Exact circular JSON reroute | 6 | 23,991 | 297 | 6,878 | 22 | 386.85 | 69.03 | 57.20 | 75.80 | FAIL SYNC |
 | CIRCULAR720-U10-W130-S2 | Exact circular JSON reroute | 2 | 23,991 | 297 | 6,878 | 22 | — | — | — | — | Route stopped after pathological final congestion; pre-route SYNC 55.87 MHz |
 | **CIRCULAR720-U10-W130-S8** | **Official 720x720p60r2 modeline; exact circular JSON reroute; rotated, unscaled native UI** | **8** | **23,991** | **297** | **6,878** | **22** | **326.80** | **71.40** | **60.18** | **75.00** | **PASS; packaged only, not flashed** |
+| **SHARED-PARITY-S8** | **1280x720; REZO/REZOMO BANK order, centered INPUT/OPTIONS chips, and unity-marker parity (`8e3ddc2e`)** | **8** | **23,985** | **303** | **6,878** | **22** | **421.41** | **74.42** | **60.82** | **75.45** | **PASS; flashed slot 4** |
+
+The SHARED-PARITY archive is `rezo-8e3ddc2e-r5.tar.gz` with SHA-256
+`58acef4c0f0c0b8ba75f3ba5f303cfffc79225fe7e42aec524dd590958d0f568`.
+Its embedded `top.bit` SHA-256 is
+`442e979ff14cdc9fb95a393433f5c72911c39eea3a9f27ca1e3c48bf79508910`.
+The exact commit-stamped seed-8 route passed every required clock and was
+flashed successfully to slot 4 on 2026-08-13 with option storage preserved.
 
 ROUND21 also explored native seeds 2, 3, 4, 5, 7, 8, 9, 10, and 11.
 Seeds 2 and 3 entered prolonged final-router congestion; seeds 4, 5, 7, 8,
