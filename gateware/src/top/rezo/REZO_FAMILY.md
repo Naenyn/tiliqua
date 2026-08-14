@@ -118,8 +118,8 @@ are:
 |---|---:|---:|---|---|---|
 | REZO standard | `55df62df` / 8 | 23,879 (409 free) | 405.19 / 72.14 / 65.13 / 75.05 | `1cf12e275855f0e61b8cd7f9cc1eebe95d4c3b49832f9207eb0d151cd92d338a` | Nominal pass; not hardware-qualified because DVI margin is close to the 1% spread peak |
 | REZO circular | `902e7c58` / 2 | 23,861 (427 free) | 404.04 / 73.93 / 60.41 / 80.95 | `b4c8cd828ef918f446320592768bfe2eff9a55fe9aac7332a196926210ee9519` | Nominal pass; not hardware-qualified because sync margin is only 0.41 MHz |
-| REZOMO standard | unchanged from `8b39ff81` / 6 | 24,193 (95 free) | 392.00 / 72.63 / 63.02 / 75.27 | see qualification table above | RTL unchanged; prior qualification retained |
-| REZOMO circular | unchanged from `8b39ff81` / 4 | 24,261 (27 free) | 389.56 / 73.94 / 61.87 / 76.02 | see qualification table above | RTL unchanged; prior qualification retained |
+| REZOMO standard | `f65f2b3f` / 6 | 24,193 (95 free) | 392.00 / 72.63 / 63.02 / 75.27 | `d5568ce575a54cad1a39e0d679b96ce6acb6b129243fd737644cdcb67b9e1c82` | Final-head rebuild reproduced prior metrics and passes the 1.25% margin gate |
+| REZOMO circular | `f65f2b3f` / 4 | 24,261 (27 free) | 389.56 / 73.94 / 61.87 / 76.02 | `5698af89a57dfc487a632d46d2e8a9619d3e49a4cfaca243975f67beae62c03f` | Final-head rebuild reproduced prior metrics and passes the 1.25% margin gate |
 
 This pass confirms that source consolidation and FPGA optimization are related
 but distinct. Pure Python constants and tests should continue to be shared.
