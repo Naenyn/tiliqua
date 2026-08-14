@@ -27,9 +27,8 @@ accidentally as a standard artifact through `--skip-build`.
 seed. The older `TILIQUA_REZO_SEED=<n>` override remains compatible when the
 family-specific variable is unset.
 The qualified defaults are seed 8 for REZO standard, seed 2 for REZO circular,
-seed 3 for REZOMO standard, and seed 4 for REZOMO circular. STREZO enters the
-matrix with its historically qualified standard seed 9 and provisional circular
-seed 1; both must be requalified after the native safe-square migration.
+seed 3 for REZOMO standard, seed 4 for REZOMO circular, seed 9 for STREZO
+standard, and seed 1 for STREZO circular.
 
 REZO circular also selects the native `yosys` executable because its documented
 staged mapping recipe is placement-hostile under the PDM environment's pinned
@@ -89,8 +88,44 @@ and UI tests. Together with the five family-target tests, the coexistence gate i
 59 passing tests. This is a software baseline only: the historical renderer
 still authors controls across most of the 720x720 panel and therefore does not
 yet satisfy the required `x=[106,614)`, `y=[106,614)` circular safe square.
-Coordinate migration and shared-page UI parity are the next checkpoint, followed
-by fresh standard and circular place-and-route qualification.
+The following checkpoint records completion of that migration and fresh
+standard/circular qualification.
+
+## STREZO native safe-square qualification (2026-08-14)
+
+Commit `6348b81` replaces STREZO's wide historical renderer with the same
+upright native 720x720 coordinate contract used by REZO and REZOMO. Both video
+targets author one `x=[106,614)`, `y=[106,614)` safe square; the standard target
+adds only its horizontal preview offset, while the circular target applies the
+panel-mount rotation after the logical UI is complete. A pixel-equivalence test
+verifies representative standard and circular coordinates.
+
+The migration also ports the current family UI conventions: native compact
+page geometry, centered fixed-width value chips, `EVEN` preset spelling,
+bounded INPUT faders, shared semantic palettes, and consistent PAGE/value
+title controls. STREZO's product-specific FEEDBACK, GROUPS, OUTPUT, BANDS, and
+CROSS pages retain their existing behavior inside the safe square.
+
+All 64 focused STREZO/family tests pass, including cycle-accurate DSP
+comparisons, historical renderer compatibility, persistence, navigation, the
+new safe-square boundary checks, and standard/circular pixel equivalence.
+Dense GROUPS and OUTPUT block-memory paths are pipelined before their dynamic
+lookups; this raised the exact standard build's DVI result to 84.18 MHz without
+changing visible cell boundaries.
+
+| Target | Commit / seed | Packed cells | DVI5X / AUDIO / SYNC / DVI MHz | Archive SHA-256 | Status |
+|---|---:|---:|---|---|---|
+| STREZO standard | `6348b81` / 9 | 23,975 (313 free) | 384.17 / 70.01 / 63.85 / 84.18 | `a95f890736c439cf0d32c4b95e0c7b6a4c9f6aed486dc288ff3e19415e9f5381` | Passes 1.25% margin gate; flashed slot 4 |
+| STREZO circular | `6348b81` / 1 | 24,015 (273 free) | 328.95 / 76.06 / 72.25 / 81.23 | `02ba74aa0ada6539916e81ea536b5e6a9d9fa3481341e2ad4e265b046621c622` | Passes 1.25% margin gate; not flashed |
+
+The standard archive is
+`build/strezo-r5/strezo-6348b810-r5.tar.gz`; its archived and routed `top.bit`
+SHA-256 is
+`ee97ab8f38a83d541d16db465b1b1e7812d09dad0d7530724ca8d52690b9b561`.
+The circular archive is
+`build/strezo-round-r5/strezo-round-6348b810-r5.tar.gz`; its archived and routed
+`top.bit` SHA-256 is
+`c123270bbffe9bd416486f82d861338a15a2bb3ad771c9d71df2101576c022ef`.
 
 ## Consolidation qualification (2026-08-14)
 

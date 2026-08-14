@@ -152,6 +152,8 @@ also passing every constrained clock.
 | REZOMO-SHIFT-WALK-S3 | Dirty `41008f9c`; retime only SHIFT/WALK with local-coordinate OUTPUT fill | 3 | — | 23,995 | 293 | — | 21 | 382.12 | 73.65 | 62.71 | 68.43 | FAIL DVI; INPUT row selector still follows BRAM directly |
 | REZOMO-INPUT-INDEX-S3 | Dirty `41008f9c`; add two-bit INPUT row-index pipeline | 3 | 20,717 | 23,993 | 295 | 7,005 | 21 | 384.47 | 73.36 | 63.22 | 75.51 | PASS 1.25% gate; superseded by exact commit build |
 | **REZOMO-CAPACITY-COMMIT-S3** | **`cbd49d7c`; narrow SHIFT/WALK, INPUT-index, and local OUTPUT-coordinate pipelines** | **3** | **20,698** | **23,978** | **310** | **7,005** | **21** | **377.36** | **72.50** | **60.89** | **77.29** | **PASS 1.25% gate; flashed slot 4** |
+| **STREZO-NATIVE-STANDARD-S9** | **`6348b81`; native 508x508 safe square, centered family UI, pipelined GROUPS/OUTPUT lookups** | **9** | **20,515** | **23,975** | **313** | **6,893** | **19** | **384.17** | **70.01** | **63.85** | **84.18** | **PASS 1.25% gate; flashed slot 4** |
+| **STREZO-NATIVE-ROUND-S1** | **`6348b81`; same upright UI with final panel-mount rotation at 720x720p60r2** | **1** | **20,551** | **24,015** | **273** | **6,893** | **19** | **328.95** | **76.06** | **72.25** | **81.23** | **PASS 1.25% gate; circular archive not flashed** |
 
 ## Notes
 
