@@ -4,6 +4,71 @@ from amaranth.sim import Simulator
 from top.rezo.top import RezoCore, RezoHardwareUI, RezoTileDisplay
 
 
+def _render_text_bounds(*regions, page=0, palette=0, input_modes=(),
+                        cv_targets=(), save_default_available=0):
+    """Return visible glyph bounds inside native compact value chips."""
+    dut = RezoTileDisplay(
+        h_active=1280, rotate_left=False, compact_layout=True)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6, domain="sync")
+    sim.add_clock(1e-6, domain="dvi")
+    samples = []
+
+    async def bench(ctx):
+        ctx.set(dut.page, page)
+        ctx.set(dut.palette, palette)
+        ctx.set(dut.save_default_available, save_default_available)
+        for index, value in enumerate(input_modes):
+            ctx.set(dut.input_modes[index], value)
+        for index, value in enumerate(cv_targets):
+            ctx.set(dut.cv_targets[index], value)
+        ctx.set(dut.de, 1)
+        # Let the sync-domain dynamic-label writer finish a complete pass.
+        for _ in range(400):
+            await ctx.tick("dvi")
+        for x0, y0, x1, y1 in regions:
+            points = []
+            for y in range(y0, y1):
+                for x in range(x0, x1):
+                    ctx.set(dut.x, dut.x_offset + x)
+                    ctx.set(dut.y, y)
+                    for _ in range(12):
+                        await ctx.tick("dvi")
+                    points.append((x, y, ctx.get(dut.r),
+                                   ctx.get(dut.g), ctx.get(dut.b)))
+            samples.append(points)
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    packed_text = dut.RGB_PALETTES[palette][1]
+    text_rgb = (
+        (packed_text >> 16) & 0xff,
+        (packed_text >> 8) & 0xff,
+        packed_text & 0xff,
+    )
+    bounds = []
+    for points in samples:
+        lit = [(x, y) for x, y, r, g, b in points
+               if (r, g, b) == text_rgb]
+        assert lit
+        bounds.append((
+            min(x for x, _ in lit), min(y for _, y in lit),
+            max(x for x, _ in lit) + 1, max(y for _, y in lit) + 1,
+        ))
+    return bounds
+
+
+def _assert_optically_centered(glyph_bounds, chip_bounds):
+    """Allow only the half-character phase inherent to fixed 16px cells."""
+    glyph_x0, glyph_y0, glyph_x1, glyph_y1 = glyph_bounds
+    chip_x0, chip_y0, chip_x1, chip_y1 = chip_bounds
+    assert abs((glyph_x0 + glyph_x1 - 1) -
+               (chip_x0 + chip_x1 - 1)) <= 10
+    assert abs((glyph_y0 + glyph_y1 - 1) -
+               (chip_y0 + chip_y1 - 1)) <= 2
+
+
 def test_standard_hdmi_compact_preview_is_native_size_and_unrotated():
     """Both targets render identical upright compact pixels at native size."""
     preview = RezoTileDisplay(
@@ -45,6 +110,33 @@ def test_standard_hdmi_compact_preview_is_native_size_and_unrotated():
     assert samples[0][0] == RezoTileDisplay.PALETTE["text"]
     assert samples[2][0] == RezoTileDisplay.PALETTE["blank"]
     assert all(standard == circular for standard, circular in samples)
+
+
+def test_compact_input_and_options_values_are_optically_centered():
+    mode_chips = tuple(
+        (304, 221 + 96 * index, 402, 241 + 96 * index)
+        for index in range(4))
+    value_chips = tuple(
+        (304, 253 + 96 * index, 370, 273 + 96 * index)
+        for index in range(1, 4))
+    input_bounds = _render_text_bounds(
+        *(mode_chips + value_chips),
+        page=2,
+        input_modes=(RezoCore.INPUT_MODE_AUDIO,) +
+                    (RezoCore.INPUT_MODE_CV,) * 3,
+        cv_targets=(RezoCore.CV_TARGET_FEEDBACK,
+                    RezoCore.CV_TARGET_FEEDBACK,
+                    RezoCore.CV_TARGET_RESONANCE,
+                    RezoCore.CV_TARGET_GROUP_BASE + 3),
+    )
+    for bounds, chip in zip(input_bounds, mode_chips + value_chips):
+        _assert_optically_centered(bounds, chip)
+
+    options_chips = ((344, 260, 456, 300), (328, 324, 456, 364))
+    options_bounds = _render_text_bounds(
+        *options_chips, page=5, palette=3, save_default_available=1)
+    for bounds, chip in zip(options_bounds, options_chips):
+        _assert_optically_centered(bounds, chip)
 
 
 def test_compact_round_layout_keeps_native_text_and_uses_top_arc():
@@ -175,7 +267,7 @@ def test_compact_labels_use_native_control_rows():
         # its left remain on the unshaded field.
         ctx.set(dut.filter_mode, 0)
         await sample(ctx, 12 * 16, 16 * 16)  # left of the VALUE chip
-        await sample(ctx, 19 * 16, 16 * 16)  # FB target chip
+        await sample(ctx, 20 * 16, 16 * 16)  # centered FB target
 
     sim.add_testbench(bench)
     sim.run()

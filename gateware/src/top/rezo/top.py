@@ -2033,9 +2033,11 @@ class RezoHardwareUI(wiring.Component):
             with m.Else():
                 with m.If(edit_direction):
                     with m.If(~bank_target_visible | (selected == self.TARGET_PAGE)):
+                        m.d.comb += next_selected.eq(self.TARGET_PRESET)
+                    with m.Elif(selected == self.TARGET_PRESET):
                         m.d.comb += next_selected.eq(self.TARGET_MODE)
                     with m.Elif(selected == self.TARGET_MODE):
-                        m.d.comb += next_selected.eq(self.TARGET_PRESET)
+                        m.d.comb += next_selected.eq(self.TARGET_BAND_BASE)
                     with m.Elif(selected ==
                                 self.TARGET_BAND_BASE + RezoCore.N_BANDS - 1):
                         m.d.comb += next_selected.eq(self.TARGET_DRIVE)
@@ -2048,10 +2050,10 @@ class RezoHardwareUI(wiring.Component):
                 with m.Else():
                     with m.If(~bank_target_visible | (selected == self.TARGET_PAGE)):
                         m.d.comb += next_selected.eq(self.TARGET_FEEDBACK)
-                    with m.Elif(selected == self.TARGET_PRESET):
-                        m.d.comb += next_selected.eq(self.TARGET_MODE)
                     with m.Elif(selected == self.TARGET_MODE):
-                        m.d.comb += next_selected.eq(self.TARGET_PAGE)
+                        m.d.comb += next_selected.eq(self.TARGET_PRESET)
+                    with m.Elif(selected == self.TARGET_BAND_BASE):
+                        m.d.comb += next_selected.eq(self.TARGET_MODE)
                     with m.Elif(selected == self.TARGET_RESONANCE):
                         m.d.comb += next_selected.eq(self.TARGET_DRIVE)
                     with m.Elif(selected == self.TARGET_DRIVE):
@@ -3817,12 +3819,12 @@ class RezoTileDisplay(wiring.Component):
                     compact_input_text_rows):
                 for pos in range(3):
                     writer_address_init[11 + n * 3 + pos] = native_text_address(
-                        2, 19, mode_row, pos)
+                        2, 20, mode_row, pos)
                     writer_address_init[23 + n * 3 + pos] = native_text_address(
-                        2, 19, value_row, pos)
+                        2, 20, value_row, pos)
                 for pos in range(2):
                     writer_address_init[96 + n * 2 + pos] = native_text_address(
-                        2, 19, mode_row, pos + 3)
+                        2, 20, mode_row, pos + 3)
             for pos in range(4):
                 writer_address_init[35 + pos] = native_text_address(
                     7, 14, 11, pos)
@@ -4122,20 +4124,20 @@ class RezoTileDisplay(wiring.Component):
             # chips by half a cell so the visible glyphs, rather than merely
             # the character slots, are centered in each box.
             palette_chip = advanced_page & self.rect(
-                text_x, text_y, 336, 260, 448, 300)
+                text_x, text_y, 344, 260, 456, 300)
             palette_select = advanced_page & (
                 self.selected == RezoHardwareUI.TARGET_PALETTE) & self.outline(
-                    text_x, text_y, 332, 256, 452, 304, t=3)
+                    text_x, text_y, 340, 256, 460, 304, t=3)
             save_default_chip = advanced_page & self.rect(
                 text_x, text_y, 328, 324, 456, 364)
             save_default_select = advanced_page & (
                 self.selected == RezoHardwareUI.TARGET_SAVE_DEFAULT) & self.outline(
                     text_x, text_y, 324, 320, 460, 368, t=3)
             damp_chip = tune_page & self.rect(
-                text_x, text_y, 268, 456, 364, 488)
+                text_x, text_y, 264, 456, 360, 488)
             damp_select = tune_page & (
                 self.selected == RezoHardwareUI.TARGET_DAMP) & self.outline(
-                    text_x, text_y, 264, 452, 368, 492, t=3)
+                    text_x, text_y, 260, 452, 364, 492, t=3)
             layout_chip = bands_page & self.rect(
                 text_x, text_y, 256, 168, 384, 200)
             layout_select = bands_page & (
@@ -4766,12 +4768,14 @@ class RezoTileDisplay(wiring.Component):
         input_visible = input_page_value_q & input_valid_value_q
         input_is_cv = input_is_cv_value_q
         input_lane_panel_x0 = 136 if self.compact_layout else 116
+        input_mode_x1 = 402 if self.compact_layout else 304
+        input_value_x1 = 370 if self.compact_layout else 656
         # Compact labels remain on the unshaded field. Only the editable MODE
         # value, CV target value, AUD gain fader and CV DEPTH fader receive a
         # panel, matching the value-only treatment used elsewhere in REZO.
-        # Native column 18 is the common right edge of MODE/VALUE/DEPTH;
-        # column 19 begins every parameter. Panels and faders therefore share
-        # the final raster coordinate x=304 with no intermediate scaling.
+        # Native column 18 is the common right edge of MODE/VALUE/DEPTH. The
+        # value chips begin at x=304, while their glyphs begin at column 20 so
+        # AUDIO/CV and the three-character targets share the chip center.
         # Native compact lane bounds all derive from the same three-pixel
         # top inset relative to their text cells: MODE 3, VALUE 35, DEPTH 67.
         # This is intentionally one shared grid, not per-input correction.
@@ -4779,13 +4783,13 @@ class RezoTileDisplay(wiring.Component):
             self.rect(input_x_value_q, input_local_value_q,
                       304 if self.compact_layout else input_lane_panel_x0,
                       0 if self.compact_layout else 4,
-                      408 if self.compact_layout else 304,
+                      input_mode_x1 if self.compact_layout else 304,
                       20 if self.compact_layout else 32) |
             Mux(input_is_cv,
                 self.rect(input_x_value_q, input_local_value_q,
                           304 if self.compact_layout else input_lane_panel_x0,
                           32 if self.compact_layout else 36,
-                          376 if self.compact_layout else 656,
+                          input_value_x1 if self.compact_layout else 656,
                           52 if self.compact_layout else 64),
                 self.rect(input_x_value_q, input_local_value_q,
                           304 if self.compact_layout else input_lane_panel_x0,
@@ -4803,14 +4807,14 @@ class RezoTileDisplay(wiring.Component):
             ((input_row_selected_q == input_target_q) &
              self.outline(input_x_value_q, input_local_value_q,
                           300 if self.compact_layout else input_lane_select_x0, 0,
-                          412 if self.compact_layout else 308,
+                          input_mode_x1 + 4 if self.compact_layout else 308,
                           24 if self.compact_layout else 38, t=3)) |
             ((input_row_selected_q == input_target_q + 1) &
              Mux(input_is_cv,
                  self.outline(input_x_value_q, input_local_value_q,
                               300 if self.compact_layout else input_lane_select_x0,
                               28 if self.compact_layout else 32,
-                              380 if self.compact_layout else 660,
+                              input_value_x1 + 4 if self.compact_layout else 660,
                               56 if self.compact_layout else 68, t=3),
                  self.outline(input_x_value_q, input_local_value_q,
                               300 if self.compact_layout else input_lane_select_x0,
@@ -4840,7 +4844,7 @@ class RezoTileDisplay(wiring.Component):
                       input_gain_end_q, 48 if self.compact_layout else 57))
         input_unity_coarse = RezoCore.INPUT_UNITY_POS >> 8
         input_unity_x = (304 + input_unity_coarse +
-                         (input_unity_coarse >> 1)) if self.compact_layout else (
+                         (input_unity_coarse >> 4)) if self.compact_layout else (
                              326 + input_unity_coarse +
                              (input_unity_coarse >> 2))
         input_line_q0 = input_visible & (

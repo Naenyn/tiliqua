@@ -43,7 +43,9 @@ def test_ui_shared_matrix_and_output_edit_paths():
     async def bench(ctx):
         endpoint = 0b00
 
-        # Select MODE, enter edit, and switch BANK -> FILTER.
+        # BANK navigation is PAGE -> PRESET -> MODE.
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_PRESET
         endpoint = await _turn(ctx, dut, endpoint, 1)
         assert ctx.get(dut.selected) == dut.TARGET_MODE
         await _click(ctx, dut)
@@ -322,7 +324,7 @@ def test_ui_disabled_bank_controls_do_not_change_stored_values():
         assert ctx.get(dut.page) == 0
         await _click(ctx, dut)
 
-        # MODE -> PRESET -> band 0. It may be traversed while navigating, but
+        # PRESET -> MODE -> band 0. It may be traversed while navigating, but
         # entering EDIT and turning cannot alter its hidden stored level.
         endpoint = await _turn(ctx, dut, endpoint, 1)
         endpoint = await _turn(ctx, dut, endpoint, 1)
