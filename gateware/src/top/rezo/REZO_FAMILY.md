@@ -25,7 +25,7 @@ accidentally as a standard artifact through `--skip-build`.
 seed. The older `TILIQUA_REZO_SEED=<n>` override remains compatible when the
 family-specific variable is unset.
 The qualified defaults are seed 8 for both REZO targets, seed 6 for REZOMO
-standard, and seed 3 for REZOMO circular.
+standard, and seed 4 for REZOMO circular.
 
 ## Source layout
 

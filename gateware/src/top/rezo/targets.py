@@ -9,6 +9,8 @@ from enum import Enum
 import os
 from pathlib import Path
 import runpy
+import importlib.util
+import sys
 
 
 class Product(str, Enum):
@@ -72,7 +74,7 @@ TARGETS = {
         bitstream_name="REZOMO",
         artifact_name="REZOMO-ROUND",
         modeline="720x720p60r2",
-        default_seed=3,
+        default_seed=4,
     ),
 }
 
@@ -98,4 +100,22 @@ def run_target(key):
     os.environ["TILIQUA_REZO_FAMILY_ARTIFACT_NAME"] = target.artifact_name
     os.environ["TILIQUA_REZO_FAMILY_MODELINE"] = target.modeline
     variant_path = Path(__file__).with_name(f"{target.module}.py")
-    runpy.run_path(str(variant_path), run_name="__main__")
+    if target.product is Product.REZO:
+        # The accepted REZO image imported its journal as the top-level module
+        # ``persistence``. Preserve that elaboration identity even though the
+        # consolidated tree also contains REZOMO's different persistence schema.
+        persistence_path = Path(__file__).with_name("rezo_persistence.py")
+        spec = importlib.util.spec_from_file_location("persistence", persistence_path)
+        persistence = importlib.util.module_from_spec(spec)
+        previous = sys.modules.get("persistence")
+        sys.modules["persistence"] = persistence
+        try:
+            spec.loader.exec_module(persistence)
+            runpy.run_path(str(variant_path), run_name="__main__")
+        finally:
+            if previous is None:
+                sys.modules.pop("persistence", None)
+            else:
+                sys.modules["persistence"] = previous
+    else:
+        runpy.run_path(str(variant_path), run_name="__main__")

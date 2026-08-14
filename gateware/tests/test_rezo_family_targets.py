@@ -39,7 +39,7 @@ def test_family_variants_are_selected_before_elaboration():
     assert TARGETS["rezo"].default_seed == 8
     assert TARGETS["rezo_round"].default_seed == 8
     assert TARGETS["rezomo"].default_seed == 6
-    assert TARGETS["rezomo_round"].default_seed == 3
+    assert TARGETS["rezomo_round"].default_seed == 4
 
 
 def test_family_target_lookup_rejects_ambiguous_names():
@@ -57,7 +57,7 @@ def test_family_runner_preserves_variant_main_identity(monkeypatch):
     monkeypatch.setattr(targets.runpy, "run_path", fake_run_path)
     targets.run_target("rezomo_round")
     assert called == {"path": "top.py", "run_name": "__main__"}
-    assert targets.os.environ["TILIQUA_REZO_SEED"] == "3"
+    assert targets.os.environ["TILIQUA_REZO_SEED"] == "4"
     assert targets.os.environ["TILIQUA_REZO_FAMILY_NAME"] == "REZOMO"
     assert targets.os.environ["TILIQUA_REZO_FAMILY_ARTIFACT_NAME"] == "REZOMO-ROUND"
     assert targets.os.environ["TILIQUA_REZO_FAMILY_MODELINE"] == "720x720p60r2"

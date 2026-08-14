@@ -56,9 +56,9 @@ from tiliqua.platform import RebootProvider
 from tiliqua.tiliqua_soc import TiliquaSoc
 from tiliqua.video import dvi
 try:
-    from .rezo_persistence import RezoStateJournal, SPIFlashTransfer
-except ImportError:  # A target wrapper may execute this module directly.
-    from rezo_persistence import RezoStateJournal, SPIFlashTransfer
+    from .persistence import RezoStateJournal, SPIFlashTransfer
+except ImportError:  # top_level_cli executes this file directly.
+    from persistence import RezoStateJournal, SPIFlashTransfer
 
 
 class RezoCore(wiring.Component):
