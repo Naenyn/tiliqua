@@ -4737,10 +4737,14 @@ class RezoTileDisplay(wiring.Component):
         input_gain_end = Array(input_gain_ends)[input_index]
         input_depth_end = Array(input_depth_ends)[input_index]
         input_meter_end = Array(input_meter_ends)[input_index]
-        input_target = Signal(unsigned(7))
-        m.d.comb += input_target.eq(
-            RezoHardwareUI.TARGET_INPUT_BASE + input_index +
-            (input_index << 1))
+        # Decode the four group targets as constants. Expressing this as
+        # TARGET_INPUT_BASE + 3 * input_index placed a carry chain after the
+        # block-RAM row decoder and became the compact display's pixel-clock
+        # critical path at high utilisation.
+        input_targets = Array(
+            Const(RezoHardwareUI.TARGET_INPUT_BASE + n * 3, 7)
+            for n in range(4))
+        input_target = input_targets[input_index]
         input_x_value_q = Signal.like(input_x_q)
         input_local_value_q = Signal.like(input_local_y)
         input_valid_value_q = Signal()
