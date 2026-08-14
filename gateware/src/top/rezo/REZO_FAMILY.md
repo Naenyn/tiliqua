@@ -1,8 +1,8 @@
 # REZO family build and consolidation guide
 
-The `codex/rezo-family` branch is the single development home for REZO and
-REZOMO. Product and display selection are explicit build-time choices; they no
-longer depend on which historical branch is checked out.
+The `codex/rezo-family` branch is the single development home for REZO, REZOMO,
+and STREZO. Product and display selection are explicit build-time choices; they
+no longer depend on which historical branch is checked out.
 
 ## Build matrix
 
@@ -14,6 +14,8 @@ Run commands from `gateware/`:
 | REZO | circular 720x720 | `pdm run rezo_round build --fs-192khz` | `rezo-round-r5/`, `rezo-round-*` |
 | REZOMO | standard 1280x720 | `pdm run rezomo build --fs-192khz` | `rezomo-r5/`, `rezomo-*` |
 | REZOMO | circular 720x720 | `pdm run rezomo_round build --fs-192khz` | `rezomo-round-r5/`, `rezomo-round-*` |
+| STREZO | standard 1280x720 | `pdm run strezo build --fs-192khz` | `strezo-r5/`, `strezo-*` |
+| STREZO | circular 720x720 | `pdm run strezo_round build --fs-192khz` | `strezo-round-r5/`, `strezo-round-*` |
 
 Every target has a distinct artifact name and therefore a distinct build
 directory and archive filename. Standard and circular builds retain the same
@@ -25,7 +27,9 @@ accidentally as a standard artifact through `--skip-build`.
 seed. The older `TILIQUA_REZO_SEED=<n>` override remains compatible when the
 family-specific variable is unset.
 The qualified defaults are seed 8 for REZO standard, seed 2 for REZO circular,
-seed 3 for REZOMO standard, and seed 4 for REZOMO circular.
+seed 3 for REZOMO standard, and seed 4 for REZOMO circular. STREZO enters the
+matrix with its historically qualified standard seed 9 and provisional circular
+seed 1; both must be requalified after the native safe-square migration.
 
 REZO circular also selects the native `yosys` executable because its documented
 staged mapping recipe is placement-hostile under the PDM environment's pinned
@@ -42,13 +46,17 @@ mapper.
   branch `rezomo` at `483f5680`. REZOMO remains at its historical Python module
   path because generated naming changes can perturb packing on the nearly full
   FPGA; `rezomo_variant.py` is only a compatibility import.
-- `rezo.py`, `rezo_round.py`, `rezomo.py`, and `rezomo_round.py` are deliberately
-  thin build entry points.
+- `strezo_variant.py` and `strezo_persistence.py` preserve the accepted linked-
+  stereo source from historical branch `strezo` at `e2b23789`. They remain
+  isolated while its renderer is migrated to the native safe-square contract.
+- `rezo.py`, `rezo_round.py`, `rezomo.py`, `rezomo_round.py`, `strezo.py`, and
+  `strezo_round.py` are deliberately thin build entry points.
 - `round.py` is a compatibility shim for the older circular-build script.
 
-Variant selection occurs before Amaranth elaboration, so REZO does not carry
-REZOMO-only clock logic. The historical `rezo`, `rezomo`, and `rezoclocked`
-branches remain recovery and provenance references while consolidation proceeds.
+Variant selection occurs before Amaranth elaboration, so no image carries either
+REZOMO-only clock logic or STREZO-only linked-stereo DSP. The historical `rezo`,
+`rezomo`, `rezoclocked`, and `strezo` branches remain recovery and provenance
+references while consolidation proceeds.
 Each variant script is executed with its historical `__main__` module identity;
 this preserves generated naming and packing for the near-capacity designs.
 
@@ -64,8 +72,25 @@ should be extracted in small, independently tested steps:
 5. persistence transport primitives, retaining variant-specific record schemas;
 6. REZOMO-only clock algorithms and state in a clocked feature module.
 
-After each extraction, run both variant suites and compare synthesized resource
-and timing results before deleting duplicated code.
+After each extraction, run every affected variant suite and compare synthesized
+resource and timing results before deleting duplicated code.
+
+## STREZO coexistence checkpoint (2026-08-14)
+
+STREZO is now an explicit third product in the family matrix. Its accepted
+`e2b23789` source and V5 persistence implementation were imported under distinct
+module names, so adding STREZO does not alter the elaborated REZO or REZOMO
+images. The original standard and circular build aliases now select isolated
+`STREZO` and `STREZO-ROUND` artifacts through the same target mechanism as the
+other family members.
+
+The imported lineage passes all 54 of its historical DSP, display, persistence,
+and UI tests. Together with the five family-target tests, the coexistence gate is
+59 passing tests. This is a software baseline only: the historical renderer
+still authors controls across most of the 720x720 panel and therefore does not
+yet satisfy the required `x=[106,614)`, `y=[106,614)` circular safe square.
+Coordinate migration and shared-page UI parity are the next checkpoint, followed
+by fresh standard and circular place-and-route qualification.
 
 ## Consolidation qualification (2026-08-14)
 

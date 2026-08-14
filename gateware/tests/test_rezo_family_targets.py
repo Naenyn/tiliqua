@@ -15,13 +15,16 @@ def test_family_exposes_complete_product_display_matrix():
         (Product.REZO, Display.ROUND),
         (Product.REZOMO, Display.STANDARD),
         (Product.REZOMO, Display.ROUND),
+        (Product.STREZO, Display.STANDARD),
+        (Product.STREZO, Display.ROUND),
     }
 
 
 def test_family_targets_have_isolated_artifacts_and_expected_modelines():
-    assert len({target.artifact_name for target in TARGETS.values()}) == 4
+    assert len({target.artifact_name for target in TARGETS.values()}) == 6
     assert TARGETS["rezo_round"].bitstream_name == "REZO"
     assert TARGETS["rezomo_round"].bitstream_name == "REZOMO"
+    assert TARGETS["strezo_round"].bitstream_name == "STREZO"
     for target in TARGETS.values():
         expected = (
             "1280x720p60"
@@ -36,20 +39,27 @@ def test_family_variants_are_selected_before_elaboration():
     assert TARGETS["rezo_round"].module == "rezo_variant"
     assert TARGETS["rezomo"].module == "top"
     assert TARGETS["rezomo_round"].module == "top"
+    assert TARGETS["strezo"].module == "strezo_variant"
+    assert TARGETS["strezo_round"].module == "strezo_variant"
     assert TARGETS["rezo"].default_seed == 8
     assert TARGETS["rezo_round"].default_seed == 2
     assert TARGETS["rezomo"].default_seed == 3
     assert TARGETS["rezomo_round"].default_seed == 4
+    assert TARGETS["strezo"].default_seed == 9
+    assert TARGETS["strezo_round"].default_seed == 1
     assert TARGETS["rezo_round"].yosys == "yosys"
     assert TARGETS["rezo"].yosys is None
-    for key in ("rezomo", "rezomo_round"):
+    for key in ("rezomo", "rezomo_round", "strezo", "strezo_round"):
         assert TARGETS[key].yosys == "yosys"
         assert TARGETS[key].nextpnr_ecp5 == "nextpnr-ecp5"
         assert TARGETS[key].ecppack == "ecppack"
 
 
 def test_family_target_lookup_rejects_ambiguous_names():
-    with pytest.raises(ValueError, match="choose rezo, rezo_round, rezomo, rezomo_round"):
+    with pytest.raises(
+            ValueError,
+            match=("choose rezo, rezo_round, rezomo, rezomo_round, "
+                   "strezo, strezo_round")):
         get_target("round")
 
 

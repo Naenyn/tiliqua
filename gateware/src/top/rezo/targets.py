@@ -16,6 +16,7 @@ import sys
 class Product(str, Enum):
     REZO = "rezo"
     REZOMO = "rezomo"
+    STREZO = "strezo"
 
 
 class Display(str, Enum):
@@ -86,6 +87,32 @@ TARGETS = {
         nextpnr_ecp5="nextpnr-ecp5",
         ecppack="ecppack",
     ),
+    "strezo": BuildTarget(
+        key="strezo",
+        product=Product.STREZO,
+        display=Display.STANDARD,
+        module="strezo_variant",
+        bitstream_name="STREZO",
+        artifact_name="STREZO",
+        modeline="1280x720p60",
+        default_seed=9,
+        yosys="yosys",
+        nextpnr_ecp5="nextpnr-ecp5",
+        ecppack="ecppack",
+    ),
+    "strezo_round": BuildTarget(
+        key="strezo_round",
+        product=Product.STREZO,
+        display=Display.ROUND,
+        module="strezo_variant",
+        bitstream_name="STREZO",
+        artifact_name="STREZO-ROUND",
+        modeline="720x720p60r2",
+        default_seed=1,
+        yosys="yosys",
+        nextpnr_ecp5="nextpnr-ecp5",
+        ecppack="ecppack",
+    ),
 }
 
 
@@ -118,11 +145,16 @@ def run_target(key):
         os.environ["ECPPACK"] = os.getenv(
             "TILIQUA_REZO_FAMILY_ECPPACK", target.ecppack)
     variant_path = Path(__file__).with_name(f"{target.module}.py")
-    if target.product is Product.REZO:
-        # The accepted REZO image imported its journal as the top-level module
-        # ``persistence``. Preserve that elaboration identity even though the
-        # consolidated tree also contains REZOMO's different persistence schema.
-        persistence_path = Path(__file__).with_name("rezo_persistence.py")
+    if target.product in (Product.REZO, Product.STREZO):
+        # The accepted REZO and STREZO images imported their journals as the
+        # top-level module ``persistence``. Preserve those elaboration identities
+        # even though the consolidated tree carries three different schemas.
+        persistence_name = (
+            "rezo_persistence.py"
+            if target.product is Product.REZO
+            else "strezo_persistence.py"
+        )
+        persistence_path = Path(__file__).with_name(persistence_name)
         spec = importlib.util.spec_from_file_location("persistence", persistence_path)
         persistence = importlib.util.module_from_spec(spec)
         previous = sys.modules.get("persistence")
