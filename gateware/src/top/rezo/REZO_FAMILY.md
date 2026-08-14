@@ -28,11 +28,13 @@ family-specific variable is unset.
 - `targets.py` is the authoritative product/display matrix.
 - `rezo_variant.py` and `rezo_persistence.py` preserve the accepted non-clocked
   REZO source from branch `rezo` at `222b6caa`.
-- `rezomo_variant.py` and `persistence.py` preserve the accepted clocked REZOMO
-  source from branch `rezomo` at `483f5680`.
+- `top.py` and `persistence.py` preserve the accepted clocked REZOMO source from
+  branch `rezomo` at `483f5680`. REZOMO remains at its historical Python module
+  path because generated naming changes can perturb packing on the nearly full
+  FPGA; `rezomo_variant.py` is only a compatibility import.
 - `rezo.py`, `rezo_round.py`, `rezomo.py`, and `rezomo_round.py` are deliberately
   thin build entry points.
-- `top.py` and `round.py` are compatibility shims for older imports and scripts.
+- `round.py` is a compatibility shim for the older circular-build script.
 
 Variant selection occurs before Amaranth elaboration, so REZO does not carry
 REZOMO-only clock logic. The historical `rezo`, `rezomo`, and `rezoclocked`

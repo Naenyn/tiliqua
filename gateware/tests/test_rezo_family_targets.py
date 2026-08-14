@@ -29,8 +29,8 @@ def test_family_targets_have_isolated_names_and_expected_modelines():
 def test_family_variants_are_selected_before_elaboration():
     assert TARGETS["rezo"].module == "rezo_variant"
     assert TARGETS["rezo_round"].module == "rezo_variant"
-    assert TARGETS["rezomo"].module == "rezomo_variant"
-    assert TARGETS["rezomo_round"].module == "rezomo_variant"
+    assert TARGETS["rezomo"].module == "top"
+    assert TARGETS["rezomo_round"].module == "top"
 
 
 def test_family_target_lookup_rejects_ambiguous_names():
