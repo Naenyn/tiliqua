@@ -86,3 +86,45 @@ The exact archives are under `build/rezo-r5/`, `build/rezo-round-r5/`,
 `8b39ff81` only make the REZO circular native-mapper and seed selection part of
 the explicit target wrapper; the final REZO circular row verifies that complete
 one-command path at the current functional head.
+
+## Post-consolidation optimization pass (2026-08-14)
+
+The first hardware test after the FILTER navigation and INPUT fader fix exposed
+an important qualification gap. A seed-12 REZO standard route passed nominal
+static timing at 74.54 MHz DVI, but produced no usable HDMI signal on the rack.
+The external video clock uses 1% spread spectrum, so a route only 0.39% above
+the nominal 74.25 MHz constraint does not have credible hardware margin. Slot 4
+was restored to the known-good `rezo-8b39ff81-r5.tar.gz` image before the rack
+was powered down. No later archive in this section has been flashed.
+
+Three measured RTL changes were retained:
+
+1. compact REZO audio-gain endpoints use one offset-plus-gain calculation,
+   keeping the complete fader inside its lane while removing the extra
+   display-domain scale adder;
+2. compact REZO INPUT target IDs use a four-entry constant decoder instead of
+   `TARGET_INPUT_BASE + 3 * input_index`, removing the block-RAM-to-carry-chain
+   DVI critical path;
+3. REZO stores scaled OUTPUT send offsets in its existing BRAM, moving the
+   multiply-by-three operation to the sync write path. REZOMO deliberately
+   retains raw sends: the identical transformation saved 38 packed cells in
+   REZO but cost 77 in REZOMO, leaving only 18 free. The rejected shared form
+   is recorded by `df3e4de` and its immediate revert `b4504cd`.
+
+The final combined software gate passed 105 tests. Current measured artifacts
+are:
+
+| Target | Source / seed | Packed cells | DVI5X / AUDIO / SYNC / DVI MHz | Archive payload SHA-256 | Status |
+|---|---:|---:|---|---|---|
+| REZO standard | `55df62df` / 8 | 23,879 (409 free) | 405.19 / 72.14 / 65.13 / 75.05 | `1cf12e275855f0e61b8cd7f9cc1eebe95d4c3b49832f9207eb0d151cd92d338a` | Nominal pass; not hardware-qualified because DVI margin is close to the 1% spread peak |
+| REZO circular | `902e7c58` / 2 | 23,861 (427 free) | 404.04 / 73.93 / 60.41 / 80.95 | `b4c8cd828ef918f446320592768bfe2eff9a55fe9aac7332a196926210ee9519` | Nominal pass; not hardware-qualified because sync margin is only 0.41 MHz |
+| REZOMO standard | unchanged from `8b39ff81` / 6 | 24,193 (95 free) | 392.00 / 72.63 / 63.02 / 75.27 | see qualification table above | RTL unchanged; prior qualification retained |
+| REZOMO circular | unchanged from `8b39ff81` / 4 | 24,261 (27 free) | 389.56 / 73.94 / 61.87 / 76.02 | see qualification table above | RTL unchanged; prior qualification retained |
+
+This pass confirms that source consolidation and FPGA optimization are related
+but distinct. Pure Python constants and tests should continue to be shared.
+Nearly-full elaborated RTL must be synthesized for both variants before it is
+made common: mathematically equivalent structures can pack very differently.
+The next hardware candidate should target at least 1% video-clock headroom plus
+additional guard margin, then be tested on the rack before its seed becomes a
+new qualified default.
