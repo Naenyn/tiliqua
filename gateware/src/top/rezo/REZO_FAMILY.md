@@ -27,6 +27,12 @@ family-specific variable is unset.
 The qualified defaults are seed 8 for both REZO targets, seed 6 for REZOMO
 standard, and seed 4 for REZOMO circular.
 
+REZO circular also selects the native `yosys` executable because its documented
+staged mapping recipe is placement-hostile under the PDM environment's pinned
+YoWASP mapper. Set `TILIQUA_REZO_FAMILY_YOSYS=/path/to/yosys` if the native
+executable is not on `PATH`; the other three targets retain the project-default
+mapper.
+
 ## Source layout
 
 - `targets.py` is the authoritative product/display matrix.

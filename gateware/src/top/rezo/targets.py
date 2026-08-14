@@ -33,6 +33,7 @@ class BuildTarget:
     artifact_name: str
     modeline: str
     default_seed: int
+    yosys: str | None = None
 
 
 TARGETS = {
@@ -55,6 +56,7 @@ TARGETS = {
         artifact_name="REZO-ROUND",
         modeline="720x720p60r2",
         default_seed=8,
+        yosys="yosys",
     ),
     "rezomo": BuildTarget(
         key="rezomo",
@@ -99,6 +101,8 @@ def run_target(key):
     os.environ["TILIQUA_REZO_FAMILY_NAME"] = target.bitstream_name
     os.environ["TILIQUA_REZO_FAMILY_ARTIFACT_NAME"] = target.artifact_name
     os.environ["TILIQUA_REZO_FAMILY_MODELINE"] = target.modeline
+    if target.yosys is not None:
+        os.environ["YOSYS"] = os.getenv("TILIQUA_REZO_FAMILY_YOSYS", target.yosys)
     variant_path = Path(__file__).with_name(f"{target.module}.py")
     if target.product is Product.REZO:
         # The accepted REZO image imported its journal as the top-level module
