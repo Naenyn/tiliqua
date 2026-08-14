@@ -1,4 +1,4 @@
-"""Compatibility entry point for the historical REZOMO circular target."""
+"""Standard 1280x720 REZO build entry point."""
 
 try:
     from .targets import run_target
@@ -7,4 +7,4 @@ except ImportError:
 
 
 if __name__ == "__main__":
-    run_target("rezomo_round")
+    run_target("rezo")

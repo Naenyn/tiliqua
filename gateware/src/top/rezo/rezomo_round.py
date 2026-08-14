@@ -1,4 +1,4 @@
-"""Compatibility entry point for the historical REZOMO circular target."""
+"""Official 720x720 circular-display REZOMO build entry point."""
 
 try:
     from .targets import run_target
