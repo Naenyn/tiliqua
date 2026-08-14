@@ -5975,4 +5975,7 @@ def run_cli(*, name="REZO", modeline=None):
 
 
 if __name__ == "__main__":
-    run_cli()
+    run_cli(
+        name=os.getenv("TILIQUA_REZO_FAMILY_NAME", "REZO"),
+        modeline=os.getenv("TILIQUA_REZO_FAMILY_MODELINE") or None,
+    )

@@ -6,8 +6,9 @@ The non-clocked REZO image therefore does not carry unused REZOMO clock logic.
 
 from dataclasses import dataclass
 from enum import Enum
-import importlib
 import os
+from pathlib import Path
+import runpy
 
 
 class Product(str, Enum):
@@ -80,19 +81,15 @@ def get_target(key):
         raise ValueError(f"unknown REZO-family target {key!r}; choose {choices}") from error
 
 
-def _import_variant(module_name):
-    if __package__:
-        return importlib.import_module(f"{__package__}.{module_name}")
-    return importlib.import_module(module_name)
-
-
 def run_target(key):
-    """Run the existing Tiliqua CLI for one explicit family target."""
+    """Run one variant with the same ``__main__`` identity as its old branch."""
     target = get_target(key)
     seed_override = os.getenv("TILIQUA_REZO_FAMILY_SEED")
     if seed_override is not None:
         os.environ["TILIQUA_REZO_SEED"] = seed_override
     else:
         os.environ.setdefault("TILIQUA_REZO_SEED", str(target.default_seed))
-    variant = _import_variant(target.module)
-    variant.run_cli(name=target.bitstream_name, modeline=target.modeline)
+    os.environ["TILIQUA_REZO_FAMILY_NAME"] = target.bitstream_name
+    os.environ["TILIQUA_REZO_FAMILY_MODELINE"] = target.modeline
+    variant_path = Path(__file__).with_name(f"{target.module}.py")
+    runpy.run_path(str(variant_path), run_name="__main__")

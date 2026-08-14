@@ -39,6 +39,8 @@ family-specific variable is unset.
 Variant selection occurs before Amaranth elaboration, so REZO does not carry
 REZOMO-only clock logic. The historical `rezo`, `rezomo`, and `rezoclocked`
 branches remain recovery and provenance references while consolidation proceeds.
+Each variant script is executed with its historical `__main__` module identity;
+this preserves generated naming and packing for the near-capacity designs.
 
 ## Extraction policy
 
