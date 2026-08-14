@@ -55,7 +55,7 @@ TARGETS = {
         bitstream_name="REZO",
         artifact_name="REZO-ROUND",
         modeline="720x720p60r2",
-        default_seed=8,
+        default_seed=2,
         yosys="yosys",
     ),
     "rezomo": BuildTarget(

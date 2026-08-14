@@ -37,7 +37,7 @@ def test_family_variants_are_selected_before_elaboration():
     assert TARGETS["rezomo"].module == "top"
     assert TARGETS["rezomo_round"].module == "top"
     assert TARGETS["rezo"].default_seed == 8
-    assert TARGETS["rezo_round"].default_seed == 8
+    assert TARGETS["rezo_round"].default_seed == 2
     assert TARGETS["rezomo"].default_seed == 6
     assert TARGETS["rezomo_round"].default_seed == 4
     assert TARGETS["rezo_round"].yosys == "yosys"
