@@ -143,6 +143,9 @@ also passing every constrained clock.
 | REZOMO-EVEN-S5 | Exact REZOMO-EVEN JSON | 5 | 20,835 | 24,193 | 95 | 6,976 | 20 | 397.14 | 71.47 | 58.28 | 75.32 | FAIL SYNC |
 | REZOMO-EVEN-S7 | Exact REZOMO-EVEN JSON | 7 | 20,835 | 24,193 | 95 | 6,976 | 20 | 373.97 | 75.59 | 59.85 | 70.90 | FAIL SYNC and DVI |
 | REZOMO-EVEN-S8 | Exact REZOMO-EVEN JSON | 8 | 20,835 | 24,193 | 95 | 6,976 | 20 | 339.21 | 74.18 | 60.98 | 75.11 | FAIL DVI5X |
+| REZOMO-FINAL-ROUND-S6 | `483f5680`; accepted UI on official 720x720p60r2 target | 6 | 20,835 | 24,261 | 27 | 6,976 | 20 | 396.98 | 77.08 | 57.19 | 79.89 | FAIL SYNC |
+| REZOMO-FINAL-ROUND-S1 | Exact circular JSON reroute | 1 | 20,835 | 24,261 | 27 | 6,976 | 20 | 361.93 | 74.24 | 53.02 | 72.48 | FAIL SYNC |
+| **REZOMO-FINAL-ROUND-S3** | **Exact committed circular JSON; accepted shared UI and CLOCK alignment** | **3** | **20,835** | **24,261** | **27** | **6,976** | **20** | **378.36** | **78.65** | **61.65** | **72.40** | **PASS; tester archive, not flashed** |
 
 ## Notes
 
@@ -212,6 +215,16 @@ also passing every constrained clock.
   each miss at least one clock. Seed 3 passes all four clocks with 95 packed
   cells free. Its standard archive completed at 2026-08-13 22:50:56 EDT and
   was flashed successfully to slot 4.
+- REZOMO-FINAL-ROUND builds the hardware-accepted shared-page and CLOCK UI from
+  exact source commit `483f5680` for the official rotated `720x720p60r2`
+  display. Seeds 6 and 1 fail only the 60 MHz SYNC domain. Seed 3 passes every
+  constrained clock with 27 packed cells free and supplies the tester archive;
+  seed 4 was stopped after seed 3 passed. The retained archive is
+  `rezomo-483f5680-720x720p60r2-r5.tar.gz` with SHA-256
+  `91e82b59edca3fd42cc83024f0a66aa437a50fd19ffb7d1112fcb5591b77b274`.
+  Its embedded `top.bit` SHA-256 is
+  `f520de6e866e353d04c18148bd12a8808abcb56a984af3ee8766db7f01111456`.
+  The archive was verified but not flashed.
 - CLOCK-DEPTH-SLIDER-S8 removes the dynamic three-character numeric DEPTH
   label and its text-writer scan slots. The replacement geometry uses the
   existing 0--16 value as a five-bit left shift, yielding a 512-pixel interior

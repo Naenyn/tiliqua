@@ -91,6 +91,12 @@ successfully to slot 4 with option storage preserved. The focused REZOMO
 navigation and native-display suite passed all 24 tests on 2026-08-13 before
 this state was committed.
 
+An updated official-screen archive was subsequently built from exact source
+commit `483f5680`. Seed 3 passes every circular-target clock and supplies
+`rezomo-483f5680-720x720p60r2-r5.tar.gz`; its manifest explicitly records
+`720x720p60r2`. The archive was prepared for external testing and was not
+flashed to the standard rack display.
+
 Untracked files and generated build output may still be present. They belong to
 the user or the existing workflow; do not remove or rewrite them as cleanup.
 
