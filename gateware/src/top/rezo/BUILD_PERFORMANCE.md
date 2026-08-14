@@ -448,3 +448,12 @@ also passing every constrained clock.
   feature cost 149 cells over CLOCK-WALK-COMPACT. Seed 2 misses only DVI;
   seed 1 misses only DVI5X; seed 7 misses DVI5X and SYNC; and seed 8 passes all
   clocks with 392 cells free and supplies the flashed archive.
+
+## 2026-08-14 consolidated REZO-family target qualification
+
+The new `codex/rezo-family` target matrix keeps product logic elaborated
+independently while selecting standard/circular modelines, isolated artifact
+names, qualified seeds, and REZO circular's native mapper explicitly. The
+combined regression suite passes 107 tests. Final packed-cell and clock results
+are recorded in `REZO_FAMILY.md`; every retained archive passed all four clocks,
+its archived bitstream matched the routed `top.bit`, and none was flashed.

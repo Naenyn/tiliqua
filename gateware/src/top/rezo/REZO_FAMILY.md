@@ -66,3 +66,23 @@ should be extracted in small, independently tested steps:
 
 After each extraction, run both variant suites and compare synthesized resource
 and timing results before deleting duplicated code.
+
+## Consolidation qualification (2026-08-14)
+
+The coexistence checkpoint passed 107 combined REZO/REZOMO tests. All four
+artifacts below pass every constrained clock, and each archive's `top.bit`
+SHA-256 matches the corresponding routed file. Nothing in this qualification
+was flashed.
+
+| Target | Commit / seed | Packed cells | DVI5X / AUDIO / SYNC / DVI MHz | Archive SHA-256 |
+|---|---:|---:|---|---|
+| REZO standard | `8b39ff81` / 8 | 23,985 (303 free) | 460.62 / 75.12 / 60.14 / 76.44 | `06dbe7a321cf5cc70faca26b80da7c15cff4a0df18c13290564a2418327dbcdb` |
+| REZO circular | `7cbdc2c7` / 2 | 23,914 (374 free) | 425.35 / 72.13 / 65.27 / 75.06 | `68f703a66f7bec3c077afc4fadc6eca64117bce1377667e3de1ef5baa91e805b` |
+| REZOMO standard | `8b39ff81` / 6 | 24,193 (95 free) | 392.00 / 72.63 / 63.02 / 75.27 | `81bc70e29b4ea4251ec18a27e051d618bed4b965d5325d581e72c43458e4305a` |
+| REZOMO circular | `8b39ff81` / 4 | 24,261 (27 free) | 389.56 / 73.94 / 61.87 / 76.02 | `021195d89b8ae34edd3bdfe14e3474e9223a421b278c6298d02085b528b47d36` |
+
+The exact archives are under `build/rezo-r5/`, `build/rezo-round-r5/`,
+`build/rezomo-r5/`, and `build/rezomo-round-r5/`. The two commits after
+`8b39ff81` only make the REZO circular native-mapper and seed selection part of
+the explicit target wrapper; the final REZO circular row verifies that complete
+one-command path at the current functional head.
