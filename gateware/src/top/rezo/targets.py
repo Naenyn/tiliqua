@@ -34,6 +34,8 @@ class BuildTarget:
     modeline: str
     default_seed: int
     yosys: str | None = None
+    nextpnr_ecp5: str | None = None
+    ecppack: str | None = None
 
 
 TARGETS = {
@@ -66,7 +68,10 @@ TARGETS = {
         bitstream_name="REZOMO",
         artifact_name="REZOMO",
         modeline="1280x720p60",
-        default_seed=6,
+        default_seed=3,
+        yosys="yosys",
+        nextpnr_ecp5="nextpnr-ecp5",
+        ecppack="ecppack",
     ),
     "rezomo_round": BuildTarget(
         key="rezomo_round",
@@ -77,6 +82,9 @@ TARGETS = {
         artifact_name="REZOMO-ROUND",
         modeline="720x720p60r2",
         default_seed=4,
+        yosys="yosys",
+        nextpnr_ecp5="nextpnr-ecp5",
+        ecppack="ecppack",
     ),
 }
 
@@ -103,6 +111,12 @@ def run_target(key):
     os.environ["TILIQUA_REZO_FAMILY_MODELINE"] = target.modeline
     if target.yosys is not None:
         os.environ["YOSYS"] = os.getenv("TILIQUA_REZO_FAMILY_YOSYS", target.yosys)
+    if target.nextpnr_ecp5 is not None:
+        os.environ["NEXTPNR_ECP5"] = os.getenv(
+            "TILIQUA_REZO_FAMILY_NEXTPNR_ECP5", target.nextpnr_ecp5)
+    if target.ecppack is not None:
+        os.environ["ECPPACK"] = os.getenv(
+            "TILIQUA_REZO_FAMILY_ECPPACK", target.ecppack)
     variant_path = Path(__file__).with_name(f"{target.module}.py")
     if target.product is Product.REZO:
         # The accepted REZO image imported its journal as the top-level module

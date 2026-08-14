@@ -38,10 +38,14 @@ def test_family_variants_are_selected_before_elaboration():
     assert TARGETS["rezomo_round"].module == "top"
     assert TARGETS["rezo"].default_seed == 8
     assert TARGETS["rezo_round"].default_seed == 2
-    assert TARGETS["rezomo"].default_seed == 6
+    assert TARGETS["rezomo"].default_seed == 3
     assert TARGETS["rezomo_round"].default_seed == 4
     assert TARGETS["rezo_round"].yosys == "yosys"
     assert TARGETS["rezo"].yosys is None
+    for key in ("rezomo", "rezomo_round"):
+        assert TARGETS[key].yosys == "yosys"
+        assert TARGETS[key].nextpnr_ecp5 == "nextpnr-ecp5"
+        assert TARGETS[key].ecppack == "ecppack"
 
 
 def test_family_target_lookup_rejects_ambiguous_names():
