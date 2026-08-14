@@ -739,6 +739,36 @@ def test_input_page_draws_post_value_audio_and_raw_bipolar_cv_meters():
     ]
 
 
+def test_compact_audio_gain_fader_stays_inside_value_lane():
+    """Maximum audio gain must stop before the compact lane's x=576 edge."""
+    dut = RezoTileDisplay(h_active=1280, compact_layout=True)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6, domain="sync")
+    sim.add_clock(1e-6, domain="dvi")
+    samples = []
+
+    async def sample(ctx, panel_x, panel_y):
+        ctx.set(dut.x, dut.x_offset + panel_x)
+        ctx.set(dut.y, panel_y)
+        ctx.set(dut.de, 1)
+        for _ in range(12):
+            await ctx.tick("dvi")
+        samples.append(ctx.get(dut.r))
+
+    async def bench(ctx):
+        ctx.set(dut.page, 2)
+        ctx.set(dut.input_modes[0], RezoCore.INPUT_MODE_AUDIO)
+        ctx.set(dut.input_gains[0], 255)
+        await sample(ctx, 570, 260)  # high gain still fills inside VALUE
+        await sample(ctx, 580, 260)  # but never escapes past its x=576 box
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    palette = RezoTileDisplay.PALETTE
+    assert samples == [palette["control"], palette["background"]]
+
+
 def test_output_page_draws_standardized_header_selection_bars():
     dut = RezoTileDisplay(h_active=1280)
     sim = Simulator(dut)

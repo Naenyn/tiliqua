@@ -53,9 +53,22 @@ def test_ui_shared_matrix_and_output_edit_paths():
         assert ctx.get(dut.filter_mode) == 1
         await _click(ctx, dut)
 
-        # Return to PAGE, enter page edit, and move FILTER -> MATRIX.
+        # FILTER navigation is PAGE -> TYPE -> MODE, while BANK remains
+        # PAGE -> PRESET -> MODE. Walk the FILTER header in both directions.
+        endpoint = await _turn(ctx, dut, endpoint, 0)
+        assert ctx.get(dut.selected) == dut.TARGET_FILTER_TYPE
         endpoint = await _turn(ctx, dut, endpoint, 0)
         assert ctx.get(dut.selected) == dut.TARGET_PAGE
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_FILTER_TYPE
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_MODE
+        endpoint = await _turn(ctx, dut, endpoint, 0)
+        assert ctx.get(dut.selected) == dut.TARGET_FILTER_TYPE
+        endpoint = await _turn(ctx, dut, endpoint, 0)
+        assert ctx.get(dut.selected) == dut.TARGET_PAGE
+
+        # Enter page edit and move FILTER -> MATRIX.
         await _click(ctx, dut)
         endpoint = await _turn(ctx, dut, endpoint, 1)
         assert ctx.get(dut.page) == 2

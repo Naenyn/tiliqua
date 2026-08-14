@@ -1994,10 +1994,10 @@ class RezoHardwareUI(wiring.Component):
             with m.If(filter_mode):
                 with m.If(edit_direction):
                     with m.If(~filter_target_visible | (selected == self.TARGET_PAGE)):
-                        m.d.comb += next_selected.eq(self.TARGET_MODE)
-                    with m.Elif(selected == self.TARGET_MODE):
                         m.d.comb += next_selected.eq(self.TARGET_FILTER_TYPE)
                     with m.Elif(selected == self.TARGET_FILTER_TYPE):
+                        m.d.comb += next_selected.eq(self.TARGET_MODE)
+                    with m.Elif(selected == self.TARGET_MODE):
                         m.d.comb += next_selected.eq(self.TARGET_FILTER_CUTOFF)
                     with m.Elif(selected == self.TARGET_FILTER_CUTOFF):
                         m.d.comb += next_selected.eq(self.TARGET_FILTER_SLOPE)
@@ -2025,9 +2025,9 @@ class RezoHardwareUI(wiring.Component):
                     with m.Elif(selected == self.TARGET_FILTER_SLOPE):
                         m.d.comb += next_selected.eq(self.TARGET_FILTER_CUTOFF)
                     with m.Elif(selected == self.TARGET_FILTER_CUTOFF):
-                        m.d.comb += next_selected.eq(self.TARGET_FILTER_TYPE)
-                    with m.Elif(selected == self.TARGET_FILTER_TYPE):
                         m.d.comb += next_selected.eq(self.TARGET_MODE)
+                    with m.Elif(selected == self.TARGET_MODE):
+                        m.d.comb += next_selected.eq(self.TARGET_FILTER_TYPE)
                     with m.Else():
                         m.d.comb += next_selected.eq(self.TARGET_PAGE)
             with m.Else():
@@ -4223,8 +4223,11 @@ class RezoTileDisplay(wiring.Component):
                 # The bipolar CV lane is centred at x=440.
                 m.d.dvi += [
                     input_gain_ends[n].eq(
-                        304 + self.input_gains[n] +
-                        (self.input_gains[n] >> 1)),
+                        # Fit the complete unsigned gain range into the
+                        # 272px VALUE lane [304, 576). The former 1.5x map
+                        # reached x=686 and escaped the lane at high gains.
+                        input_control_x0 + self.input_gains[n] +
+                        (self.input_gains[n] >> 4)),
                     input_depth_ends[n].eq(
                         440 + self.cv_depths[n] +
                         (self.cv_depths[n] >> 1)),
