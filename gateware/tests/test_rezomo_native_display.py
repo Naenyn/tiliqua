@@ -392,3 +392,37 @@ def test_input_audio_value_fill_stays_inside_its_panel():
     )
     assert pixels[0] == (accent, accent, accent)
     assert pixels[1] != (accent, accent, accent)
+
+
+def test_output_send_scaling_preserves_exact_fill_endpoint():
+    """A send of eight fills 24 pixels after the four-pixel inset."""
+    dut = RezoTileDisplay(
+        h_active=1280, rotate_left=False, compact_layout=True)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6, domain="sync")
+    sim.add_clock(1e-6, domain="dvi")
+    samples = []
+
+    async def sample(ctx, panel_x):
+        ctx.set(dut.x, dut.x_offset + panel_x)
+        ctx.set(dut.y, 342)
+        ctx.set(dut.de, 1)
+        for _ in range(12):
+            await ctx.tick("dvi")
+        samples.append(ctx.get(dut.r))
+
+    async def bench(ctx):
+        ctx.set(dut.page, 4)
+        ctx.set(dut.output_send_write_addr, 0)
+        ctx.set(dut.output_send_write_data, 8)
+        ctx.set(dut.output_send_write_en, 1)
+        await ctx.tick("sync")
+        ctx.set(dut.output_send_write_en, 0)
+        await sample(ctx, 270)
+        await sample(ctx, 271)
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    palette = RezoTileDisplay.PALETTE
+    assert samples == [palette["control"], palette["background"]]

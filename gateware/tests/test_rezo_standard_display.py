@@ -848,6 +848,42 @@ def test_compact_output_cells_share_native_label_centers():
     ]
 
 
+def test_compact_output_send_scaling_preserves_exact_fill_endpoint():
+    """A send of eight fills 24 pixels after the four-pixel inset."""
+    dut = RezoTileDisplay(
+        h_active=1280, rotate_left=False, compact_layout=True)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6, domain="sync")
+    sim.add_clock(1e-6, domain="dvi")
+    samples = []
+
+    async def sample(ctx, panel_x):
+        ctx.set(dut.x, dut.x_offset + panel_x)
+        ctx.set(dut.y, 342)
+        ctx.set(dut.de, 1)
+        for _ in range(12):
+            await ctx.tick("dvi")
+        samples.append(ctx.get(dut.r))
+
+    async def bench(ctx):
+        ctx.set(dut.page, 4)
+        ctx.set(dut.output_send_write_addr, 0)
+        ctx.set(dut.output_send_write_data, 8)
+        ctx.set(dut.output_send_write_en, 1)
+        await ctx.tick("sync")
+        ctx.set(dut.output_send_write_en, 0)
+        # First compact cell starts at x=243. Its inset starts at 247 and an
+        # eight-step send ends at 247 + 8*3 = 271 (exclusive).
+        await sample(ctx, 270)
+        await sample(ctx, 271)
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    palette = RezoTileDisplay.PALETTE
+    assert samples == [palette["control"], palette["background"]]
+
+
 def test_compact_matrix_labels_share_control_row_centers():
     """MATRIX labels use the faders' cadence and one right-hand edge."""
     text_rows = (16, 21, 26, 31, 36)

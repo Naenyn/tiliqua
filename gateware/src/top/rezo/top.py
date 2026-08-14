@@ -6058,13 +6058,21 @@ class RezoTileDisplay(wiring.Component):
         output_row_inner = Signal()
         output_col_inner = Signal()
         m.submodules.output_send_mem = output_send_mem = Memory(
-            shape=unsigned(5), depth=20, init=[0] * 20,
+            shape=unsigned(7), depth=20, init=[0] * 20,
             attrs={"ram_style": "block"})
         output_send_rport = output_send_mem.read_port(domain="dvi")
         output_send_wport = output_send_mem.write_port(domain="sync")
+        output_send_scaled_write = Signal(unsigned(7))
+        if self.compact_layout:
+            m.d.comb += output_send_scaled_write.eq(
+                self.output_send_write_data +
+                (self.output_send_write_data << 1))
+        else:
+            m.d.comb += output_send_scaled_write.eq(
+                self.output_send_write_data << 2)
         m.d.comb += [
             output_send_wport.addr.eq(self.output_send_write_addr),
-            output_send_wport.data.eq(self.output_send_write_data),
+            output_send_wport.data.eq(output_send_scaled_write),
             output_send_wport.en.eq(self.output_send_write_en),
         ]
         output_cell_x0 = Signal(unsigned(10))
@@ -6132,13 +6140,8 @@ class RezoTileDisplay(wiring.Component):
             output_page_q.eq(output_page),
         ]
         output_send_end = Signal(unsigned(10))
-        if self.compact_layout:
-            m.d.comb += output_send_end.eq(
-                output_x0_q + 4 + output_send_rport.data +
-                (output_send_rport.data << 1))
-        else:
-            m.d.comb += output_send_end.eq(
-                output_x0_q + 4 + (output_send_rport.data << 2))
+        m.d.comb += output_send_end.eq(
+            output_x0_q + 4 + output_send_rport.data)
         m.d.comb += [
             output_cell.eq(output_page & output_row_active & output_col_active &
                            (output_row_edge | output_col_edge)),
