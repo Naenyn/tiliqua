@@ -128,3 +128,15 @@ made common: mathematically equivalent structures can pack very differently.
 The next hardware candidate should target at least 1% video-clock headroom plus
 additional guard margin, then be tested on the rack before its seed becomes a
 new qualified default.
+
+Run the margin gate after every build and before packaging or flashing a new
+route:
+
+```sh
+pdm run python scripts/check_timing_margin.py \
+  build/<target>-r5/top.tim --minimum-headroom-percent 1.25
+```
+
+This is intentionally stricter than nextpnr's nominal PASS/FAIL flag. The
+default covers the configured 1% spread peak plus a small guard margin; release
+candidates may use a higher threshold.
