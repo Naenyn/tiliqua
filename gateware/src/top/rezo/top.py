@@ -663,6 +663,14 @@ class RezoCore(wiring.Component):
         ping_pong_steps = Signal(range(self.N_BANDS + 1))
         enabled_band_count = Signal(range(self.N_BANDS + 1))
         shift_lfsr = Signal(unsigned(16), init=0xACE1)
+        # SHIFT and WALK make wide pattern updates from the accepted clock
+        # sample. Start those two algorithms one control cycle later so live
+        # INPUT role/source decoding does not sit in their update cones.
+        shift_pending = Signal()
+        shift_sample = Signal(signed(16))
+        walk_clock_pending = Signal()
+        walk_clock_interval = Signal.like(walk_burst_quarter)
+        walk_clock_interval_seen = Signal()
         # Independent broadband DATA source. Advancing at the accepted audio
         # sample rate makes a clock pulse genuinely sample the running noise,
         # while a 32-bit maximal-length sequence avoids the short audible
@@ -836,7 +844,7 @@ class RezoCore(wiring.Component):
                 (self.clock_algorithm == self.CLOCK_ALGORITHM_WALK) &
                 (self.walk_style == self.WALK_STYLE_HEAD) &
                 (walk_burst_remaining != 0) &
-                (walk_burst_elapsed >= walk_burst_threshold) & ~clock_pulse),
+                (walk_burst_elapsed >= walk_burst_threshold)),
             clock_scale_product.eq(
                 clock_modulation_array[clock_scale_index] *
                 self.clock_depth),
@@ -1017,6 +1025,7 @@ class RezoCore(wiring.Component):
         m.d.comb += [
             out_ready.eq(~out_valid | self.o.ready),
             self.i.ready.eq((state == state_wait) & out_ready &
+                            ~shift_pending & ~walk_clock_pending &
                             ~rotate_pending & ~walk_pending & ~turing_pending &
                             ~turing_map_pending & ~turing_clear_pending),
             turing_pattern_wport.en.eq(0),
@@ -1026,6 +1035,74 @@ class RezoCore(wiring.Component):
 
         with m.If(self.o.ready):
             m.d.sync += out_valid.eq(0)
+
+        with m.If(shift_pending):
+            m.d.sync += [
+                shift_pending.eq(0),
+                rotate_seeded.eq(0),
+                shift_lfsr.eq(Cat(
+                    shift_lfsr[1:],
+                    shift_lfsr[0] ^ shift_lfsr[2] ^
+                    shift_lfsr[3] ^ shift_lfsr[5])),
+            ]
+            with m.Switch(self.shift_direction):
+                with m.Case(self.SHIFT_BACKWARD):
+                    for n in range(self.N_BANDS - 1):
+                        m.d.sync += self.clock_modulations[n].eq(
+                            self.clock_modulations[n + 1])
+                    m.d.sync += self.clock_modulations[-1].eq(shift_sample)
+                with m.Case(self.SHIFT_RANDOM):
+                    with m.If(shift_lfsr[0]):
+                        for n in range(self.N_BANDS - 1, 0, -1):
+                            m.d.sync += self.clock_modulations[n].eq(
+                                self.clock_modulations[n - 1])
+                        m.d.sync += self.clock_modulations[0].eq(shift_sample)
+                    with m.Else():
+                        for n in range(self.N_BANDS - 1):
+                            m.d.sync += self.clock_modulations[n].eq(
+                                self.clock_modulations[n + 1])
+                        m.d.sync += self.clock_modulations[-1].eq(shift_sample)
+                with m.Default():
+                    for n in range(self.N_BANDS - 1, 0, -1):
+                        m.d.sync += self.clock_modulations[n].eq(
+                            self.clock_modulations[n - 1])
+                    m.d.sync += self.clock_modulations[0].eq(shift_sample)
+
+        with m.If(walk_clock_pending):
+            m.d.sync += [
+                walk_clock_pending.eq(0),
+                rotate_seeded.eq(0),
+                walk_random_bits.eq(shift_lfsr),
+                shift_lfsr.eq(Cat(
+                    shift_lfsr[1:],
+                    shift_lfsr[0] ^ shift_lfsr[2] ^
+                    shift_lfsr[3] ^ shift_lfsr[5])),
+            ]
+            with m.If(self.walk_style == self.WALK_STYLE_HEAD):
+                with m.If(enabled_band_count != 0):
+                    m.d.sync += [
+                        walk_pending.eq(1),
+                        walk_index.eq(walk_cursor),
+                        walk_head_direction.eq(shift_lfsr[2]),
+                    ]
+                with m.If(
+                        (enabled_band_count != 0) &
+                        (self.walk_drunk != 0) &
+                        (~clock_external_active_q | walk_clock_interval_seen) &
+                        ((walk_chance_threshold == 255) |
+                         (shift_lfsr[8:16] < walk_chance_threshold))):
+                    m.d.sync += [
+                        walk_burst_remaining.eq(self.walk_drunk),
+                        walk_burst_period.eq(walk_clock_interval >> 4),
+                    ]
+                with m.Else():
+                    m.d.sync += walk_burst_remaining.eq(0)
+            with m.Else():
+                m.d.sync += [
+                    walk_pending.eq(1),
+                    walk_index.eq(0),
+                    walk_burst_remaining.eq(0),
+                ]
 
         # One small shared multiplier scales all ten raw clock values in ten
         # control cycles. Pattern state remains full resolution, so changing
@@ -1381,66 +1458,20 @@ class RezoCore(wiring.Component):
                             ping_pong_steps.eq(0),
                             shift_lfsr.eq(0xACE1),
                         ]
-                    with m.Elif(walk_burst_pulse):
-                        # Extra HEAD landings reuse the normal one-step worker
-                        # but occur on quarter-interval subdivisions between
-                        # incoming clocks.
-                        m.d.sync += [
-                            walk_pending.eq(enabled_band_count != 0),
-                            walk_index.eq(walk_cursor),
-                            walk_head_direction.eq(shift_lfsr[2]),
-                            walk_random_bits.eq(shift_lfsr),
-                            walk_burst_remaining.eq(
-                                walk_burst_remaining - 1),
-                            shift_lfsr.eq(Cat(
-                                shift_lfsr[1:],
-                                shift_lfsr[0] ^ shift_lfsr[2] ^
-                                shift_lfsr[3] ^ shift_lfsr[5])),
-                        ]
                     with m.Elif(clock_pulse):
                         with m.If(self.clock_algorithm ==
                                   self.CLOCK_ALGORITHM_SHIFT):
                             m.d.sync += [
-                                rotate_seeded.eq(0),
-                                shift_lfsr.eq(Cat(
-                                    shift_lfsr[1:],
-                                    shift_lfsr[0] ^ shift_lfsr[2] ^
-                                    shift_lfsr[3] ^ shift_lfsr[5])),
+                                shift_pending.eq(1),
+                                shift_sample.eq(sampled_modulation),
                             ]
-                            with m.Switch(self.shift_direction):
-                                with m.Case(self.SHIFT_BACKWARD):
-                                    for n in range(self.N_BANDS - 1):
-                                        m.d.sync += self.clock_modulations[n].eq(
-                                            self.clock_modulations[n + 1])
-                                    m.d.sync += self.clock_modulations[-1].eq(
-                                        sampled_modulation)
-                                with m.Case(self.SHIFT_RANDOM):
-                                    with m.If(shift_lfsr[0]):
-                                        for n in range(self.N_BANDS - 1, 0, -1):
-                                            m.d.sync += self.clock_modulations[n].eq(
-                                                self.clock_modulations[n - 1])
-                                        m.d.sync += self.clock_modulations[0].eq(
-                                            sampled_modulation)
-                                    with m.Else():
-                                        for n in range(self.N_BANDS - 1):
-                                            m.d.sync += self.clock_modulations[n].eq(
-                                                self.clock_modulations[n + 1])
-                                        m.d.sync += self.clock_modulations[-1].eq(
-                                            sampled_modulation)
-                                with m.Default():
-                                    for n in range(self.N_BANDS - 1, 0, -1):
-                                        m.d.sync += self.clock_modulations[n].eq(
-                                            self.clock_modulations[n - 1])
-                                    m.d.sync += self.clock_modulations[0].eq(
-                                        sampled_modulation)
                         with m.Elif(self.clock_algorithm ==
                                     self.CLOCK_ALGORITHM_ROTATE):
                             rotate_forward = (
                                 self.shift_direction == self.SHIFT_FORWARD)
                             for n in range(self.N_BANDS):
                                 m.d.sync += rotate_snapshot_origins[n].eq(Mux(
-                                    rotate_seeded,
-                                    rotate_origins[n], n))
+                                    rotate_seeded, rotate_origins[n], n))
                             m.d.sync += [
                                 rotate_seeded.eq(1),
                                 rotate_pending.eq(1),
@@ -1453,43 +1484,11 @@ class RezoCore(wiring.Component):
                         with m.Elif(self.clock_algorithm ==
                                     self.CLOCK_ALGORITHM_WALK):
                             m.d.sync += [
-                                rotate_seeded.eq(0),
-                                walk_random_bits.eq(shift_lfsr),
-                                shift_lfsr.eq(Cat(
-                                    shift_lfsr[1:],
-                                    shift_lfsr[0] ^ shift_lfsr[2] ^
-                                    shift_lfsr[3] ^ shift_lfsr[5])),
+                                walk_clock_pending.eq(1),
+                                walk_clock_interval.eq(walk_burst_quarter),
+                                walk_clock_interval_seen.eq(
+                                    external_interval_seen),
                             ]
-                            with m.If(self.walk_style ==
-                                      self.WALK_STYLE_HEAD):
-                                with m.If(enabled_band_count != 0):
-                                    m.d.sync += [
-                                        walk_pending.eq(1),
-                                        walk_index.eq(walk_cursor),
-                                        walk_head_direction.eq(shift_lfsr[2]),
-                                    ]
-                                with m.If(
-                                        (enabled_band_count != 0) &
-                                        (self.walk_drunk != 0) &
-                                        (~clock_external_active_q |
-                                         external_interval_seen) &
-                                        ((walk_chance_threshold == 255) |
-                                         (shift_lfsr[8:16] <
-                                          walk_chance_threshold))):
-                                    m.d.sync += [
-                                        walk_burst_remaining.eq(
-                                            self.walk_drunk),
-                                        walk_burst_period.eq(
-                                            walk_burst_quarter >> 4),
-                                    ]
-                                with m.Else():
-                                    m.d.sync += walk_burst_remaining.eq(0)
-                            with m.Else():
-                                m.d.sync += [
-                                    walk_pending.eq(1),
-                                    walk_index.eq(0),
-                                    walk_burst_remaining.eq(0),
-                                ]
                         with m.Else():
                             turing_forward = (
                                 (self.shift_direction == self.SHIFT_FORWARD) |
@@ -1531,6 +1530,22 @@ class RezoCore(wiring.Component):
                             with m.If(turing_mutate):
                                 m.d.sync += turing_carry.eq(
                                     shift_lfsr.as_signed() >> 1)
+                    with m.Elif(walk_burst_pulse):
+                        # Extra HEAD landings reuse the normal one-step worker
+                        # but occur on quarter-interval subdivisions between
+                        # incoming clocks.
+                        m.d.sync += [
+                            walk_pending.eq(enabled_band_count != 0),
+                            walk_index.eq(walk_cursor),
+                            walk_head_direction.eq(shift_lfsr[2]),
+                            walk_random_bits.eq(shift_lfsr),
+                            walk_burst_remaining.eq(
+                                walk_burst_remaining - 1),
+                            shift_lfsr.eq(Cat(
+                                shift_lfsr[1:],
+                                shift_lfsr[0] ^ shift_lfsr[2] ^
+                                shift_lfsr[3] ^ shift_lfsr[5])),
+                        ]
                     for n, diff in enumerate(level_diffs):
                         with m.If(diff > self.PARAM_SLEW_STEP):
                             m.d.sync += smooth_levels[n].eq(
@@ -5786,9 +5801,17 @@ class RezoTileDisplay(wiring.Component):
         m.d.comb += input_y_rport.addr.eq(y)
 
         input_x_q = Signal.like(x)
-        m.d.dvi += input_x_q.eq(x + 1)
+        input_index_q = Signal(unsigned(2))
+        m.d.dvi += [
+            input_x_q.eq(x + 1),
+            # Retiming only the repeated-row selector removes the BRAM
+            # clock-to-output delay from the endpoint muxes without disturbing
+            # local-X/Y geometry. The selector settles at the blank left edge,
+            # hundreds of pixels before the first INPUT control at x=304.
+            input_index_q.eq(input_y_rport.data[7:9]),
+        ]
         input_local_y = input_y_rport.data[:7]
-        input_index = input_y_rport.data[7:9]
+        input_index = input_index_q
         input_row_valid = input_y_rport.data[9]
         input_mode = Array(self.input_modes)[input_index]
         input_depth = Array(self.cv_depths)[input_index]
@@ -6119,39 +6142,37 @@ class RezoTileDisplay(wiring.Component):
                     output_row_edge.eq((y < row_y + 2) | (y >= row_y + 26)),
                     output_cell_y0.eq(row_y),
                 ]
-        output_x_q = Signal.like(x)
-        output_y_q = Signal.like(y)
-        output_x0_q = Signal.like(output_cell_x0)
-        output_y0_q = Signal.like(output_cell_y0)
+        output_x_inner_q = Signal(unsigned(10))
+        output_x_inside_q = Signal()
+        output_y_inside_q = Signal()
         output_row_active_q = Signal()
         output_col_active_q = Signal()
         output_page_q = Signal()
         m.d.dvi += [
-            output_x_q.eq(x),
-            output_y_q.eq(y),
-            output_x0_q.eq(output_cell_x0),
-            output_y0_q.eq(output_cell_y0),
+            # Register position relative to the fill origin before consuming the
+            # synchronous send RAM.  This removes the offset carry chain from
+            # the RAM-to-pixel path while retaining the compact raw 5-bit value.
+            output_x_inner_q.eq(x - output_cell_x0 - 4),
+            output_x_inside_q.eq(x >= output_cell_x0 + 4),
+            output_y_inside_q.eq(
+                (y >= output_cell_y0 + 5) & (y < output_cell_y0 + 23)),
             output_row_active_q.eq(output_row_active),
             output_col_active_q.eq(output_col_active),
             output_page_q.eq(output_page),
         ]
-        output_send_end = Signal(unsigned(10))
+        output_send_width = Signal(unsigned(7))
         if self.compact_layout:
-            m.d.comb += output_send_end.eq(
-                output_x0_q + 4 + output_send_rport.data +
-                (output_send_rport.data << 1))
+            m.d.comb += output_send_width.eq(
+                output_send_rport.data + (output_send_rport.data << 1))
         else:
-            m.d.comb += output_send_end.eq(
-                output_x0_q + 4 + (output_send_rport.data << 2))
+            m.d.comb += output_send_width.eq(output_send_rport.data << 2)
         m.d.comb += [
             output_cell.eq(output_page & output_row_active & output_col_active &
                            (output_row_edge | output_col_edge)),
             output_fill.eq(
                 output_page_q & output_row_active_q & output_col_active_q &
-                (output_y_q >= output_y0_q + 5) &
-                (output_y_q < output_y0_q + 23) &
-                (output_x_q >= output_x0_q + 4) &
-                (output_x_q < output_send_end)),
+                output_y_inside_q & output_x_inside_q &
+                (output_x_inner_q < output_send_width)),
         ]
         output_target = Signal(unsigned(7))
         output_header_select = Signal()
