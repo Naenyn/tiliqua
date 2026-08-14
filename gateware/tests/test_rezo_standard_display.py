@@ -759,7 +759,7 @@ def test_compact_audio_gain_fader_stays_inside_value_lane():
         ctx.set(dut.page, 2)
         ctx.set(dut.input_modes[0], RezoCore.INPUT_MODE_AUDIO)
         ctx.set(dut.input_gains[0], 255)
-        await sample(ctx, 570, 260)  # high gain still fills inside VALUE
+        await sample(ctx, 550, 260)  # high gain still fills inside VALUE
         await sample(ctx, 580, 260)  # but never escapes past its x=576 box
 
     sim.add_testbench(bench)

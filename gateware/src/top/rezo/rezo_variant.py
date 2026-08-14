@@ -4223,11 +4223,10 @@ class RezoTileDisplay(wiring.Component):
                 # The bipolar CV lane is centred at x=440.
                 m.d.dvi += [
                     input_gain_ends[n].eq(
-                        # Fit the complete unsigned gain range into the
-                        # 272px VALUE lane [304, 576). The former 1.5x map
-                        # reached x=686 and escaped the lane at high gains.
-                        input_control_x0 + self.input_gains[n] +
-                        (self.input_gains[n] >> 4)),
+                        # Keep the unsigned gain inside the 272px VALUE lane
+                        # [304, 576) without another display-domain adder. The
+                        # former 1.5x map reached x=686 at high gains.
+                        input_control_x0 + self.input_gains[n]),
                     input_depth_ends[n].eq(
                         440 + self.cv_depths[n] +
                         (self.cv_depths[n] >> 1)),
