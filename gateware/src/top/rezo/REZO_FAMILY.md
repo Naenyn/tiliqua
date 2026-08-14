@@ -25,7 +25,7 @@ accidentally as a standard artifact through `--skip-build`.
 seed. The older `TILIQUA_REZO_SEED=<n>` override remains compatible when the
 family-specific variable is unset.
 The qualified defaults are seed 8 for REZO standard, seed 2 for REZO circular,
-seed 6 for REZOMO standard, and seed 4 for REZOMO circular.
+seed 3 for REZOMO standard, and seed 4 for REZOMO circular.
 
 REZO circular also selects the native `yosys` executable because its documented
 staged mapping recipe is placement-hostile under the PDM environment's pinned
@@ -140,3 +140,40 @@ pdm run python scripts/check_timing_margin.py \
 This is intentionally stricter than nextpnr's nominal PASS/FAIL flag. The
 default covers the configured 1% spread peak plus a small guard margin; release
 candidates may use a higher threshold.
+
+## REZOMO capacity recovery (2026-08-14)
+
+REZOMO standard commit `cbd49d7c`, seed 3, is the first hardware candidate from
+the dedicated post-consolidation capacity pass. It uses 23,978 packed cells
+(310 free), versus 24,193 packed cells (95 free) for the prior qualified
+standard image. This recovers 215 cells and increases free packed capacity by
+more than three times without changing the shared DVI PHY or persistence
+format.
+
+The retained changes are deliberately narrow:
+
+1. OUTPUT ROUTING decodes repeated output columns from block memory and keeps
+   raw send values in block memory, but registers pixel position relative to
+   the cell before comparing against the send width. This removes a post-RAM
+   coordinate carry chain without the packing penalty of storing absolute
+   endpoints.
+2. SHIFT and WALK capture accepted clock events and begin their wide pattern
+   updates one 60 MHz cycle later. ROTATE and TURING remain on their direct
+   paths. All clock-algorithm simulations preserve the prior results.
+3. INPUT ROUTING registers only its two-bit repeated-row selector before the
+   endpoint muxes. The selector settles in the blank left edge before any INPUT
+   control is drawn, removing the block-RAM clock-to-output delay from the DVI
+   critical path without moving visible geometry.
+
+The exact commit build passed the 1.25% margin gate at DVI5X 377.36 MHz
+(1.62%), AUDIO 72.50 MHz (47.51%), DVI 77.29 MHz (4.09%), and SYNC 60.89 MHz
+(1.48%). The 39-test focused REZO-family suite passed. Archive
+`rezomo-cbd49d7c-r5.tar.gz` has SHA-256
+`ee8eaa227c35ebe8c7af307af756f984b9df217d8ff05e2be98fdf1aa93cb90e`;
+its `top.bit` SHA-256 is
+`e67ea8eb4a95ace972fe7e9ed4776964006f01508da6fc9ddbfa84839ed28295`.
+It was flashed successfully to slot 4 for hardware validation.
+
+The circular REZOMO target has not yet been rebuilt from this optimization
+commit. Its older seed-4 qualification remains the current reference until an
+exact circular build passes the same margin gate.

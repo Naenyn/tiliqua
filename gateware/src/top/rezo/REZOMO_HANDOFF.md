@@ -100,6 +100,16 @@ flashed to the standard rack display.
 Untracked files and generated build output may still be present. They belong to
 the user or the existing workflow; do not remove or rewrite them as cleanup.
 
+The post-consolidation capacity pass produced standard-target commit
+`cbd49d7c`. It leaves 310 packed cells free, up from 95 in the prior qualified
+image, and passes the enforced 1.25% timing-headroom gate on all four clocks.
+The exact archive `rezomo-cbd49d7c-r5.tar.gz` was flashed successfully to slot 4
+on 2026-08-14 and is awaiting the user's hardware pass. The optimization keeps
+the DVI PHY and persistence format unchanged; it retimes only SHIFT/WALK event
+starts and two renderer lookup paths. The focused 39-test REZO-family suite
+passes. See `REZO_FAMILY.md` and `BUILD_PERFORMANCE.md` for exact measurements
+and hashes.
+
 ## Work completed so far
 
 The following areas have already received native-coordinate and layout work:

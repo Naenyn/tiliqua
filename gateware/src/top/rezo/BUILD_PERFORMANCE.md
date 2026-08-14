@@ -146,6 +146,12 @@ also passing every constrained clock.
 | REZOMO-FINAL-ROUND-S6 | `483f5680`; accepted UI on official 720x720p60r2 target | 6 | 20,835 | 24,261 | 27 | 6,976 | 20 | 396.98 | 77.08 | 57.19 | 79.89 | FAIL SYNC |
 | REZOMO-FINAL-ROUND-S1 | Exact circular JSON reroute | 1 | 20,835 | 24,261 | 27 | 6,976 | 20 | 361.93 | 74.24 | 53.02 | 72.48 | FAIL SYNC |
 | **REZOMO-FINAL-ROUND-S3** | **Exact committed circular JSON; accepted shared UI and CLOCK alignment** | **3** | **20,835** | **24,261** | **27** | **6,976** | **20** | **378.36** | **78.65** | **61.65** | **72.40** | **PASS; tester archive, not flashed** |
+| REZOMO-EVENT-ALL-S3 | Dirty `41008f9c`; raw-send local-coordinate renderer and all-algorithm event stage | 3 | — | 23,881 | 407 | — | 21 | 363.64 | 71.80 | 61.77 | 75.94 | FAIL DVI5X; all-algorithm retiming rejected |
+| REZOMO-EVENT-ALL-S1 | Same all-algorithm event netlist | 1 | — | 23,881 | 407 | — | 21 | 346.38 | 73.88 | 62.89 | 74.71 | FAIL DVI5X; final seed trial |
+| REZOMO-DVI-RESET-LOCAL-S3 | Dirty `41008f9c`; separate local DVI5X reset deassertion pipeline | 3 | — | 24,239 | 49 | — | 21 | 247.34 | 76.44 | 56.58 | 69.40 | FAIL DVI5X, SYNC, and DVI; rejected packing regression |
+| REZOMO-SHIFT-WALK-S3 | Dirty `41008f9c`; retime only SHIFT/WALK with local-coordinate OUTPUT fill | 3 | — | 23,995 | 293 | — | 21 | 382.12 | 73.65 | 62.71 | 68.43 | FAIL DVI; INPUT row selector still follows BRAM directly |
+| REZOMO-INPUT-INDEX-S3 | Dirty `41008f9c`; add two-bit INPUT row-index pipeline | 3 | 20,717 | 23,993 | 295 | 7,005 | 21 | 384.47 | 73.36 | 63.22 | 75.51 | PASS 1.25% gate; superseded by exact commit build |
+| **REZOMO-CAPACITY-COMMIT-S3** | **`cbd49d7c`; narrow SHIFT/WALK, INPUT-index, and local OUTPUT-coordinate pipelines** | **3** | **20,698** | **23,978** | **310** | **7,005** | **21** | **377.36** | **72.50** | **60.89** | **77.29** | **PASS 1.25% gate; flashed slot 4** |
 
 ## Notes
 
@@ -225,6 +231,18 @@ also passing every constrained clock.
   Its embedded `top.bit` SHA-256 is
   `f520de6e866e353d04c18148bd12a8808abcb56a984af3ee8766db7f01111456`.
   The archive was verified but not flashed.
+- REZOMO-CAPACITY-COMMIT-S3 is the exact standard-target build from commit
+  `cbd49d7c`. OUTPUT sends remain raw in block memory; registering local pixel
+  coordinates removes the post-RAM offset chain. SHIFT and WALK alone capture
+  accepted events before their wide updates, while a two-bit INPUT row-index
+  stage removes the DVI BRAM-to-endpoint-mux path. The exact route recovers 215
+  packed cells over REZOMO-EVEN-S3 and passes the 1.25% margin gate on every
+  clock. The 39-test focused family suite passes. Archive SHA-256 is
+  `ee8eaa227c35ebe8c7af307af756f984b9df217d8ff05e2be98fdf1aa93cb90e`;
+  `top.bit` SHA-256 is
+  `e67ea8eb4a95ace972fe7e9ed4776964006f01508da6fc9ddbfa84839ed28295`.
+  Flashing to slot 4 completed successfully on 2026-08-14; hardware validation
+  is pending.
 - CLOCK-DEPTH-SLIDER-S8 removes the dynamic three-character numeric DEPTH
   label and its text-writer scan slots. The replacement geometry uses the
   existing 0--16 value as a five-bit left shift, yielding a 512-pixel interior
