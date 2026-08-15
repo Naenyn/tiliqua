@@ -4124,10 +4124,9 @@ class RezoTileDisplay(wiring.Component):
 
             put_native(5, "STATE AND DISPLAY", 8, 13)
             put_native(5, "PALETTE", 13, 17)
-            put_native(5, "CROSS CURVE", 8, 21)
-            put_native(5, "LINEAR", 20, 21)
-            put_native(5, "LOGARITHMIC", 27, 21)
-            put_native(5, "SAVE DEFAULT", 8, 25)
+            put_native(5, "SAVE DEFAULT", 8, 21)
+            put_native(5, "ADVANCED", 8, 27)
+            put_native(5, "CROSS CURVE", 8, 31)
 
             put_native(6, "PRESET", 8, 11)
             put_native(6, "ENABLE", 8, 16)
@@ -4184,10 +4183,9 @@ class RezoTileDisplay(wiring.Component):
                 put(4, f"OUT{n}", 2, 21 + n * 5)
             put(5, "STATE AND DISPLAY", 2, 11)
             put(5, "PALETTE", 8, 15)
-            put(5, "CROSS CURVE", 3, 19)
-            put(5, "LINEAR", 20, 19)
-            put(5, "LOGARITHMIC", 27, 19)
-            put(5, "SAVE DEFAULT", 3, 23)
+            put(5, "SAVE DEFAULT", 3, 19)
+            put(5, "ADVANCED", 3, 25)
+            put(5, "CROSS CURVE", 3, 29)
             put(6, "PRESET", 2, 7)
             put(6, "ENABLE", 2, 12)
             put(6, "SET FREQ", 2, 22)
@@ -4237,6 +4235,7 @@ class RezoTileDisplay(wiring.Component):
         frequency_preview_sync = self.frequency_preview
         cross_layout_sync = self.cross_layout
         cross_layout_preview_sync = self.cross_layout_preview
+        cross_curve_sync = self.cross_curve
         band_frequencies_sync = self.band_frequencies
         input_modes_sync = [Signal(unsigned(2), name=f"text_input_mode{n}")
                             for n in range(4)]
@@ -4296,7 +4295,7 @@ class RezoTileDisplay(wiring.Component):
             m.d.comb += bands_selected_band.eq(
                 selected_sync - RezoHardwareUI.TARGET_BAND_ENABLE_BASE)
 
-        update_index = Signal(range(99))
+        update_index = Signal(range(107))
         update_active = Signal(init=1)
         refresh_counter = Signal(range(4_000_000))
         writer_address = Signal(unsigned(15))
@@ -4401,6 +4400,12 @@ class RezoTileDisplay(wiring.Component):
         cross_layout_chars = [
             Array(Const(self.code(name[pos]), 6)
                   for name in cross_layout_names)
+            for pos in range(8)
+        ]
+        cross_curve_names = (" LINEAR ", "  LOG   ")
+        cross_curve_chars = [
+            Array(Const(self.code(name[pos]), 6)
+                  for name in cross_curve_names)
             for pos in range(8)
         ]
         displayed_cross_layout = Signal(unsigned(3))
@@ -4518,7 +4523,7 @@ class RezoTileDisplay(wiring.Component):
             for pos in range(6):
                 writer_address_init[46 + pos] = writer_cell(5, 22, 17, pos)
             for pos in range(7):
-                writer_address_init[52 + pos] = writer_cell(5, 22, 25, pos)
+                writer_address_init[52 + pos] = writer_cell(5, 22, 21, pos)
                 writer_address_init[59 + pos] = writer_cell(6, 16, 11, pos)
             for pos in range(5):
                 writer_address_init[66 + pos] = writer_cell(6, 20, 22, pos)
@@ -4531,6 +4536,8 @@ class RezoTileDisplay(wiring.Component):
             for pos in range(4):
                 writer_address_init[91 + pos] = writer_cell(6, 18, 31, pos)
                 writer_address_init[95 + pos] = writer_cell(6, 18, 33, pos)
+            for pos in range(8):
+                writer_address_init[99 + pos] = writer_cell(5, 20, 31, pos)
         else:
             for pos in range(4):
                 writer_address_init[4 + pos] = writer_cell(0, 11, 7, pos)
@@ -4550,7 +4557,7 @@ class RezoTileDisplay(wiring.Component):
             for pos in range(6):
                 writer_address_init[46 + pos] = writer_cell(5, 18, 15, pos)
             for pos in range(7):
-                writer_address_init[52 + pos] = writer_cell(5, 18, 23, pos)
+                writer_address_init[52 + pos] = writer_cell(5, 18, 19, pos)
                 writer_address_init[59 + pos] = writer_cell(6, 9, 7, pos)
             for pos in range(5):
                 writer_address_init[66 + pos] = writer_cell(6, 14, 22, pos)
@@ -4564,6 +4571,8 @@ class RezoTileDisplay(wiring.Component):
             for pos in range(4):
                 writer_address_init[91 + pos] = writer_cell(6, 12, 37, pos)
                 writer_address_init[95 + pos] = writer_cell(6, 34, 33, pos)
+            for pos in range(8):
+                writer_address_init[99 + pos] = writer_cell(5, 20, 29, pos)
         m.submodules.writer_address_mem = writer_address_mem = Memory(
             shape=unsigned(15), depth=len(writer_address_init),
             init=writer_address_init, attrs={"ram_style": "block"})
@@ -4651,8 +4660,12 @@ class RezoTileDisplay(wiring.Component):
                     m.d.comb += writer_char.eq(motion_rate_rport.data)
                 with m.Case(95 + pos):
                     m.d.comb += writer_char.eq(motion_phase_rport.data)
+            for pos in range(8):
+                with m.Case(99 + pos):
+                    m.d.comb += writer_char.eq(
+                        cross_curve_chars[pos][cross_curve_sync])
         with m.If(update_active):
-            with m.If(update_index == 98):
+            with m.If(update_index == 106):
                 m.d.sync += [update_active.eq(0), refresh_counter.eq(0)]
             with m.Else():
                 m.d.sync += update_index.eq(update_index + 1)
@@ -4735,9 +4748,22 @@ class RezoTileDisplay(wiring.Component):
                 603 if self.compact_layout else 684,
                 575 if self.compact_layout else 666)),
         ]
-        content_panel = active & self.rect(
+        normal_content_panel = self.rect(
             x, y, 125 if self.compact_layout else 28, content_y0,
             594 if self.compact_layout else 692, content_y1)
+        options_content_panel = (
+            self.rect(x, y,
+                      125 if self.compact_layout else 28,
+                      218 if self.compact_layout else 190,
+                      594 if self.compact_layout else 692,
+                      400 if self.compact_layout else 412) |
+            self.rect(x, y,
+                      125 if self.compact_layout else 28,
+                      454 if self.compact_layout else 438,
+                      594 if self.compact_layout else 692,
+                      555 if self.compact_layout else 548))
+        content_panel = active & Mux(
+            advanced_page, options_content_panel, normal_content_panel)
         bank_control_y0s = (
             compact_main_control_y0s if self.compact_layout
             else (556, 588, 620))
@@ -4782,15 +4808,15 @@ class RezoTileDisplay(wiring.Component):
                 304 if self.compact_layout else 272, t=3)
         save_default_chip = advanced_page & self.rect(
             x, y, 344 if self.compact_layout else 264,
-            388 if self.compact_layout else 356,
+            324 if self.compact_layout else 292,
             472 if self.compact_layout else 408,
-            428 if self.compact_layout else 396)
+            364 if self.compact_layout else 332)
         save_default_select = advanced_page & (
             self.selected == RezoHardwareUI.TARGET_SAVE_DEFAULT) & self.outline(
                 x, y, 340 if self.compact_layout else 260,
-                384 if self.compact_layout else 352,
+                320 if self.compact_layout else 288,
                 476 if self.compact_layout else 412,
-                432 if self.compact_layout else 400, t=3)
+                368 if self.compact_layout else 336, t=3)
         motion_source_x0 = 280 if self.compact_layout else 160
         motion_source_x1 = 424 if self.compact_layout else 296
         motion_rate_x0 = 280 if self.compact_layout else 160
@@ -4943,21 +4969,25 @@ class RezoTileDisplay(wiring.Component):
         cross_layout_chip = cross_page & self.rect(
             x, y, 256 if self.compact_layout else 136,
             168 if self.compact_layout else 100,
-            400 if self.compact_layout else 296,
+            384 if self.compact_layout else 264,
             200 if self.compact_layout else 138)
         cross_layout_select = cross_page & (
             self.selected == RezoHardwareUI.TARGET_CROSS_LAYOUT) & self.outline(
                 x, y, 252 if self.compact_layout else 131,
                 164 if self.compact_layout else 95,
-                404 if self.compact_layout else 301,
+                388 if self.compact_layout else 269,
                 204 if self.compact_layout else 143, t=3)
         cross_curve_chip = advanced_page & self.rect(
-            x, y, 312,
-            324 if self.compact_layout else 292,
-            608,
-            364 if self.compact_layout else 332)
+            x, y, 320,
+            484 if self.compact_layout else 452,
+            448,
+            524 if self.compact_layout else 492)
         cross_curve_select = advanced_page & (
-            self.selected == RezoHardwareUI.TARGET_CROSS_CURVE) & cross_curve_chip
+            self.selected == RezoHardwareUI.TARGET_CROSS_CURVE) & self.outline(
+                x, y, 316,
+                480 if self.compact_layout else 448,
+                452,
+                528 if self.compact_layout else 496, t=3)
 
         preset_chip = Signal()
         preset_select = Signal()
