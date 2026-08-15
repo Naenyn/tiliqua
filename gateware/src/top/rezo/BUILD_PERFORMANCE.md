@@ -158,6 +158,7 @@ also passing every constrained clock.
 | **STREZO-CURVE-SCAN-S16** | **`2ec93a17`; one BRAM replaces ten parallel display scalers** | **16** | **19,661** | **22,857** | **1,431** | **6,875** | **21** | **387.00** | **73.36** | **67.81** | **77.64** | **PASS 1.25% gate; standard archive flashed slot 4** |
 | STREZO-CURVE-UI-S16 | `04c6e663`; corrected dynamic curve value and split OPTIONS panels | 16 | — | 22,937 | 1,351 | 6,875 | 21 | 373.13 | 75.74 | 66.13 | 71.96 | FAIL DVI and DVI5X margin; no flash |
 | **STREZO-CURVE-UI-S9** | **`04c6e663`; centered CROSS layout and dynamic LINEAR/LOG ADVANCED control** | **9** | **—** | **22,937** | **1,351** | **6,875** | **21** | **422.30** | **73.58** | **63.20** | **81.59** | **PASS 1.25% gate; standard archive flashed slot 4** |
+| **STREZO-UI-POLISH-S9** | **`72445513`; padded LAYOUT chip and top-to-bottom OPTIONS navigation** | **9** | **—** | **22,952** | **1,336** | **6,875** | **21** | **437.45** | **73.23** | **63.25** | **82.12** | **PASS 1.25% gate; standard archive flashed slot 4** |
 
 ## Notes
 

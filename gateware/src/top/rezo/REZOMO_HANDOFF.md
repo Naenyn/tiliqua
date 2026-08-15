@@ -58,6 +58,13 @@ SHA-256 is `d3af6d3b93ab7265ddd0840a9fbd5840c25a09d96c9b714d616f5abfa5627d0c`;
 the packaged `top.bit` SHA-256 is
 `c5f6d4ed0680fc98e90f87d19f82e9fcd1b04f94ca8c92ffc1aed2133c6589cc`.
 
+Commit `72445513` adds symmetric horizontal padding to the CROSS LAYOUT chip
+and changes OPTIONS navigation to PAGE -> PALETTE -> SAVE -> CURVE. Its seed-9
+route leaves 1,336 cells free and passes at 437.45 MHz DVI5X, 73.23 MHz AUDIO,
+63.25 MHz SYNC, and 82.12 MHz DVI. Archive `strezo-72445513-r5.tar.gz` was
+flashed to slot 4 (`Refresh: DONE`), SHA-256
+`b60e2eb20ec8ab376a238d5577f1aa65677fa7aac61e877470cdc726754bbca7`.
+
 ## Current objective
 
 REZOMO is being caught up to the native-display architecture and UI conventions
