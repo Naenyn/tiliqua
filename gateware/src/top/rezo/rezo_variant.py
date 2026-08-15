@@ -56,8 +56,10 @@ from tiliqua.platform import RebootProvider
 from tiliqua.tiliqua_soc import TiliquaSoc
 from tiliqua.video import dvi
 try:
+    from .encoder_acceleration import progressive_edit_level
     from .persistence import RezoStateJournal, SPIFlashTransfer
 except ImportError:  # top_level_cli executes this file directly.
+    from encoder_acceleration import progressive_edit_level
     from persistence import RezoStateJournal, SPIFlashTransfer
 
 
@@ -1755,8 +1757,10 @@ class RezoHardwareUI(wiring.Component):
         output_relative_column = Signal()
         output_relative_direction = Signal()
         detent_timer = Signal(unsigned(21), init=(1 << 21) - 1)
-        accelerated_edit_step = Signal(unsigned(4), init=1)
-        edit_repeat_remaining = Signal(unsigned(3))
+        accelerated_edit_level = Signal(unsigned(2))
+        next_accelerated_edit_level = Signal(unsigned(2))
+        accelerated_edit_step = Signal(unsigned(3))
+        edit_repeat_remaining = Signal(unsigned(2))
         continuous_accel_target = Signal()
         m.d.comb += continuous_accel_target.eq(editing & (
             bank_band_target |
@@ -1778,8 +1782,17 @@ class RezoHardwareUI(wiring.Component):
              (input_modes[3] != RezoCore.INPUT_MODE_CV)) |
             (selected == self.TARGET_INPUT_BASE + 2) |
             (selected == self.TARGET_INPUT_BASE + 5) |
-            (selected == self.TARGET_INPUT_BASE + 8) |
-            (selected == self.TARGET_INPUT_BASE + 11)))
+             (selected == self.TARGET_INPUT_BASE + 8) |
+             (selected == self.TARGET_INPUT_BASE + 11)))
+        m.d.comb += [
+            accelerated_edit_step.eq(accelerated_edit_level + 1),
+            next_accelerated_edit_level.eq(progressive_edit_level(
+                detent_timer,
+                accelerated_edit_level,
+                editing,
+                Mux(next_detent_acc > 0, ~edit_direction, edit_direction),
+            )),
+        ]
         m.d.sync += output_edit_pending.eq(0)
         with m.If(output_relative_active):
             m.d.sync += [
@@ -1850,12 +1863,10 @@ class RezoHardwareUI(wiring.Component):
                 with m.Elif(iq_is_detent & detent_armed):
                     m.d.sync += [
                         detent_timer.eq(0),
-                        accelerated_edit_step.eq(
-                            Mux(detent_timer < 1_200_000, 8, 1)),
+                        accelerated_edit_level.eq(next_accelerated_edit_level),
                         edit_repeat_remaining.eq(Mux(
-                            (detent_timer < 1_200_000) &
                             continuous_accel_target,
-                            7, 0)),
+                            next_accelerated_edit_level, 0)),
                     ]
                     with m.If(next_detent_acc > 0):
                         m.d.sync += [

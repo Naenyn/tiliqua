@@ -197,6 +197,20 @@ def test_ui_bands_navigates_and_edits_all_motion_controls():
         assert ctx.get(dut.motion_rate) == 13
         assert ctx.get(dut.motion_source) == 1
 
+        # RANDOM is sample-and-hold noise, so phase has no continuous-wave
+        # meaning. Selecting RANDOM removes PHASE from both navigation
+        # directions while retaining RATE and DEPTH.
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        await _click(ctx, dut)
+        assert ctx.get(dut.motion_source) == RezoCore.MOTION_SOURCE_RANDOM
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_MOTION_RATE
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_MOTION_DEPTH
+        endpoint = await _turn(ctx, dut, endpoint, 0)
+        assert ctx.get(dut.selected) == dut.TARGET_MOTION_RATE
+
     sim.add_testbench(bench)
     sim.run()
 
@@ -218,7 +232,7 @@ def test_ui_input_faders_accelerate_after_precise_first_detent():
         await _click(ctx, dut)
 
         # IN0 is an audio input. Its first detent is the precise 256-unit
-        # step; a second immediate detent replays eight cheap one-step edits.
+        # step; sustained rapid detents ramp through 2x, 3x, and 4x.
         endpoint = await _turn(ctx, dut, endpoint, 1)  # IN0 MODE
         endpoint = await _turn(ctx, dut, endpoint, 1)  # IN0 VALUE
         assert ctx.get(dut.selected) == dut.TARGET_INPUT_BASE + 1
@@ -229,7 +243,7 @@ def test_ui_input_faders_accelerate_after_precise_first_detent():
         endpoint = await _turn(ctx, dut, endpoint, 1)
         for _ in range(8):
             await ctx.tick()
-        assert ctx.get(dut.input_gains[0]) == start_gain + 2304
+        assert ctx.get(dut.input_gains[0]) == start_gain + 768
         await _click(ctx, dut)
 
         # Skip IN0 DEPTH and IN1 DEPTH because those inputs are audio, then
@@ -243,7 +257,7 @@ def test_ui_input_faders_accelerate_after_precise_first_detent():
         endpoint = await _turn(ctx, dut, endpoint, 1)
         for _ in range(8):
             await ctx.tick()
-        assert ctx.get(dut.cv_depths[2]) == 2304
+        assert ctx.get(dut.cv_depths[2]) == 768
 
     sim.add_testbench(bench)
     sim.run()
@@ -356,6 +370,32 @@ def test_ui_global_skips_matrix_and_exposes_same_then_cross_controls():
         await _click(ctx, dut)
         endpoint = await _turn(ctx, dut, endpoint, 1)
         assert ctx.get(dut.selected) == dut.TARGET_CROSS_FEEDBACK
+        await _click(ctx, dut)
+
+        # CROSS uses exactly the same progressive curve as every other
+        # continuous fader: rapid detents contribute 1, 2, 3, then 4 steps.
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.cross_feedback) == 1
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        for _ in range(8):
+            await ctx.tick()
+        assert ctx.get(dut.cross_feedback) == 3
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        for _ in range(8):
+            await ctx.tick()
+        assert ctx.get(dut.cross_feedback) == 6
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        for _ in range(8):
+            await ctx.tick()
+        assert ctx.get(dut.cross_feedback) == 10
+        # Reversing direction immediately restores precise one-step editing.
+        endpoint = await _turn(ctx, dut, endpoint, 0)
+        for _ in range(8):
+            await ctx.tick()
+        assert ctx.get(dut.cross_feedback) == 9
+        for _ in range(40):
+            endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.cross_feedback) == RezoCore.CROSS_DEPTH_MAX
 
     sim.add_testbench(bench)
     sim.run()
@@ -459,6 +499,7 @@ def test_ui_state_scan_preserves_all_compact_v5_parameters():
             captured.append(ctx.get(dut.state_read_data))
             await ctx.tick()
         ctx.set(dut.state_shift_enable, 0)
+        await ctx.tick()
         assert captured == state
 
         assert ctx.get(dut.drive) == saved_drive << 8

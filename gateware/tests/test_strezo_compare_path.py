@@ -78,6 +78,43 @@ def test_internal_triangle_motion_phase_spreads_across_bands():
     assert len(set(first_random)) > 4
 
 
+def test_motion_monitor_reports_the_post_depth_base_lfo():
+    dut = RezoCore(fs=192_000)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+    captured = {}
+
+    async def send(ctx):
+        ctx.set(dut.i.valid, 1)
+        await ctx.tick().until(dut.i.ready == 1)
+        ctx.set(dut.i.valid, 0)
+        ctx.set(dut.o.ready, 1)
+        await ctx.tick().until(dut.o.valid == 1)
+
+    async def bench(ctx):
+        ctx.set(dut.motion_source, RezoCore.MOTION_SOURCE_TRIANGLE)
+        ctx.set(dut.motion_rate, 1)
+
+        ctx.set(dut.motion_depth, 0)
+        await send(ctx)
+        captured["zero"] = ctx.get(dut.motion_monitor)
+
+        ctx.set(dut.motion_depth, 64)
+        await send(ctx)
+        captured["half"] = ctx.get(dut.motion_monitor)
+
+        ctx.set(dut.motion_depth, 128)
+        await send(ctx)
+        captured["full"] = ctx.get(dut.motion_monitor)
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    assert captured["zero"] == 0
+    assert abs(captured["half"]) > 0
+    assert abs(captured["full"]) >= 2 * abs(captured["half"]) - 1
+
+
 def test_input_meters_use_audio_post_value_and_cv_pre_depth():
     dut = RezoCore(fs=192_000)
     sim = Simulator(dut)

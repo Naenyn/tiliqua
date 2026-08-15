@@ -450,7 +450,7 @@ def test_ui_clock_mode_defaults_and_control_navigation():
         endpoint = await _turn(ctx, dut, endpoint, 1)
         assert ctx.get(dut.internal_clock_rate) == 121
         endpoint = await _turn(ctx, dut, endpoint, 1)
-        assert ctx.get(dut.internal_clock_rate) == 129
+        assert ctx.get(dut.internal_clock_rate) == 123
         await _click(ctx, dut)
 
         endpoint = await _turn(ctx, dut, endpoint, 1)

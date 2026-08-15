@@ -49,8 +49,10 @@ from tiliqua.platform import RebootProvider
 from tiliqua.tiliqua_soc import TiliquaSoc
 from tiliqua.video import dvi
 try:
+    from .encoder_acceleration import progressive_edit_level
     from .persistence import RezoStateJournal, SPIFlashTransfer
 except ImportError:  # top_level_cli executes this file directly.
+    from encoder_acceleration import progressive_edit_level
     from persistence import RezoStateJournal, SPIFlashTransfer
 
 
@@ -91,6 +93,9 @@ class RezoCore(wiring.Component):
     CROSS_LAYOUT_ALL = 4
     CROSS_LAYOUT_USER = 5
     CROSS_DEPTH_MAX = 128
+    MOTION_SOURCE_OFF = 0
+    MOTION_SOURCE_TRIANGLE = 1
+    MOTION_SOURCE_RANDOM = 2
 
     @classmethod
     def cross_coefficient(cls, layout, source, destination, user_value):
@@ -192,6 +197,8 @@ class RezoCore(wiring.Component):
         self.motion_rate = Signal(unsigned(8), init=12)
         self.motion_phase = Signal(unsigned(8), init=28)
         self.motion_depth = Signal(unsigned(8), init=32)
+        # Display-only view of the already-computed bipolar LFO source.
+        self.motion_monitor = Signal(signed(6))
         self.input_gains = [Signal(unsigned(16), init=self.INPUT_UNITY_POS if n < 2 else 0)
                             for n in range(4)]
         self.input_modes = [
@@ -759,6 +766,9 @@ class RezoCore(wiring.Component):
         self._feedback_gain = feedback_gain
         self._matrix_feedback_term_l = matrix_feedback_term_l
         self._matrix_feedback_term_r = matrix_feedback_term_r
+        # The original 0..16 controls used a /16 normalization. The expanded
+        # 0..128 controls use /128, preserving both historical endpoints while
+        # providing eight times as many useful positions between them.
         cross_self_gain = Signal(unsigned(8))
         cross_other_gain = Signal(unsigned(8))
         cross_ll = Signal(signed(25))
@@ -1004,8 +1014,9 @@ class RezoCore(wiring.Component):
             matrix_cross_feedback_q.eq(self.cross_feedback),
             matrix_feedback_gain_q.eq(feedback_gain),
             # source * coefficient / 16 is accumulated per destination.
-            # Applying (CROSS * feedback) / 256 and then the Q1.15 shift
-            # preserves the previous overall /65536 feedback scaling.
+            # CROSS now has eight times the old UI resolution, so divide by
+            # 256 rather than 32. The later Q1.15 shift preserves the exact
+            # historical full-scale matrix feedback depth.
             matrix_combined_gain_q.eq(
                 (matrix_combined_gain_product + 128) >> 8),
             cross_ll_q.eq(cross_ll),
@@ -1177,6 +1188,14 @@ class RezoCore(wiring.Component):
 
         with m.If(self.o.ready):
             m.d.sync += out_valid.eq(0)
+
+        # The per-band motion waveform changes as the DSP advances through
+        # ten phase-offset bands. Capture only the base, depth-scaled term
+        # prepared for band zero so the UI reports the modulation actually
+        # applied: zero depth collapses the monitor and full depth preserves
+        # the source's full displayed excursion.
+        with m.If(state == state_input_limit_commit):
+            m.d.sync += self.motion_monitor.eq(motion_term >> 12)
 
         with m.Switch(state):
             with m.Case(state_wait):
@@ -2252,8 +2271,10 @@ class RezoHardwareUI(wiring.Component):
                         Mux(output_relative_column, 5, 1)),
                 ]
         detent_timer = Signal(unsigned(21), init=(1 << 21) - 1)
-        accelerated_edit_step = Signal(unsigned(4), init=1)
-        edit_repeat_remaining = Signal(unsigned(3))
+        accelerated_edit_level = Signal(unsigned(2))
+        next_accelerated_edit_level = Signal(unsigned(2))
+        accelerated_edit_step = Signal(unsigned(3))
+        edit_repeat_remaining = Signal(unsigned(2))
         continuous_accel_target = Signal()
         m.d.comb += continuous_accel_target.eq(editing & (
             bank_band_target |
@@ -2275,8 +2296,17 @@ class RezoHardwareUI(wiring.Component):
              (input_modes[3] != RezoCore.INPUT_MODE_CV)) |
             (selected == self.TARGET_INPUT_BASE + 2) |
             (selected == self.TARGET_INPUT_BASE + 5) |
-            (selected == self.TARGET_INPUT_BASE + 8) |
-            (selected == self.TARGET_INPUT_BASE + 11)))
+             (selected == self.TARGET_INPUT_BASE + 8) |
+             (selected == self.TARGET_INPUT_BASE + 11)))
+        m.d.comb += [
+            accelerated_edit_step.eq(accelerated_edit_level + 1),
+            next_accelerated_edit_level.eq(progressive_edit_level(
+                detent_timer,
+                accelerated_edit_level,
+                editing,
+                Mux(next_detent_acc > 0, ~edit_direction, edit_direction),
+            )),
+        ]
         m.submodules += FFSynchronizer(Cat(self.enc_i, self.enc_q), iq_sync, init=0)
 
         forward_transition = (
@@ -2304,9 +2334,11 @@ class RezoHardwareUI(wiring.Component):
             self.save_default_request.eq(0),
             iq_prev.eq(iq_sync),
         ]
-        # Accelerate continuous controls by replaying the same cheap one-step
-        # edit seven more times.  This avoids putting a variable-width adder
-        # in every parameter path, which is costly on this nearly full ECP5.
+        # Accelerate every continuous control by replaying its same cheap
+        # one-step edit. Sustained fast turns ramp through 1x, 2x, 3x, and 4x;
+        # slow turns and reversals immediately return to precise 1x editing.
+        # This avoids a variable-width adder in every parameter path, which is
+        # costly on this nearly full ECP5.
         # Routing matrices and other discrete selectors deliberately remain
         # one detent per state.
         with m.If(edit_repeat_remaining != 0):
@@ -2335,12 +2367,10 @@ class RezoHardwareUI(wiring.Component):
                 with m.Elif(iq_is_detent & detent_armed):
                     m.d.sync += [
                         detent_timer.eq(0),
-                        accelerated_edit_step.eq(
-                            Mux(detent_timer < 1_200_000, 8, 1)),
+                        accelerated_edit_level.eq(next_accelerated_edit_level),
                         edit_repeat_remaining.eq(Mux(
-                            (detent_timer < 1_200_000) &
                             continuous_accel_target,
-                            7, 0)),
+                            next_accelerated_edit_level, 0)),
                     ]
                     with m.If(next_detent_acc > 0):
                         m.d.sync += [
@@ -2681,7 +2711,10 @@ class RezoHardwareUI(wiring.Component):
                 with m.Elif(selected == self.TARGET_MOTION_SOURCE):
                     m.d.comb += next_selected.eq(self.TARGET_MOTION_RATE)
                 with m.Elif(selected == self.TARGET_MOTION_RATE):
-                    m.d.comb += next_selected.eq(self.TARGET_MOTION_PHASE)
+                    m.d.comb += next_selected.eq(Mux(
+                        motion_source[1],
+                        self.TARGET_MOTION_DEPTH,
+                        self.TARGET_MOTION_PHASE))
                 with m.Elif(selected == self.TARGET_MOTION_PHASE):
                     m.d.comb += next_selected.eq(self.TARGET_MOTION_DEPTH)
                 with m.Elif(selected == self.TARGET_MOTION_DEPTH):
@@ -2693,7 +2726,10 @@ class RezoHardwareUI(wiring.Component):
                           (selected == self.TARGET_PAGE)):
                     m.d.comb += next_selected.eq(self.TARGET_MOTION_DEPTH)
                 with m.Elif(selected == self.TARGET_MOTION_DEPTH):
-                    m.d.comb += next_selected.eq(self.TARGET_MOTION_PHASE)
+                    m.d.comb += next_selected.eq(Mux(
+                        motion_source[1],
+                        self.TARGET_MOTION_RATE,
+                        self.TARGET_MOTION_PHASE))
                 with m.Elif(selected == self.TARGET_MOTION_PHASE):
                     m.d.comb += next_selected.eq(self.TARGET_MOTION_RATE)
                 with m.Elif(selected == self.TARGET_MOTION_RATE):
@@ -3723,6 +3759,7 @@ class RezoTileDisplay(wiring.Component):
             "motion_rate": In(unsigned(8)),
             "motion_phase": In(unsigned(8)),
             "motion_depth": In(unsigned(8)),
+            "motion_monitor": In(signed(6)),
             "input_gains": In(data.ArrayLayout(unsigned(8), 4)),
             "input_modes": In(data.ArrayLayout(unsigned(2), 4)),
             "cv_targets": In(data.ArrayLayout(unsigned(3), 4)),
@@ -3768,6 +3805,14 @@ class RezoTileDisplay(wiring.Component):
     @staticmethod
     def rect(x, y, x0, y0, x1, y1):
         return (x >= x0) & (x < x1) & (y >= y0) & (y < y1)
+
+    @classmethod
+    def bipolar_line(cls, x, y, center, endpoint, y0, y1, negative):
+        """Render a center-to-value bipolar telemetry line."""
+        return Mux(
+            ~negative,
+            cls.rect(x, y, center, y0, endpoint, y1),
+            cls.rect(x, y, endpoint, y0, center, y1))
 
     @classmethod
     def outline(cls, x, y, x0, y0, x1, y1, t=2):
@@ -3940,6 +3985,13 @@ class RezoTileDisplay(wiring.Component):
         compact_output_col_centers = (
             16 * 16 + 14, 20 * 16 + 14, 24 * 16 + 14,
             28 * 16 + 14, 32 * 16 + 22)
+        # CROSS has only four columns, so it can use the full panel width and
+        # sit higher than OUTPUT's five-column matrix. Keep these values
+        # separate to preserve OUTPUT's established composition.
+        compact_cross_text_rows = (20, 24, 28, 32)
+        compact_cross_row_centers = tuple(
+            row * 16 + 6 for row in compact_cross_text_rows)
+        compact_cross_col_centers = (254, 334, 414, 494)
         compact_main_control_text_rows = (28, 30, 32)
         compact_main_control_y0s = (448, 480, 512)
 
@@ -3994,17 +4046,17 @@ class RezoTileDisplay(wiring.Component):
             put_native(6, "SET FREQ", 8, 22)
             put_native(6, "HZ", 26, 22)
             put_native(6, "MOTION", 8, 27)
-            put_native(6, "SOURCE", 8, 29)
-            put_native(6, "PHASE", 24, 29)
-            put_native(6, "RATE HZ", 8, 33)
-            put_native(6, "DEPTH", 24, 33)
+            put_native(6, "LFO SHAPE", 8, 29)
+            put_native(6, "RATE HZ", 8, 31)
+            put_native(6, "PHASE", 8, 33)
+            put_native(6, "DEPTH", 8, 35)
 
             put_native(7, "LAYOUT", 8, 11)
-            put_native(7, "TO", 15, 17)
+            put_native(7, "TO", 15, 15)
             put_native(7, "FROM", 8, 18)
-            for group, row in enumerate(compact_output_text_rows):
+            for group, row in enumerate(compact_cross_text_rows):
                 put_native(7, f"G{group + 1}", 10, row)
-                put_native(7, f"G{group + 1}", 16 + group * 4, 18)
+                put_native(7, f"G{group + 1}", 15 + group * 5, 17)
             put_native(7, "SAME", 9, 34)
             put_native(7, "CROSS", 8, 36)
         else:
@@ -4153,7 +4205,7 @@ class RezoTileDisplay(wiring.Component):
             m.d.comb += bands_selected_band.eq(
                 selected_sync - RezoHardwareUI.TARGET_BAND_ENABLE_BASE)
 
-        update_index = Signal(range(96))
+        update_index = Signal(range(99))
         update_active = Signal(init=1)
         refresh_counter = Signal(range(4_000_000))
         writer_address = Signal(unsigned(15))
@@ -4289,25 +4341,34 @@ class RezoTileDisplay(wiring.Component):
                 Mux(save_busy_sync | (save_status_sync == 1), 1,
                     Mux(save_status_sync == 2, 2,
                         Mux(save_status_sync == 3, 3, 0)))))
-        motion_source_names = (" OFF ", " TRI ", "RAND ")
-        motion_source_chars = [
-            Array(Const(self.code(name[pos]), 6)
-                  for name in motion_source_names)
-            for pos in range(5)
-        ]
-        # One compact dual-port label ROM converts the continuous 0.1 Hz rate
-        # and 8-bit phase step to readable text without synthesizing decimal
-        # dividers or wide-word character muxes into the control domain.
+        motion_source_names = ("  OFF   ", "TRIANGLE", " RANDOM ")
+        # One compact label ROM converts the continuous 0.1 Hz rate to text
+        # without synthesizing a decimal divider into the control domain.
+        motion_source_offset = 896
+        motion_phase_blank_offset = 880
         motion_phase_offset = 1024
         motion_label_init = [0] * 2048
         for value in range(256):
             rate = min(value, 200)
             rate_text = f"{rate // 10:2d}.{rate % 10}"[-4:]
-            degrees = round(value * 360 / 256)
-            phase_text = f"{degrees:3d} "[-4:]
             for pos in range(4):
                 motion_label_init[(value << 2) | pos] = self.code(
                     rate_text[pos])
+        # RATE is constrained to 0..200, leaving its 224..229 slots available
+        # for the three eight-character source names. Reuse the rate read port
+        # while those characters are refreshed instead of building eight
+        # independent three-way character muxes.
+        for source, name in enumerate(motion_source_names):
+            for pos, char in enumerate(name):
+                motion_label_init[
+                    motion_source_offset | (source << 3) | pos
+                ] = self.code(char)
+        for pos in range(4):
+            motion_label_init[motion_phase_blank_offset | pos] = 0
+        for value in range(256):
+            degrees = round(value * 360 / 256)
+            phase_text = f"{degrees:3d} "[-4:]
+            for pos in range(4):
                 motion_label_init[
                     motion_phase_offset | (value << 2) | pos
                 ] = self.code(phase_text[pos])
@@ -4317,19 +4378,27 @@ class RezoTileDisplay(wiring.Component):
             attrs={"ram_style": "block"})
         motion_rate_rport = motion_label_mem.read_port()
         motion_phase_rport = motion_label_mem.read_port()
+        motion_phase_base = Signal(unsigned(11), init=motion_phase_offset)
+        m.d.sync += motion_phase_base.eq(Mux(
+            self.motion_source[1], motion_phase_blank_offset,
+            motion_phase_offset | (self.motion_phase << 2)))
         m.d.comb += [
             motion_rate_rport.addr.eq(self.motion_rate << 2),
-            motion_phase_rport.addr.eq(
-                motion_phase_offset | (self.motion_phase << 2)),
+            motion_phase_rport.addr.eq(motion_phase_base),
         ]
         with m.Switch(update_index):
+            for pos in range(8):
+                with m.Case(82 + pos):
+                    m.d.comb += motion_rate_rport.addr.eq(
+                        motion_source_offset |
+                        (self.motion_source << 3) | pos)
             for pos in range(4):
-                with m.Case(87 + pos):
+                with m.Case(90 + pos):
                     m.d.comb += motion_rate_rport.addr.eq(
                         (self.motion_rate << 2) | pos)
-                with m.Case(91 + pos):
+                with m.Case(94 + pos):
                     m.d.comb += motion_phase_rport.addr.eq(
-                        motion_phase_offset | (self.motion_phase << 2) | pos)
+                        motion_phase_base | pos)
 
         # Most text destinations are fixed.  Keep their addresses in one
         # DP16KD instead of synthesizing a 96-way, 15-bit address mux.  The
@@ -4366,11 +4435,11 @@ class RezoTileDisplay(wiring.Component):
                 writer_address_init[71 + n] = writer_cell(4, 13, row)
             for pos in range(8):
                 writer_address_init[75 + pos] = writer_cell(7, 16, 11, pos)
-            for pos in range(5):
-                writer_address_init[83 + pos] = writer_cell(6, 17, 29, pos)
+            for pos in range(8):
+                writer_address_init[83 + pos] = writer_cell(6, 18, 29, pos)
             for pos in range(4):
-                writer_address_init[88 + pos] = writer_cell(6, 17, 33, pos)
-                writer_address_init[92 + pos] = writer_cell(6, 30, 29, pos)
+                writer_address_init[91 + pos] = writer_cell(6, 18, 31, pos)
+                writer_address_init[95 + pos] = writer_cell(6, 18, 33, pos)
         else:
             for pos in range(4):
                 writer_address_init[4 + pos] = writer_cell(0, 11, 7, pos)
@@ -4399,11 +4468,11 @@ class RezoTileDisplay(wiring.Component):
                     4, 7, 21 + n * 5)
             for pos in range(8):
                 writer_address_init[75 + pos] = writer_cell(7, 10, 7, pos)
-            for pos in range(5):
-                writer_address_init[83 + pos] = writer_cell(6, 12, 33, pos)
+            for pos in range(8):
+                writer_address_init[83 + pos] = writer_cell(6, 10, 33, pos)
             for pos in range(4):
-                writer_address_init[88 + pos] = writer_cell(6, 12, 37, pos)
-                writer_address_init[92 + pos] = writer_cell(6, 34, 33, pos)
+                writer_address_init[91 + pos] = writer_cell(6, 12, 37, pos)
+                writer_address_init[95 + pos] = writer_cell(6, 34, 33, pos)
         m.submodules.writer_address_mem = writer_address_mem = Memory(
             shape=unsigned(15), depth=len(writer_address_init),
             init=writer_address_init, attrs={"ram_style": "block"})
@@ -4483,17 +4552,16 @@ class RezoTileDisplay(wiring.Component):
                 with m.Case(75 + pos):
                     m.d.comb += writer_char.eq(
                         cross_layout_chars[pos][displayed_cross_layout])
-            for pos in range(5):
+            for pos in range(8):
                 with m.Case(83 + pos):
-                    m.d.comb += writer_char.eq(
-                        motion_source_chars[pos][self.motion_source])
-            for pos in range(4):
-                with m.Case(88 + pos):
                     m.d.comb += writer_char.eq(motion_rate_rport.data)
-                with m.Case(92 + pos):
+            for pos in range(4):
+                with m.Case(91 + pos):
+                    m.d.comb += writer_char.eq(motion_rate_rport.data)
+                with m.Case(95 + pos):
                     m.d.comb += writer_char.eq(motion_phase_rport.data)
         with m.If(update_active):
-            with m.If(update_index == 95):
+            with m.If(update_index == 98):
                 m.d.sync += [update_active.eq(0), refresh_counter.eq(0)]
             with m.Else():
                 m.d.sync += update_index.eq(update_index + 1)
@@ -4573,7 +4641,7 @@ class RezoTileDisplay(wiring.Component):
             content_y0.eq(218 if self.compact_layout else 190),
             content_y1.eq(Mux(
                 bands_page | cross_page,
-                599 if self.compact_layout else 684,
+                603 if self.compact_layout else 684,
                 575 if self.compact_layout else 666)),
         ]
         content_panel = active & self.rect(
@@ -4602,13 +4670,13 @@ class RezoTileDisplay(wiring.Component):
                           588 if self.compact_layout else 650,
                           450 if self.compact_layout else 480))) |
             (cross_page & (
-                self.rect(x, y, 283 if self.compact_layout else 118,
+                self.rect(x, y, 232 if self.compact_layout else 118,
                           542 if self.compact_layout else 616,
-                          560 if self.compact_layout else 650,
+                          580 if self.compact_layout else 650,
                           562 if self.compact_layout else 640) |
-                self.rect(x, y, 283 if self.compact_layout else 118,
+                self.rect(x, y, 232 if self.compact_layout else 118,
                           574 if self.compact_layout else 648,
-                          560 if self.compact_layout else 650,
+                          580 if self.compact_layout else 650,
                           594 if self.compact_layout else 672))))
         palette_chip = advanced_page & self.rect(
             x, y, 344 if self.compact_layout else 264,
@@ -4632,37 +4700,48 @@ class RezoTileDisplay(wiring.Component):
                 320 if self.compact_layout else 288,
                 476 if self.compact_layout else 412,
                 368 if self.compact_layout else 336, t=3)
-        motion_left_x0 = 256 if self.compact_layout else 160
-        motion_left_x1 = 368 if self.compact_layout else 296
-        motion_right_x0 = 448 if self.compact_layout else 512
-        motion_right_x1 = 576 if self.compact_layout else 640
-        motion_top_y0 = 456 if self.compact_layout else 520
+        motion_source_x0 = 280 if self.compact_layout else 160
+        motion_source_x1 = 424 if self.compact_layout else 296
+        motion_rate_x0 = 280 if self.compact_layout else 160
+        motion_rate_x1 = 360 if self.compact_layout else 296
+        motion_phase_x0 = 280 if self.compact_layout else 512
+        motion_phase_x1 = 360 if self.compact_layout else 640
+        motion_depth_x0 = 280 if self.compact_layout else 512
+        motion_depth_x1 = 568 if self.compact_layout else 640
+        # Dynamic text occupies fourteen pixels at the bottom-biased tile
+        # baseline. Inset compact chips by four pixels so their visible
+        # padding is balanced above and below the glyphs.
+        motion_top_y0 = 460 if self.compact_layout else 520
         motion_top_y1 = 480 if self.compact_layout else 552
-        motion_bottom_y0 = 520 if self.compact_layout else 584
-        motion_bottom_y1 = 544 if self.compact_layout else 616
-        motion_source_chip = bands_page & self.rect(
-            x, y, motion_left_x0, motion_top_y0,
-            motion_left_x1, motion_top_y1)
-        motion_rate_chip = bands_page & self.rect(
-            x, y, motion_left_x0, motion_bottom_y0,
-            motion_left_x1, motion_bottom_y1)
-        motion_phase_chip = bands_page & self.rect(
-            x, y, motion_right_x0, motion_top_y0,
-            motion_right_x1, motion_top_y1)
+        motion_rate_y0 = 492 if self.compact_layout else 584
+        motion_rate_y1 = 512 if self.compact_layout else 616
+        motion_phase_y0 = 524 if self.compact_layout else 520
+        motion_phase_y1 = 544 if self.compact_layout else 552
+        motion_bottom_y0 = 552 if self.compact_layout else 584
+        motion_bottom_y1 = 572 if self.compact_layout else 616
+        # SOURCE, RATE, and PHASE share the same 24-on/8-off vertical cadence.
+        # Decode the column once instead of synthesizing three full rectangles.
+        motion_value_x1 = Signal(unsigned(10), init=motion_rate_x1)
+        m.d.comb += motion_value_x1.eq(Mux(
+            y[5:10] == (motion_top_y0 >> 5),
+            motion_source_x1, motion_rate_x1))
+        motion_value_chip = (
+            bands_page &
+            (y[5:10] >= (motion_top_y0 >> 5)) &
+            (y[5:10] <= (motion_phase_y0 >> 5)) &
+            (y[:5] >= (motion_top_y0 & 31)) &
+            (x >= motion_source_x0) & (x < motion_value_x1))
         motion_select_x0 = Signal(
-            unsigned(10), init=motion_left_x0 - 4)
+            unsigned(10), init=motion_source_x0 - 4)
         motion_select_x1 = Signal(
-            unsigned(10), init=motion_left_x1 + 4)
+            unsigned(10), init=motion_source_x1 + 4)
         motion_select_y0 = Signal(
             unsigned(10), init=motion_top_y0 - 4)
-        motion_select_y1 = Signal(
-            unsigned(10), init=motion_top_y1 + 4)
         motion_chip_selected = Signal()
         m.d.comb += [
-            motion_select_x0.eq(motion_left_x0 - 4),
-            motion_select_x1.eq(motion_left_x1 + 4),
+            motion_select_x0.eq(motion_source_x0 - 4),
+            motion_select_x1.eq(motion_source_x1 + 4),
             motion_select_y0.eq(motion_top_y0 - 4),
-            motion_select_y1.eq(motion_top_y1 + 4),
             motion_chip_selected.eq(0),
         ]
         with m.Switch(self.selected):
@@ -4670,30 +4749,84 @@ class RezoTileDisplay(wiring.Component):
                 m.d.comb += motion_chip_selected.eq(1)
             with m.Case(RezoHardwareUI.TARGET_MOTION_RATE):
                 m.d.comb += [
-                    motion_select_y0.eq(motion_bottom_y0 - 4),
-                    motion_select_y1.eq(motion_bottom_y1 + 4),
+                    motion_select_x0.eq(motion_rate_x0 - 4),
+                    motion_select_x1.eq(motion_rate_x1 + 4),
+                    motion_select_y0.eq(motion_rate_y0 - 4),
                     motion_chip_selected.eq(1),
                 ]
             with m.Case(RezoHardwareUI.TARGET_MOTION_PHASE):
                 m.d.comb += [
-                    motion_select_x0.eq(motion_right_x0 - 4),
-                    motion_select_x1.eq(motion_right_x1 + 4),
+                    motion_select_x0.eq(motion_phase_x0 - 4),
+                    motion_select_x1.eq(motion_phase_x1 + 4),
+                    motion_select_y0.eq(motion_phase_y0 - 4),
                     motion_chip_selected.eq(1),
                 ]
+        motion_outline_height = 28 if self.compact_layout else 40
         motion_chip_select = (
             bands_page & motion_chip_selected &
             self.outline(x, y, motion_select_x0, motion_select_y0,
-                         motion_select_x1, motion_select_y1, t=3))
-        motion_depth_track = bands_page & self.rect(
-            x, y, motion_right_x0, motion_bottom_y0,
-            motion_right_x1, motion_bottom_y1)
-        motion_depth_fill = bands_page & self.rect(
-            x, y, motion_right_x0, motion_bottom_y0,
-            motion_right_x0 + self.motion_depth, motion_bottom_y1)
-        motion_depth_select = bands_page & (
-            self.selected == RezoHardwareUI.TARGET_MOTION_DEPTH) & self.rect(
-                x, y, motion_right_x0 - 6, motion_bottom_y0,
-                motion_right_x0 - 2, motion_bottom_y1)
+                         motion_select_x1,
+                         motion_select_y0 + motion_outline_height, t=3))
+        motion_fader_height = 20 if self.compact_layout else 32
+        motion_depth_track = (
+            bands_page &
+            (y >= motion_bottom_y0) &
+            (y < motion_bottom_y0 + motion_fader_height) &
+            (x >= motion_depth_x0) & (x < motion_depth_x1))
+
+        # Store absolute endpoints in block memory to avoid a wide multiply in
+        # the near-capacity pixel path.
+        motion_ui_init = [motion_depth_x0 >> 2] * 512
+        for depth_value in range(256):
+            clamped_depth = min(depth_value, RezoCore.CROSS_DEPTH_MAX)
+            motion_ui_init[depth_value] = (
+                motion_depth_x0 + (clamped_depth << 1) +
+                (clamped_depth >> 2)) >> 2
+        for raw_value in range(64):
+            signed_value = raw_value if raw_value < 32 else raw_value - 64
+            # The depth-scaled monitor's reachable source extrema are -16
+            # and +15. Map those asymmetrical integer limits onto equal
+            # 144-pixel excursions across the full 288-pixel DEPTH track.
+            # This table is display-only; DSP modulation remains unchanged.
+            if signed_value >= 0:
+                scaled_value = min(36, round(signed_value * 36 / 15))
+            else:
+                scaled_value = round(signed_value * 36 / 16)
+            motion_ui_init[256 + raw_value] = 106 + scaled_value
+        m.submodules.motion_ui_mem = motion_ui_mem = Memory(
+            shape=unsigned(8), depth=len(motion_ui_init),
+            init=motion_ui_init, attrs={"ram_style": "block"})
+        motion_depth_rport = motion_ui_mem.read_port(domain="dvi")
+        motion_monitor_rport = motion_ui_mem.read_port(domain="dvi")
+        motion_monitor_negative_q = Signal()
+        m.d.comb += [
+            motion_depth_rport.addr.eq(self.motion_depth),
+            motion_monitor_rport.addr.eq(
+                256 | self.motion_monitor.as_unsigned()),
+        ]
+        # Align the sign with the synchronous endpoint-table read.  Without
+        # this delay a zero crossing could combine a new sign with the prior
+        # endpoint for one pixel clock.
+        m.d.dvi += motion_monitor_negative_q.eq(self.motion_monitor < 0)
+        motion_depth_fill = (
+            bands_page & (x[2:10] >= (motion_depth_x0 >> 2)) &
+            (x[2:10] < motion_depth_rport.data[:8]) &
+            (y >= motion_bottom_y0) &
+            (y < motion_bottom_y0 + motion_fader_height))
+        motion_depth_select = (
+            bands_page &
+            (self.selected == RezoHardwareUI.TARGET_MOTION_DEPTH) &
+            self.rect(x, y, motion_depth_x0 - 6, motion_bottom_y0,
+                      motion_depth_x0 - 2,
+                      motion_bottom_y0 + motion_fader_height))
+
+        # A thin bipolar telemetry line reuses the same visual language as the
+        # INPUT page. Its value comes from the audio engine's existing LFO;
+        # the display does not synthesize another oscillator.
+        motion_monitor_line = bands_page & self.bipolar_line(
+            x[2:10], y, 106, motion_monitor_rport.data,
+            570, 572, motion_monitor_negative_q)
+
         damp_chip = tune_page & self.rect(
             x, y, 268 if self.compact_layout else 156,
             462 if self.compact_layout else 504,
@@ -5177,17 +5310,13 @@ class RezoTileDisplay(wiring.Component):
         # from the bar's left edge; CV is bipolar around the DEPTH center.
         input_meter_q0 = input_visible & Mux(
             input_is_cv,
-            Mux(~input_meter_negative_q,
-                self.rect(input_x_value_q, input_local_value_q,
-                          440 if self.compact_layout else 490,
-                          82 if self.compact_layout else 65,
-                          input_meter_end_q,
-                          84 if self.compact_layout else 66),
-                self.rect(input_x_value_q, input_local_value_q,
-                          input_meter_end_q,
-                          82 if self.compact_layout else 65,
-                          440 if self.compact_layout else 490,
-                          84 if self.compact_layout else 66)),
+            self.bipolar_line(
+                input_x_value_q, input_local_value_q,
+                440 if self.compact_layout else 490,
+                input_meter_end_q,
+                82 if self.compact_layout else 65,
+                84 if self.compact_layout else 66,
+                input_meter_negative_q),
             self.rect(input_x_value_q, input_local_value_q,
                       304 if self.compact_layout else 326,
                       50 if self.compact_layout else 65,
@@ -5383,9 +5512,14 @@ class RezoTileDisplay(wiring.Component):
             output_send_index.eq(0),
         ]
         for output in range(4):
-            row_y = (
+            output_row_y = (
                 compact_output_row_centers[output] - 13
                 if self.compact_layout else 326 + output * 80)
+            row_y = (
+                Mux(cross_page,
+                    compact_cross_row_centers[output] - 13,
+                    output_row_y)
+                if self.compact_layout else output_row_y)
             output_geom_y = text_y if self.compact_layout else y
             with m.If((output_geom_y >= row_y) &
                       (output_geom_y < row_y + 28)):
@@ -5402,11 +5536,23 @@ class RezoTileDisplay(wiring.Component):
                 ]
         for source in range(5):
             cell_width = 56 if self.compact_layout else 72
-            cell_x0 = (
+            output_cell_left = (
                 compact_output_col_centers[source] - 27
                 if self.compact_layout else 188 + source * 96)
+            cell_x0 = (
+                Mux(cross_page,
+                    (compact_cross_col_centers[source] - 27
+                     if source < 4 else output_cell_left),
+                    output_cell_left)
+                if self.compact_layout else output_cell_left)
+            cell_width = (
+                Mux(cross_page,
+                    Const(56 if source < 4 else cell_width, 7),
+                    Const(cell_width, 7))
+                if self.compact_layout else cell_width)
             output_geom_x = text_x if self.compact_layout else x
-            with m.If((output_geom_x >= cell_x0) &
+            source_visible = ~cross_page if source == 4 else Const(1)
+            with m.If(source_visible & (output_geom_x >= cell_x0) &
                       (output_geom_x < cell_x0 + cell_width)):
                 m.d.comb += [
                     output_source.eq(source),
@@ -5529,8 +5675,8 @@ class RezoTileDisplay(wiring.Component):
                   (output_col_active & (output_source < 4) &
                    output_header_col_target &
                    (output_header_group == output_source) &
-                   (y >= (280 if self.compact_layout else 248)) &
-                   (y < (284 if self.compact_layout else 252))))) |
+                   (y >= (264 if self.compact_layout else 248)) &
+                   (y < (268 if self.compact_layout else 252))))) |
                 (output_page &
                  (((output_row_active & output_header_row_target &
                     (output_header_group == output_row) &
@@ -5654,12 +5800,13 @@ class RezoTileDisplay(wiring.Component):
         bank_control_visible = bank_control_page_q & bank_control_active_q
         control_fill_x0 = 289 if self.compact_layout else 124
         bank_control_end = (
-            control_fill_x0 + bank_control_base_q +
-            (bank_control_base_q >> 3)
+            control_fill_x0 + (bank_control_base_q << 1) +
+            (bank_control_base_q >> 2) + (bank_control_base_q >> 3)
             if self.compact_layout else
             control_fill_x0 + (bank_control_base_q << 2))
         bank_control_effective_end = (
-            control_fill_x0 + bank_control_effective_q +
+            control_fill_x0 + (bank_control_effective_q << 1) +
+            (bank_control_effective_q >> 2) +
             (bank_control_effective_q >> 3)
             if self.compact_layout else
             control_fill_x0 + (bank_control_effective_q << 2))
@@ -5677,18 +5824,24 @@ class RezoTileDisplay(wiring.Component):
             bank_control_end - 2, bank_control_y0_q - 2,
             bank_control_end + 2, bank_control_y0_q + 18)
 
-        cross_track_x0 = 304 if self.compact_layout else 124
+        cross_track_x0 = 236 if self.compact_layout else 124
         same_y0 = 544 if self.compact_layout else 620
         cross_y0 = 576 if self.compact_layout else 652
+        same_feedback_width = (
+            (self.same_feedback << 1) + (self.same_feedback >> 1) +
+            (self.same_feedback >> 3)
+            if self.compact_layout else self.same_feedback << 2)
+        cross_feedback_width = (
+            (self.cross_feedback << 1) + (self.cross_feedback >> 1) +
+            (self.cross_feedback >> 3)
+            if self.compact_layout else self.cross_feedback << 2)
         same_fill = cross_page & self.rect(
             x, y, cross_track_x0, same_y0,
-            cross_track_x0 + (self.same_feedback <<
-                              (1 if self.compact_layout else 2)),
+            cross_track_x0 + same_feedback_width,
             same_y0 + 16)
         cross_fill = cross_page & self.rect(
             x, y, cross_track_x0, cross_y0,
-            cross_track_x0 + (self.cross_feedback <<
-                              (1 if self.compact_layout else 2)),
+            cross_track_x0 + cross_feedback_width,
             cross_y0 + 16)
         cross_select = cross_page & (
             ((self.selected == RezoHardwareUI.TARGET_SAME_FEEDBACK) &
@@ -5795,10 +5948,10 @@ class RezoTileDisplay(wiring.Component):
             geometry_line_q0.eq(
                 band_zero_q0 | bank_control_mod_marker | border),
             geometry_mod_q0.eq(band_mod_fill | bank_control_mod_fill |
-                               input_meter_q0),
+                               input_meter_q0 | motion_monitor_line),
             geometry_panel_q0.eq(preset_chip | palette_chip | save_default_chip |
-                                 motion_source_chip | motion_rate_chip |
-                                 motion_phase_chip | damp_chip | layout_chip |
+                                 motion_value_chip |
+                                 damp_chip | layout_chip |
                                  band_slot_q0 | output_side_chip |
                                  meter_panel | motion_depth_track),
         ]
@@ -6060,6 +6213,7 @@ class RezoBeamTop(Elaboratable):
                              for n in range(4)]
         display_input_meters = [Signal(signed(6), name=f"display_input_meter{n}")
                                 for n in range(4)]
+        display_motion_monitor = Signal(signed(6))
         output_send_write_index = Signal(range(20))
         output_send_array = Array(ui.output_sends)
         cross_matrix_write_index = Signal(range(16))
@@ -6078,8 +6232,10 @@ class RezoBeamTop(Elaboratable):
             display_effective_drive.eq(rezo.effective_drive >> 8),
             display_resonance.eq(rezo.resonance >> 8),
             display_feedback.eq(rezo.feedback >> 8),
-            display_same_feedback.eq(rezo.same_feedback),
-            display_cross_feedback.eq(rezo.cross_feedback),
+            # Render the user-facing positions, not the safety-scaled DSP
+            # coefficients, so both faders retain their full visual travel.
+            display_same_feedback.eq(ui.same_feedback),
+            display_cross_feedback.eq(ui.cross_feedback),
             display_effective_resonance.eq(rezo.effective_resonance >> 8),
             display_effective_feedback.eq(rezo.effective_feedback >> 8),
             display_limit_knee.eq(rezo.limit_knee >> 8),
@@ -6090,6 +6246,7 @@ class RezoBeamTop(Elaboratable):
         for n in range(4):
             m.d.comb += display_cv_depths[n].eq(rezo.cv_depths[n] >> 8)
             m.d.sync += display_input_meters[n].eq(rezo.input_meters[n] >> 10)
+        m.d.sync += display_motion_monitor.eq(rezo.motion_monitor)
         m.d.comb += [
             # OUTPUT and CROSS are never visible simultaneously, so their
             # identically shaped grids share one display BRAM. Refresh the
@@ -6127,6 +6284,8 @@ class RezoBeamTop(Elaboratable):
             FFSynchronizer(i=display_effective_feedback, o=display.effective_feedback, o_domain="dvi"),
             FFSynchronizer(i=display_limit_knee, o=display.limit_knee, o_domain="dvi"),
             FFSynchronizer(i=display_limit_cap, o=display.limit_cap, o_domain="dvi"),
+            FFSynchronizer(i=display_motion_monitor,
+                           o=display.motion_monitor, o_domain="dvi"),
             FFSynchronizer(i=ui.damp_mode, o=display.damp_mode, o_domain="dvi"),
             FFSynchronizer(i=ui.selected, o=display.selected, o_domain="dvi"),
             FFSynchronizer(i=ui.page, o=display.page, o_domain="dvi"),

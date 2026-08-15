@@ -27,7 +27,7 @@ accidentally as a standard artifact through `--skip-build`.
 seed. The older `TILIQUA_REZO_SEED=<n>` override remains compatible when the
 family-specific variable is unset.
 The qualified defaults are seed 8 for REZO standard, seed 2 for REZO circular,
-seed 3 for REZOMO standard, seed 4 for REZOMO circular, seed 9 for STREZO
+seed 3 for REZOMO standard, seed 4 for REZOMO circular, seed 4 for STREZO
 standard, and seed 1 for STREZO circular.
 
 REZO circular also selects the native `yosys` executable because its documented
