@@ -19,12 +19,21 @@ REZO uses the encoder for both navigation and editing.
 3. Turn to change the selected value.
 4. Click again to apply the value and return to **NAV**.
 
+Continuous numeric controls use progressive acceleration: a slow turn changes
+one step at a time, while sustained fast turns in one direction ramp smoothly
+through larger steps. Direction changes and discrete choices always begin with
+a single step.
+
 Enable switches, feedback-source switches, and **SAVE DEFAULT** act
 immediately when clicked. They do not require a separate edit step.
 
-To change pages, select the **REZO** box at the upper left, click, and turn.
-To switch between BANK and FILTER, select the mode box at the upper right,
-click, turn once, and click again.
+To change pages, select the page-name chip beside **PAGE**, click, and turn. On
+the main page, navigation proceeds PAGE, then PRESET, then MODE. Select MODE to
+switch between BANK and FILTER.
+
+REZO is supplied for both standard 1280x720 displays and the rotated 720x720
+circular display. The controls and saved state are identical; only the screen
+composition changes.
 
 ## Understanding the bands
 

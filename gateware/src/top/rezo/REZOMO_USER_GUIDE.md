@@ -19,11 +19,21 @@ REZOMO uses the encoder for navigation and editing.
 3. Turn to change the selected value.
 4. Click again to apply the value and return to **NAV**.
 
+Continuous numeric controls use progressive acceleration: a slow turn changes
+one step at a time, while sustained fast turns in one direction ramp smoothly
+through larger steps. Direction changes and discrete choices always begin with
+a single step.
+
 Enable switches, feedback-source switches, and **SAVE DEFAULT** act
 immediately when clicked.
 
-Select the **REZOMO** box at the upper left to change pages. Select the mode
-box at the upper right to switch between BANK and CLOCK.
+Select the page-name chip beside **PAGE** to change pages. On the main page,
+navigation proceeds PAGE, then PRESET, then MODE. Select MODE to switch between
+BANK and CLOCK.
+
+REZOMO is supplied for both standard 1280x720 displays and the rotated 720x720
+circular display. The controls and saved state are identical; only the screen
+composition changes.
 
 ## Understanding the bands
 
