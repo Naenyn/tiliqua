@@ -7,6 +7,7 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
                     input_gains=(), input_modes=(), cv_targets=(),
                     band_enables=(), feedback_sends=(), same_feedback=0,
                     cross_feedback=0, cross_layout=RezoCore.CROSS_LAYOUT_GLOBAL,
+                    cross_curve=RezoCore.CROSS_CURVE_LINEAR,
                     drive=0, resonance=0, feedback=0,
                     matrix_values=(), motion_source=0, motion_rate=12,
                     motion_phase=28, motion_depth=0, motion_monitor=0):
@@ -36,6 +37,7 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
         ctx.set(dut.same_feedback, same_feedback)
         ctx.set(dut.cross_feedback, cross_feedback)
         ctx.set(dut.cross_layout, cross_layout)
+        ctx.set(dut.cross_curve, cross_curve)
         ctx.set(dut.drive, drive)
         ctx.set(dut.effective_drive, drive)
         ctx.set(dut.resonance, resonance)

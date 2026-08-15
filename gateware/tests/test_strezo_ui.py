@@ -120,8 +120,8 @@ def test_ui_output_headers_bulk_edit_before_saved_stereo_side_selectors():
     sim.run()
 
 
-def test_ui_advanced_palette_selection_wraps():
-    """OPTIONS exposes a palette control with five wrapping themes."""
+def test_ui_advanced_palette_and_cross_curve_selection_wrap():
+    """OPTIONS exposes the wrapping palette and cross-feedback curve."""
     dut = FastClickRezoUI()
     sim = Simulator(dut)
     sim.add_clock(1e-6)
@@ -145,6 +145,15 @@ def test_ui_advanced_palette_selection_wraps():
         assert ctx.get(dut.palette) == 0
         endpoint = await _turn(ctx, dut, endpoint, 0)
         assert ctx.get(dut.palette) == 4
+
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_CROSS_CURVE
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.cross_curve) == RezoCore.CROSS_CURVE_LOG
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.cross_curve) == RezoCore.CROSS_CURVE_LINEAR
 
     sim.add_testbench(bench)
     sim.run()
@@ -329,7 +338,7 @@ def test_ui_cross_layout_presets_and_cell_editing():
 
         # Enter FROM G1 and turn down once: its four cells retain their
         # differences while zero-valued cells clamp at zero.
-        for _ in range(5):
+        for _ in range(6):
             endpoint = await _turn(ctx, dut, endpoint, 1)
         assert ctx.get(dut.selected) == dut.TARGET_CROSS_ROW_BASE
         await _click(ctx, dut)
@@ -431,6 +440,7 @@ def test_ui_state_scan_preserves_all_compact_v5_parameters():
         saved_cross_matrix = tuple((n * 3) % 17 for n in range(16))
         saved_same_reduction = 37
         saved_cross_feedback = 91
+        saved_cross_curve = RezoCore.CROSS_CURVE_LOG
         saved_motion_source = 2
         saved_motion_rate = 137
         saved_motion_phase = 91
@@ -465,8 +475,10 @@ def test_ui_state_scan_preserves_all_compact_v5_parameters():
         for value in saved_cross_matrix: append(value, 5)
         append(saved_same_reduction, 5)
         append(saved_cross_feedback, 5)
-        # Retain the exact V4 prefix, then append V5 motion controls.
-        append(0, 2)
+        # The former V4 padding now persists CROSS CURVE; old zero padding
+        # continues to restore the backward-compatible LINEAR curve.
+        append(saved_cross_curve, 1)
+        append(0, 1)
         append(saved_motion_source, 2)
         append(saved_motion_rate, 8)
         append(saved_motion_phase, 8)
@@ -529,6 +541,7 @@ def test_ui_state_scan_preserves_all_compact_v5_parameters():
         assert ctx.get(dut.same_feedback) == \
             RezoCore.CROSS_DEPTH_MAX - saved_same_reduction
         assert ctx.get(dut.cross_feedback) == saved_cross_feedback
+        assert ctx.get(dut.cross_curve) == saved_cross_curve
         assert tuple(ctx.get(dut.cross_matrix[n]) for n in range(16)) == \
             saved_cross_matrix
         assert ctx.get(dut.motion_source) == saved_motion_source
@@ -690,7 +703,8 @@ def test_ui_save_default_click_requests_once():
         assert ctx.get(dut.page) == 5
         await _click(ctx, dut)
 
-        # Clockwise enters PALETTE, then SAVE DEFAULT. Motion controls follow.
+        # Clockwise enters PALETTE, CROSS CURVE, then SAVE DEFAULT.
+        endpoint = await _turn(ctx, dut, endpoint, 1)
         endpoint = await _turn(ctx, dut, endpoint, 1)
         endpoint = await _turn(ctx, dut, endpoint, 1)
         assert ctx.get(dut.selected) == dut.TARGET_SAVE_DEFAULT

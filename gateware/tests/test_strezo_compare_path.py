@@ -270,6 +270,46 @@ def test_cross_feedback_moves_only_the_feedback_path_between_channels():
         (left_outputs[-16:], feedback_probes[-16:])
 
 
+def test_cross_curve_lookup_preserves_endpoints_and_shapes_midrange():
+    """All curves retain instability at full scale but redistribute travel."""
+    curves = (
+        RezoCore.CROSS_CURVE_LINEAR,
+        RezoCore.CROSS_CURVE_LOG,
+    )
+    for curve in curves:
+        values = [RezoCore.cross_curve_coefficient(curve, raw)
+                  for raw in range(RezoCore.CROSS_DEPTH_MAX + 1)]
+        assert values[0] == 0
+        assert values[-1] == RezoCore.CROSS_DEPTH_MAX
+        assert values == sorted(values)
+
+    midpoint = RezoCore.CROSS_DEPTH_MAX // 2
+    linear, log = (
+        RezoCore.cross_curve_coefficient(curve, midpoint)
+        for curve in (RezoCore.CROSS_CURVE_LINEAR,
+                      RezoCore.CROSS_CURVE_LOG)
+    )
+    assert log > linear
+    assert RezoCore.cross_curve_coefficient(RezoCore.CROSS_CURVE_LOG, 32) == 62
+    assert RezoCore.cross_curve_coefficient(RezoCore.CROSS_CURVE_LOG, 64) == 93
+
+    dut = RezoCore(fs=192_000)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+
+    async def bench(ctx):
+        ctx.set(dut.cross_feedback, midpoint)
+        for curve in curves:
+            ctx.set(dut.cross_curve, curve)
+            for _ in range(3):
+                await ctx.tick()
+            assert ctx.get(dut._effective_cross_feedback) == \
+                RezoCore.cross_curve_coefficient(curve, midpoint)
+
+    sim.add_testbench(bench)
+    sim.run()
+
+
 def test_group_cross_matrix_routes_source_group_to_selected_destination():
     """An immutable factory route is generated without touching USER."""
     dut = RezoCore(fs=192_000)

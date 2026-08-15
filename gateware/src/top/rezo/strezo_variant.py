@@ -93,6 +93,8 @@ class RezoCore(wiring.Component):
     CROSS_LAYOUT_ALL = 4
     CROSS_LAYOUT_USER = 5
     CROSS_DEPTH_MAX = 128
+    CROSS_CURVE_LINEAR = 0
+    CROSS_CURVE_LOG = 1
     MOTION_SOURCE_OFF = 0
     MOTION_SOURCE_TRIANGLE = 1
     MOTION_SOURCE_RANDOM = 2
@@ -109,6 +111,18 @@ class RezoCore(wiring.Component):
                     Mux(layout == cls.CROSS_LAYOUT_MIRROR,
                         Mux(destination == (3 - source), 16, 0),
                         Mux(layout == cls.CROSS_LAYOUT_ALL, 4, 0)))))
+
+    @classmethod
+    def cross_curve_coefficient(cls, curve, raw):
+        """Translate a retained fader position to one DSP coefficient."""
+        position = min(raw, cls.CROSS_DEPTH_MAX) / cls.CROSS_DEPTH_MAX
+        if curve == cls.CROSS_CURVE_LINEAR:
+            shaped = position
+        else:
+            # Early-rising logarithmic response: make the low half audible
+            # sooner, then progressively refine the approach to full scale.
+            shaped = math.log1p(7.0 * position) / math.log(8.0)
+        return round(cls.CROSS_DEPTH_MAX * shaped)
 
     # The original REZO prototype used the nominal centers of the filterbank
     # that inspired it. Keep that layout as LEGACY, but make the neutral
@@ -181,6 +195,7 @@ class RezoCore(wiring.Component):
         self.feedback = Signal(unsigned(16), init=0)
         self.same_feedback = Signal(unsigned(8), init=self.CROSS_DEPTH_MAX)
         self.cross_feedback = Signal(unsigned(8), init=0)
+        self.cross_curve = Signal(init=self.CROSS_CURVE_LINEAR)
         self.cross_layout = Signal(unsigned(3), init=self.CROSS_LAYOUT_GLOBAL)
         self.cross_matrix = [
             Signal(unsigned(5), init=16 if source == destination else 0,
@@ -256,6 +271,41 @@ class RezoCore(wiring.Component):
 
     def elaborate(self, platform):
         m = Module()
+
+        # CROSS closes a two-channel round trip, so its perceived feedback
+        # strength is not linear in its per-leg coefficient. Keep the raw
+        # 0..128 position for UI/persistence and translate it through one
+        # registered block-ROM lookup before either GLOBAL or matrix routing.
+        # Every curve retains the exact 0 and full-scale endpoints.
+        cutoff_table = [
+            fixed.Const(self.cutoff_coeff(freq, self.fs),
+                        dsp.mac.SQNative).as_value().value
+            for freq in self.FREQUENCIES_HZ
+        ]
+        curve_init = []
+        for curve in range(2):
+            for raw in range(256):
+                curve_init.append(self.cross_curve_coefficient(curve, raw))
+        # The 18-bit filter coefficient ROM uses only addresses 0..115. Store
+        # CROSS curves at 512..1023 and use the spare read port, retaining one
+        # DP16KD for both tables without an address adder.
+        coefficient_init = [
+            *cutoff_table,
+            *([0] * (512 - len(cutoff_table))),
+            *curve_init,
+        ]
+        m.submodules.coefficient_mem = coefficient_mem = Memory(
+            shape=dsp.mac.SQNative.as_shape(), depth=len(coefficient_init),
+            init=coefficient_init,
+            attrs={"ram_style": "block"})
+        cross_curve_rport = coefficient_mem.read_port()
+        effective_cross_feedback = Signal(unsigned(8))
+        self._effective_cross_feedback = effective_cross_feedback
+        m.d.comb += [
+            cross_curve_rport.addr.eq(Cat(
+                self.cross_feedback, self.cross_curve, Const(1, 1))),
+            effective_cross_feedback.eq(cross_curve_rport.data[:8]),
+        ]
 
         # Smooth UI/CV target parameters before the DSP consumes them.  The UI
         # can jump a target by a whole encoder detent; the filterbank should
@@ -392,19 +442,11 @@ class RezoCore(wiring.Component):
         quiet_samples_l = Signal(unsigned(4))
         quiet_samples_r = Signal(unsigned(4))
 
-        cutoff_table = [
-            fixed.Const(self.cutoff_coeff(freq, self.fs),
-                        dsp.mac.SQNative).as_value().value
-            for freq in self.FREQUENCIES_HZ
-        ]
         # Runtime frequency selection is table-driven. The next band's block-
         # ROM coefficient is prefetched after the current band's two SVF passes
         # are complete, so the synchronous output is ready before ``band`` is
         # advanced without putting a wide LUT mux in the audio path.
-        m.submodules.cutoff_mem = cutoff_mem = Memory(
-            shape=dsp.mac.SQNative.as_shape(), depth=len(cutoff_table),
-            init=cutoff_table, attrs={"ram_style": "block"})
-        cutoff_rport = cutoff_mem.read_port()
+        cutoff_rport = coefficient_mem.read_port()
         frequency_array = Array(self.band_frequencies)
         for n in range(self.N_BANDS):
             m.d.comb += level_diffs[n].eq(
@@ -925,7 +967,7 @@ class RezoCore(wiring.Component):
             cross_self_gain.eq(self.same_feedback),
             cross_other_gain.eq(Mux(
                 self.cross_layout == self.CROSS_LAYOUT_GLOBAL,
-                self.cross_feedback, 0)),
+                effective_cross_feedback, 0)),
             cross_ll.eq(feedback_sample.as_value().as_signed() *
                         Cat(cross_self_gain, Const(0, 1)).as_signed()),
             cross_lr.eq(feedback_sample_r.as_value().as_signed() *
@@ -1011,7 +1053,7 @@ class RezoCore(wiring.Component):
             matrix_cross_sum_q_r.eq(matrix_cross_sum_r),
             matrix_multiply_source_q_l.eq(matrix_multiply_source_l),
             matrix_multiply_source_q_r.eq(matrix_multiply_source_r),
-            matrix_cross_feedback_q.eq(self.cross_feedback),
+            matrix_cross_feedback_q.eq(effective_cross_feedback),
             matrix_feedback_gain_q.eq(feedback_gain),
             # source * coefficient / 16 is accumulated per destination.
             # CROSS now has eight times the old UI resolution, so divide by
@@ -1897,6 +1939,10 @@ class RezoHardwareUI(wiring.Component):
     TARGET_OUTPUT_COL_BASE = TARGET_CROSS_COL_BASE
     TARGET_OUTPUT_DRY_COL = TARGET_CROSS_LAYOUT
     TARGET_SAME_FEEDBACK = RezoCore.N_BANDS + 116
+    # BANDS DEPTH and CROSS CURVE never coexist on screen. Sharing their
+    # selection ID avoids extending another decode term through this nearly
+    # full design; edit behavior remains page-qualified below.
+    TARGET_CROSS_CURVE = TARGET_MOTION_DEPTH
     N_TARGETS = RezoCore.N_BANDS + 117
 
     # STREZO has its own journal magic and no longer retains dormant FILTER or
@@ -1933,6 +1979,7 @@ class RezoHardwareUI(wiring.Component):
             "feedback": Out(unsigned(16)),
             "same_feedback": Out(unsigned(8)),
             "cross_feedback": Out(unsigned(8)),
+            "cross_curve": Out(1),
             "cross_layout": Out(unsigned(3)),
             "cross_layout_preview": Out(unsigned(3)),
             "cross_matrix": Out(data.ArrayLayout(unsigned(5), 16)),
@@ -2093,6 +2140,8 @@ class RezoHardwareUI(wiring.Component):
         m.d.comb += same_feedback.eq(
             RezoCore.CROSS_DEPTH_MAX - same_feedback_reduction)
         cross_feedback = Signal(unsigned(8), init=0)
+        cross_curve = Signal(init=RezoCore.CROSS_CURVE_LINEAR)
+        cross_curve_pad = Signal()
         cross_layout = Signal(unsigned(3), init=RezoCore.CROSS_LAYOUT_GLOBAL)
         cross_layout_preview = Signal(
             unsigned(3), init=RezoCore.CROSS_LAYOUT_GLOBAL)
@@ -2212,7 +2261,6 @@ class RezoHardwareUI(wiring.Component):
         output_side_target = Signal()
         output_row_target = Signal()
         output_col_target = Signal()
-        cross_target_visible = Signal()
         cross_matrix_target = Signal()
         cross_row_target = Signal()
         cross_col_target = Signal()
@@ -2463,15 +2511,10 @@ class RezoHardwareUI(wiring.Component):
                 (selected < self.TARGET_CROSS_COL_BASE + 4)),
             cross_edit_target.eq(
                 cross_matrix_target | cross_row_target | cross_col_target),
-            cross_target_visible.eq(
-                (selected == self.TARGET_PAGE) |
-                (selected == self.TARGET_CROSS_LAYOUT) |
-                (selected == self.TARGET_CROSS_FEEDBACK) |
-                (selected == self.TARGET_SAME_FEEDBACK) |
-                cross_edit_target),
             advanced_target_visible.eq(
                 (selected == self.TARGET_PAGE) |
                 (selected == self.TARGET_PALETTE) |
+                (selected == self.TARGET_CROSS_CURVE) |
                 (selected == self.TARGET_SAVE_DEFAULT)),
             band_enable_target.eq(
                 (selected >= self.TARGET_BAND_ENABLE_BASE) &
@@ -2682,6 +2725,8 @@ class RezoHardwareUI(wiring.Component):
                           (selected == self.TARGET_PAGE)):
                     m.d.comb += next_selected.eq(self.TARGET_PALETTE)
                 with m.Elif(selected == self.TARGET_PALETTE):
+                    m.d.comb += next_selected.eq(self.TARGET_CROSS_CURVE)
+                with m.Elif(selected == self.TARGET_CROSS_CURVE):
                     m.d.comb += next_selected.eq(self.TARGET_SAVE_DEFAULT)
                 with m.Else():
                     m.d.comb += next_selected.eq(self.TARGET_PAGE)
@@ -2690,6 +2735,8 @@ class RezoHardwareUI(wiring.Component):
                           (selected == self.TARGET_PAGE)):
                     m.d.comb += next_selected.eq(self.TARGET_SAVE_DEFAULT)
                 with m.Elif(selected == self.TARGET_SAVE_DEFAULT):
+                    m.d.comb += next_selected.eq(self.TARGET_CROSS_CURVE)
+                with m.Elif(selected == self.TARGET_CROSS_CURVE):
                     m.d.comb += next_selected.eq(self.TARGET_PALETTE)
                 with m.Else():
                     m.d.comb += next_selected.eq(self.TARGET_PAGE)
@@ -2748,11 +2795,10 @@ class RezoHardwareUI(wiring.Component):
                     m.d.comb += next_selected.eq(selected - 1)
         with m.Elif(page == 7):
             # Layout, four TO headers, each FROM header and its four cells,
-            # then independent same-side and cross-feedback amounts. GLOBAL
-            # skips the matrix because it routes the complete stereo sums.
+            # then independent same-side and cross-feedback amounts.
+            # GLOBAL skips the matrix because it routes complete stereo sums.
             with m.If(edit_direction):
-                with m.If(~cross_target_visible |
-                          (selected == self.TARGET_PAGE)):
+                with m.If(selected == self.TARGET_PAGE):
                     m.d.comb += next_selected.eq(self.TARGET_CROSS_LAYOUT)
                 with m.Elif(selected == self.TARGET_CROSS_LAYOUT):
                     m.d.comb += next_selected.eq(Mux(
@@ -2781,8 +2827,7 @@ class RezoHardwareUI(wiring.Component):
                 with m.Else():
                     m.d.comb += next_selected.eq(selected + 1)
             with m.Else():
-                with m.If(~cross_target_visible |
-                          (selected == self.TARGET_PAGE)):
+                with m.If(selected == self.TARGET_PAGE):
                     m.d.comb += next_selected.eq(
                         self.TARGET_CROSS_FEEDBACK)
                 with m.Elif(selected == self.TARGET_CROSS_FEEDBACK):
@@ -2945,6 +2990,12 @@ class RezoHardwareUI(wiring.Component):
                             cross_layout_preview == RezoCore.CROSS_LAYOUT_GLOBAL,
                             RezoCore.CROSS_LAYOUT_USER,
                             cross_layout_preview - 1))
+                with m.Elif((page == 5) &
+                            (selected == self.TARGET_CROSS_CURVE)):
+                    with m.If(edit_direction):
+                        m.d.sync += cross_curve.eq(cross_curve + 1)
+                    with m.Else():
+                        m.d.sync += cross_curve.eq(cross_curve - 1)
                 with m.Elif(band_frequency_target):
                     with m.If(edit_direction):
                         with m.If(frequency_preview <=
@@ -3200,7 +3251,8 @@ class RezoHardwareUI(wiring.Component):
         cross_matrix_bits = Cat(
             cross_layout, *cross_matrix, same_feedback_reduction[:5],
             cross_feedback[:5])
-        state_v4_pad = Signal(2)
+        # V4/V5 reserved these two bits as zero. Reusing one makes old saves
+        # load LINEAR without growing or versioning the compact record.
         # The packed state is a circular stream. This temporal interface costs
         # one local shift mux per retained bit instead of a 42-way read mux and
         # a separate 42-way restore decoder. A complete SAVE rotation returns
@@ -3219,7 +3271,8 @@ class RezoHardwareUI(wiring.Component):
             output_send_bits,
             band_config_bits,
             cross_matrix_bits,
-            state_v4_pad,
+            cross_curve,
+            cross_curve_pad,
             motion_source, motion_rate, motion_phase, motion_depth,
             same_feedback_reduction[5:8], cross_feedback[5:8],
         )
@@ -3266,6 +3319,7 @@ class RezoHardwareUI(wiring.Component):
             self.feedback.eq(feedback << 8),
             self.same_feedback.eq(same_feedback),
             self.cross_feedback.eq(cross_feedback),
+            self.cross_curve.eq(cross_curve),
             self.cross_layout.eq(cross_layout),
             self.cross_layout_preview.eq(cross_layout_preview),
             self.limit_knee.eq(limit_knee << 8),
@@ -3750,6 +3804,7 @@ class RezoTileDisplay(wiring.Component):
             "effective_feedback": In(unsigned(8)),
             "same_feedback": In(unsigned(8)),
             "cross_feedback": In(unsigned(8)),
+            "cross_curve": In(1),
             "cross_layout": In(unsigned(3)),
             "cross_layout_preview": In(unsigned(3)),
             "limit_knee": In(unsigned(8)),
@@ -4039,7 +4094,10 @@ class RezoTileDisplay(wiring.Component):
 
             put_native(5, "STATE AND DISPLAY", 8, 13)
             put_native(5, "PALETTE", 13, 17)
-            put_native(5, "SAVE DEFAULT", 8, 21)
+            put_native(5, "CROSS CURVE", 8, 21)
+            put_native(5, "LINEAR", 20, 21)
+            put_native(5, "LOGARITHMIC", 27, 21)
+            put_native(5, "SAVE DEFAULT", 8, 25)
 
             put_native(6, "PRESET", 8, 11)
             put_native(6, "ENABLE", 8, 16)
@@ -4096,7 +4154,10 @@ class RezoTileDisplay(wiring.Component):
                 put(4, f"OUT{n}", 2, 21 + n * 5)
             put(5, "STATE AND DISPLAY", 2, 11)
             put(5, "PALETTE", 8, 15)
-            put(5, "SAVE DEFAULT", 3, 19)
+            put(5, "CROSS CURVE", 3, 19)
+            put(5, "LINEAR", 20, 19)
+            put(5, "LOGARITHMIC", 27, 19)
+            put(5, "SAVE DEFAULT", 3, 23)
             put(6, "PRESET", 2, 7)
             put(6, "ENABLE", 2, 12)
             put(6, "SET FREQ", 2, 22)
@@ -4427,7 +4488,7 @@ class RezoTileDisplay(wiring.Component):
             for pos in range(6):
                 writer_address_init[46 + pos] = writer_cell(5, 22, 17, pos)
             for pos in range(7):
-                writer_address_init[52 + pos] = writer_cell(5, 22, 21, pos)
+                writer_address_init[52 + pos] = writer_cell(5, 22, 25, pos)
                 writer_address_init[59 + pos] = writer_cell(6, 16, 11, pos)
             for pos in range(5):
                 writer_address_init[66 + pos] = writer_cell(6, 20, 22, pos)
@@ -4459,7 +4520,7 @@ class RezoTileDisplay(wiring.Component):
             for pos in range(6):
                 writer_address_init[46 + pos] = writer_cell(5, 18, 15, pos)
             for pos in range(7):
-                writer_address_init[52 + pos] = writer_cell(5, 18, 19, pos)
+                writer_address_init[52 + pos] = writer_cell(5, 18, 23, pos)
                 writer_address_init[59 + pos] = writer_cell(6, 9, 7, pos)
             for pos in range(5):
                 writer_address_init[66 + pos] = writer_cell(6, 14, 22, pos)
@@ -4691,15 +4752,15 @@ class RezoTileDisplay(wiring.Component):
                 304 if self.compact_layout else 272, t=3)
         save_default_chip = advanced_page & self.rect(
             x, y, 344 if self.compact_layout else 264,
-            324 if self.compact_layout else 292,
+            388 if self.compact_layout else 356,
             472 if self.compact_layout else 408,
-            364 if self.compact_layout else 332)
+            428 if self.compact_layout else 396)
         save_default_select = advanced_page & (
             self.selected == RezoHardwareUI.TARGET_SAVE_DEFAULT) & self.outline(
                 x, y, 340 if self.compact_layout else 260,
-                320 if self.compact_layout else 288,
+                384 if self.compact_layout else 352,
                 476 if self.compact_layout else 412,
-                368 if self.compact_layout else 336, t=3)
+                432 if self.compact_layout else 400, t=3)
         motion_source_x0 = 280 if self.compact_layout else 160
         motion_source_x1 = 424 if self.compact_layout else 296
         motion_rate_x0 = 280 if self.compact_layout else 160
@@ -4860,6 +4921,13 @@ class RezoTileDisplay(wiring.Component):
                 164 if self.compact_layout else 95,
                 404 if self.compact_layout else 301,
                 204 if self.compact_layout else 143, t=3)
+        cross_curve_chip = advanced_page & self.rect(
+            x, y, 312,
+            324 if self.compact_layout else 292,
+            608,
+            364 if self.compact_layout else 332)
+        cross_curve_select = advanced_page & (
+            self.selected == RezoHardwareUI.TARGET_CROSS_CURVE) & cross_curve_chip
 
         preset_chip = Signal()
         preset_select = Signal()
@@ -5917,11 +5985,10 @@ class RezoTileDisplay(wiring.Component):
             routing_selected_q.eq(group_select_q0 | output_select_q0 |
                                   output_side_select | cross_header_select_q0),
             advanced_selected_q.eq(
-                palette_select | save_default_select),
+                palette_select | cross_curve_select | save_default_select),
             bands_selected_q.eq(layout_select | band_select_q0 |
                                 motion_chip_select | motion_depth_select),
-            cross_selected_q.eq(
-                cross_layout_select | cross_select),
+            cross_selected_q.eq(cross_layout_select | cross_select),
             page_selected_q.eq(page_select),
         ]
         selected = active & (bank_selected_q | input_selected_q | routing_selected_q |
@@ -5949,7 +6016,8 @@ class RezoTileDisplay(wiring.Component):
                 band_zero_q0 | bank_control_mod_marker | border),
             geometry_mod_q0.eq(band_mod_fill | bank_control_mod_fill |
                                input_meter_q0 | motion_monitor_line),
-            geometry_panel_q0.eq(preset_chip | palette_chip | save_default_chip |
+            geometry_panel_q0.eq(preset_chip | palette_chip | cross_curve_chip |
+                                 save_default_chip |
                                  motion_value_chip |
                                  damp_chip | layout_chip |
                                  band_slot_q0 | output_side_chip |
@@ -6129,6 +6197,7 @@ class RezoBeamTop(Elaboratable):
             rezo.feedback.eq(ui.feedback),
             rezo.same_feedback.eq(ui.same_feedback),
             rezo.cross_feedback.eq(ui.cross_feedback),
+            rezo.cross_curve.eq(ui.cross_curve),
             rezo.cross_layout.eq(ui.cross_layout),
             rezo.limit_knee.eq(ui.limit_knee),
             rezo.limit_cap.eq(ui.limit_cap),
@@ -6305,6 +6374,7 @@ class RezoBeamTop(Elaboratable):
             display.frequency_preview.eq(ui.frequency_preview),
             display.cross_layout.eq(ui.cross_layout),
             display.cross_layout_preview.eq(ui.cross_layout_preview),
+            display.cross_curve.eq(ui.cross_curve),
             display.motion_source.eq(ui.motion_source),
             display.motion_rate.eq(ui.motion_rate),
             display.motion_phase.eq(ui.motion_phase),
