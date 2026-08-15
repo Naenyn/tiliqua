@@ -63,6 +63,8 @@ def top_level_cli(
 
     parser.add_argument('--skip-build', action='store_true',
                         help="Perform design elaboration but do not actually build the bitstream.")
+    parser.add_argument('--package-only', action='store_true',
+                        help="Package an existing top.bit without elaborating or building.")
     parser.add_argument('--fs-192khz', action='store_true',
                         help="Force usage of maximum CODEC sample rate (192kHz, default is 48kHz).")
 
@@ -273,6 +275,12 @@ def top_level_cli(
     # or memory regions as needed.
     if archiver_callback:
         archiver_callback(archiver)
+
+    if args.package_only:
+        if not archiver.validate_existing_bitstream():
+            sys.exit(1)
+        archiver.with_bitstream().create()
+        return fragment
 
     if isinstance(fragment, TiliquaSoc):
         # Create firmware-only archive if --fw-only specified

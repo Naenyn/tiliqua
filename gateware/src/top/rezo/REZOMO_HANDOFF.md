@@ -37,6 +37,8 @@ Run focused tests, extract fresh RTL with `pdm run <target> build --fs-192khz
 once only after the packed design has deliberate headroom. `--skip-build` now
 extracts its BuildPlan and exits before archiving, preventing an older
 `top.bit` from being mislabeled as a new profile build.
+Use `--package-only` after placing a separately qualified route at `top.bit`;
+it packages that existing image explicitly without elaboration or routing.
 
 ## Current objective
 

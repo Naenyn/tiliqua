@@ -174,7 +174,9 @@ also passing every constrained clock.
   the emitted `top.ys`, followed by `nextpnr-ecp5 --pack-only` on `top.json`.
   Only start a full route after pack-only reports the desired free-cell target.
   As of the STREZO-CURVE-SCAN work, `--skip-build` explicitly extracts the
-  plan and cannot silently archive a stale `top.bit`.
+  plan and cannot silently archive a stale `top.bit`. After a separately
+  qualified route is packed to `top.bit`, use the explicit `--package-only`
+  option to create its commit-stamped archive without rebuilding.
 - The native renderer adds two display lookup memories over the backport
   baseline: one maps shared horizontal-fader pixels to parameter values and
   one holds INPUT row geometry. Standard and official-screen builds require
