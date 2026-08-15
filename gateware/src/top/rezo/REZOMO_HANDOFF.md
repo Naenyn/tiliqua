@@ -45,6 +45,19 @@ extracts its BuildPlan and exits before archiving, preventing an older
 Use `--package-only` after placing a separately qualified route at `top.bit`;
 it packages that existing image explicitly without elaboration or routing.
 
+Commit `04c6e663` repairs the STREZO curve control observed on hardware. The
+OPTIONS page now separates STATE AND DISPLAY from ADVANCED, renders exactly
+one dynamic LINEAR/LOG value, and uses an outline rather than filling the chip
+while editing. The CROSS LAYOUT chip now matches its centered eight-character
+text lane. All 41 focused UI, DSP, and native-display tests pass; the curve-ROM
+test proves that LINEAR and LOG select different effective CROSS coefficients.
+The design packs to 22,937 cells (1,351 free). Seed 16 was rejected; seed 9
+passes at 422.30 MHz DVI5X, 73.58 MHz AUDIO, 63.20 MHz SYNC, and 81.59 MHz DVI.
+Archive `strezo-04c6e663-r5.tar.gz` was flashed successfully to slot 4. Its
+SHA-256 is `d3af6d3b93ab7265ddd0840a9fbd5840c25a09d96c9b714d616f5abfa5627d0c`;
+the packaged `top.bit` SHA-256 is
+`c5f6d4ed0680fc98e90f87d19f82e9fcd1b04f94ca8c92ffc1aed2133c6589cc`.
+
 ## Current objective
 
 REZOMO is being caught up to the native-display architecture and UI conventions

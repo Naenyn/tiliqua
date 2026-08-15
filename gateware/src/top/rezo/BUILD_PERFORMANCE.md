@@ -156,6 +156,8 @@ also passing every constrained clock.
 | **STREZO-NATIVE-ROUND-S1** | **`6348b81`; same upright UI with final panel-mount rotation at 720x720p60r2** | **1** | **20,551** | **24,015** | **273** | **6,893** | **19** | **328.95** | **76.06** | **72.25** | **81.23** | **PASS 1.25% gate; circular archive not flashed** |
 | STREZO-CURVE-SCAN-S4 | Dirty `06608b0d`; configurable linear/logarithmic CROSS plus shared ten-band display scaler | 4 | 19,661 | 22,857 | 1,431 | 6,875 | 21 | 347.46 | 72.00 | 54.19 | 81.52 | FAIL DVI5X and SYNC; no flash |
 | **STREZO-CURVE-SCAN-S16** | **`2ec93a17`; one BRAM replaces ten parallel display scalers** | **16** | **19,661** | **22,857** | **1,431** | **6,875** | **21** | **387.00** | **73.36** | **67.81** | **77.64** | **PASS 1.25% gate; standard archive flashed slot 4** |
+| STREZO-CURVE-UI-S16 | `04c6e663`; corrected dynamic curve value and split OPTIONS panels | 16 | — | 22,937 | 1,351 | 6,875 | 21 | 373.13 | 75.74 | 66.13 | 71.96 | FAIL DVI and DVI5X margin; no flash |
+| **STREZO-CURVE-UI-S9** | **`04c6e663`; centered CROSS layout and dynamic LINEAR/LOG ADVANCED control** | **9** | **—** | **22,937** | **1,351** | **6,875** | **21** | **422.30** | **73.58** | **63.20** | **81.59** | **PASS 1.25% gate; standard archive flashed slot 4** |
 
 ## Notes
 
