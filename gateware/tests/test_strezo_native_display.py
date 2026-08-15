@@ -148,6 +148,22 @@ def test_cross_matrix_is_raised_and_spread_across_the_panel():
     ]
 
 
+def test_cross_layout_chip_has_symmetric_horizontal_padding():
+    panel = RezoTileDisplay.PALETTE["panel"]
+    blank = RezoTileDisplay.PALETTE["blank"]
+    assert _render_samples(
+        page=7,
+        cross_layout=RezoCore.CROSS_LAYOUT_DIAGONAL,
+        points=((247, 184), (248, 184), (255, 184),
+                (384, 184), (391, 184), (392, 184)),
+    ) == [
+        (blank, blank, blank),
+        (panel, panel, panel), (panel, panel, panel),
+        (panel, panel, panel), (panel, panel, panel),
+        (blank, blank, blank),
+    ]
+
+
 def test_cross_matrix_maximum_fill_matches_the_centered_cell_lane():
     control = RezoTileDisplay.PALETTE["control"]
     panel = RezoTileDisplay.PALETTE["panel"]

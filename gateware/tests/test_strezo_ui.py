@@ -148,6 +148,8 @@ def test_ui_advanced_palette_and_cross_curve_selection_wrap():
 
         await _click(ctx, dut)
         endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_SAVE_DEFAULT
+        endpoint = await _turn(ctx, dut, endpoint, 1)
         assert ctx.get(dut.selected) == dut.TARGET_CROSS_CURVE
         await _click(ctx, dut)
         endpoint = await _turn(ctx, dut, endpoint, 1)
@@ -703,8 +705,7 @@ def test_ui_save_default_click_requests_once():
         assert ctx.get(dut.page) == 5
         await _click(ctx, dut)
 
-        # Clockwise enters PALETTE, CROSS CURVE, then SAVE DEFAULT.
-        endpoint = await _turn(ctx, dut, endpoint, 1)
+        # Clockwise follows the visual order: PALETTE, then SAVE DEFAULT.
         endpoint = await _turn(ctx, dut, endpoint, 1)
         endpoint = await _turn(ctx, dut, endpoint, 1)
         assert ctx.get(dut.selected) == dut.TARGET_SAVE_DEFAULT

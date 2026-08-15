@@ -2725,18 +2725,18 @@ class RezoHardwareUI(wiring.Component):
                           (selected == self.TARGET_PAGE)):
                     m.d.comb += next_selected.eq(self.TARGET_PALETTE)
                 with m.Elif(selected == self.TARGET_PALETTE):
-                    m.d.comb += next_selected.eq(self.TARGET_CROSS_CURVE)
-                with m.Elif(selected == self.TARGET_CROSS_CURVE):
                     m.d.comb += next_selected.eq(self.TARGET_SAVE_DEFAULT)
+                with m.Elif(selected == self.TARGET_SAVE_DEFAULT):
+                    m.d.comb += next_selected.eq(self.TARGET_CROSS_CURVE)
                 with m.Else():
                     m.d.comb += next_selected.eq(self.TARGET_PAGE)
             with m.Else():
                 with m.If(~advanced_target_visible |
                           (selected == self.TARGET_PAGE)):
-                    m.d.comb += next_selected.eq(self.TARGET_SAVE_DEFAULT)
-                with m.Elif(selected == self.TARGET_SAVE_DEFAULT):
                     m.d.comb += next_selected.eq(self.TARGET_CROSS_CURVE)
                 with m.Elif(selected == self.TARGET_CROSS_CURVE):
+                    m.d.comb += next_selected.eq(self.TARGET_SAVE_DEFAULT)
+                with m.Elif(selected == self.TARGET_SAVE_DEFAULT):
                     m.d.comb += next_selected.eq(self.TARGET_PALETTE)
                 with m.Else():
                     m.d.comb += next_selected.eq(self.TARGET_PAGE)
@@ -4967,15 +4967,15 @@ class RezoTileDisplay(wiring.Component):
                 388 if self.compact_layout else 269,
                 204 if self.compact_layout else 143, t=3)
         cross_layout_chip = cross_page & self.rect(
-            x, y, 256 if self.compact_layout else 136,
+            x, y, 248 if self.compact_layout else 128,
             168 if self.compact_layout else 100,
-            384 if self.compact_layout else 264,
+            392 if self.compact_layout else 272,
             200 if self.compact_layout else 138)
         cross_layout_select = cross_page & (
             self.selected == RezoHardwareUI.TARGET_CROSS_LAYOUT) & self.outline(
-                x, y, 252 if self.compact_layout else 131,
+                x, y, 244 if self.compact_layout else 123,
                 164 if self.compact_layout else 95,
-                388 if self.compact_layout else 269,
+                396 if self.compact_layout else 277,
                 204 if self.compact_layout else 143, t=3)
         cross_curve_chip = advanced_page & self.rect(
             x, y, 320,
