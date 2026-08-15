@@ -30,6 +30,11 @@ The standard build now uses 19,661 total LUT4, 22,857 packed cells (1,431 free),
 pre-optimization candidate. Seed 4 failed DVI5X and SYNC and was not flashed.
 Seed 16 passes at 387.00 MHz DVI5X, 73.36 MHz AUDIO, 67.81 MHz SYNC, and
 77.64 MHz DVI; every clock passes the repository's 1.25 percent headroom gate.
+The standard archive `strezo-2ec93a17-r5.tar.gz` was flashed successfully to
+slot 4 on 2026-08-15 (`Refresh: DONE`). Its SHA-256 is
+`eff8627058a3b94aece852eaa9589b6dccf9e8f9309deffba113b4282097a396`;
+the packaged `top.bit` SHA-256 is
+`e186a8d037962f3948f9a444e1d86f24201184acf8e08ce338d444825d9e1915`.
 
 To conserve future model and wall-clock budget, do not begin with seed sweeps.
 Run focused tests, extract fresh RTL with `pdm run <target> build --fs-192khz

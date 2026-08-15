@@ -155,7 +155,7 @@ also passing every constrained clock.
 | **STREZO-NATIVE-STANDARD-S9** | **`6348b81`; native 508x508 safe square, centered family UI, pipelined GROUPS/OUTPUT lookups** | **9** | **20,515** | **23,975** | **313** | **6,893** | **19** | **384.17** | **70.01** | **63.85** | **84.18** | **PASS 1.25% gate; flashed slot 4** |
 | **STREZO-NATIVE-ROUND-S1** | **`6348b81`; same upright UI with final panel-mount rotation at 720x720p60r2** | **1** | **20,551** | **24,015** | **273** | **6,893** | **19** | **328.95** | **76.06** | **72.25** | **81.23** | **PASS 1.25% gate; circular archive not flashed** |
 | STREZO-CURVE-SCAN-S4 | Dirty `06608b0d`; configurable linear/logarithmic CROSS plus shared ten-band display scaler | 4 | 19,661 | 22,857 | 1,431 | 6,875 | 21 | 347.46 | 72.00 | 54.19 | 81.52 | FAIL DVI5X and SYNC; no flash |
-| **STREZO-CURVE-SCAN-S16** | **Exact STREZO-CURVE-SCAN JSON; one BRAM replaces ten parallel display scalers** | **16** | **19,661** | **22,857** | **1,431** | **6,875** | **21** | **387.00** | **73.36** | **67.81** | **77.64** | **PASS 1.25% gate; retained standard route** |
+| **STREZO-CURVE-SCAN-S16** | **`2ec93a17`; one BRAM replaces ten parallel display scalers** | **16** | **19,661** | **22,857** | **1,431** | **6,875** | **21** | **387.00** | **73.36** | **67.81** | **77.64** | **PASS 1.25% gate; standard archive flashed slot 4** |
 
 ## Notes
 
