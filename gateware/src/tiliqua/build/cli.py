@@ -325,7 +325,16 @@ def top_level_cli(
 
         print("Building bitstream for", hw_platform.name)
 
-        hw_platform.build(fragment, do_build=not args.skip_build, **build_flags)
+        build_result = hw_platform.build(
+            fragment, do_build=not args.skip_build, **build_flags)
+
+        if args.skip_build:
+            # ``Platform.build(..., do_build=False)`` returns an unextracted
+            # BuildPlan. Extract it explicitly so --skip-build really emits a
+            # fresh RTL/Yosys plan, and stop before the archiver can package a
+            # stale top.bit left by an earlier route.
+            build_result.extract(build_path)
+            return fragment
 
         archiver.with_bitstream().create()
 

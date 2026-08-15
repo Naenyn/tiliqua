@@ -154,6 +154,8 @@ also passing every constrained clock.
 | **REZOMO-CAPACITY-COMMIT-S3** | **`cbd49d7c`; narrow SHIFT/WALK, INPUT-index, and local OUTPUT-coordinate pipelines** | **3** | **20,698** | **23,978** | **310** | **7,005** | **21** | **377.36** | **72.50** | **60.89** | **77.29** | **PASS 1.25% gate; flashed slot 4** |
 | **STREZO-NATIVE-STANDARD-S9** | **`6348b81`; native 508x508 safe square, centered family UI, pipelined GROUPS/OUTPUT lookups** | **9** | **20,515** | **23,975** | **313** | **6,893** | **19** | **384.17** | **70.01** | **63.85** | **84.18** | **PASS 1.25% gate; flashed slot 4** |
 | **STREZO-NATIVE-ROUND-S1** | **`6348b81`; same upright UI with final panel-mount rotation at 720x720p60r2** | **1** | **20,551** | **24,015** | **273** | **6,893** | **19** | **328.95** | **76.06** | **72.25** | **81.23** | **PASS 1.25% gate; circular archive not flashed** |
+| STREZO-CURVE-SCAN-S4 | Dirty `06608b0d`; configurable linear/logarithmic CROSS plus shared ten-band display scaler | 4 | 19,661 | 22,857 | 1,431 | 6,875 | 21 | 347.46 | 72.00 | 54.19 | 81.52 | FAIL DVI5X and SYNC; no flash |
+| **STREZO-CURVE-SCAN-S16** | **Exact STREZO-CURVE-SCAN JSON; one BRAM replaces ten parallel display scalers** | **16** | **19,661** | **22,857** | **1,431** | **6,875** | **21** | **387.00** | **73.36** | **67.81** | **77.64** | **PASS 1.25% gate; retained standard route** |
 
 ## Notes
 
@@ -162,6 +164,17 @@ also passing every constrained clock.
 - DVI5X timing is dominated by the existing TMDS serializer and is highly
   placement-sensitive. A feature can leave REZO logic timing healthy while a
   particular seed fails the independent serializer path.
+- STREZO-CURVE-SCAN trades one additional block RAM for 1,393 packed cells.
+  The display scans the ten bands in ten DVI clocks and looks up the exact
+  former height/sign mapping; DSP, modulation, and audio coefficients are
+  unchanged. An earlier experiment that selected one INPUT row before endpoint
+  scaling packed 15 cells worse and was reverted.
+- For low-cost capacity work, first run focused tests, then use `--skip-build`
+  to extract a fresh build plan without routing or archiving. Run `yosys` on
+  the emitted `top.ys`, followed by `nextpnr-ecp5 --pack-only` on `top.json`.
+  Only start a full route after pack-only reports the desired free-cell target.
+  As of the STREZO-CURVE-SCAN work, `--skip-build` explicitly extracts the
+  plan and cannot silently archive a stale `top.bit`.
 - The native renderer adds two display lookup memories over the backport
   baseline: one maps shared horizontal-fader pixels to parameter values and
   one holds INPUT row geometry. Standard and official-screen builds require

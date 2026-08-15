@@ -3945,39 +3945,69 @@ class RezoTileDisplay(wiring.Component):
         band_negative_values = [Signal(name=f"tile_band_negative{n}")
                                 for n in range(RezoCore.N_BANDS)]
 
-        for n in range(RezoCore.N_BANDS):
-            level = self.effective_levels[n]
-            base_level = self.levels[n]
-            mag = Signal(unsigned(7), name=f"tile_level_mag{n}")
-            base_mag = Signal(unsigned(7), name=f"tile_base_level_mag{n}")
-            height = Signal(signed(12), name=f"tile_level_height{n}")
-            base_height = Signal(signed(12), name=f"tile_base_level_height{n}")
-            m.d.comb += [
-                mag.eq(Mux(level < 0, -level, level)),
-                base_mag.eq(Mux(base_level < 0, -base_level, base_level)),
-            ]
+        # Display scaling used to duplicate magnitude, shift/add scaling, and
+        # endpoint arithmetic for all ten bands. Pixels only consume the
+        # registered endpoints, so scan one band per DVI clock through a
+        # dual-port lookup instead. A complete refresh takes ten clocks
+        # (about 0.14 us at 74.25 MHz) and does not touch the audio datapath.
+        band_height_init = []
+        for raw_level in range(256):
+            signed_level = raw_level if raw_level < 128 else raw_level - 256
+            # Preserve the former seven-bit magnitude behavior, including
+            # the signed -128 endpoint wrapping to zero.
+            magnitude = abs(signed_level) & 0x7f
             if self.compact_layout:
-                m.d.comb += [
-                    height.eq(mag + (mag >> 2) + (mag >> 3) +
-                              (mag >> 5)),
-                    base_height.eq(base_mag + (base_mag >> 2) +
-                                   (base_mag >> 3) + (base_mag >> 5)),
-                ]
+                height_value = (magnitude + (magnitude >> 2) +
+                                (magnitude >> 3) + (magnitude >> 5))
             else:
-                m.d.comb += [
-                    height.eq((mag << 1) + (mag >> 1) +
-                              Mux(level < 0, 0, mag >> 3)),
-                    base_height.eq((base_mag << 1) + (base_mag >> 1) +
-                                   Mux(base_level < 0, 0, base_mag >> 3)),
-                ]
-            m.d.dvi += [
-                band_top_values[n].eq(zero_y - height),
-                band_bottom_values[n].eq(zero_y + height),
-                band_base_marker_values[n].eq(
-                    Mux(base_level < 0, zero_y + base_height, zero_y - base_height)),
-                band_positive_values[n].eq(level > 0),
-                band_negative_values[n].eq(level < 0),
-            ]
+                height_value = ((magnitude << 1) + (magnitude >> 1) +
+                                (0 if signed_level < 0 else magnitude >> 3))
+            band_height_init.append(
+                height_value | ((signed_level > 0) << 9) |
+                ((signed_level < 0) << 10))
+        m.submodules.band_height_mem = band_height_mem = Memory(
+            shape=unsigned(11), depth=256, init=band_height_init,
+            attrs={"ram_style": "block"})
+        band_effective_height_rport = band_height_mem.read_port(domain="dvi")
+        band_base_height_rport = band_height_mem.read_port(domain="dvi")
+        band_scan_index = Signal(range(RezoCore.N_BANDS))
+        band_write_index = Signal.like(band_scan_index)
+        m.d.comb += [
+            band_effective_height_rport.addr.eq(
+                Array(self.effective_levels)[band_scan_index].as_unsigned()),
+            band_base_height_rport.addr.eq(
+                Array(self.levels)[band_scan_index].as_unsigned()),
+        ]
+        with m.If(band_scan_index == RezoCore.N_BANDS - 1):
+            m.d.dvi += band_scan_index.eq(0)
+        with m.Else():
+            m.d.dvi += band_scan_index.eq(band_scan_index + 1)
+        m.d.dvi += band_write_index.eq(band_scan_index)
+
+        effective_height = band_effective_height_rport.data[:9]
+        base_height = band_base_height_rport.data[:9]
+        next_band_top = Signal(signed(12))
+        next_band_bottom = Signal(signed(12))
+        next_base_marker = Signal(signed(12))
+        m.d.comb += [
+            next_band_top.eq(zero_y - effective_height),
+            next_band_bottom.eq(zero_y + effective_height),
+            next_base_marker.eq(Mux(
+                band_base_height_rport.data[10],
+                zero_y + base_height, zero_y - base_height)),
+        ]
+        with m.Switch(band_write_index):
+            for n in range(RezoCore.N_BANDS):
+                with m.Case(n):
+                    m.d.dvi += [
+                        band_top_values[n].eq(next_band_top),
+                        band_bottom_values[n].eq(next_band_bottom),
+                        band_base_marker_values[n].eq(next_base_marker),
+                        band_positive_values[n].eq(
+                            band_effective_height_rport.data[9]),
+                        band_negative_values[n].eq(
+                            band_effective_height_rport.data[10]),
+                    ]
 
         cell_x = Signal(unsigned(6))
         cell_y = Signal(unsigned(6))

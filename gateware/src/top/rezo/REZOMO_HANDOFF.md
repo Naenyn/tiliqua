@@ -8,6 +8,36 @@ The older [`REZO_HANDOFF.md`](REZO_HANDOFF.md) contains useful project history,
 including earlier REZOMO notes, but its filename is now ambiguous. Keep it as a
 historical reference; use this file for the current state and operating rules.
 
+## 2026-08-15 STREZO curve and capacity checkpoint
+
+The consolidated `codex/rezo-family` branch now includes STREZO. Commit
+`06608b0d` checkpoints the configurable CROSS response before the capacity
+pass. CROSS CURVE lives on OPTIONS, offers the full names LINEAR and
+LOGARITHMIC, and persists in a formerly reserved state bit. The CROSS page
+retains the full LAYOUT label and full layout names. LOGARITHMIC is an early
+response curve (`log1p(7x) / log(8)`), not the rejected late `x^2` curve; both
+curves retain zero and full-scale endpoints, including intentional instability
+at maximum.
+
+The retained capacity optimization changes display telemetry only. Ten copies
+of the BANK band-height arithmetic are replaced by one dual-port block-ROM
+lookup scanned across the ten bands in ten DVI clocks (about 0.14 microseconds).
+Audio DSP, CROSS coefficients, feedback topology, motion, and encoder behavior
+are unchanged. The native display regression suite passes all 13 tests.
+
+The standard build now uses 19,661 total LUT4, 22,857 packed cells (1,431 free),
+6,875 FF, and 21 BRAM. This recovers 1,393 packed cells from the 24,250-cell
+pre-optimization candidate. Seed 4 failed DVI5X and SYNC and was not flashed.
+Seed 16 passes at 387.00 MHz DVI5X, 73.36 MHz AUDIO, 67.81 MHz SYNC, and
+77.64 MHz DVI; every clock passes the repository's 1.25 percent headroom gate.
+
+To conserve future model and wall-clock budget, do not begin with seed sweeps.
+Run focused tests, extract fresh RTL with `pdm run <target> build --fs-192khz
+--skip-build`, synthesize `top.ys`, and run nextpnr with `--pack-only`. Route
+once only after the packed design has deliberate headroom. `--skip-build` now
+extracts its BuildPlan and exits before archiving, preventing an older
+`top.bit` from being mislabeled as a new profile build.
+
 ## Current objective
 
 REZOMO is being caught up to the native-display architecture and UI conventions
