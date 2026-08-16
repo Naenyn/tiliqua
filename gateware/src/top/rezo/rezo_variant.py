@@ -1751,6 +1751,10 @@ class RezoHardwareUI(wiring.Component):
         output_edit_pending = Signal()
         output_edit_index = Signal(unsigned(5))
         output_edit_direction = Signal()
+        filter_cv_edit_pending = Signal()
+        filter_cv_edit_index = Signal(range(15))
+        filter_cv_edit_direction = Signal()
+        filter_cv_edit_step = Signal(unsigned(3))
         output_relative_active = Signal()
         output_relative_step = Signal(unsigned(3))
         output_relative_index = Signal(unsigned(5))
@@ -1793,7 +1797,10 @@ class RezoHardwareUI(wiring.Component):
                 Mux(next_detent_acc > 0, ~edit_direction, edit_direction),
             )),
         ]
-        m.d.sync += output_edit_pending.eq(0)
+        m.d.sync += [
+            output_edit_pending.eq(0),
+            filter_cv_edit_pending.eq(0),
+        ]
         with m.If(output_relative_active):
             m.d.sync += [
                 output_edit_pending.eq(1),
@@ -2445,14 +2452,17 @@ class RezoHardwareUI(wiring.Component):
                         self.clamp_add(m, filter_width, -step_amount, 0, 128)
                 with m.Elif((selected >= self.TARGET_FILTER_CV_BASE) &
                             (selected < self.TARGET_FILTER_CV_BASE + 15)):
-                    matrix_value = Array(filter_cv_matrix)[
-                        selected - self.TARGET_FILTER_CV_BASE]
-                    with m.If(edit_direction):
-                        self.clamp_add(m, matrix_value, accelerated_edit_step,
-                                       -128, 127)
-                    with m.Else():
-                        self.clamp_add(m, matrix_value, -accelerated_edit_step,
-                                       -128, 127)
+                    # Register the edit request before decoding the 15-way
+                    # matrix write. This removes the live navigation target
+                    # from the longest 60 MHz control path; one control-clock
+                    # of latency is far below an encoder detent interval.
+                    m.d.sync += [
+                        filter_cv_edit_pending.eq(1),
+                        filter_cv_edit_index.eq(
+                            selected - self.TARGET_FILTER_CV_BASE),
+                        filter_cv_edit_direction.eq(edit_direction),
+                        filter_cv_edit_step.eq(accelerated_edit_step),
+                    ]
                 with m.Elif(output_cell_target):
                     m.d.sync += [
                         output_edit_pending.eq(1),
@@ -2557,6 +2567,15 @@ class RezoHardwareUI(wiring.Component):
                     self.clamp_add(m, filter_send, -1, 0, 16)
                 with m.Else():
                     self.clamp_add(m, bank_send, -1, 0, 16)
+
+        with m.If(filter_cv_edit_pending):
+            matrix_value = Array(filter_cv_matrix)[filter_cv_edit_index]
+            with m.If(filter_cv_edit_direction):
+                self.clamp_add(m, matrix_value, filter_cv_edit_step,
+                               -128, 127)
+            with m.Else():
+                self.clamp_add(m, matrix_value, -filter_cv_edit_step,
+                               -128, 127)
         # Packed 16-bit state scan port, sampled sequentially by the journal.
         # Packing at each field's native precision is materially smaller than
         # a 114-way 16-bit mux and leaves space for musical features.

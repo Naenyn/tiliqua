@@ -430,7 +430,10 @@ class RezoCore(wiring.Component):
             # effective-level clamp after group CV remains the audio/display
             # boundary; clamping here only adds a long redundant mux chain to
             # the 60 MHz parameter-slew path.
-            m.d.comb += level_targets[n].eq(
+            # Register the UI/CV target before the slew subtractor. This
+            # breaks the former UI-level-to-smoother critical path while only
+            # adding one 60 MHz control tick to an already-slewed parameter.
+            m.d.sync += level_targets[n].eq(
                 self.levels[n] + Mux(
                     self.clock_mode, clock_scaled_modulations[n], 0))
             m.d.comb += level_diffs[n].eq(

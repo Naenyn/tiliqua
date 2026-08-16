@@ -79,6 +79,9 @@ def test_ui_shared_matrix_and_output_edit_paths():
         assert ctx.get(dut.selected) == dut.TARGET_FILTER_CV_BASE
         await _click(ctx, dut)
         endpoint = await _turn(ctx, dut, endpoint, 1)
+        # FILTER-CV writes are intentionally registered to keep the 15-way
+        # edit decoder off the 60 MHz navigation critical path.
+        await ctx.tick()
         assert ctx.get(dut.filter_cv_matrix[0]) > 0
         assert all(ctx.get(dut.filter_cv_matrix[n]) == 0 for n in range(1, 15))
 
