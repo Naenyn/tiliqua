@@ -495,3 +495,25 @@ names, qualified seeds, and REZO circular's native mapper explicitly. The
 combined regression suite passes 107 tests. Final packed-cell and clock results
 are recorded in `REZO_FAMILY.md`; every retained archive passed all four clocks,
 its archived bitstream matched the routed `top.bit`, and none was flashed.
+
+## 2026-08-16 unified six-target release
+
+All six release archives below were synthesized from exact source commit
+`0defa7645717307599d1d671c9cc60b9c1910bb3` after registering the REZO
+FILTER-CV edit request and REZOMO shared level target. Every route passes the
+project's 1.25% timing-margin gate. The manifests were checked for source tag,
+product name, and modeline. Nothing in this set was flashed.
+
+| Target | Seed | DVI5X / AUDIO / SYNC / DVI MHz | Archive | Archive SHA-256 |
+|---|---:|---|---|---|
+| REZO standard | 9 | 405.68 / 70.27 / 61.88 / 77.97 | `rezo-0defa764-r5.tar.gz` | `42cc02a15b7ba7e6b73680d88cf33853491dadbdc5bd8f6886382bd29b67c550` |
+| REZOMO standard | 4 | 395.26 / 72.16 / 63.64 / 77.99 | `rezomo-0defa764-r5.tar.gz` | `989d2d7cd3281443174366759c7d64e2fec66e287ec2a02d4e87b9b57f1c9592` |
+| STREZO standard | 1 | 382.26 / 71.56 / 62.47 / 82.22 | `strezo-0defa764-r5.tar.gz` | `03859d2f8fa0770ef468682962f6d8e09583441dc3290d30b37367b890f54a01` |
+| REZO circular | 9 | 352.36 / 74.04 / 63.49 / 74.04 | `rezo-round-0defa764-r5.tar.gz` | `452c5ceac8899e07d0fa52f430f3cb34dd563b727340ea4aa54347fa096a387d` |
+| REZOMO circular | 4 | 320.20 / 74.72 / 66.07 / 78.64 | `rezomo-round-0defa764-r5.tar.gz` | `9e0e85d1244cbe1fb562fe1ef851b170fdac1cccb12733e6327e8c6ac1160129` |
+| STREZO circular | 1 | 327.55 / 74.39 / 63.28 / 75.94 | `strezo-round-0defa764-r5.tar.gz` | `32ac2a7dbbcd7d195ced8147290c0afb9565ce73b9a8a20d4c74eeccd63c9d86` |
+
+Collected copies live in `build/rezo-family-release-0defa764/`. Retain each
+seed with its corresponding synthesized netlist: a seed is reproducible for
+the same netlist, toolchain, constraints, and router options, but is not a
+portable timing guarantee after RTL or toolchain changes.
