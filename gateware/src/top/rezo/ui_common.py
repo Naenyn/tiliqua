@@ -23,6 +23,17 @@ NATIVE_FEEDBACK_KNEE_Y0 = NATIVE_FEEDBACK_KNEE_ROW * 16
 NATIVE_FEEDBACK_CEILING_Y0 = NATIVE_FEEDBACK_CEILING_ROW * 16
 
 
+def native_feedback_track_rows(rect, x, y, x0, x1):
+    """Return the three shared FEEDBACK-page shaded control tracks."""
+    return (
+        rect(x, y, x0, NATIVE_FEEDBACK_AMOUNT_Y0 - 2,
+             x1, NATIVE_FEEDBACK_AMOUNT_Y0 + 18) |
+        rect(x, y, x0, NATIVE_FEEDBACK_KNEE_Y0 - 2,
+             x1, NATIVE_FEEDBACK_KNEE_Y0 + 18) |
+        rect(x, y, x0, NATIVE_FEEDBACK_CEILING_Y0 - 2,
+             x1, NATIVE_FEEDBACK_CEILING_Y0 + 18))
+
+
 def put_native_feedback_labels(put):
     """Place the labels shared by every native REZO FEEDBACK page."""
     put(1, "FEEDBACK SOURCES", 8, 13)

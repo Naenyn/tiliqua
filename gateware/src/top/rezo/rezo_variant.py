@@ -63,7 +63,8 @@ try:
         NATIVE_FEEDBACK_KNEE_Y0,
         NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
         native_input_gain_endpoint, native_input_unity_x,
-        output_header_selection, put_native_feedback_labels,
+        native_feedback_track_rows, output_header_selection,
+        put_native_feedback_labels,
     )
 except ImportError:  # top_level_cli executes this file directly.
     from encoder_acceleration import progressive_edit_level
@@ -73,7 +74,8 @@ except ImportError:  # top_level_cli executes this file directly.
         NATIVE_FEEDBACK_KNEE_Y0,
         NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
         native_input_gain_endpoint, native_input_unity_x,
-        output_header_selection, put_native_feedback_labels,
+        native_feedback_track_rows, output_header_selection,
+        put_native_feedback_labels,
     )
 
 
@@ -4163,16 +4165,16 @@ class RezoTileDisplay(wiring.Component):
                 self.rect(x, y, control_panel_x0, 670, 650, 690))
         meter_panel = active & (
             (bank_page & bank_meter_rows) |
-            (tune_page & (
-                self.rect(x, y, tune_panel_x0,
-                          366 + tune_y_shift, tune_panel_x1,
-                          386 + tune_y_shift) |
-                self.rect(x, y, tune_panel_x0,
-                          398 + tune_y_shift, tune_panel_x1,
-                          418 + tune_y_shift) |
-                self.rect(x, y, tune_panel_x0,
-                          430 + tune_y_shift, tune_panel_x1,
-                          450 + tune_y_shift))))
+            (tune_page & Mux(
+                self.compact_layout,
+                native_feedback_track_rows(
+                    self.rect, x, y, tune_panel_x0, tune_panel_x1),
+                (self.rect(x, y, tune_panel_x0, 366 + tune_y_shift,
+                           tune_panel_x1, 386 + tune_y_shift) |
+                 self.rect(x, y, tune_panel_x0, 398 + tune_y_shift,
+                           tune_panel_x1, 418 + tune_y_shift) |
+                 self.rect(x, y, tune_panel_x0, 430 + tune_y_shift,
+                           tune_panel_x1, 450 + tune_y_shift)))))
         filter_meter_panel = active & filter_page & filter_meter_rows
         if self.compact_layout:
             # Six- and seven-character dynamic values have an unavoidable

@@ -1,5 +1,8 @@
 from top.rezo.ui_common import (
     NATIVE_FEEDBACK_AMOUNT_ROW,
+    NATIVE_FEEDBACK_AMOUNT_Y0,
+    NATIVE_FEEDBACK_CEILING_Y0,
+    NATIVE_FEEDBACK_KNEE_Y0,
     NATIVE_FEEDBACK_SAFETY_TITLE_ROW,
     NATIVE_INPUT_CONTROL_X0,
     NATIVE_INPUT_CONTROL_X1,
@@ -7,6 +10,7 @@ from top.rezo.ui_common import (
     NATIVE_INPUT_PANEL_Y1,
     NATIVE_OUTPUT_COL_SELECT_Y0,
     NATIVE_OUTPUT_ROW_SELECT_X0,
+    native_feedback_track_rows,
     native_input_unity_x,
 )
 
@@ -22,3 +26,22 @@ def test_shared_native_page_geometry_matches_the_508_pixel_layout():
 
 def test_shared_input_unity_marker_uses_the_established_gain_mapping():
     assert native_input_unity_x(52428) == 520
+
+
+def test_shared_feedback_tracks_follow_the_label_control_rows():
+    calls = []
+
+    def rect(*args):
+        calls.append(args)
+        return 0
+
+    native_feedback_track_rows(rect, "x", "y", 268, 588)
+
+    assert calls == [
+        ("x", "y", 268, NATIVE_FEEDBACK_AMOUNT_Y0 - 2,
+         588, NATIVE_FEEDBACK_AMOUNT_Y0 + 18),
+        ("x", "y", 268, NATIVE_FEEDBACK_KNEE_Y0 - 2,
+         588, NATIVE_FEEDBACK_KNEE_Y0 + 18),
+        ("x", "y", 268, NATIVE_FEEDBACK_CEILING_Y0 - 2,
+         588, NATIVE_FEEDBACK_CEILING_Y0 + 18),
+    ]

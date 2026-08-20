@@ -56,7 +56,8 @@ try:
         NATIVE_FEEDBACK_KNEE_Y0,
         NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
         native_input_gain_endpoint, native_input_unity_x,
-        output_header_selection, put_native_feedback_labels,
+        native_feedback_track_rows, output_header_selection,
+        put_native_feedback_labels,
     )
 except ImportError:  # top_level_cli executes this file directly.
     from encoder_acceleration import progressive_edit_level
@@ -66,7 +67,8 @@ except ImportError:  # top_level_cli executes this file directly.
         NATIVE_FEEDBACK_KNEE_Y0,
         NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
         native_input_gain_endpoint, native_input_unity_x,
-        output_header_selection, put_native_feedback_labels,
+        native_feedback_track_rows, output_header_selection,
+        put_native_feedback_labels,
     )
 
 
@@ -4810,15 +4812,12 @@ class RezoTileDisplay(wiring.Component):
                           bank_panel_x1, bank_control_y0s[1] + 18) |
                 self.rect(x, y, bank_panel_x0, bank_control_y0s[2] - 2,
                           bank_panel_x1, bank_control_y0s[2] + 18))) |
-            (tune_page & (
-                self.rect(x, y, 268 if self.compact_layout else 150,
-                          398 if self.compact_layout else 408,
-                          588 if self.compact_layout else 650,
-                          418 if self.compact_layout else 432) |
-                self.rect(x, y, 268 if self.compact_layout else 150,
-                          430 if self.compact_layout else 456,
-                          588 if self.compact_layout else 650,
-                          450 if self.compact_layout else 480))) |
+            (tune_page & Mux(
+                self.compact_layout,
+                native_feedback_track_rows(
+                    self.rect, x, y, 268, 588),
+                (self.rect(x, y, 150, 408, 650, 432) |
+                 self.rect(x, y, 150, 456, 650, 480)))) |
             (cross_page & (
                 self.rect(x, y, 232 if self.compact_layout else 118,
                           542 if self.compact_layout else 616,
