@@ -3,6 +3,7 @@ from top.rezo.ui_common import (
     NATIVE_FEEDBACK_AMOUNT_Y0,
     NATIVE_FEEDBACK_CEILING_Y0,
     NATIVE_FEEDBACK_KNEE_Y0,
+    NATIVE_FEEDBACK_LABEL_RIGHT,
     NATIVE_FEEDBACK_SAFETY_TITLE_ROW,
     NATIVE_INPUT_CONTROL_X0,
     NATIVE_INPUT_CONTROL_X1,
@@ -12,6 +13,7 @@ from top.rezo.ui_common import (
     NATIVE_OUTPUT_ROW_SELECT_X0,
     native_feedback_track_rows,
     native_input_unity_x,
+    put_native_feedback_labels,
 )
 
 
@@ -45,3 +47,22 @@ def test_shared_feedback_tracks_follow_the_label_control_rows():
         ("x", "y", 268, NATIVE_FEEDBACK_CEILING_Y0 - 2,
          588, NATIVE_FEEDBACK_CEILING_Y0 + 18),
     ]
+
+
+def test_shared_feedback_control_labels_have_a_common_right_edge():
+    calls = []
+
+    def put(*args):
+        calls.append(args)
+
+    put_native_feedback_labels(put)
+
+    controls = {
+        text: x
+        for _enabled, text, x, _row in calls
+        if text in ("FEEDBACK", "KNEE", "CEILING", "DAMPING")
+    }
+    assert controls
+    assert {
+        x + len(text) for text, x in controls.items()
+    } == {NATIVE_FEEDBACK_LABEL_RIGHT}
