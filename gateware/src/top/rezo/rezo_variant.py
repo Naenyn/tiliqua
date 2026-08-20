@@ -60,6 +60,7 @@ try:
     from .persistence import RezoStateJournal, SPIFlashTransfer
     from .ui_common import (
         NATIVE_FEEDBACK_AMOUNT_Y0, NATIVE_FEEDBACK_CEILING_Y0,
+        NATIVE_FEEDBACK_DAMPING_CHIP_Y0, NATIVE_FEEDBACK_DAMPING_CHIP_Y1,
         NATIVE_FEEDBACK_KNEE_Y0,
         NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
         native_input_gain_endpoint, native_input_unity_x,
@@ -71,6 +72,7 @@ except ImportError:  # top_level_cli executes this file directly.
     from persistence import RezoStateJournal, SPIFlashTransfer
     from ui_common import (
         NATIVE_FEEDBACK_AMOUNT_Y0, NATIVE_FEEDBACK_CEILING_Y0,
+        NATIVE_FEEDBACK_DAMPING_CHIP_Y0, NATIVE_FEEDBACK_DAMPING_CHIP_Y1,
         NATIVE_FEEDBACK_KNEE_Y0,
         NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
         native_input_gain_endpoint, native_input_unity_x,
@@ -4192,10 +4194,13 @@ class RezoTileDisplay(wiring.Component):
                 self.selected == RezoHardwareUI.TARGET_SAVE_DEFAULT) & self.outline(
                     text_x, text_y, 324, 320, 460, 368, t=3)
             damp_chip = tune_page & self.rect(
-                text_x, text_y, 264, 456, 360, 488)
+                text_x, text_y, 264, NATIVE_FEEDBACK_DAMPING_CHIP_Y0,
+                360, NATIVE_FEEDBACK_DAMPING_CHIP_Y1)
             damp_select = tune_page & (
                 self.selected == RezoHardwareUI.TARGET_DAMP) & self.outline(
-                    text_x, text_y, 260, 452, 364, 492, t=3)
+                    text_x, text_y, 260,
+                    NATIVE_FEEDBACK_DAMPING_CHIP_Y0 - 4, 364,
+                    NATIVE_FEEDBACK_DAMPING_CHIP_Y1 + 4, t=3)
             layout_chip = bands_page & self.rect(
                 text_x, text_y, 256, 168, 384, 200)
             layout_select = bands_page & (

@@ -53,6 +53,7 @@ try:
     from .persistence import RezoStateJournal, SPIFlashTransfer
     from .ui_common import (
         NATIVE_FEEDBACK_AMOUNT_Y0, NATIVE_FEEDBACK_CEILING_Y0,
+        NATIVE_FEEDBACK_DAMPING_CHIP_Y0, NATIVE_FEEDBACK_DAMPING_CHIP_Y1,
         NATIVE_FEEDBACK_KNEE_Y0,
         NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
         native_input_gain_endpoint, native_input_unity_x,
@@ -64,6 +65,7 @@ except ImportError:  # top_level_cli executes this file directly.
     from persistence import RezoStateJournal, SPIFlashTransfer
     from ui_common import (
         NATIVE_FEEDBACK_AMOUNT_Y0, NATIVE_FEEDBACK_CEILING_Y0,
+        NATIVE_FEEDBACK_DAMPING_CHIP_Y0, NATIVE_FEEDBACK_DAMPING_CHIP_Y1,
         NATIVE_FEEDBACK_KNEE_Y0,
         NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
         native_input_gain_endpoint, native_input_unity_x,
@@ -4978,15 +4980,17 @@ class RezoTileDisplay(wiring.Component):
 
         damp_chip = tune_page & self.rect(
             x, y, 268 if self.compact_layout else 156,
-            462 if self.compact_layout else 504,
+            NATIVE_FEEDBACK_DAMPING_CHIP_Y0 if self.compact_layout else 504,
             396 if self.compact_layout else 316,
-            486 if self.compact_layout else 536)
+            NATIVE_FEEDBACK_DAMPING_CHIP_Y1 if self.compact_layout else 536)
         damp_select = tune_page & (
             self.selected == RezoHardwareUI.TARGET_DAMP) & self.outline(
                 x, y, 264 if self.compact_layout else 150,
-                458 if self.compact_layout else 500,
+                (NATIVE_FEEDBACK_DAMPING_CHIP_Y0 - 4
+                 if self.compact_layout else 500),
                 400 if self.compact_layout else 322,
-                490 if self.compact_layout else 540, t=3)
+                (NATIVE_FEEDBACK_DAMPING_CHIP_Y1 + 4
+                 if self.compact_layout else 540), t=3)
         layout_chip = bands_page & self.rect(
             x, y, 256 if self.compact_layout else 136,
             168 if self.compact_layout else 100,

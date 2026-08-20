@@ -1,6 +1,10 @@
 from amaranth.sim import Simulator
 
 from top.rezo.strezo_variant import RezoCore, RezoHardwareUI, RezoTileDisplay
+from top.rezo.ui_common import (
+    NATIVE_FEEDBACK_CEILING_Y0,
+    NATIVE_FEEDBACK_KNEE_Y0,
+)
 
 
 def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
@@ -246,8 +250,10 @@ def test_feedback_safety_maxima_fill_the_compact_tracks():
         page=1,
         limit_knee=128,
         limit_cap=128,
-        points=((587, 408), (588, 408),
-                (587, 440), (588, 440)),
+        points=((587, NATIVE_FEEDBACK_KNEE_Y0 + 8),
+                (588, NATIVE_FEEDBACK_KNEE_Y0 + 8),
+                (587, NATIVE_FEEDBACK_CEILING_Y0 + 8),
+                (588, NATIVE_FEEDBACK_CEILING_Y0 + 8)),
     ) == [
         (control, control, control), (background, background, background),
         (control, control, control), (background, background, background),
