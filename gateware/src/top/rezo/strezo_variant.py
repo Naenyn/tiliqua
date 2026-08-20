@@ -2897,7 +2897,8 @@ class RezoHardwareUI(wiring.Component):
                             layout_load_target.eq(layout_preview),
                             layout_load_prefetched.eq(0),
                         ]
-                with m.Elif(selected == self.TARGET_CROSS_LAYOUT):
+                with m.Elif((page == 7) &
+                            (selected == self.TARGET_CROSS_LAYOUT)):
                     m.d.sync += cross_layout.eq(cross_layout_preview)
                 with m.Elif(band_frequency_target):
                     m.d.sync += [
@@ -2910,7 +2911,8 @@ class RezoHardwareUI(wiring.Component):
             with m.Else():
                 with m.If(selected == self.TARGET_BAND_LAYOUT):
                     m.d.sync += layout_preview.eq(frequency_layout)
-                with m.Elif(selected == self.TARGET_CROSS_LAYOUT):
+                with m.Elif((page == 7) &
+                            (selected == self.TARGET_CROSS_LAYOUT)):
                     m.d.sync += cross_layout_preview.eq(cross_layout)
                 for n in range(RezoCore.N_BANDS):
                     with m.If(selected == self.TARGET_BAND_FREQ_BASE + n):
@@ -2979,7 +2981,8 @@ class RezoHardwareUI(wiring.Component):
                         m.d.sync += layout_preview.eq(layout_preview + 1)
                     with m.Else():
                         m.d.sync += layout_preview.eq(layout_preview - 1)
-                with m.Elif(selected == self.TARGET_CROSS_LAYOUT):
+                with m.Elif((page == 7) &
+                            (selected == self.TARGET_CROSS_LAYOUT)):
                     with m.If(edit_direction):
                         m.d.sync += cross_layout_preview.eq(Mux(
                             cross_layout_preview == RezoCore.CROSS_LAYOUT_USER,
@@ -4390,7 +4393,12 @@ class RezoTileDisplay(wiring.Component):
                         m.d.comb += frequency_label_rport.addr.eq(
                             frequency_full_offset |
                             (bands_frequency_index << 3) | pos)
-        layout_names = (" LEGACY", " OCTAVE", "PERCEPT", "  USER ")
+        # The BANDS preset chip is 128 pixels wide while native text advances
+        # on a 16-pixel cell grid.  Six- and seven-letter names therefore
+        # share column 17; USER uses column 18 below.  Keep the strings free of
+        # leading padding so each visible name is centered by its destination
+        # rather than appearing left-aligned within a fixed text slot.
+        layout_names = ("LEGACY ", "OCTAVE ", "PERCEPT", "USER   ")
         layout_chars = [Array(Const(self.code(name[pos]), 6)
                               for name in layout_names)
                         for pos in range(7)]
@@ -4524,7 +4532,9 @@ class RezoTileDisplay(wiring.Component):
                 writer_address_init[46 + pos] = writer_cell(5, 22, 17, pos)
             for pos in range(7):
                 writer_address_init[52 + pos] = writer_cell(5, 22, 21, pos)
-                writer_address_init[59 + pos] = writer_cell(6, 16, 11, pos)
+                # BANDS layout destinations are selected dynamically below so
+                # USER can use the narrower, independently centered origin.
+                writer_address_init[59 + pos] = writer_cell(6, 17, 11, pos)
             for pos in range(5):
                 writer_address_init[66 + pos] = writer_cell(6, 20, 22, pos)
             for n, row in enumerate(compact_output_text_rows):
@@ -4584,7 +4594,12 @@ class RezoTileDisplay(wiring.Component):
                 page_offsets[writer_page_q] +
                 (8 if self.compact_layout else 3) * 45 +
                 (33 if self.compact_layout else 39) + writer_index_q,
-                writer_address_rport.data)),
+                Mux(
+                    self.compact_layout &
+                    (writer_index_q >= 59) & (writer_index_q < 66) &
+                    (displayed_layout == RezoCore.LAYOUT_USER),
+                    writer_address_rport.data + 1,
+                    writer_address_rport.data))),
         ]
 
         with m.Switch(update_index):
@@ -5980,10 +5995,20 @@ class RezoTileDisplay(wiring.Component):
                        cross_track_x0 - 2, cross_y0 + 16)))
         tune_fill_x0 = 268 if self.compact_layout else 156
         tune_fill_scale_shift = 0 if self.compact_layout else 2
+        # KNEE and CEILING are user-facing 16..128 controls.  The old compact
+        # map advanced only 1.125 pixels per step, so the valid maximum stopped
+        # near the middle of the 320-pixel lane.  A 2.5x shift/add maps 128 to
+        # the lane's exact right edge without changing the DSP coefficient.
+        compact_tune_knee_end = (
+            tune_fill_x0 + (self.limit_knee << 1) +
+            (self.limit_knee >> 1))
+        compact_tune_cap_end = (
+            tune_fill_x0 + (self.limit_cap << 1) +
+            (self.limit_cap >> 1))
         dry_fill = tune_page & self.rect(
             x, y, tune_fill_x0,
             400 if self.compact_layout else 412,
-            (tune_fill_x0 + self.limit_knee + (self.limit_knee >> 3)
+            (compact_tune_knee_end
              if self.compact_layout else
              124 + (self.limit_knee << tune_fill_scale_shift)),
             416 if self.compact_layout else 428)
@@ -5998,7 +6023,7 @@ class RezoTileDisplay(wiring.Component):
         tune_cap_fill = tune_page & self.rect(
             x, y, tune_fill_x0,
             432 if self.compact_layout else 460,
-            (tune_fill_x0 + self.limit_cap + (self.limit_cap >> 3)
+            (compact_tune_cap_end
              if self.compact_layout else
              124 + (self.limit_cap << tune_fill_scale_shift)),
             448 if self.compact_layout else 476)

@@ -68,10 +68,14 @@ def test_ui_shared_matrix_and_output_edit_paths():
         endpoint = await _turn(ctx, dut, endpoint, 0)
         assert ctx.get(dut.selected) == dut.TARGET_PAGE
 
-        # Enter page edit and move FILTER -> MATRIX.
+        # Enter page edit and move FILTER -> BANDS -> INPUT -> MATRIX.
         await _click(ctx, dut)
         endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.page) == 6
+        endpoint = await _turn(ctx, dut, endpoint, 1)
         assert ctx.get(dut.page) == 2
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.page) == 7
         await _click(ctx, dut)
 
         # Select and edit the first modulation-matrix cell.
@@ -114,6 +118,8 @@ def test_ui_shared_feedback_toggle_path():
         for _ in range(9):
             endpoint = await _turn(ctx, dut, endpoint, 1)
         assert ctx.get(dut.selected) == dut.TARGET_FEEDBACK_SEND_BASE + 9
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_FEEDBACK
         endpoint = await _turn(ctx, dut, endpoint, 1)
         assert ctx.get(dut.selected) == dut.TARGET_LIMIT_KNEE
 
@@ -167,7 +173,9 @@ def test_ui_state_scan_round_trips_independent_mode_values():
         (dut.STATE_INPUT_CONFIG, 0x9A56),
         (dut.STATE_BANK_GROUP_BASE + 1, 0x3210),
         (dut.STATE_FEEDBACK_PRESET, 0x73A5),
-        (dut.STATE_OUTPUT_BASE + 12, 0x00AD),
+        # The high byte of the final output word is FILTER's independent
+        # feedback amount; its low byte remains the tail of the send matrix.
+        (dut.STATE_OUTPUT_BASE + 12, 0x5AAD),
     )
 
     async def bench(ctx):
@@ -219,6 +227,7 @@ def test_ui_state_scan_round_trips_independent_mode_values():
         # drive must now be the active drive. Band 5 restores signed 0xE400.
         assert ctx.get(dut.filter_mode) == 1
         assert ctx.get(dut.drive) == 0x5600
+        assert ctx.get(dut.feedback) == 0x5A00
         assert ctx.get(dut.levels[5]) == -0x1C00
         assert ctx.get(dut.input_gains[3]) == 0xCCCC
         assert ctx.get(dut.palette) == 3

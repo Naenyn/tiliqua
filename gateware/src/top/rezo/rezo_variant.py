@@ -269,8 +269,8 @@ class RezoCore(wiring.Component):
             effective_resonance_raw.eq(smooth_resonance + resonance_cv_term),
             effective_feedback_raw.eq(smooth_feedback + feedback_cv_term),
             effective_drive_raw.eq(self.DRIVE_FLOOR + smooth_drive + drive_cv_term),
-            feedback_gain.eq(Mux(sample_filter_mode, 0,
-                                 Mux(effective_feedback > 31744, 31744, effective_feedback))),
+            feedback_gain.eq(Mux(effective_feedback > 31744,
+                                 31744, effective_feedback)),
         ]
         with m.If(effective_resonance_raw < 0):
             m.d.comb += effective_resonance.eq(0)
@@ -606,8 +606,7 @@ class RezoCore(wiring.Component):
         # exceeded the 312-clock budget at 192 kHz.
         output_sources = Array([
             *group_acc,
-            Mux(sample_filter_mode, 0,
-                input_mix_sample.as_value().as_signed()),
+            input_mix_sample.as_value().as_signed(),
         ])
         output_source_signal = Signal(mix_shape)
         input_mode_array = Array(self.input_modes)
@@ -646,7 +645,8 @@ class RezoCore(wiring.Component):
         ]
         for n in range(3):
             raw_cv = input_samples[n + 1].as_value().as_signed()
-            with m.If((raw_cv > -256) & (raw_cv < 256)):
+            with m.If((self.input_modes[n + 1] != self.INPUT_MODE_CV) |
+                      ((raw_cv > -256) & (raw_cv < 256))):
                 m.d.comb += filter_cv_inputs[n].as_value().eq(0)
             with m.Else():
                 m.d.comb += filter_cv_inputs[n].as_value().eq(raw_cv)
@@ -964,11 +964,12 @@ class RezoCore(wiring.Component):
                     with m.Else():
                         m.d.sync += effective.eq(target)
                 m.d.sync += [
-                    self.effective_feedback.eq(0),
                     input_mix_acc.eq(0),
                     input_chan.eq(0),
                     mac_a_q.eq(input_samples[0]),
-                    mac_b_q.as_value().eq(self.INPUT_UNITY >> 1),
+                    mac_b_q.eq(Mux(
+                        self.input_modes[0] == self.INPUT_MODE_AUDIO,
+                        input_gain_coeffs[0], 0)),
                     state.eq(state_input_gain_commit),
                 ]
 
@@ -1080,45 +1081,39 @@ class RezoCore(wiring.Component):
                                 (self.input_meters[n].as_unsigned() >> 14) - 1)
                         with m.Else():
                             m.d.sync += self.input_meters[n].eq(0)
-                with m.If(sample_filter_mode):
+                with m.Switch(input_chan):
+                  with m.Case(0):
+                    m.d.sync += [
+                        input_mix_acc.eq(input_mix_next),
+                        input_chan.eq(1),
+                        mac_a_q.eq(input_samples[1]),
+                        mac_b_q.eq(Mux(self.input_modes[1] == self.INPUT_MODE_AUDIO,
+                                       input_gain_coeffs[1], 0)),
+                        state.eq(state_input_gain_commit),
+                    ]
+                  with m.Case(1):
+                    m.d.sync += [
+                        input_mix_acc.eq(input_mix_next),
+                        input_chan.eq(2),
+                        mac_a_q.eq(input_samples[2]),
+                        mac_b_q.eq(Mux(self.input_modes[2] == self.INPUT_MODE_AUDIO,
+                                       input_gain_coeffs[2], 0)),
+                        state.eq(state_input_gain_commit),
+                    ]
+                  with m.Case(2):
+                    m.d.sync += [
+                        input_mix_acc.eq(input_mix_next),
+                        input_chan.eq(3),
+                        mac_a_q.eq(input_samples[3]),
+                        mac_b_q.eq(Mux(self.input_modes[3] == self.INPUT_MODE_AUDIO,
+                                       input_gain_coeffs[3], 0)),
+                        state.eq(state_input_gain_commit),
+                    ]
+                  with m.Default():
                     m.d.sync += [
                         input_mix_acc.eq(input_mix_next),
                         state.eq(state_input_limit_commit),
                     ]
-                with m.Else():
-                    with m.Switch(input_chan):
-                      with m.Case(0):
-                        m.d.sync += [
-                            input_mix_acc.eq(input_mix_next),
-                            input_chan.eq(1),
-                            mac_a_q.eq(input_samples[1]),
-                            mac_b_q.eq(Mux(self.input_modes[1] == self.INPUT_MODE_AUDIO,
-                                           input_gain_coeffs[1], 0)),
-                            state.eq(state_input_gain_commit),
-                        ]
-                      with m.Case(1):
-                        m.d.sync += [
-                            input_mix_acc.eq(input_mix_next),
-                            input_chan.eq(2),
-                            mac_a_q.eq(input_samples[2]),
-                            mac_b_q.eq(Mux(self.input_modes[2] == self.INPUT_MODE_AUDIO,
-                                           input_gain_coeffs[2], 0)),
-                            state.eq(state_input_gain_commit),
-                        ]
-                      with m.Case(2):
-                        m.d.sync += [
-                            input_mix_acc.eq(input_mix_next),
-                            input_chan.eq(3),
-                            mac_a_q.eq(input_samples[3]),
-                            mac_b_q.eq(Mux(self.input_modes[3] == self.INPUT_MODE_AUDIO,
-                                           input_gain_coeffs[3], 0)),
-                            state.eq(state_input_gain_commit),
-                        ]
-                      with m.Default():
-                        m.d.sync += [
-                            input_mix_acc.eq(input_mix_next),
-                            state.eq(state_input_limit_commit),
-                        ]
 
             with m.Case(state_input_limit_commit):
                 m.d.sync += [
@@ -1652,7 +1647,9 @@ class RezoHardwareUI(wiring.Component):
         filter_drive = Signal(unsigned(8), init=RezoCore.DRIVE_DEFAULT >> 8)
         drive = Signal(unsigned(16))
         resonance = Signal(unsigned(8), init=8192 >> 8)
-        feedback = Signal(unsigned(8), init=0)
+        bank_feedback = Signal(unsigned(8), init=0)
+        filter_feedback = Signal(unsigned(8), init=0)
+        feedback = Signal(unsigned(8))
         filter_mode = Signal(init=0)
         filter_type = Signal(unsigned(2), init=RezoCore.FILTER_LP)
         filter_cutoff = Signal(unsigned(8), init=16384 >> 8)
@@ -1710,6 +1707,7 @@ class RezoHardwareUI(wiring.Component):
             drive_position.eq(Mux(filter_mode, filter_drive, bank_drive)),
             drive.eq(Mux(drive_position == 96, RezoCore.DRIVE_MAX,
                          drive_position << 8)),
+            feedback.eq(Mux(filter_mode, filter_feedback, bank_feedback)),
         ]
         selected = Signal(range(self.N_TARGETS), init=self.TARGET_PAGE)
         page = Signal(unsigned(3), init=0)
@@ -1808,7 +1806,7 @@ class RezoHardwareUI(wiring.Component):
                 output_edit_direction.eq(output_relative_direction),
             ]
             with m.If(output_relative_step == Mux(
-                    output_relative_column, 3, Mux(filter_mode, 3, 4))):
+                    output_relative_column, 3, 4)):
                 m.d.sync += output_relative_active.eq(0)
             with m.Else():
                 m.d.sync += [
@@ -1931,6 +1929,7 @@ class RezoHardwareUI(wiring.Component):
                 (selected >= self.TARGET_FEEDBACK_SEND_BASE) &
                 (selected < self.TARGET_FEEDBACK_SEND_BASE + RezoCore.N_BANDS)),
             tune_target_visible.eq((selected == self.TARGET_PAGE) |
+                                   (selected == self.TARGET_FEEDBACK) |
                                    ((selected >= self.TARGET_LIMIT_KNEE) &
                                     (selected <= self.TARGET_DAMP)) |
                                    feedback_send_target),
@@ -1943,8 +1942,7 @@ class RezoHardwareUI(wiring.Component):
             output_dry_target.eq(dry_target_expr),
             output_cell_target.eq(
                 (selected >= self.TARGET_OUTPUT_BASE) &
-                (selected < self.TARGET_OUTPUT_BASE + 20) &
-                (~filter_mode | ~output_dry_target)),
+                (selected < self.TARGET_OUTPUT_BASE + 20)),
             output_row_target.eq(
                 (page == 4) &
                 (selected >= self.TARGET_OUTPUT_ROW_BASE) &
@@ -1953,7 +1951,7 @@ class RezoHardwareUI(wiring.Component):
                 (page == 4) &
                 (((selected >= self.TARGET_OUTPUT_COL_BASE) &
                   (selected < self.TARGET_OUTPUT_COL_BASE + 4)) |
-                 ((selected == self.TARGET_OUTPUT_DRY_COL) & ~filter_mode))),
+                 (selected == self.TARGET_OUTPUT_DRY_COL))),
             output_target_visible.eq((selected == self.TARGET_PAGE) |
                                      output_cell_target |
                                      output_row_target |
@@ -2089,6 +2087,8 @@ class RezoHardwareUI(wiring.Component):
                     m.d.comb += next_selected.eq(self.TARGET_PAGE)
                 with m.Elif(selected ==
                             self.TARGET_FEEDBACK_SEND_BASE + RezoCore.N_BANDS - 1):
+                    m.d.comb += next_selected.eq(self.TARGET_FEEDBACK)
+                with m.Elif(selected == self.TARGET_FEEDBACK):
                     m.d.comb += next_selected.eq(self.TARGET_LIMIT_KNEE)
                 with m.Else():
                     m.d.comb += next_selected.eq(selected + 1)
@@ -2100,11 +2100,13 @@ class RezoHardwareUI(wiring.Component):
                 with m.Elif(selected == self.TARGET_FEEDBACK_SEND_BASE):
                     m.d.comb += next_selected.eq(self.TARGET_PAGE)
                 with m.Elif(selected == self.TARGET_LIMIT_KNEE):
+                    m.d.comb += next_selected.eq(self.TARGET_FEEDBACK)
+                with m.Elif(selected == self.TARGET_FEEDBACK):
                     m.d.comb += next_selected.eq(
                         self.TARGET_FEEDBACK_SEND_BASE + RezoCore.N_BANDS - 1)
                 with m.Else():
                     m.d.comb += next_selected.eq(selected - 1)
-        with m.Elif((page == 2) & filter_mode):
+        with m.Elif((page == 7) & filter_mode):
             with m.If(edit_direction):
                 with m.If(~filter_cv_target_visible |
                           (selected == self.TARGET_PAGE)):
@@ -2360,14 +2362,15 @@ class RezoHardwareUI(wiring.Component):
                 with m.If(selected == self.TARGET_PRESET):
                     m.d.sync += preset.eq(next_preset)
                 with m.Elif(selected == self.TARGET_PAGE):
-                    # Main mode -> bands -> inputs/modulation -> groups ->
-                    # outputs -> feedback -> advanced.
+                    # Main mode -> shared bands -> inputs -> FILTER matrix ->
+                    # groups -> outputs -> feedback -> advanced.
                     with m.If(edit_direction):
                         with m.Switch(page):
-                            with m.Case(0):
-                                m.d.sync += page.eq(Mux(filter_mode, 2, 6))
+                            with m.Case(0): m.d.sync += page.eq(6)
                             with m.Case(6): m.d.sync += page.eq(2)
-                            with m.Case(2): m.d.sync += page.eq(3)
+                            with m.Case(2):
+                                m.d.sync += page.eq(Mux(filter_mode, 7, 3))
+                            with m.Case(7): m.d.sync += page.eq(3)
                             with m.Case(3): m.d.sync += page.eq(4)
                             with m.Case(4): m.d.sync += page.eq(1)
                             with m.Case(1): m.d.sync += page.eq(5)
@@ -2378,9 +2381,11 @@ class RezoHardwareUI(wiring.Component):
                             with m.Case(5): m.d.sync += page.eq(1)
                             with m.Case(1): m.d.sync += page.eq(4)
                             with m.Case(4): m.d.sync += page.eq(3)
-                            with m.Case(3): m.d.sync += page.eq(2)
-                            with m.Case(2):
-                                m.d.sync += page.eq(Mux(filter_mode, 0, 6))
+                            with m.Case(3):
+                                m.d.sync += page.eq(Mux(filter_mode, 7, 2))
+                            with m.Case(7): m.d.sync += page.eq(2)
+                            with m.Case(2): m.d.sync += page.eq(6)
+                            with m.Case(6): m.d.sync += page.eq(0)
                             with m.Default(): m.d.sync += page.eq(0)
                 with m.Elif(selected == self.TARGET_BAND_LAYOUT):
                     with m.If(edit_direction):
@@ -2491,9 +2496,19 @@ class RezoHardwareUI(wiring.Component):
                                            96)
                 with m.Elif(selected == self.TARGET_FEEDBACK):
                     with m.If(edit_direction):
-                        self.clamp_add(m, feedback, step_amount, 0, 128)
+                        with m.If(filter_mode):
+                            self.clamp_add(m, filter_feedback,
+                                           step_amount, 0, 128)
+                        with m.Else():
+                            self.clamp_add(m, bank_feedback,
+                                           step_amount, 0, 128)
                     with m.Else():
-                        self.clamp_add(m, feedback, -step_amount, 0, 128)
+                        with m.If(filter_mode):
+                            self.clamp_add(m, filter_feedback,
+                                           -step_amount, 0, 128)
+                        with m.Else():
+                            self.clamp_add(m, bank_feedback,
+                                           -step_amount, 0, 128)
                 with m.Elif(selected == self.TARGET_LIMIT_KNEE):
                     with m.If(edit_direction):
                         self.clamp_add(m, limit_knee, step_amount, 16, 128)
@@ -2588,7 +2603,6 @@ class RezoHardwareUI(wiring.Component):
                                for n in range(1, 5)))
         bank_group_fine = Cat(*(band_frequencies[n][:RezoCore.FREQ_FINE_WIDTH]
                                 for n in range(5, 9)))
-        output_send_pad = Signal(8)
         band_config_fine = band_frequencies[9][:RezoCore.FREQ_FINE_WIDTH]
         filter_cv_bits = Cat(*(value.as_unsigned() for value in filter_cv_matrix),
                              filter_cv_fine)
@@ -2596,8 +2610,10 @@ class RezoHardwareUI(wiring.Component):
         input_config_bits = Cat(*input_modes, *cv_targets)
         bank_group_bits = Cat(*bank_group_indices, bank_group_fine)
         feedback_preset_bits = Cat(*feedback_sends, preset, palette)
+        # V2 reserved exactly one byte after the two output matrices. Reuse it
+        # for FILTER's independent feedback amount; old saves restore zero.
         output_send_bits = Cat(*bank_output_sends, *filter_output_sends,
-                               output_send_pad)
+                               filter_feedback)
         band_config_bits = Cat(
             *(frequency[RezoCore.FREQ_FINE_WIDTH:]
               for frequency in band_frequencies),
@@ -2610,7 +2626,7 @@ class RezoHardwareUI(wiring.Component):
         state_bits = Cat(
             level_bytes,
             bank_drive, filter_drive,
-            resonance, feedback,
+            resonance, bank_feedback,
             filter_cutoff, filter_slope,
             filter_width, limit_knee,
             limit_cap, damp_mode, filter_mode, filter_type, cap_flags_fine,
@@ -3373,12 +3389,12 @@ class RezoTileDisplay(wiring.Component):
             bank_page.eq((self.page == 0) & ~self.filter_mode),
             filter_page.eq((self.page == 0) & self.filter_mode),
             tune_page.eq(self.page == 1),
-            input_page.eq((self.page == 2) & ~self.filter_mode),
-            filter_cv_page.eq((self.page == 2) & self.filter_mode),
+            input_page.eq(self.page == 2),
+            filter_cv_page.eq((self.page == 7) & self.filter_mode),
             group_page.eq(self.page == 3),
             output_page.eq(self.page == 4),
             advanced_page.eq(self.page == 5),
-            bands_page.eq((self.page == 6) & ~self.filter_mode),
+            bands_page.eq(self.page == 6),
         ]
         page_cells = 45 * 45
         text_init = [0] * (9 * page_cells)
@@ -3483,6 +3499,7 @@ class RezoTileDisplay(wiring.Component):
             put_native(1, "BANDS", 8, 16)
             put_native(1, "FREQ:", 23, 16)
             put_native(1, "FEEDBACK SAFETY", 8, 22)
+            put_native(1, "AMOUNT", compact_feedback_label_x + 1, 23)
             put_native(1, "KNEE", compact_feedback_label_x + 3, 25)
             put_native(1, "CEILING", compact_feedback_label_x, 27)
             put_native(1, "DAMPING", compact_feedback_label_x, 29)
@@ -3513,8 +3530,8 @@ class RezoTileDisplay(wiring.Component):
             # OUTPUT matrix. Geometry below is centred from these exact text
             # starts, so labels and cells cannot accumulate scaling drift.
             put_native(4, "OUTPUT ROUTING", 8, 13)
-            for x0, label in zip((16, 20, 24, 28),
-                                 ("G1", "G2", "G3", "G4")):
+            for x0, label in zip((16, 20, 24, 28, 32),
+                                 ("G1", "G2", "G3", "G4", "DRY")):
                 put_native(4, label, x0, 18)
             for n, row in enumerate(compact_output_text_rows):
                 put_native(4, f"OUT{n}", 9, row)
@@ -3616,7 +3633,7 @@ class RezoTileDisplay(wiring.Component):
         text_page_q = Signal(unsigned(4))
         m.d.dvi += text_page_q.eq(
             Mux((self.page == 0) & self.filter_mode, 7,
-                Mux((self.page == 2) & self.filter_mode, 8, self.page)))
+                Mux((self.page == 7) & self.filter_mode, 8, self.page)))
         m.d.comb += [
             text_address.eq(page_offsets[text_page_q] + cell_y * 45 + cell_x),
             text_rport.addr.eq(text_address),
@@ -3726,7 +3743,7 @@ class RezoTileDisplay(wiring.Component):
             writer_index_q.eq(update_index),
             writer_page_q.eq(Mux(
                 (page_sync == 0) & filter_mode_sync, 7,
-                Mux((page_sync == 2) & filter_mode_sync, 8, page_sync))),
+                Mux((page_sync == 7) & filter_mode_sync, 8, page_sync))),
             writer_char_q.eq(writer_char),
             writer_valid_q.eq(update_active),
         ]
@@ -4141,6 +4158,9 @@ class RezoTileDisplay(wiring.Component):
         meter_panel = active & (
             (bank_page & bank_meter_rows) |
             (tune_page & (
+                self.rect(x, y, tune_panel_x0,
+                          366 + tune_y_shift, tune_panel_x1,
+                          386 + tune_y_shift) |
                 self.rect(x, y, tune_panel_x0,
                           398 + tune_y_shift, tune_panel_x1,
                           418 + tune_y_shift) |
@@ -5120,7 +5140,7 @@ class RezoTileDisplay(wiring.Component):
                       (output_geom_x < cell_x0 + cell_width)):
                 m.d.comb += [
                     output_source.eq(source),
-                    output_col_active.eq(Const(source != 4) | ~self.filter_mode),
+                    output_col_active.eq(1),
                     output_col_edge.eq(
                         (output_geom_x < cell_x0 + 2) |
                         (output_geom_x >= cell_x0 + cell_width - 2)),
@@ -5357,14 +5377,21 @@ class RezoTileDisplay(wiring.Component):
         if self.compact_layout:
             tune_y_q = Signal.like(y)
             tune_page_q = Signal()
+            tune_feedback_q = Signal.like(self.feedback)
             tune_knee_q = Signal.like(self.limit_knee)
             tune_cap_q = Signal.like(self.limit_cap)
             m.d.dvi += [
                 tune_y_q.eq(y),
                 tune_page_q.eq(tune_page),
+                tune_feedback_q.eq(self.feedback),
                 tune_knee_q.eq(self.limit_knee),
                 tune_cap_q.eq(self.limit_cap),
             ]
+            tune_feedback_fill = (
+                tune_page_q & compact_fader_x_valid &
+                (compact_fader_threshold <= tune_feedback_q) &
+                (tune_y_q >= 368 + tune_y_shift) &
+                (tune_y_q < 384 + tune_y_shift))
             dry_fill = (
                 tune_page_q & compact_fader_x_valid &
                 (compact_fader_threshold <= tune_knee_q) &
@@ -5376,6 +5403,9 @@ class RezoTileDisplay(wiring.Component):
                 (tune_y_q >= 432 + tune_y_shift) &
                 (tune_y_q < 448 + tune_y_shift))
         else:
+            tune_feedback_fill = tune_page & self.rect(
+                x, y, tune_fill_x0, 380,
+                control_fill_x0 + (self.feedback << 2), 396)
             dry_fill = tune_page & self.rect(
                 x, y, tune_fill_x0, 412,
                 control_fill_x0 + (self.limit_knee << 2), 428)
@@ -5389,6 +5419,14 @@ class RezoTileDisplay(wiring.Component):
                          396 + tune_y_shift, tune_panel_x1,
                          420 + tune_y_shift, t=3),
             self.rect(x, y, 144, 408, 148, 432))
+        tune_feedback_select = (
+            tune_page &
+            (self.selected == RezoHardwareUI.TARGET_FEEDBACK) & Mux(
+                self.compact_layout,
+                self.outline(x, y, tune_panel_x0,
+                             364 + tune_y_shift, tune_panel_x1,
+                             388 + tune_y_shift, t=3),
+                self.rect(x, y, 144, 376, 148, 400)))
         res_select = ((bank_page & (self.selected == RezoHardwareUI.TARGET_RESONANCE)) |
                       (tune_page & (self.selected == RezoHardwareUI.TARGET_LIMIT_CAP))) & (
             (bank_page & self.outline(
@@ -5577,7 +5615,8 @@ class RezoTileDisplay(wiring.Component):
                              input_selected_q | routing_selected_q |
                              filter_cv_selected_q |
                              advanced_selected_q | bands_selected_q |
-                             page_selected_q | damp_select)
+                             page_selected_q | damp_select |
+                             tune_feedback_select)
 
         selected_q = Signal()
         text_q = Signal()
@@ -5593,7 +5632,7 @@ class RezoTileDisplay(wiring.Component):
         geometry_panel_q0 = Signal()
         m.d.dvi += [
             geometry_fill_q0.eq(band_fill | band_marker | bank_control_fill |
-                                dry_fill | tune_cap_fill |
+                                tune_feedback_fill | dry_fill | tune_cap_fill |
                                 filter_control_fill),
             geometry_line_q0.eq(
                 band_zero_q0 | bank_control_mod_marker |

@@ -92,9 +92,21 @@ def test_ui_output_headers_bulk_edit_before_saved_stereo_side_selectors():
             (15, 15, 15, 15)
         await _click(ctx, dut)
 
-        # Remaining group columns, DRY, then OUT0's relative row header.
-        for _ in range(5):
+        # Remaining group columns, then DRY.  Its bulk edit must update both
+        # the audio-facing send state and the display-facing values.
+        for _ in range(4):
             endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_OUTPUT_DRY_COL
+        await _click(ctx, dut)
+        endpoint = await _turn(ctx, dut, endpoint, 1)
+        for _ in range(8):
+            await ctx.tick()
+        assert tuple(ctx.get(dut.output_sends[n]) for n in (4, 9, 14, 19)) == \
+            (1, 1, 1, 1)
+        await _click(ctx, dut)
+
+        # Continue to OUT0's relative row header.
+        endpoint = await _turn(ctx, dut, endpoint, 1)
         assert ctx.get(dut.selected) == dut.TARGET_OUTPUT_ROW_BASE
         await _click(ctx, dut)
         endpoint = await _turn(ctx, dut, endpoint, 0)

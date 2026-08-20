@@ -102,8 +102,9 @@ CV changes its effective value.
 
 ### BANDS page
 
-The BANDS page configures the resonators themselves. It appears only in BANK
-mode.
+The BANDS page configures the resonators themselves. It is available in both
+BANK and FILTER so their shared center frequencies can be edited without
+switching modes.
 
 #### Frequency layouts
 
@@ -183,9 +184,11 @@ The BANK and FILTER output-send settings are stored separately.
 
 ### FEEDBACK page
 
-The ten band switches choose which enabled bands feed the shared feedback loop.
+The ten band switches choose which resonators feed the shared feedback loop.
 Click a band to include or exclude it. These switches shape the feedback signal;
-the main page's **FB** control sets its overall amount.
+the **AMOUNT** control sets its overall level. BANK and FILTER retain
+independent amounts, so FILTER begins at zero feedback even when BANK feedback
+is already raised.
 
 The three safety controls shape and constrain the returning signal:
 
@@ -222,15 +225,15 @@ The transition between BANK and FILTER is briefly smoothed to reduce clicks.
 
 ### What remains shared with BANK
 
-- The ten center frequencies are the frequencies configured on the BANK BANDS
-  page. FILTER uses them even though the BANDS page is hidden.
+- The ten center frequencies are configured on the shared BANDS page.
 - Resonance is shared.
 - Band-to-group assignments are shared.
 - Display palette and saved state are shared.
 
 FILTER ignores the BANK band-enable switches: all ten resonators remain
 available to construct the filter response. It also ignores the manual BANK
-level shape and disables the BANK feedback loop.
+level shape. The feedback-source switches and safety controls are shared, while
+FILTER has an independent feedback amount that defaults to zero.
 
 ### FILTER main page
 
@@ -257,11 +260,13 @@ BANK band levels.
 
 ### FILTER inputs and MOD MATRIX
 
-FILTER treats **IN0** as its audio input. Keep IN0 configured as AUDIO and use
-its saved input gain to set the incoming level.
+The INPUT page works in FILTER as it does in BANK: each jack can independently
+be AUDIO or CV. Every AUDIO-role input joins the mono mix feeding the
+resonators, with its own gain. IN1, IN2, and IN3 used as CV become the three
+sources on the MATRIX page; switching one back to AUDIO removes its CV signal
+from the matrix without erasing the stored matrix depths.
 
-IN1, IN2, and IN3 become the three CV sources on the **MATRIX** page. Each can
-modulate any of five destinations with a bipolar depth:
+Each CV source can modulate any of five destinations with a bipolar depth:
 
 - Frequency
 - Resonance
@@ -280,16 +285,15 @@ FILTER ignores the BANK enable mask, all ten band columns are available here.
 Group changes are shared with BANK.
 
 FILTER has its own OUTPUT send levels, separate from BANK. The four group sends
-remain available, but DRY is omitted: FILTER outputs contain only grouped
-resonator signals.
+and the unfiltered DRY input mix are all available.
 
-### Pages with BANK-only behavior
+### Shared and mode-specific behavior
 
-- **BANDS** is hidden in FILTER. Return to BANK to change frequency layouts,
-  individual center frequencies, or enable switches.
-- The feedback loop is disabled in FILTER. FEEDBACK settings are retained for
-  BANK and resume when BANK is selected.
-- OPTIONS and SAVE DEFAULT work identically in both modes.
+- BANDS frequencies, group membership, feedback-source switches, safety
+  controls, and OPTIONS are shared.
+- BANK alone uses manual band levels and the band-enable mask.
+- BANK and FILTER retain separate drive, feedback amount, and output sends.
+- SAVE DEFAULT stores the complete state of both modes.
 
 ### A practical first patch
 
@@ -300,5 +304,5 @@ resonator signals.
 5. Mix those groups differently across OUT0 through OUT3.
 6. Add a CV input, target a group, and set a small bipolar depth.
 7. Switch to FILTER, choose LP, and adjust FREQ and SLOPE.
-8. Use IN1 on the MATRIX page to modulate FREQ.
+8. Set IN1 to CV, then use it on the MATRIX page to modulate FREQ.
 9. When the complete setup is worth keeping, use OPTIONS > SAVE DEFAULT.

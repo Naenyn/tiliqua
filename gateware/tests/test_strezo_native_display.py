@@ -1,6 +1,6 @@
 from amaranth.sim import Simulator
 
-from top.rezo.strezo_variant import RezoCore, RezoTileDisplay
+from top.rezo.strezo_variant import RezoCore, RezoHardwareUI, RezoTileDisplay
 
 
 def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
@@ -9,6 +9,7 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
                     cross_feedback=0, cross_layout=RezoCore.CROSS_LAYOUT_GLOBAL,
                     cross_curve=RezoCore.CROSS_CURVE_LINEAR,
                     drive=0, resonance=0, feedback=0,
+                    limit_knee=32, limit_cap=112, selected=0,
                     matrix_values=(), motion_source=0, motion_rate=12,
                     motion_phase=28, motion_depth=0, motion_monitor=0):
     """Render settled pixels from STREZO's upright native canvas."""
@@ -44,6 +45,9 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
         ctx.set(dut.effective_resonance, resonance)
         ctx.set(dut.feedback, feedback)
         ctx.set(dut.effective_feedback, feedback)
+        ctx.set(dut.limit_knee, limit_knee)
+        ctx.set(dut.limit_cap, limit_cap)
+        ctx.set(dut.selected, selected)
         ctx.set(dut.motion_source, motion_source)
         ctx.set(dut.motion_rate, motion_rate)
         ctx.set(dut.motion_phase, motion_phase)
@@ -220,6 +224,30 @@ def test_bank_control_maxima_fill_the_compact_tracks():
         (control, control, control), (line, line, line),
         (control, control, control), (line, line, line),
     ]
+
+
+def test_feedback_safety_maxima_fill_the_compact_tracks():
+    control = RezoTileDisplay.PALETTE["control"]
+    background = RezoTileDisplay.PALETTE["background"]
+    assert _render_samples(
+        page=1,
+        limit_knee=128,
+        limit_cap=128,
+        points=((587, 408), (588, 408),
+                (587, 440), (588, 440)),
+    ) == [
+        (control, control, control), (background, background, background),
+        (control, control, control), (background, background, background),
+    ]
+
+
+def test_output_dry_header_has_the_same_visible_selection_bar_as_groups():
+    selected = RezoTileDisplay.PALETTE["selected"]
+    assert _render_samples(
+        page=4,
+        selected=RezoHardwareUI.TARGET_OUTPUT_DRY_COL,
+        points=((538, 281),),
+    ) == [(selected, selected, selected)]
 
 
 def test_cross_lower_rows_have_balanced_clear_bands():

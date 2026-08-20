@@ -260,12 +260,13 @@ def test_compact_labels_use_native_control_rows():
         await sample(ctx, 160, 592)          # below RESONANCE, inside field
 
         # MATRIX uses the same native 64px row cadence for text and controls.
-        ctx.set(dut.page, 2)
+        ctx.set(dut.page, 7)
         await sample(ctx, 8 * 16, 18 * 16)   # FREQUENCY
 
         # Dynamic INPUT targets align with the value-only CV chip. Labels to
         # its left remain on the unshaded field.
         ctx.set(dut.filter_mode, 0)
+        ctx.set(dut.page, 2)
         await sample(ctx, 12 * 16, 16 * 16)  # left of the VALUE chip
         await sample(ctx, 20 * 16, 16 * 16)  # centered FB target
 

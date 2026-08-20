@@ -104,6 +104,7 @@ def test_filter_cv_matrix_modulates_all_five_destinations():
 
     async def bench(ctx):
         ctx.set(dut.filter_mode, 1)
+        ctx.set(dut.feedback, 8192)
         # IN1 raises frequency and slope, IN2 lowers resonance, IN3 raises
         # width, and IN2 raises drive. Matrix storage is destination-major.
         ctx.set(dut.filter_cv_matrix[0], 32)
@@ -119,6 +120,7 @@ def test_filter_cv_matrix_modulates_all_five_destinations():
             width=ctx.get(dut.effective_filter_width),
             slope=ctx.get(dut.effective_filter_slope),
             drive=ctx.get(dut.effective_drive),
+            feedback=ctx.get(dut.effective_feedback),
         )
 
     sim.add_testbench(bench)
@@ -129,6 +131,7 @@ def test_filter_cv_matrix_modulates_all_five_destinations():
     assert result["width"] > 12288
     assert result["slope"] > 16384
     assert result["drive"] > 16384
+    assert result["feedback"] > 0
 
 
 def test_mode_change_slews_shared_band_gains():
@@ -229,6 +232,50 @@ def test_bank_zero_wet_and_dry_paths():
     assert rail_count == 0
     assert 0.45 < half_rms / full_rms < 0.55
     assert max(abs(source - result) for source, result in dry_pairs) <= 2
+
+
+def test_filter_dry_uses_all_audio_role_inputs():
+    """FILTER DRY follows the same per-jack AUDIO/CV mix as BANK."""
+    dut = RezoCore(fs=192_000)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+    captured = {}
+
+    async def send(ctx):
+        ctx.set(dut.i.payload[0].as_value(), 2_000)
+        ctx.set(dut.i.payload[1].as_value(), 2_000)
+        ctx.set(dut.i.valid, 1)
+        await ctx.tick().until(dut.i.ready == 1)
+        ctx.set(dut.i.valid, 0)
+        ctx.set(dut.o.ready, 1)
+        values = await ctx.tick().sample(
+            dut.o.payload[0].as_value()).until(dut.o.valid == 1)
+        return values[0]
+
+    async def bench(ctx):
+        ctx.set(dut.filter_mode, 1)
+        for send_level in dut.output_sends:
+            ctx.set(send_level, 0)
+        ctx.set(dut.output_sends[dut.N_GROUPS], 16)
+
+        # As CV, IN1 is absent from DRY.
+        for _ in range(16):
+            captured["cv"] = await send(ctx)
+
+        # As AUDIO at unity, the same jack joins IN0 in the DRY mix.
+        ctx.set(dut.input_modes[1], dut.INPUT_MODE_AUDIO)
+        ctx.set(dut.input_gains[1], dut.INPUT_UNITY_POS)
+        for _ in range(224):
+            captured["audio"] = await send(ctx)
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    assert abs(captured["cv"] - 2_000) <= 2
+    # Gain changes are deliberately slewed at 64 counts per audio sample, so
+    # the second jack is only partway to unity here; nevertheless it must be
+    # clearly present in FILTER's DRY mix once its role changes to AUDIO.
+    assert captured["audio"] > captured["cv"] + 400
 
 
 def test_band5_zero_feedback_matches_known_good_drive_scale():
