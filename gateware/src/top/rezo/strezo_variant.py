@@ -51,9 +51,21 @@ from tiliqua.video import dvi
 try:
     from .encoder_acceleration import progressive_edit_level
     from .persistence import RezoStateJournal, SPIFlashTransfer
+    from .ui_common import (
+        NATIVE_FEEDBACK_SAFETY_TITLE_ROW,
+        NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
+        native_input_gain_endpoint, native_input_unity_x,
+        output_header_selection,
+    )
 except ImportError:  # top_level_cli executes this file directly.
     from encoder_acceleration import progressive_edit_level
     from persistence import RezoStateJournal, SPIFlashTransfer
+    from ui_common import (
+        NATIVE_FEEDBACK_SAFETY_TITLE_ROW,
+        NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
+        native_input_gain_endpoint, native_input_unity_x,
+        output_header_selection,
+    )
 
 
 class RezoCore(wiring.Component):
@@ -1237,7 +1249,9 @@ class RezoCore(wiring.Component):
         # applied: zero depth collapses the monitor and full depth preserves
         # the source's full displayed excursion.
         with m.If(state == state_input_limit_commit):
-            m.d.sync += self.motion_monitor.eq(motion_term >> 12)
+            # Display-only telemetry spans the full signed 6-bit lane at
+            # maximum depth. DSP modulation keeps using motion_term above.
+            m.d.sync += self.motion_monitor.eq(motion_term >> 11)
 
         with m.Switch(state):
             with m.Case(state_wait):
@@ -4100,7 +4114,8 @@ class RezoTileDisplay(wiring.Component):
             put_native(1, "FEEDBACK SOURCES", 8, 13)
             put_native(1, "BANDS", 8, 16)
             put_native(1, "FREQ:", 23, 16)
-            put_native(1, "FEEDBACK SAFETY", 8, 22)
+            put_native(1, "FEEDBACK SAFETY", 8,
+                       NATIVE_FEEDBACK_SAFETY_TITLE_ROW)
             put_native(1, "KNEE", 12, 25)
             put_native(1, "CEILING", 9, 27)
             put_native(1, "DAMPING", 9, 29)
@@ -4757,11 +4772,14 @@ class RezoTileDisplay(wiring.Component):
         content_y1 = Signal(
             unsigned(10), init=575 if self.compact_layout else 666)
         m.d.dvi += [
-            content_y0.eq(218 if self.compact_layout else 190),
+            content_y0.eq(
+                NATIVE_INPUT_PANEL_Y0 if self.compact_layout else 190),
             content_y1.eq(Mux(
                 bands_page | cross_page,
                 603 if self.compact_layout else 684,
-                575 if self.compact_layout else 666)),
+                Mux(input_page,
+                    NATIVE_INPUT_PANEL_Y1 if self.compact_layout else 666,
+                    575 if self.compact_layout else 666))),
         ]
         normal_content_panel = self.rect(
             x, y, 125 if self.compact_layout else 28, content_y0,
@@ -5040,7 +5058,8 @@ class RezoTileDisplay(wiring.Component):
         for n in range(4):
             if self.compact_layout:
                 m.d.dvi += [
-                    input_gain_ends[n].eq(304 + self.input_gains[n]),
+                    input_gain_ends[n].eq(
+                        native_input_gain_endpoint(self.input_gains[n])),
                     input_depth_ends[n].eq(
                         440 + self.cv_depths[n] +
                         (self.cv_depths[n] >> 1)),
@@ -5344,7 +5363,8 @@ class RezoTileDisplay(wiring.Component):
         input_target = input_targets[input_index]
         input_unity_coarse = RezoCore.INPUT_UNITY_POS >> 8
         input_unity_x = (
-            304 + input_unity_coarse if self.compact_layout
+            native_input_unity_x(RezoCore.INPUT_UNITY_POS)
+            if self.compact_layout
             else 326 + input_unity_coarse + (input_unity_coarse >> 2))
         input_x_value_q = Signal.like(input_x_q)
         input_local_value_q = Signal.like(input_local_y)
@@ -5820,19 +5840,20 @@ class RezoTileDisplay(wiring.Component):
                    (output_header_group == output_source) &
                    (y >= (264 if self.compact_layout else 248)) &
                    (y < (268 if self.compact_layout else 252))))) |
-                (output_page &
-                 (((output_row_active & output_header_row_target &
-                    (output_header_group == output_row) &
-                    (x >= (116 if self.compact_layout else 26)) &
-                    (x < (120 if self.compact_layout else 30)))) |
-                  (output_col_active &
-                   (y >= (280 if self.compact_layout else 264)) &
-                   (y < (284 if self.compact_layout else 268)) &
-                   ((output_header_col_target &
-                     (output_header_group == output_source)) |
-                    ((self.selected ==
-                      RezoHardwareUI.TARGET_OUTPUT_DRY_COL) &
-                     (output_source == 4))))))),
+                output_header_selection(
+                    page=output_page,
+                    row_active=output_row_active,
+                    col_active=output_col_active,
+                    row_target=output_header_row_target,
+                    col_target=output_header_col_target,
+                    selected_row=output_header_group,
+                    selected_col=output_header_group,
+                    matrix_row=output_row,
+                    matrix_col=output_source,
+                    dry_selected=(
+                        self.selected ==
+                        RezoHardwareUI.TARGET_OUTPUT_DRY_COL),
+                    x=x, y=y, compact=self.compact_layout)),
         ]
 
         for target, signals in [

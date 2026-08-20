@@ -58,9 +58,21 @@ from tiliqua.video import dvi
 try:
     from .encoder_acceleration import progressive_edit_level
     from .persistence import RezoStateJournal, SPIFlashTransfer
+    from .ui_common import (
+        NATIVE_FEEDBACK_SAFETY_TITLE_ROW,
+        NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
+        native_input_gain_endpoint, native_input_unity_x,
+        output_header_selection,
+    )
 except ImportError:  # top_level_cli executes this file directly.
     from encoder_acceleration import progressive_edit_level
     from persistence import RezoStateJournal, SPIFlashTransfer
+    from ui_common import (
+        NATIVE_FEEDBACK_SAFETY_TITLE_ROW,
+        NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
+        native_input_gain_endpoint, native_input_unity_x,
+        output_header_selection,
+    )
 
 
 class RezoCore(wiring.Component):
@@ -3498,7 +3510,8 @@ class RezoTileDisplay(wiring.Component):
             put_native(1, "FEEDBACK SOURCES", 8, 13)
             put_native(1, "BANDS", 8, 16)
             put_native(1, "FREQ:", 23, 16)
-            put_native(1, "FEEDBACK SAFETY", 8, 22)
+            put_native(1, "FEEDBACK SAFETY", 8,
+                       NATIVE_FEEDBACK_SAFETY_TITLE_ROW)
             put_native(1, "AMOUNT", compact_feedback_label_x + 1, 23)
             put_native(1, "KNEE", compact_feedback_label_x + 3, 25)
             put_native(1, "CEILING", compact_feedback_label_x, 27)
@@ -4113,10 +4126,10 @@ class RezoTileDisplay(wiring.Component):
             # INPUT starts its field immediately above IN0 MODE (y=167), but
             # below the INPUT ROUTING heading. Other pages retain y=190.
             content_y0.eq(Mux(input_page,
-                              218 if self.compact_layout else 160,
+                              NATIVE_INPUT_PANEL_Y0 if self.compact_layout else 160,
                               240 if self.compact_layout else 190)),
             content_y1.eq(Mux(filter_page | input_page,
-                              599 if self.compact_layout else 700,
+                              NATIVE_INPUT_PANEL_Y1 if self.compact_layout else 700,
                               Mux(tune_page,
                                   588 if self.compact_layout else 684,
                                   575 if self.compact_layout else 666))),
@@ -4273,10 +4286,7 @@ class RezoTileDisplay(wiring.Component):
                 # The bipolar CV lane is centred at x=440.
                 m.d.dvi += [
                     input_gain_ends[n].eq(
-                        # Keep the unsigned gain inside the 272px VALUE lane
-                        # [304, 576) without another display-domain adder. The
-                        # former 1.5x map reached x=686 at high gains.
-                        input_control_x0 + self.input_gains[n]),
+                        native_input_gain_endpoint(self.input_gains[n])),
                     input_depth_ends[n].eq(
                         440 + self.cv_depths[n] +
                         (self.cv_depths[n] >> 1)),
@@ -4899,10 +4909,10 @@ class RezoTileDisplay(wiring.Component):
                       36 if self.compact_layout else 43,
                       input_gain_end_q, 48 if self.compact_layout else 57))
         input_unity_coarse = RezoCore.INPUT_UNITY_POS >> 8
-        input_unity_x = (304 + input_unity_coarse +
-                         (input_unity_coarse >> 4)) if self.compact_layout else (
+        input_unity_x = (native_input_unity_x(RezoCore.INPUT_UNITY_POS)
+                         if self.compact_layout else (
                              326 + input_unity_coarse +
-                             (input_unity_coarse >> 2))
+                             (input_unity_coarse >> 2)))
         input_line_q0 = input_visible & (
             (input_is_cv & self.rect(
                 input_x_value_q, input_local_value_q,
@@ -5206,18 +5216,20 @@ class RezoTileDisplay(wiring.Component):
             output_header_col_target.eq(
                 (self.selected >= RezoHardwareUI.TARGET_OUTPUT_COL_BASE) &
                 (self.selected < RezoHardwareUI.TARGET_OUTPUT_COL_BASE + 4)),
-            output_header_select.eq(output_page & (
-                (output_row_active & output_header_row_target &
-                 (output_header_row == output_row) &
-                 (output_geom_x >= (116 if self.compact_layout else 26)) &
-                 (output_geom_x < (120 if self.compact_layout else 30))) |
-                (output_col_active &
-                 (output_geom_y >= (280 if self.compact_layout else 264)) &
-                 (output_geom_y < (284 if self.compact_layout else 268)) &
-                 ((output_header_col_target &
-                   (output_header_col == output_source)) |
-                  ((self.selected == RezoHardwareUI.TARGET_OUTPUT_DRY_COL) &
-                   (output_source == 4)))))),
+            output_header_select.eq(output_header_selection(
+                page=output_page,
+                row_active=output_row_active,
+                col_active=output_col_active,
+                row_target=output_header_row_target,
+                col_target=output_header_col_target,
+                selected_row=output_header_row,
+                selected_col=output_header_col,
+                matrix_row=output_row,
+                matrix_col=output_source,
+                dry_selected=(
+                    self.selected == RezoHardwareUI.TARGET_OUTPUT_DRY_COL),
+                x=output_geom_x, y=output_geom_y,
+                compact=self.compact_layout)),
         ]
 
         for target, signals in [

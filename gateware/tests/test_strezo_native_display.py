@@ -119,16 +119,29 @@ def test_standard_and_circular_targets_render_identical_native_pixels():
 
 def test_input_audio_fill_remains_inside_its_native_value_lane():
     control = RezoTileDisplay.PALETTE["control"]
-    panel = RezoTileDisplay.PALETTE["panel"]
+    background = RezoTileDisplay.PALETTE["background"]
     pixels = _render_samples(
         page=2,
         input_gains=(255,),
         input_modes=(RezoCore.INPUT_MODE_LEFT,),
-        points=((557, 257), (574, 257)),
+        points=((574, 257), (575, 257), (576, 257)),
     )
     assert pixels == [
         (control, control, control),
-        (panel, panel, panel),
+        (control, control, control),
+        (background, background, background),
+    ]
+
+
+def test_input_panel_contains_the_last_native_control_row():
+    background = RezoTileDisplay.PALETTE["background"]
+    blank = RezoTileDisplay.PALETTE["blank"]
+    assert _render_samples(
+        page=2,
+        points=((130, 598), (130, 599)),
+    ) == [
+        (background, background, background),
+        (blank, blank, blank),
     ]
 
 

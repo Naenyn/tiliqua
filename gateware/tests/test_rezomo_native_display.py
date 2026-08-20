@@ -1,6 +1,6 @@
 from amaranth.sim import Simulator
 
-from top.rezo.top import RezoCore, RezoTileDisplay
+from top.rezo.top import RezoCore, RezoHardwareUI, RezoTileDisplay
 
 
 def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
@@ -18,7 +18,7 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
                     turing_target=RezoCore.TURING_TARGET_ALL,
                     turing_start=0,
                     band_enables=(), feedback_sends=(), input_gains=(),
-                    input_modes=(), cv_targets=()):
+                    input_modes=(), cv_targets=(), selected=0):
     """Render settled pixels from the native REZOMO coordinate space."""
     dut = RezoTileDisplay(
         h_active=h_active,
@@ -48,6 +48,7 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
         ctx.set(dut.clock_depth, clock_depth)
         ctx.set(dut.turing_target, turing_target)
         ctx.set(dut.turing_start, turing_start)
+        ctx.set(dut.selected, selected)
         for index, value in enumerate(band_enables):
             ctx.set(dut.band_enables[index], value)
         for index, value in enumerate(feedback_sends):
@@ -388,10 +389,23 @@ def test_input_audio_value_fill_stays_inside_its_panel():
     pixels = _render_samples(
         page=2,
         input_gains=(255,),
-        points=((570, 260), (575, 260)),
+        points=((575, 260), (576, 260)),
     )
     assert pixels[0] == (accent, accent, accent)
     assert pixels[1] != (accent, accent, accent)
+
+
+def test_output_row_selector_uses_native_safe_square_coordinates():
+    selected = RezoTileDisplay.PALETTE["selected"]
+    blank = RezoTileDisplay.PALETTE["blank"]
+    assert _render_samples(
+        page=4,
+        selected=RezoHardwareUI.TARGET_OUTPUT_ROW_BASE,
+        points=((26, 342), (116, 342)),
+    ) == [
+        (blank, blank, blank),
+        (selected, selected, selected),
+    ]
 
 
 def test_output_send_scaling_preserves_exact_fill_endpoint():
