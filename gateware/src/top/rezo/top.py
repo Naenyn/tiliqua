@@ -2594,6 +2594,9 @@ class RezoHardwareUI(wiring.Component):
         output_edit_pending = Signal()
         output_edit_index = Signal(unsigned(5))
         output_edit_direction = Signal()
+        input_edit_pending = Signal()
+        input_edit_index = Signal(range(12))
+        input_edit_direction = Signal()
         # Header edits walk a row or column through the same single-cell
         # write path as ordinary sends. This keeps relative matrix editing
         # cheap enough for the nearly full ECP5.
@@ -2637,7 +2640,10 @@ class RezoHardwareUI(wiring.Component):
                 Mux(next_detent_acc > 0, ~edit_direction, edit_direction),
             )),
         ]
-        m.d.sync += output_edit_pending.eq(0)
+        m.d.sync += [
+            output_edit_pending.eq(0),
+            input_edit_pending.eq(0),
+        ]
         with m.If(output_relative_active):
             m.d.sync += [
                 output_edit_pending.eq(1),
@@ -3322,29 +3328,13 @@ class RezoHardwareUI(wiring.Component):
                         self.clamp_add(m, damp_mode, 1, 0, 4)
                     with m.Else():
                         self.clamp_add(m, damp_mode, -1, 0, 4)
-                for n in range(4):
-                    with m.Elif(selected == self.TARGET_INPUT_BASE + n * 3):
-                        m.d.sync += input_modes[n].eq(~input_modes[n])
-                    with m.Elif(selected == self.TARGET_INPUT_BASE + n * 3 + 1):
-                        with m.If(input_modes[n] == RezoCore.INPUT_MODE_AUDIO):
-                            input_gain_coarse = input_gains[n][8:16]
-                            with m.If(edit_direction):
-                                self.clamp_add(m, input_gain_coarse, 1, 0, 255)
-                            with m.Else():
-                                self.clamp_add(m, input_gain_coarse, -1, 0, 255)
-                        with m.Else():
-                            with m.If(edit_direction):
-                                m.d.sync += cv_targets[n].eq(Mux(cv_targets[n] == RezoCore.CV_TARGET_MAX, 0,
-                                                                 cv_targets[n] + 1))
-                            with m.Else():
-                                m.d.sync += cv_targets[n].eq(Mux(cv_targets[n] == 0, RezoCore.CV_TARGET_MAX,
-                                                                 cv_targets[n] - 1))
-                    with m.Elif(selected == self.TARGET_INPUT_BASE + n * 3 + 2):
-                        cv_depth_coarse = cv_depths[n][8:16].as_signed()
-                        with m.If(edit_direction):
-                            self.clamp_add(m, cv_depth_coarse, 1, -128, 127)
-                        with m.Else():
-                            self.clamp_add(m, cv_depth_coarse, -1, -128, 127)
+                with m.Elif((selected >= self.TARGET_INPUT_BASE) &
+                            (selected < self.TARGET_INPUT_BASE + 12)):
+                    m.d.sync += [
+                        input_edit_pending.eq(1),
+                        input_edit_index.eq(selected - self.TARGET_INPUT_BASE),
+                        input_edit_direction.eq(edit_direction),
+                    ]
                 with m.Elif((selected >= self.TARGET_GROUP_BASE) &
                             (selected < self.TARGET_GROUP_BASE + RezoCore.N_BANDS)):
                     bank_group_index = Array(bank_group_indices)[
@@ -3373,6 +3363,34 @@ class RezoHardwareUI(wiring.Component):
                 self.clamp_add(m, output_edit_send, 1, 0, 16)
             with m.Else():
                 self.clamp_add(m, output_edit_send, -1, 0, 16)
+
+        with m.If(input_edit_pending):
+            for n in range(4):
+                with m.If(input_edit_index == n * 3):
+                    m.d.sync += input_modes[n].eq(~input_modes[n])
+                with m.Elif(input_edit_index == n * 3 + 1):
+                    with m.If(input_modes[n] == RezoCore.INPUT_MODE_AUDIO):
+                        input_gain_coarse = input_gains[n][8:16]
+                        with m.If(input_edit_direction):
+                            self.clamp_add(m, input_gain_coarse, 1, 0, 255)
+                        with m.Else():
+                            self.clamp_add(m, input_gain_coarse, -1, 0, 255)
+                    with m.Else():
+                        with m.If(input_edit_direction):
+                            m.d.sync += cv_targets[n].eq(Mux(
+                                cv_targets[n] == RezoCore.CV_TARGET_MAX,
+                                0, cv_targets[n] + 1))
+                        with m.Else():
+                            m.d.sync += cv_targets[n].eq(Mux(
+                                cv_targets[n] == 0,
+                                RezoCore.CV_TARGET_MAX,
+                                cv_targets[n] - 1))
+                with m.Elif(input_edit_index == n * 3 + 2):
+                    cv_depth_coarse = cv_depths[n][8:16].as_signed()
+                    with m.If(input_edit_direction):
+                        self.clamp_add(m, cv_depth_coarse, 1, -128, 127)
+                    with m.Else():
+                        self.clamp_add(m, cv_depth_coarse, -1, -128, 127)
 
         # CLOCK controls are disjoint from every legacy target. Keeping their
         # edit decoders parallel avoids lengthening the already timing-critical
@@ -4406,15 +4424,22 @@ class RezoTileDisplay(wiring.Component):
                 attrs={"ram_style": "block"})
             compact_fader_x_rport = compact_fader_x_mem.read_port(
                 domain="dvi")
+            compact_fader_prefetch_x = Signal(range(self.PANEL_W))
             compact_fader_lookup_x = Signal(range(self.PANEL_W))
+            compact_fader_data_q = Signal(unsigned(9))
             m.d.comb += [
+                compact_fader_prefetch_x.eq(Mux(
+                    x < self.PANEL_W - 1, x + 1, 0)),
                 compact_fader_lookup_x.eq(Mux(
-                    tune_page & (x < self.PANEL_W - 21), x + 21,
-                    Mux(x < self.PANEL_W, x, 0))),
+                    tune_page &
+                    (compact_fader_prefetch_x < self.PANEL_W - 21),
+                    compact_fader_prefetch_x + 21,
+                    compact_fader_prefetch_x)),
                 compact_fader_x_rport.addr.eq(compact_fader_lookup_x),
             ]
-            compact_fader_threshold = compact_fader_x_rport.data[:8]
-            compact_fader_x_valid = compact_fader_x_rport.data[8]
+            m.d.dvi += compact_fader_data_q.eq(compact_fader_x_rport.data)
+            compact_fader_threshold = compact_fader_data_q[:8]
+            compact_fader_x_valid = compact_fader_data_q[8]
 
         page_titles = ("BANK", "FEEDBACK", "INPUT", "GROUPS", "OUTPUT",
                        "OPTIONS", "BANDS", "CLOCK")
