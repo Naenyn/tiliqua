@@ -517,3 +517,22 @@ Collected copies live in `build/rezo-family-release-0defa764/`. Retain each
 seed with its corresponding synthesized netlist: a seed is reproducible for
 the same netlist, toolchain, constraints, and router options, but is not a
 portable timing guarantee after RTL or toolchain changes.
+
+## 2026-08-20 shared-page geometry checkpoint
+
+Standard-display archives were rebuilt from source commit `ccd8a63d` after
+moving common INPUT, OUTPUT, and FEEDBACK geometry into `ui_common.py`. The
+same checkpoint also scales STREZO's display-only motion monitor across the
+full bipolar DEPTH lane; its audio modulation path is unchanged.
+
+| Target | Seed | LUT4 / COMB | DVI5X / AUDIO / SYNC / DVI MHz | Archive SHA-256 |
+|---|---:|---|---|---|
+| REZO standard | 9 | 20,456 / 24,052 | 405.02 / 77.10 / 60.65 / 78.91 | `02dca67ca9fb538ae2d4f2534773c37108671e73588055ee248d6e27f55c0f8a` |
+| REZOMO standard | 9 | 20,674 / 23,946 | 394.63 / 73.56 / 64.70 / 81.94 | `1ad8abf3281e3f3de371be5e1f5c74daa72e3d537626413475ce5c8e706554b8` |
+| STREZO standard | 4 | 19,824 / 23,058 | 440.53 / 73.20 / 62.32 / 81.83 | `73a33e59e2631c894d617eb548f71e07295dae19a6e689e55cd6b24b5d638e36` |
+
+All clocks pass nominal timing. REZO's 60.65 MHz sync result is a 1.08% margin,
+slightly below the conservative 1.25% release gate; its independently clocked
+video paths retain 9.10% DVI5X and 6.28% DVI margin. Seeds 8 and 7 failed sync,
+so seed 9 is retained as the measured standard default for this netlist.
+REZOMO seeds 3 and 4 failed DVI5X before seed 9 passed with margin.
