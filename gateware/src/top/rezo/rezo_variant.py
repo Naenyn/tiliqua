@@ -59,19 +59,21 @@ try:
     from .encoder_acceleration import progressive_edit_level
     from .persistence import RezoStateJournal, SPIFlashTransfer
     from .ui_common import (
-        NATIVE_FEEDBACK_SAFETY_TITLE_ROW,
+        NATIVE_FEEDBACK_AMOUNT_Y0, NATIVE_FEEDBACK_CEILING_Y0,
+        NATIVE_FEEDBACK_KNEE_Y0,
         NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
         native_input_gain_endpoint, native_input_unity_x,
-        output_header_selection,
+        output_header_selection, put_native_feedback_labels,
     )
 except ImportError:  # top_level_cli executes this file directly.
     from encoder_acceleration import progressive_edit_level
     from persistence import RezoStateJournal, SPIFlashTransfer
     from ui_common import (
-        NATIVE_FEEDBACK_SAFETY_TITLE_ROW,
+        NATIVE_FEEDBACK_AMOUNT_Y0, NATIVE_FEEDBACK_CEILING_Y0,
+        NATIVE_FEEDBACK_KNEE_Y0,
         NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
         native_input_gain_endpoint, native_input_unity_x,
-        output_header_selection,
+        output_header_selection, put_native_feedback_labels,
     )
 
 
@@ -3481,7 +3483,6 @@ class RezoTileDisplay(wiring.Component):
         # FEEDBACK safety labels share one right edge. Their value controls
         # begin seven native pixels later, after the compact geometry lookup.
         # This keeps the two faders and DAMPING chip on one physical x axis.
-        compact_feedback_label_x = 9
         if self.compact_layout:
             # The compact UI is authored natively for the centered 508px
             # square.  Text and geometry therefore share one coordinate
@@ -3507,15 +3508,7 @@ class RezoTileDisplay(wiring.Component):
             put_native(0, "FEEDBACK", 9, compact_main_control_text_rows[2])
 
             # FEEDBACK.
-            put_native(1, "FEEDBACK SOURCES", 8, 13)
-            put_native(1, "BANDS", 8, 16)
-            put_native(1, "FREQ:", 23, 16)
-            put_native(1, "FEEDBACK SAFETY", 8,
-                       NATIVE_FEEDBACK_SAFETY_TITLE_ROW)
-            put_native(1, "AMOUNT", compact_feedback_label_x + 1, 23)
-            put_native(1, "KNEE", compact_feedback_label_x + 3, 25)
-            put_native(1, "CEILING", compact_feedback_label_x, 27)
-            put_native(1, "DAMPING", compact_feedback_label_x, 29)
+            put_native_feedback_labels(put_native)
 
             # INPUT uses four identical groups. MODE, VALUE and DEPTH are
             # plain labels; only the editable value beside each label owns a
@@ -5402,18 +5395,18 @@ class RezoTileDisplay(wiring.Component):
             tune_feedback_fill = (
                 tune_page_q & compact_fader_x_valid &
                 (compact_fader_threshold <= tune_feedback_q) &
-                (tune_y_q >= 368 + tune_y_shift) &
-                (tune_y_q < 384 + tune_y_shift))
+                (tune_y_q >= NATIVE_FEEDBACK_AMOUNT_Y0 + tune_y_shift) &
+                (tune_y_q < NATIVE_FEEDBACK_AMOUNT_Y0 + 16 + tune_y_shift))
             dry_fill = (
                 tune_page_q & compact_fader_x_valid &
                 (compact_fader_threshold <= tune_knee_q) &
-                (tune_y_q >= 400 + tune_y_shift) &
-                (tune_y_q < 416 + tune_y_shift))
+                (tune_y_q >= NATIVE_FEEDBACK_KNEE_Y0 + tune_y_shift) &
+                (tune_y_q < NATIVE_FEEDBACK_KNEE_Y0 + 16 + tune_y_shift))
             tune_cap_fill = (
                 tune_page_q & compact_fader_x_valid &
                 (compact_fader_threshold <= tune_cap_q) &
-                (tune_y_q >= 432 + tune_y_shift) &
-                (tune_y_q < 448 + tune_y_shift))
+                (tune_y_q >= NATIVE_FEEDBACK_CEILING_Y0 + tune_y_shift) &
+                (tune_y_q < NATIVE_FEEDBACK_CEILING_Y0 + 16 + tune_y_shift))
         else:
             tune_feedback_fill = tune_page & self.rect(
                 x, y, tune_fill_x0, 380,
@@ -5428,16 +5421,19 @@ class RezoTileDisplay(wiring.Component):
                       (self.selected == RezoHardwareUI.TARGET_LIMIT_KNEE)) & Mux(
             self.compact_layout,
             self.outline(x, y, tune_panel_x0,
-                         396 + tune_y_shift, tune_panel_x1,
-                         420 + tune_y_shift, t=3),
+                         NATIVE_FEEDBACK_KNEE_Y0 - 4 + tune_y_shift,
+                         tune_panel_x1,
+                         NATIVE_FEEDBACK_KNEE_Y0 + 20 + tune_y_shift, t=3),
             self.rect(x, y, 144, 408, 148, 432))
         tune_feedback_select = (
             tune_page &
             (self.selected == RezoHardwareUI.TARGET_FEEDBACK) & Mux(
                 self.compact_layout,
                 self.outline(x, y, tune_panel_x0,
-                             364 + tune_y_shift, tune_panel_x1,
-                             388 + tune_y_shift, t=3),
+                             NATIVE_FEEDBACK_AMOUNT_Y0 - 4 + tune_y_shift,
+                             tune_panel_x1,
+                             NATIVE_FEEDBACK_AMOUNT_Y0 + 20 + tune_y_shift,
+                             t=3),
                 self.rect(x, y, 144, 376, 148, 400)))
         res_select = ((bank_page & (self.selected == RezoHardwareUI.TARGET_RESONANCE)) |
                       (tune_page & (self.selected == RezoHardwareUI.TARGET_LIMIT_CAP))) & (
@@ -5448,8 +5444,10 @@ class RezoTileDisplay(wiring.Component):
             (tune_page & Mux(
                 self.compact_layout,
                 self.outline(x, y, tune_panel_x0,
-                             428 + tune_y_shift, tune_panel_x1,
-                             452 + tune_y_shift, t=3),
+                             NATIVE_FEEDBACK_CEILING_Y0 - 4 + tune_y_shift,
+                             tune_panel_x1,
+                             NATIVE_FEEDBACK_CEILING_Y0 + 20 + tune_y_shift,
+                             t=3),
                 self.rect(x, y, 144, 456, 148, 480))))
         fb_select = (
             bank_page &

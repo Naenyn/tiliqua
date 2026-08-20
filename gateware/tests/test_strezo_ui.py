@@ -61,6 +61,8 @@ def test_ui_shared_feedback_toggle_path():
             endpoint = await _turn(ctx, dut, endpoint, 1)
         assert ctx.get(dut.selected) == dut.TARGET_FEEDBACK_SEND_BASE + 9
         endpoint = await _turn(ctx, dut, endpoint, 1)
+        assert ctx.get(dut.selected) == dut.TARGET_FEEDBACK
+        endpoint = await _turn(ctx, dut, endpoint, 1)
         assert ctx.get(dut.selected) == dut.TARGET_LIMIT_KNEE
 
     sim.add_testbench(bench)

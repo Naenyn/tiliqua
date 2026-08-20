@@ -254,6 +254,19 @@ def test_feedback_safety_maxima_fill_the_compact_tracks():
     ]
 
 
+def test_feedback_amount_maximum_fills_the_compact_track():
+    control = RezoTileDisplay.PALETTE["control"]
+    background = RezoTileDisplay.PALETTE["background"]
+    assert _render_samples(
+        page=1,
+        feedback=128,
+        points=((587, 344), (588, 344)),
+    ) == [
+        (control, control, control),
+        (background, background, background),
+    ]
+
+
 def test_output_dry_header_has_the_same_visible_selection_bar_as_groups():
     selected = RezoTileDisplay.PALETTE["selected"]
     assert _render_samples(

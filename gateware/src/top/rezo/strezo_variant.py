@@ -52,19 +52,21 @@ try:
     from .encoder_acceleration import progressive_edit_level
     from .persistence import RezoStateJournal, SPIFlashTransfer
     from .ui_common import (
-        NATIVE_FEEDBACK_SAFETY_TITLE_ROW,
+        NATIVE_FEEDBACK_AMOUNT_Y0, NATIVE_FEEDBACK_CEILING_Y0,
+        NATIVE_FEEDBACK_KNEE_Y0,
         NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
         native_input_gain_endpoint, native_input_unity_x,
-        output_header_selection,
+        output_header_selection, put_native_feedback_labels,
     )
 except ImportError:  # top_level_cli executes this file directly.
     from encoder_acceleration import progressive_edit_level
     from persistence import RezoStateJournal, SPIFlashTransfer
     from ui_common import (
-        NATIVE_FEEDBACK_SAFETY_TITLE_ROW,
+        NATIVE_FEEDBACK_AMOUNT_Y0, NATIVE_FEEDBACK_CEILING_Y0,
+        NATIVE_FEEDBACK_KNEE_Y0,
         NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
         native_input_gain_endpoint, native_input_unity_x,
-        output_header_selection,
+        output_header_selection, put_native_feedback_labels,
     )
 
 
@@ -2485,6 +2487,7 @@ class RezoHardwareUI(wiring.Component):
                 (selected >= self.TARGET_FEEDBACK_SEND_BASE) &
                 (selected < self.TARGET_FEEDBACK_SEND_BASE + RezoCore.N_BANDS)),
             tune_target_visible.eq((selected == self.TARGET_PAGE) |
+                                   (selected == self.TARGET_FEEDBACK) |
                                    ((selected >= self.TARGET_LIMIT_KNEE) &
                                     (selected <= self.TARGET_DAMP)) |
                                    feedback_send_target),
@@ -2604,6 +2607,8 @@ class RezoHardwareUI(wiring.Component):
                     m.d.comb += next_selected.eq(self.TARGET_PAGE)
                 with m.Elif(selected ==
                             self.TARGET_FEEDBACK_SEND_BASE + RezoCore.N_BANDS - 1):
+                    m.d.comb += next_selected.eq(self.TARGET_FEEDBACK)
+                with m.Elif(selected == self.TARGET_FEEDBACK):
                     m.d.comb += next_selected.eq(self.TARGET_LIMIT_KNEE)
                 with m.Else():
                     m.d.comb += next_selected.eq(selected + 1)
@@ -2615,6 +2620,8 @@ class RezoHardwareUI(wiring.Component):
                 with m.Elif(selected == self.TARGET_FEEDBACK_SEND_BASE):
                     m.d.comb += next_selected.eq(self.TARGET_PAGE)
                 with m.Elif(selected == self.TARGET_LIMIT_KNEE):
+                    m.d.comb += next_selected.eq(self.TARGET_FEEDBACK)
+                with m.Elif(selected == self.TARGET_FEEDBACK):
                     m.d.comb += next_selected.eq(
                         self.TARGET_FEEDBACK_SEND_BASE + RezoCore.N_BANDS - 1)
                 with m.Else():
@@ -4111,14 +4118,7 @@ class RezoTileDisplay(wiring.Component):
             put_native(0, "RESONANCE", 8, compact_main_control_text_rows[1])
             put_native(0, "FEEDBACK", 9, compact_main_control_text_rows[2])
 
-            put_native(1, "FEEDBACK SOURCES", 8, 13)
-            put_native(1, "BANDS", 8, 16)
-            put_native(1, "FREQ:", 23, 16)
-            put_native(1, "FEEDBACK SAFETY", 8,
-                       NATIVE_FEEDBACK_SAFETY_TITLE_ROW)
-            put_native(1, "KNEE", 12, 25)
-            put_native(1, "CEILING", 9, 27)
-            put_native(1, "DAMPING", 9, 29)
+            put_native_feedback_labels(put_native)
 
             put_native(2, "INPUT ROUTING", 8, 12)
             for n, (mode_row, value_row, depth_row) in enumerate(
@@ -6016,6 +6016,9 @@ class RezoTileDisplay(wiring.Component):
                        cross_track_x0 - 2, cross_y0 + 16)))
         tune_fill_x0 = 268 if self.compact_layout else 156
         tune_fill_scale_shift = 0 if self.compact_layout else 2
+        compact_tune_feedback_end = (
+            tune_fill_x0 + (self.feedback << 1) +
+            (self.feedback >> 1))
         # KNEE and CEILING are user-facing 16..128 controls.  The old compact
         # map advanced only 1.125 pixels per step, so the valid maximum stopped
         # near the middle of the 320-pixel lane.  A 2.5x shift/add maps 128 to
@@ -6026,28 +6029,50 @@ class RezoTileDisplay(wiring.Component):
         compact_tune_cap_end = (
             tune_fill_x0 + (self.limit_cap << 1) +
             (self.limit_cap >> 1))
+        tune_feedback_fill = tune_page & self.rect(
+            x, y, tune_fill_x0,
+            NATIVE_FEEDBACK_AMOUNT_Y0 if self.compact_layout else 380,
+            (compact_tune_feedback_end
+             if self.compact_layout else
+             124 + (self.feedback << tune_fill_scale_shift)),
+            (NATIVE_FEEDBACK_AMOUNT_Y0 + 16
+             if self.compact_layout else 396))
+        tune_feedback_select = (
+            tune_page &
+            (self.selected == RezoHardwareUI.TARGET_FEEDBACK) &
+            self.outline(x, y,
+                         264 if self.compact_layout else 144,
+                         (NATIVE_FEEDBACK_AMOUNT_Y0 - 4
+                          if self.compact_layout else 376),
+                         592 if self.compact_layout else 148,
+                         (NATIVE_FEEDBACK_AMOUNT_Y0 + 20
+                          if self.compact_layout else 400), t=3))
         dry_fill = tune_page & self.rect(
             x, y, tune_fill_x0,
-            400 if self.compact_layout else 412,
+            NATIVE_FEEDBACK_KNEE_Y0 if self.compact_layout else 412,
             (compact_tune_knee_end
              if self.compact_layout else
              124 + (self.limit_knee << tune_fill_scale_shift)),
-            416 if self.compact_layout else 428)
+            (NATIVE_FEEDBACK_KNEE_Y0 + 16
+             if self.compact_layout else 428))
         dry_select = (
             tune_page &
             (self.selected == RezoHardwareUI.TARGET_LIMIT_KNEE) &
             self.outline(x, y,
                          264 if self.compact_layout else 144,
-                         396 if self.compact_layout else 408,
+                         (NATIVE_FEEDBACK_KNEE_Y0 - 4
+                          if self.compact_layout else 408),
                          592 if self.compact_layout else 148,
-                         420 if self.compact_layout else 432, t=3))
+                         (NATIVE_FEEDBACK_KNEE_Y0 + 20
+                          if self.compact_layout else 432), t=3))
         tune_cap_fill = tune_page & self.rect(
             x, y, tune_fill_x0,
-            432 if self.compact_layout else 460,
+            NATIVE_FEEDBACK_CEILING_Y0 if self.compact_layout else 460,
             (compact_tune_cap_end
              if self.compact_layout else
              124 + (self.limit_cap << tune_fill_scale_shift)),
-            448 if self.compact_layout else 476)
+            (NATIVE_FEEDBACK_CEILING_Y0 + 16
+             if self.compact_layout else 476))
         res_select = (
             (bank_page &
              (self.selected == RezoHardwareUI.TARGET_RESONANCE) &
@@ -6058,9 +6083,11 @@ class RezoTileDisplay(wiring.Component):
              (self.selected == RezoHardwareUI.TARGET_LIMIT_CAP) &
              self.outline(x, y,
                           264 if self.compact_layout else 144,
-                          428 if self.compact_layout else 456,
+                          (NATIVE_FEEDBACK_CEILING_Y0 - 4
+                           if self.compact_layout else 456),
                           592 if self.compact_layout else 148,
-                          452 if self.compact_layout else 480, t=3)))
+                          (NATIVE_FEEDBACK_CEILING_Y0 + 20
+                           if self.compact_layout else 480), t=3)))
         fb_select = (bank_page &
                      (self.selected == RezoHardwareUI.TARGET_FEEDBACK) &
                      self.outline(x, y, bank_panel_x0,
@@ -6085,8 +6112,8 @@ class RezoTileDisplay(wiring.Component):
         page_selected_q = Signal()
         m.d.dvi += [
             bank_selected_q.eq(preset_select | preset_group_select | band_select_q0 |
-                               drive_select | dry_select | res_select | fb_select |
-                               damp_select),
+                               drive_select | tune_feedback_select |
+                               dry_select | res_select | fb_select | damp_select),
             input_selected_q.eq(input_select_q0),
             routing_selected_q.eq(group_select_q0 | output_select_q0 |
                                   output_side_select | cross_header_select_q0),
@@ -6116,7 +6143,8 @@ class RezoTileDisplay(wiring.Component):
         geometry_panel_q0 = Signal()
         m.d.dvi += [
             geometry_fill_q0.eq(band_fill | band_marker | bank_control_fill |
-                                same_fill | cross_fill | dry_fill |
+                                same_fill | cross_fill | tune_feedback_fill |
+                                dry_fill |
                                 tune_cap_fill | motion_depth_fill),
             geometry_line_q0.eq(
                 band_zero_q0 | bank_control_mod_marker | border),
