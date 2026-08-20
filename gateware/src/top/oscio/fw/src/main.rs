@@ -554,7 +554,10 @@ fn main() -> ! {
             ];
             for ch in 0..4usize {
                 scope.set_yscale_index(ch, yscale[ch].to_hw_index());
-                scope.set_ypos_px(ch, ypos[ch] * (sppd / 4) as i16);
+                // Plot coordinates grow downward, while the user-facing
+                // offset follows the normal graph convention: positive is
+                // up and negative is down.
+                scope.set_ypos_px(ch, -(ypos[ch] * (sppd / 4) as i16));
             }
             scope.set_channel_mask([
                 vis[0] == ChannelVis::On,
