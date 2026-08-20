@@ -948,3 +948,34 @@ The guiding constraint is to keep REZO musically interesting and visually
 coherent while maintaining 720p60 HDMI timing and substantial modulation
 capacity. Optimize shared machinery before adding parallel copies of feature
 logic.
+
+## Standard-display hardware checkpoint (2026-08-20)
+
+Commit `f612bab9` is the hardware checkpoint for the first post-release bug
+pass. It fixes STREZO CEILING/KNEE display scaling, OUTPUT DRY selection, and
+BANDS preset centering. It also expands REZO FILTER mode with shared editable
+band frequencies, per-input AUDIO/CV roles, dry routing, and an independent
+feedback amount. The focused regression suites pass.
+
+All three standard 1280x720 builds completed successfully with their target's
+checked-in default synthesis and placement recipe, and were flashed and booted
+in the following stable slot assignment:
+
+| Target | Default seed | Archive | Slot | Archive SHA-256 | `top.bit` SHA-256 |
+|---|---:|---|---:|---|---|
+| REZO | 4 | `build/rezo-r5/rezo-f612bab9-r5.tar.gz` | 2 | `f14af9ddb32078a8f99081c7482e4a0ee4ad6502c4aecc5030c551a38c6d9df2` | `2e8464a6fcc253e7624c07733482d232cbbaf8259f3f257b06e9ba958e3db078` |
+| REZOMO | 9 | `build/rezomo-r5/rezomo-f612bab9-r5.tar.gz` | 3 | `e69b336bc589e90bfdfb6bf70ec37fd7f3e5089cf0a1f8ded2e16fab8c344d9f` | `b63b54ad828900a6719f34d83afb503eee7f0c31f1c79c4a13f30755820c7717` |
+| STREZO | 7 | `build/strezo-r5/strezo-f612bab9-r5.tar.gz` | 4 | `103f9b2d088873ebae8093e35d3f22cd35de085de6d3a6360b23ee073fe2dc22` | `4ad8c30297dfff78d8c72304bf3ed49a8233e194ea45925ed1a79e2f76609de3` |
+
+The timing summaries recorded by the successful routes were:
+
+| Target | DVI5X | AUDIO | SYNC | DVI |
+|---|---:|---:|---:|---:|
+| REZO | 387.90 MHz | 71.60 MHz | 61.21 MHz | 77.14 MHz |
+| REZOMO | 414.42 MHz | 76.28 MHz | 63.15 MHz | 79.77 MHz |
+| STREZO | 394.79 MHz | 74.15 MHz | 63.01 MHz | 79.16 MHz |
+
+These are deliberately standard-display builds only. No circular target was
+rebuilt for this checkpoint. Continue to use slots 2, 3, and 4 for REZO,
+REZOMO, and STREZO respectively unless the user explicitly changes the
+assignment.
