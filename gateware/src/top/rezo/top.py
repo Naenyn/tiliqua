@@ -60,7 +60,9 @@ try:
     from .persistence import RezoStateJournal, SPIFlashTransfer
     from .ui_common import (
         NATIVE_FEEDBACK_AMOUNT_Y0, NATIVE_FEEDBACK_CEILING_Y0,
+        NATIVE_FEEDBACK_DAMPING_CHIP_X0, NATIVE_FEEDBACK_DAMPING_CHIP_X1,
         NATIVE_FEEDBACK_DAMPING_CHIP_Y0, NATIVE_FEEDBACK_DAMPING_CHIP_Y1,
+        NATIVE_FEEDBACK_DAMPING_TEXT_COL, NATIVE_FEEDBACK_DAMPING_TEXT_ROW,
         NATIVE_FEEDBACK_KNEE_Y0,
         NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
         native_input_gain_endpoint, native_input_unity_x,
@@ -72,7 +74,9 @@ except ImportError:  # top_level_cli executes this file directly.
     from persistence import RezoStateJournal, SPIFlashTransfer
     from ui_common import (
         NATIVE_FEEDBACK_AMOUNT_Y0, NATIVE_FEEDBACK_CEILING_Y0,
+        NATIVE_FEEDBACK_DAMPING_CHIP_X0, NATIVE_FEEDBACK_DAMPING_CHIP_X1,
         NATIVE_FEEDBACK_DAMPING_CHIP_Y0, NATIVE_FEEDBACK_DAMPING_CHIP_Y1,
+        NATIVE_FEEDBACK_DAMPING_TEXT_COL, NATIVE_FEEDBACK_DAMPING_TEXT_ROW,
         NATIVE_FEEDBACK_KNEE_Y0,
         NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
         native_input_gain_endpoint, native_input_unity_x,
@@ -4983,7 +4987,10 @@ class RezoTileDisplay(wiring.Component):
                 with m.Case(172 + pos):
                     m.d.comb += [
                         writer_address.eq(
-                            writer_cell(1, 29, 17 + pos, 32, 12 + pos)),
+                            writer_cell(
+                                1, NATIVE_FEEDBACK_DAMPING_TEXT_ROW,
+                                NATIVE_FEEDBACK_DAMPING_TEXT_COL + pos,
+                                32, 12 + pos)),
                         writer_char.eq(damp_chars[pos][damp_name_index]),
                     ]
             for pos in range(7):
@@ -5314,9 +5321,11 @@ class RezoTileDisplay(wiring.Component):
                 476 if self.compact_layout else 412,
                 368 if self.compact_layout else 336, t=3)
         damp_chip = tune_page & self.rect(
-            x, y, 264 if self.compact_layout else 156,
+            x, y, (NATIVE_FEEDBACK_DAMPING_CHIP_X0
+                   if self.compact_layout else 156),
             NATIVE_FEEDBACK_DAMPING_CHIP_Y0 if self.compact_layout else 504,
-            360 if self.compact_layout else 316,
+            (NATIVE_FEEDBACK_DAMPING_CHIP_X1
+             if self.compact_layout else 316),
             NATIVE_FEEDBACK_DAMPING_CHIP_Y1 if self.compact_layout else 536)
         damp_select = tune_page & (
             self.selected == RezoHardwareUI.TARGET_DAMP) & self.outline(
