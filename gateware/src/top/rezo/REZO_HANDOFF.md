@@ -9,6 +9,34 @@ before changing the design. The current operator guides are
 [`REZOMO_USER_GUIDE.md`](REZOMO_USER_GUIDE.md), and
 [`STREZO_USER_GUIDE.md`](STREZO_USER_GUIDE.md).
 
+## 2026-08-21 production-helper audit and consolidation stop point
+
+The follow-up production audit tested the safest remaining exact helper: the
+three journal `_header_prefix_byte` methods were temporarily moved into a
+shared `JournalHeaderMixin` in `persistence_common.py`. This was a pure
+elaboration-time refactor with no intended RTL change.
+
+The experiment passed the 29 persistence tests and the complete family suite
+(`195 passed, 79 warnings in 795.37s`). Standard-only seed-8 builds also passed
+all clocks. Nevertheless, REZOMO synthesis increased from the qualified
+20,466 LUT4 to 20,600 LUT4, a cost of 134 LUT4, and DVI5X fell from 439.75 MHz
+to 376.36 MHz—only about 1.35% above its 371.33 MHz requirement. The helper
+extraction was therefore rejected and all four product/common source files
+were restored byte-for-byte to commit `2a8c1525`.
+
+The experimental dirty-source archives named with the prior HEAD tag
+(`rezo-2a8c1525-r5.tar.gz`, `rezomo-2a8c1525-r5.tar.gz`, and
+`strezo-2a8c1525-r5.tar.gz`) are not qualified release artifacts and were not
+flashed. No circular target was built.
+
+This establishes the practical stopping point for source consolidation. The
+remaining exact helpers (`gray_decode`, `clamp_add`, `apply_preset`, and small
+display geometry/text methods) save only tens of source lines while directly
+or pervasively constructing packing-sensitive RTL. Do not extract them merely
+for deduplication. Revisit production consolidation only when it supports a
+specific functional change or measurable capacity optimization; otherwise
+prioritize features, hardware fixes, and targeted REZOMO optimization.
+
 ## 2026-08-21 exact UI/display contract consolidation
 
 This checkpoint completes the exact-body test consolidation audit. It changes

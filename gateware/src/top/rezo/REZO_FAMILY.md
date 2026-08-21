@@ -83,6 +83,22 @@ should be extracted in small, independently tested steps:
 After each extraction, run every affected variant suite and compare synthesized
 resource and timing results before deleting duplicated code.
 
+### Production-helper audit stop point (2026-08-21)
+
+The remaining production similarities were audited after exact test
+consolidation. A trial extraction of the identical journal header-byte encoder
+passed all 195 tests and all standard seed-8 timing gates, but increased REZOMO
+from 20,466 to 20,600 LUT4 and reduced DVI5X from 439.75 to 376.36 MHz. The
+experiment was reverted completely; product source is byte-identical to commit
+`2a8c1525`.
+
+This result closes general-purpose consolidation work. The remaining UI and
+display helpers produce RTL at many call sites, offer little source reduction,
+and are not worth risking capacity or timing. Future extraction should require
+a concrete feature or measured optimization benefit, not deduplication alone.
+Only standard targets were used for the rejected experiment, and nothing was
+flashed.
+
 ### Exact UI/display contract consolidation checkpoint (2026-08-21)
 
 `test_rezo_family_ui_contract.py` and
