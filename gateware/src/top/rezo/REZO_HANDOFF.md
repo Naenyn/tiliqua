@@ -1,13 +1,306 @@
-# REZOMO development handoff
+# REZO family development handoff
 
-This file is the starting context for the next Codex task working on REZOMO.
-Read
-it together with [`BUILD_PERFORMANCE.md`](BUILD_PERFORMANCE.md) and
+This file is the starting context for the next Codex task working on the
+unified REZO, REZOMO, and STREZO family. Read it together with
+[`BUILD_PERFORMANCE.md`](BUILD_PERFORMANCE.md) and
 [`Rezo_Feature_Ideas_By_Complexity.md`](Rezo_Feature_Ideas_By_Complexity.md)
-before changing the design. [`REZOMO_USER_GUIDE.md`](REZOMO_USER_GUIDE.md) is
-the complete operator documentation for this clocked variant;
-[`REZO_USER_GUIDE.md`](REZO_USER_GUIDE.md) documents the original BANK/FILTER
-bitstream.
+before changing the design. The current operator guides are
+[`REZO_USER_GUIDE.md`](REZO_USER_GUIDE.md),
+[`REZOMO_USER_GUIDE.md`](REZOMO_USER_GUIDE.md), and
+[`STREZO_USER_GUIDE.md`](STREZO_USER_GUIDE.md).
+
+## 2026-08-21 fixed-left value-chip implementation
+
+This checkpoint supersedes the exact-centering investigation immediately
+below. Hardware-accurate optical centering was rejected after synthesis showed
+that its per-value pixel translation pushed REZOMO beyond capacity. The family
+now uses the intentionally cheaper rule the user originally proposed: every
+changing value begins at one fixed chip-relative text-cell origin and shorter
+values carry trailing blanks to clear the remainder of the slot.
+
+- Applied fixed-left strings and writer origins across REZO, REZOMO, and
+  STREZO, including BANK/FILTER mode, INPUT mode/target, damping, OPTIONS,
+  BANDS layout/frequency, STREZO stereo/motion values, and every REZOMO CLOCK
+  value. Removed the temporary font-ink centering helper, translated lookup,
+  offset registry, shifter, and their focused tests.
+- REZOMO initially still packed at 24,365 `TRELLIS_COMB` cells, 77 beyond the
+  24,288-cell device. Left justification itself did not add a dynamic shifter;
+  moving blanks from the beginnings to the ends of many CLOCK spellings changed
+  constant-mux truth-table sharing and cost LUTs. CLOCK strings now live in one
+  synchronous 6-bit character ROM. The existing three-cycle refresh writer
+  absorbs its latency with no new display-pipeline stage. Final REZOMO packing
+  is 24,265 cells (23 free), 7,146 FF, and 22 DP16KD.
+- Final focused display regression:
+  `82 passed, 36 warnings in 123.26s` across `test_rezo_display.py`,
+  `test_rezo_standard_display.py`, `test_rezomo_native_display.py`,
+  `test_strezo_display.py`, and `test_strezo_native_display.py`. The warnings
+  are existing dependency deprecations.
+- Only standard `1280x720p60` targets were built. No 720x720 circular target
+  was invoked. After the rack was powered back on, the qualified archives were
+  flashed successfully: REZO to slot 2, REZOMO to slot 3, and STREZO to slot 4.
+- Qualified archives and final post-route clocks:
+  - REZO seed 7: 24,148 packed cells (140 free), 6,900 FF, 22 DP16KD;
+    DVI5X 388.95, AUDIO 70.12, SYNC 62.24, DVI 74.84 MHz. Archive
+    `build/rezo-r5/rezo-0f79dfb9-r5.tar.gz`, SHA-256
+    `a4927e86f62ef055f96c2d23963966af8ac064329e63e8d2945b5dbaa884e8d2`.
+    This archive was created with `--package-only` after routing the exact
+    authoritative JSON; its `top.bit` SHA-256 is
+    `6222aecfe69371aa9064a0c119f3baab97ee0556a084762e9c875feb118de08a`.
+  - REZOMO seed 9: DVI5X 431.03, AUDIO 69.04, SYNC 65.15, DVI 77.24 MHz.
+    Archive `build/rezomo-r5/rezomo-0f79dfb9-r5.tar.gz`, SHA-256
+    `cc2c2d7b5722202764303616bfb19b0968db3e9ffac57572a3ade3ce1e733d61`;
+    `top.bit` SHA-256
+    `18ad8a7ee10fc55e89c9d7f904b4854450ed1ab9d0143f84f29c539cb3270fd6`.
+  - STREZO seed 11: 23,392 packed cells (896 free), 6,919 FF, 21 DP16KD;
+    DVI5X 448.83, AUDIO 71.82, SYNC 63.76, DVI 78.18 MHz. Archive
+    `build/strezo-r5/strezo-0f79dfb9-r5.tar.gz`, SHA-256
+    `99f12206cb8661990e62ad8d7557e755f8da686c02fc7685097de00c51127556`;
+    `top.bit` SHA-256
+    `35016ff6330214bc9b3e52b3ccf982cb754777a615e2dcadb51cbb091224dd8c`.
+- Standard target defaults are now REZO seed 7, REZOMO seed 9, and STREZO
+  seed 11. The remaining action is hardware visual validation of slots 2, 3,
+  and 4. No circular archive was built or flashed in this pass.
+- `rezo_variant.py` is only an implementation filename introduced when the
+  family targets were consolidated. REZO is still the original product,
+  REZOMO the second, and STREZO the third; “variant” does not mean REZO is
+  derived from REZOMO.
+
+## 2026-08-21 superseded exact-centering investigation
+
+Historical context only: do not resume this implementation direction unless
+the user explicitly reverses the fixed-left decision above.
+
+### 2026-08-21 implementation checkpoint: REZOMO capacity blocker
+
+- Added `text_chip.py` with pure visible-ink bound and even-pixel centering
+  helpers derived from `FONT_5X7`, plus focused unit coverage.
+- REZO, REZOMO, and STREZO now have a registered translated text lookup and
+  left-aligned fixed-width writers for the migrated fields. Shared fields are
+  selected from precomputed per-value offsets; STREZO also covers CROSS layout
+  and curve. REZOMO's offset constants were moved to block RAM and its field
+  decode compressed to character row/column comparisons.
+- Focused display result before the final lookup register: 84 passed across
+  the six REZO-family display files. After registering the lookup, the focused
+  helper/centering/native set passed 23 tests; the complete set should be rerun
+  after the capacity architecture is finalized.
+- REZO standard seed 9 initially placed but failed sync at 59.65 MHz and DVI at
+  61.80 MHz. Registering the translated source lookup then produced a standard
+  `1280x720p60` archive with no timing warnings:
+  `build/rezo-r5/rezo-0f79dfb9-r5.tar.gz`.
+- REZOMO standard seed 9 fails before routing with `Unable to find legal
+  placement for all cells`. The direct constant-mux form synthesized to 25,836
+  submodules; the first block-RAM offset-table form still synthesized to 25,963
+  submodules (22 DP16KD). This is a deterministic capacity problem, not a seed
+  miss. Do not flash the REZO archive alone; no slots were changed at this
+  checkpoint.
+- The remaining architectural task is to make REZOMO's per-value phase
+  selection essentially free, likely by folding phase metadata into an
+  existing writer/address memory or recovering substantial renderer capacity.
+  Once REZOMO places, rerun the full display suite, build STREZO standard only,
+  then flash slots 2/3/4 together. No circular build was invoked in this pass.
+
+### Current status and user intent
+
+- Repository: `/Users/naenyn/git/tiliqua`.
+- Active branch at this checkpoint: `codex/rezo-family`.
+- The user approved implementing accurate horizontal centering for **all text
+  value chips in all three REZO-family bitstreams**. Every possible string a
+  chip can display must be centered independently; centering only the default
+  or longest value is not sufficient.
+- This refactor is paused **before implementation**. No centering code has been
+  edited, tested, built, flashed, or committed yet.
+- Vertical centering of ordinary value chips is mostly acceptable. The page
+  navigation header has separate visual issues and is not the focus of this
+  refactor. Do not broaden this pass without a concrete reason.
+- The three variants share `RezoTileDisplay` in `rezo_variant.py`, with variant
+  additions in `rezomo_variant.py` and `strezo_variant.py`. The implementation
+  must cover both the shared pages and every variant-specific value chip.
+- Do not commit unless the user asks. The user's standing preference is to flash
+  completed builds unless they explicitly say not to. The rack was powered on
+  at this checkpoint; standard-display slots are REZO 2, REZOMO 3, STREZO 4.
+- Preserve the user's unrelated untracked files. At this checkpoint they were
+  `Erica Resonant FB Notes.txt`, `build/`, and
+  `gateware/src/top/.DS_Store`.
+
+### Hardware-photo evidence and why the previous claim was wrong
+
+The user supplied four REZO photos demonstrating that horizontal centering is
+not consistent:
+
+- MAIN: preset `ALL` is visibly left of center; mode `BANK` is much closer.
+- INPUT: mode `AUDIO` is right of center; target values such as `DRV` and `RES`
+  are also right of center.
+- OPTIONS: both `LCD` and `SAVE` are right of center.
+- BANDS: preset `PERCEPT` is left of center.
+
+Therefore, do not report that chips use consistent horizontal centering merely
+because their writer origins or padded slot widths are consistent. The visible
+glyph ink is what must be centered in the fixed chip rectangle.
+
+### Root cause in the current renderer
+
+`RezoTileDisplay` is in `gateware/src/top/rezo/rezo_variant.py`. Relevant facts:
+
+- `CELL_SHIFT = 4`, so each text cell is 16 screen pixels wide/high.
+- The current character lookup is effectively:
+
+  ```python
+  cell_x.eq(text_x[4:])
+  cell_y.eq(text_y[4:])
+  glyph_col.eq(text_x[1:4])
+  glyph_row.eq(text_y[1:4])
+  ```
+
+- The font is 5x7. Rendering reads `bit 4 - glyph_col` and gates on
+  `glyph_col < 5`. Screen bit 0 is ignored, so each font column occupies two
+  screen pixels.
+- A nominal glyph can occupy at most 10 of a cell's 16 horizontal pixels,
+  leaving six trailing pixels. Individual glyphs have different actual ink
+  bounds, so their optical/geometric ink centers also differ.
+- Text RAM is 45x45 characters per page. Dynamic strings are refreshed at
+  roughly 15 Hz.
+
+Manual leading/trailing spaces and character-count centering cannot produce
+accurate visible centering because a text cell's center is not the rendered
+ink's center, and actual ink bounds vary by glyph and string.
+
+### Approved implementation direction
+
+Keep each chip at a fixed geometry, sized slightly larger than its largest
+allowed value. Center each possible value by its **actual rendered ink bounds**:
+
+1. At Python elaboration time, use the same `RezoBeamDisplay.FONT_5X7` data as
+   the hardware renderer to calculate every glyph/string's leftmost and
+   rightmost ink pixels.
+2. Add pure helpers for string ink bounds and for the per-value x correction
+   needed to align the text ink center with the chip center.
+3. For chip bounds `x0..x1`, align the text's ink center to
+   `Cchip = (x0 + x1) / 2`. Use one documented floor/rounding rule. Prefer even
+   screen-pixel offsets so doubled font columns stay aligned; an unavoidable
+   one-pixel parity difference is acceptable if handled consistently.
+4. Precompute all corrections as constants. Runtime hardware should only select
+   constants already implied by the value selector. Do not add runtime division,
+   multiplication, a second font renderer, or a metadata RAM.
+5. Apply shifts only inside explicitly registered value-chip rectangles. Labels
+   and ordinary page text must remain unchanged.
+6. If visual shift is `S`, renderer source lookup should use `text_x - S` (or an
+   equivalent formulation). Clip both the chip field and source validity so
+   neighboring text-RAM cells cannot bleed into a shifted field. Pipeline that
+   validity alongside the existing glyph memory/column pipeline.
+7. Remove or replace manual space padding where it fights the geometric
+   correction, while still clearing the entire fixed-width text-RAM slot when a
+   shorter value replaces a longer one.
+
+The most maintainable architecture is a data-driven registry describing, for
+each value chip: page, chip bounds, writer origin/slot width, allowed strings,
+and precomputed offsets. Use the same registry for writer formatting and
+renderer shifting where practical. Static and dynamic chips both count.
+
+Before editing, inspect the exact current renderer pipeline. It has historically
+included `cell_x_pre_q`, `text_active_pre_q`, glyph memory/read-port signals,
+`glyph_col_q`, and `text_active_q`; correction validity must stay aligned with
+the glyph data through those stages.
+
+### Known value writers and tables to inventory
+
+The following locations are clues, not a substitute for a fresh exhaustive
+inventory with `rg` through all three variant files:
+
+- Active navigation value: column 33, row 8, width 4.
+- MAIN preset: column 16, row 11, width 4.
+- Selected compact band frequency: page 0, column 29, row 14, width 3.
+- INPUT modes: page 2, column 20 at the native input mode rows, width 5.
+- INPUT values: page 2, column 20 at the value rows, width 3.
+- FILTER type: page 7, column 14, row 11, width 4.
+- OUTPUT dry value: page 4, column 31, row 18, width 4.
+- FEEDBACK frequency: page 1, column 29, row 16, width 3.
+- OPTIONS palette: page 5, column 22, row 17, width 6.
+- OPTIONS save state: page 5, column 22, row 21, width 7.
+- STREZO layout: page 6, column 16, row 11, width 7.
+- STREZO BANDS selected frequency: page 6, column 20, row 22, width 5.
+- Feedback damping value: page 1 at the native damping writer, width 5.
+- Static values also require coverage, including BANK/FILTER mode values and all
+  REZOMO CLOCK and STREZO-specific pages.
+
+Known manually padded tables include:
+
+```python
+preset_names = ("ALL ", "ODD ", "EVEN", "LOW ", "MID ", "HIGH", "ZERO")
+target_names = ("FB ", "RES", "DRV", "G1 ", "G2 ", "G3 ", "G4 ")
+nav_names = ("NAV ", "EDIT")
+damp_names = (" OFF ", "LIGHT", " MED ", "HEAVY", " MAX ")
+layout_names = (" LEGACY", " OCTAVE", "PERCEPT", "  USER ")
+filter_type_names = (" LP ", " HP ", " BP ", "NOT ")
+palette_names = ("  LCD ", " AMBER", " CYAN ", " GREEN", "VIOLET")
+save_names = (" SAVE  ", "SAVING ", " SAVED ", " ERROR ", "NO SLOT")
+```
+
+Also audit INPUT mode (`"AUDIO"` versus padded `CV`), OUTPUT dry, compact
+frequency strings, and all variant tables. Manual padding must not survive as
+an unexamined second centering system.
+
+Known compact chip geometry includes:
+
+- Palette: x=344..456, y=260..300; writer x=352.
+- Save: x=328..456, y=324..364; writer x=352.
+- Layout: x=256..384, y=168..200; writer x=256.
+- MAIN mode: x=464..584, y=168..200.
+- FILTER type: x=216..288, y=168..200.
+- INPUT mode: x=304..402 (98 pixels wide); writer x=320.
+- INPUT value: x=304..370 (66 pixels wide); writer x=320.
+
+The INPUT writer origin is a concrete example of why `AUDIO`, `DRV`, and `RES`
+appear right-shifted. Recheck all precise bounds in current code rather than
+assuming this list is complete or current.
+
+### Verification requirements
+
+- Add pure unit tests for font ink-bound and offset helpers.
+- Add or extend display pixel tests so every allowed value in every registered
+  chip is exhaustively checked for centered visible bounds and containment.
+- Representative regressions must include `ALL`/`BANK`, `AUDIO`/`CV`,
+  `DRV`/`RES`/`FB`, all palettes (`LCD`, `AMBER`, `CYAN`, etc.), every SAVE
+  state, `PERCEPT` and all layouts, FILTER types, damping modes, REZOMO CLOCK
+  choices, and STREZO-specific values.
+- Allow at most the unavoidable one-screen-pixel parity difference after the
+  documented rounding rule. Verify that text remains inside intended padding.
+- Relevant tests include:
+  - `gateware/tests/test_rezo_display.py`
+  - `gateware/tests/test_rezo_standard_display.py`
+  - `gateware/tests/test_rezomo_native_display.py`
+  - `gateware/tests/test_strezo_native_display.py`
+  - any additional variant display tests found by `rg`.
+- Run `git diff --check`, focused pytest, and Python compilation where relevant.
+- After tests pass, build all three **standard, non-circular** variants. Reuse
+  recorded qualified/default seed metadata rather than blindly chasing random
+  seeds. If all three builds pass and the rack is still available, flash REZO
+  to slot 2, REZOMO to slot 3, and STREZO to slot 4.
+
+Recent commits useful for build/geometry context include:
+
+- `0f79dfb9 Record qualified REZO family standard seeds`
+- `3cf5fe57 Pipeline STREZO motion depth endpoint`
+- `2517dc8d Pipeline STREZO motion indicator endpoint`
+- `1d58670e Pipeline STREZO feedback display endpoints`
+- `9ddf2a9f Standardize REZO family control geometry`
+- `a235999a Record qualified STREZO standard seed`
+
+Recheck actual HEAD and current build metadata before building. The older
+standard-display hardware checkpoint later in this document is historical and
+must not be mistaken for the current branch tip.
+
+### Recommended resume order
+
+1. Inspect the current shared text writer/renderer and both variant subclasses.
+2. Inventory every fixed text-value chip, its bounds, its writer slot, and all
+   possible strings.
+3. Implement the pure font-metric/centering helper and its unit tests.
+4. Introduce the chip registry and the clipped correction pipeline.
+5. Remove conflicting manual padding while preserving slot clearing.
+6. Run exhaustive pixel and existing regression tests.
+7. Build the three standard variants and flash slots 2/3/4 if permitted.
+8. Update this section with exact test results, archives/seeds, flash results,
+   and any remaining exceptions.
 
 ## 2026-08-13 native circular-display migration
 

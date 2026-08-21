@@ -4592,13 +4592,9 @@ class RezoTileDisplay(wiring.Component):
             m.d.comb += selected_band.eq(
                 selected_sync - RezoHardwareUI.TARGET_BAND_BASE)
 
-        # These fixed-width strings are padded per visible name so the text is
-        # centered inside the shared BANK selector rather than left-aligned.
-        # BANK uses one fixed four-character value field.  Padding the short
-        # names in the string itself keeps every value centred without
-        # synthesizing data-dependent rectangle geometry on the nearly-full
-        # FPGA.
-        preset_names = ("ALL ", "ODD ", "EVEN", "LOW ", "MID ", " HI ", "ZERO")
+        # Fixed-width value slots are left-justified; trailing blanks clear
+        # characters left behind when a shorter value replaces a longer one.
+        preset_names = ("ALL ", "ODD ", "EVEN", "LOW ", "MID ", "HI  ", "ZERO")
         def frequency_name(frequency):
             if frequency < 1000:
                 return f"{frequency:<3}"[:3]
@@ -4621,72 +4617,79 @@ class RezoTileDisplay(wiring.Component):
                      for pos in range(4)]
         preset_chars = [Array(Const(self.code(name[pos]), 6) for name in preset_names)
                         for pos in range(4)]
-        def centered_field(value, width, total=10):
-            """Centre a value within its semantic field, then clear the tail."""
-            return f"{value:^{width}}".ljust(total)
+        def left_field(value, width, total=10):
+            """Left-justify a value and clear its complete fixed-width slot."""
+            return value[:width].ljust(total)
 
-        direction_names = tuple(centered_field(name, 9)
+        direction_names = tuple(left_field(name, 9)
                                 for name in ("FORWARD", "REVERSE",
                                              "PING PONG", "RANDOM"))
-        direction_chars = [Array(Const(self.code(name[pos]), 6)
-                                 for name in direction_names)
-                           for pos in range(10)]
-        walk_style_names = tuple(centered_field(name, 4)
+        walk_style_names = tuple(left_field(name, 4)
                                  for name in ("ALL", "BAND"))
-        walk_style_chars = [Array(Const(self.code(name[pos]), 6)
-                                  for name in walk_style_names)
-                            for pos in range(10)]
-        walk_drunk_names = tuple(centered_field(name, 1)
+        walk_drunk_names = tuple(left_field(name, 1)
                                  for name in ("1", "2", "3", "4"))
-        walk_drunk_chars = [Array(Const(self.code(name[pos]), 6)
-                                  for name in walk_drunk_names)
-                            for pos in range(10)]
-        walk_chance_names = tuple(centered_field(name, 3)
+        walk_chance_names = tuple(left_field(name, 3)
                                   for name in ("0", "10", "25", "50",
                                                "75", "100"))
-        walk_chance_chars = [Array(Const(self.code(name[pos]), 6)
-                                   for name in walk_chance_names)
-                             for pos in range(10)]
-        algorithm_names = tuple(centered_field(name, 6, 8)
+        algorithm_names = tuple(left_field(name, 6, 8)
                                 for name in ("SHIFT", "ROTATE", "TURING",
                                              "WALK"))
-        algorithm_chars = [Array(Const(self.code(name[pos]), 6)
-                                 for name in algorithm_names)
-                           for pos in range(8)]
-        turing_length_names = tuple(centered_field(str(value), 2)
+        turing_length_names = tuple(left_field(str(value), 2)
                                     for value in range(2, 11))
-        turing_length_chars = [Array(Const(self.code(name[pos]), 6)
-                                     for name in turing_length_names)
-                               for pos in range(10)]
         turing_change_names = tuple(
-            centered_field(str(value), 3)
+            left_field(str(value), 3)
             for value in (1, 3, 6, 12, 25, 50, 100))
-        turing_change_chars = [Array(Const(self.code(name[pos]), 6)
-                                     for name in turing_change_names)
-                               for pos in range(10)]
-        clock_source_names = tuple(centered_field(name, 8)
+        clock_source_names = tuple(left_field(name, 8)
                                    for name in ("AUTO INT", "AUTO EXT",
                                                 "INTERNAL", "EXTERNAL"))
-        clock_source_chars = [Array(Const(self.code(name[pos]), 6)
-                                    for name in clock_source_names)
-                              for pos in range(10)]
-        data_source_names = tuple(centered_field(name, 9)
+        data_source_names = tuple(left_field(name, 9)
                                   for name in ("CV", "RANDOM", "AUTO CV",
                                                "AUTO RAND"))
-        data_source_chars = [Array(Const(self.code(name[pos]), 6)
-                                   for name in data_source_names)
-                             for pos in range(10)]
-        turing_target_names = tuple(centered_field(name, 5)
+        turing_target_names = tuple(left_field(name, 5)
                                     for name in ("ALL", "RANGE"))
-        turing_target_chars = [Array(Const(self.code(name[pos]), 6)
-                                     for name in turing_target_names)
-                               for pos in range(10)]
         turing_start_names = tuple(
-            centered_field(str(value), 2)
+            left_field(str(value), 2)
             for value in range(1, RezoCore.N_BANDS + 1))
-        turing_start_chars = [Array(Const(self.code(name[pos]), 6)
-                                    for name in turing_start_names)
-                              for pos in range(10)]
+        # CLOCK's value strings used to elaborate into many parallel constant
+        # muxes. Left justification changes their common-bit patterns enough
+        # to make that representation costly on this nearly-full device. The
+        # refresh writer holds each update index for three sync clocks, so one
+        # synchronous character ROM can serve every CLOCK field without an
+        # additional writer stage. Each spelling receives a 16-character
+        # power-of-two slot, making the live address selection cheap.
+        clock_value_tables = (
+            ("direction", direction_names),
+            ("walk_style", walk_style_names),
+            ("walk_drunk", walk_drunk_names),
+            ("walk_chance", walk_chance_names),
+            ("algorithm", algorithm_names),
+            ("turing_length", turing_length_names),
+            ("turing_change", turing_change_names),
+            ("clock_source", clock_source_names),
+            ("data_source", data_source_names),
+            ("turing_target", turing_target_names),
+            ("turing_start", turing_start_names),
+        )
+        clock_value_bases = {}
+        clock_value_init = [self.code(" ")] * 1024
+        clock_value_next_base = 0
+        for table_name, names in clock_value_tables:
+            clock_value_bases[table_name] = clock_value_next_base
+            for value_index, name in enumerate(names):
+                value_base = clock_value_next_base + value_index * 16
+                for pos, char in enumerate(name):
+                    clock_value_init[value_base + pos] = self.code(char)
+            clock_value_next_base += len(names) * 16
+        clock_value_blank_address = clock_value_next_base
+        m.submodules.clock_value_mem = clock_value_mem = Memory(
+            shape=unsigned(6), depth=len(clock_value_init),
+            init=clock_value_init, attrs={"ram_style": "block"})
+        clock_value_rport = clock_value_mem.read_port()
+        clock_value_address = Signal(unsigned(10))
+        m.d.comb += [
+            clock_value_address.eq(clock_value_blank_address),
+            clock_value_rport.addr.eq(clock_value_address),
+        ]
         clock_source_display = Signal(unsigned(2))
         data_source_display = Signal(unsigned(2))
         m.d.comb += clock_source_display.eq(Mux(
@@ -4698,8 +4701,7 @@ class RezoTileDisplay(wiring.Component):
             data_source_sync == RezoCore.DATA_SOURCE_AUTO,
             Mux(data_random_active_sync, 3, 2),
             data_source_sync))
-        mode_names = tuple(centered_field(name, 5, 8)
-                           for name in ("BANK", "CLOCK"))
+        mode_names = ("BANK    ", "CLOCK   ")
         mode_chars = [Array(Const(self.code(name[pos]), 6)
                             for name in mode_names)
                       for pos in range(8)]
@@ -4712,7 +4714,7 @@ class RezoTileDisplay(wiring.Component):
         frequency_label_init = [0] * (
             frequency_tail_offset + len(frequency_names))
         for index, name in enumerate(frequency_names):
-            full_name = f"{RezoCore.FREQUENCIES_HZ[index]:>5}"
+            full_name = f"{RezoCore.FREQUENCIES_HZ[index]:<5}"
             frequency_label_init[index] = sum(
                 self.code(name[pos]) << (6 * pos) for pos in range(3))
             frequency_label_init[frequency_head_offset + index] = sum(
@@ -4752,7 +4754,7 @@ class RezoTileDisplay(wiring.Component):
         bpm_label_init = []
         for bpm in range(RezoCore.INTERNAL_CLOCK_MIN_BPM,
                          RezoCore.INTERNAL_CLOCK_MAX_BPM + 1):
-            label = f"{bpm:^3}"
+            label = f"{bpm:<3}"
             bpm_label_init.append(sum(
                 self.code(label[pos]) << (6 * pos) for pos in range(3)))
         m.submodules.bpm_label_mem = bpm_label_mem = Memory(
@@ -4761,24 +4763,24 @@ class RezoTileDisplay(wiring.Component):
         bpm_label_rport = bpm_label_mem.read_port()
         m.d.comb += bpm_label_rport.addr.eq(
             internal_clock_rate_sync - RezoCore.INTERNAL_CLOCK_MIN_BPM)
-        layout_names = (" LEGACY", " OCTAVE", "PERCEPT", "  USER ")
+        layout_names = ("LEGACY ", "OCTAVE ", "PERCEPT", "USER   ")
         layout_chars = [Array(Const(self.code(name[pos]), 6)
                               for name in layout_names)
                         for pos in range(7)]
         target_chars = [Array(Const(self.code(name[pos]), 6) for name in target_names)
                         for pos in range(3)]
-        palette_names = ("  LCD ", " AMBER", " CYAN ", " GREEN", "VIOLET")
+        palette_names = ("LCD   ", "AMBER ", "CYAN  ", "GREEN ", "VIOLET")
         palette_chars = [Array(Const(self.code(name[pos]), 6)
                                for name in palette_names)
                          for pos in range(6)]
-        damp_names = (" OFF ", "LIGHT", " MED ", "HEAVY", " MAX ")
+        damp_names = ("OFF  ", "LIGHT", "MED  ", "HEAVY", "MAX  ")
         damp_chars = [Array(Const(self.code(name[pos]), 6)
                             for name in damp_names)
                       for pos in range(5)]
         damp_name_index = Signal(range(5))
         m.d.comb += damp_name_index.eq(Mux(
             damp_mode_sync > 4, 4, damp_mode_sync))
-        save_names = (" SAVE  ", "SAVING ", " SAVED ", " ERROR ",
+        save_names = ("SAVE   ", "SAVING ", "SAVED  ", "ERROR  ",
                       "NO SLOT")
         save_chars = [Array(Const(self.code(name[pos]), 6)
                             for name in save_names)
@@ -4811,8 +4813,8 @@ class RezoTileDisplay(wiring.Component):
                 with m.Case(4 + pos):
                     m.d.comb += [
                         writer_address.eq(writer_cell(
-                            # Centre the four-cell preset field in its 96px
-                            # selector chip (one native cell of side padding).
+                            # Preset names are fixed-width and use one native
+                            # cell of left padding in the selector chip.
                             0, 11, 17 + pos, 7, 11 + pos)),
                         writer_char.eq(preset_chars[pos][preset_sync]),
                     ]
@@ -4838,9 +4840,9 @@ class RezoTileDisplay(wiring.Component):
                 for pos in range(3):
                     with m.Case(11 + n * 3 + pos):
                         audio_char = self.code("AUD"[pos])
-                        # AUDIO occupies five cells. Centre the shorter CV
-                        # spelling in that same fixed-width mode chip.
-                        cv_char = self.code(" CV"[pos])
+                        # Both mode names begin at the chip's fixed text
+                        # origin; the shorter spelling clears its last cell.
+                        cv_char = self.code("CV "[pos])
                         m.d.comb += [
                             writer_address.eq(writer_cell(
                                 2, compact_input_text_rows[n][0], 20 + pos,
@@ -4892,7 +4894,7 @@ class RezoTileDisplay(wiring.Component):
                 with m.Case(59 + pos):
                     m.d.comb += [
                         writer_address.eq(writer_cell(
-                            6, 11, 16 + pos, 7, 9 + pos)),
+                            6, 11, 17 + pos, 7, 9 + pos)),
                         writer_char.eq(layout_chars[pos][displayed_layout]),
                     ]
             for pos in range(5):
@@ -4946,27 +4948,34 @@ class RezoTileDisplay(wiring.Component):
                     m.d.comb += [
                         writer_address.eq(writer_cell(
                             7, 16, 20 + pos, 7, 9 + pos)),
-                        writer_char.eq(
-                            algorithm_chars[pos][clock_algorithm_sync]),
+                        clock_value_address.eq(
+                            clock_value_bases["algorithm"] |
+                            (clock_algorithm_sync << 4) | pos),
+                        writer_char.eq(clock_value_rport.data),
                     ]
             for pos in range(10):
                 with m.Case(85 + pos):
+                    direction_display = Mux(
+                        clock_algorithm_sync ==
+                        RezoCore.CLOCK_ALGORITHM_WALK,
+                        RezoCore.SHIFT_RANDOM, shift_direction_sync)
                     m.d.comb += [
                         writer_address.eq(writer_cell(
                             7, 18, 20 + pos, 15, 12 + pos)),
-                        writer_char.eq(Mux(
-                            clock_algorithm_sync ==
-                            RezoCore.CLOCK_ALGORITHM_WALK,
-                            direction_chars[pos][RezoCore.SHIFT_RANDOM],
-                            direction_chars[pos][shift_direction_sync])),
+                        clock_value_address.eq(
+                            clock_value_bases["direction"] |
+                            (direction_display << 4) | pos),
+                        writer_char.eq(clock_value_rport.data),
                     ]
             for pos in range(10):
                 with m.Case(95 + pos):
                     m.d.comb += [
                         writer_address.eq(writer_cell(
                             7, 20, 20 + pos, 20, 12 + pos)),
-                        writer_char.eq(
-                            clock_source_chars[pos][clock_source_display]),
+                        clock_value_address.eq(
+                            clock_value_bases["clock_source"] |
+                            (clock_source_display << 4) | pos),
+                        writer_char.eq(clock_value_rport.data),
                     ]
             for pos in range(3):
                 with m.Case(105 + pos):
@@ -5025,53 +5034,64 @@ class RezoTileDisplay(wiring.Component):
             for row in range(4):
                 for pos in range(10):
                     with m.Case(132 + row * 10 + pos):
+                        value_address = Const(
+                            clock_value_blank_address, unsigned(10))
                         if row == 0:
-                            value_char = Mux(
+                            value_address = Mux(
                                 clock_algorithm_sync ==
                                 RezoCore.CLOCK_ALGORITHM_TURING,
-                                turing_change_chars[pos][
-                                    turing_change_index_sync],
+                                clock_value_bases["turing_change"] |
+                                (turing_change_index_sync << 4) | pos,
                                 Mux(clock_algorithm_sync ==
                                     RezoCore.CLOCK_ALGORITHM_WALK,
-                                    walk_style_chars[pos][walk_style_sync],
+                                    clock_value_bases["walk_style"] |
+                                    (walk_style_sync << 4) | pos,
                                     Mux(clock_algorithm_sync ==
                                         RezoCore.CLOCK_ALGORITHM_SHIFT,
-                                        data_source_chars[pos][
-                                            data_source_display], 0)))
+                                        clock_value_bases["data_source"] |
+                                        (data_source_display << 4) | pos,
+                                        clock_value_blank_address)))
                         elif row == 1:
-                            value_char = Mux(
+                            value_address = Mux(
                                 clock_algorithm_sync ==
                                 RezoCore.CLOCK_ALGORITHM_TURING,
-                                turing_target_chars[pos][turing_target_sync],
+                                clock_value_bases["turing_target"] |
+                                (turing_target_sync << 4) | pos,
                                 Mux(clock_algorithm_sync ==
                                     RezoCore.CLOCK_ALGORITHM_WALK,
-                                    walk_drunk_chars[pos][walk_drunk_sync], 0))
+                                    clock_value_bases["walk_drunk"] |
+                                    (walk_drunk_sync << 4) | pos,
+                                    clock_value_blank_address))
                         elif row == 2:
-                            value_char = Mux(
+                            value_address = Mux(
                                 clock_algorithm_sync ==
                                 RezoCore.CLOCK_ALGORITHM_TURING,
                                 Mux(turing_target_sync ==
                                     RezoCore.TURING_TARGET_RANGE,
-                                    turing_start_chars[pos][turing_start_sync],
-                                    turing_length_chars[pos][
-                                        turing_length_sync - 2]),
+                                    clock_value_bases["turing_start"] |
+                                    (turing_start_sync << 4) | pos,
+                                    clock_value_bases["turing_length"] |
+                                    ((turing_length_sync - 2) << 4) | pos),
                                 Mux(clock_algorithm_sync ==
                                     RezoCore.CLOCK_ALGORITHM_WALK,
-                                    walk_chance_chars[pos][
-                                        walk_chance_index_sync], 0))
+                                    clock_value_bases["walk_chance"] |
+                                    (walk_chance_index_sync << 4) | pos,
+                                    clock_value_blank_address))
                         else:
-                            value_char = Mux(
+                            value_address = Mux(
                                 (clock_algorithm_sync ==
                                  RezoCore.CLOCK_ALGORITHM_TURING) &
                                 (turing_target_sync ==
                                  RezoCore.TURING_TARGET_RANGE),
-                                turing_length_chars[pos][
-                                    turing_length_sync - 2], 0)
+                                clock_value_bases["turing_length"] |
+                                ((turing_length_sync - 2) << 4) | pos,
+                                clock_value_blank_address)
                         m.d.comb += [
                             writer_address.eq(writer_cell(
                                 7, 26 + row * 2, 20 + pos,
                                 15 + row * 5, 32 + pos)),
-                            writer_char.eq(value_char),
+                            clock_value_address.eq(value_address),
+                            writer_char.eq(clock_value_rport.data),
                         ]
         with m.If(update_active):
             # Hold each label index for three clocks: allow synchronous label
@@ -5267,10 +5287,7 @@ class RezoTileDisplay(wiring.Component):
         output_cell = Signal()
         output_fill = Signal()
         output_select = Signal()
-        # Bias the fixed selector two pixels toward the wider CLOCK spelling.
-        # Its visible glyphs land within three native pixels of center while
-        # BANK remains within five, without adding a live mode-dependent
-        # comparator to the capacity-sensitive pixel path.
+        # BANK and CLOCK share one fixed left origin and selector geometry.
         compact_mode_x1 = 564
         mode_chip = home_page & self.rect(
             x, y, 464 if self.compact_layout else 452,
@@ -5515,9 +5532,7 @@ class RezoTileDisplay(wiring.Component):
                               (self.input_meters[n] << 1))),
                 ]
 
-        # A shared four-cell value field plus one native-cell inset on either
-        # side. Short names are padded in ``preset_names`` above, so their
-        # visible centres coincide with this fixed chip's centre.
+        # A shared four-cell value field with a fixed one-cell left inset.
         compact_preset_x1 = 352
         preset_chip_signals.append(bank_page & self.rect(
             x, y,
@@ -5820,10 +5835,8 @@ class RezoTileDisplay(wiring.Component):
         ]
         input_visible = input_page_value_q & input_valid_value_q
         input_is_cv = input_is_cv_value_q
-        # MODE and VALUE chips are sized around each field's longest value
-        # (AUDIO and a three-character target respectively). Their endpoints
-        # split the two cell-parity centers so AUDIO/CV and FB/RES remain at
-        # most four native pixels from the geometric center.
+        # MODE and VALUE chips are sized around each field's longest value;
+        # every value begins at the same fixed text-cell origin.
         input_mode_x1 = 402 if self.compact_layout else 304
         input_value_x1 = 370 if self.compact_layout else 656
         input_panel_q0 = input_visible & (

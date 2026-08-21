@@ -4253,9 +4253,9 @@ class RezoTileDisplay(wiring.Component):
             m.d.comb += selected_band.eq(
                 selected_sync - RezoHardwareUI.TARGET_BAND_BASE)
 
-        # These fixed-width strings are padded per visible name so the text is
-        # centered inside the shared BANK selector rather than left-aligned.
-        preset_names = ("ALL ", "ODD ", "EVEN", "LOW ", "MID ", " HI ", "ZERO")
+        # Fixed-width value slots are left-justified; trailing blanks clear
+        # characters left behind when a shorter value replaces a longer one.
+        preset_names = ("ALL ", "ODD ", "EVEN", "LOW ", "MID ", "HI  ", "ZERO")
         def frequency_name(frequency):
             if frequency < 1000:
                 return f"{frequency:<3}"[:3]
@@ -4283,7 +4283,7 @@ class RezoTileDisplay(wiring.Component):
         frequency_full_offset = 1024
         frequency_label_init = [0] * 2048
         for index, name in enumerate(frequency_names):
-            full_name = f"{RezoCore.FREQUENCIES_HZ[index]:>5}"
+            full_name = f"{RezoCore.FREQUENCIES_HZ[index]:<5}"
             for pos in range(3):
                 frequency_label_init[(index << 3) | pos] = self.code(name[pos])
             for pos in range(5):
@@ -4317,24 +4317,20 @@ class RezoTileDisplay(wiring.Component):
                         m.d.comb += frequency_label_rport.addr.eq(
                             frequency_full_offset |
                             (bands_frequency_index << 3) | pos)
-        # The BANDS preset chip is 128 pixels wide while native text advances
-        # on a 16-pixel cell grid.  Six- and seven-letter names therefore
-        # share column 17; USER uses column 18 below.  Keep the strings free of
-        # leading padding so each visible name is centered by its destination
-        # rather than appearing left-aligned within a fixed text slot.
+        # Every BANDS layout name shares column 17 as its fixed left origin.
         layout_names = ("LEGACY ", "OCTAVE ", "PERCEPT", "USER   ")
         layout_chars = [Array(Const(self.code(name[pos]), 6)
                               for name in layout_names)
                         for pos in range(7)]
         cross_layout_names = (
-            " GLOBAL ", "DIAGONAL", " ROTATE ",
-            " MIRROR ", "  ALL   ", "  USER  ")
+            "GLOBAL  ", "DIAGONAL", "ROTATE  ",
+            "MIRROR  ", "ALL     ", "USER    ")
         cross_layout_chars = [
             Array(Const(self.code(name[pos]), 6)
                   for name in cross_layout_names)
             for pos in range(8)
         ]
-        cross_curve_names = (" LINEAR ", "  LOG   ")
+        cross_curve_names = ("LINEAR  ", "LOG     ")
         cross_curve_chars = [
             Array(Const(self.code(name[pos]), 6)
                   for name in cross_curve_names)
@@ -4347,18 +4343,18 @@ class RezoTileDisplay(wiring.Component):
             cross_layout_preview_sync, cross_layout_sync))
         target_chars = [Array(Const(self.code(name[pos]), 6) for name in target_names)
                         for pos in range(3)]
-        palette_names = ("  LCD ", " AMBER", " CYAN ", " GREEN", "VIOLET")
+        palette_names = ("LCD   ", "AMBER ", "CYAN  ", "GREEN ", "VIOLET")
         palette_chars = [Array(Const(self.code(name[pos]), 6)
                                for name in palette_names)
                          for pos in range(6)]
-        damp_names = (" OFF ", "LIGHT", " MED ", "HEAVY", " MAX ")
+        damp_names = ("OFF  ", "LIGHT", "MED  ", "HEAVY", "MAX  ")
         damp_chars = [Array(Const(self.code(name[pos]), 6)
                             for name in damp_names)
                       for pos in range(5)]
         damp_name_index = Signal(range(5))
         m.d.comb += damp_name_index.eq(Mux(
             damp_mode_sync > 4, 4, damp_mode_sync))
-        save_names = (" SAVE  ", "SAVING ", " SAVED ", " ERROR ",
+        save_names = ("SAVE   ", "SAVING ", "SAVED  ", "ERROR  ",
                       "NO SLOT")
         save_chars = [Array(Const(self.code(name[pos]), 6)
                             for name in save_names)
@@ -4369,7 +4365,7 @@ class RezoTileDisplay(wiring.Component):
                 Mux(save_busy_sync | (save_status_sync == 1), 1,
                     Mux(save_status_sync == 2, 2,
                         Mux(save_status_sync == 3, 3, 0)))))
-        motion_source_names = ("  OFF   ", "TRIANGLE", " RANDOM ")
+        motion_source_names = ("OFF     ", "TRIANGLE", "RANDOM  ")
         # One compact label ROM converts the continuous 0.1 Hz rate to text
         # without synthesizing a decimal divider into the control domain.
         motion_source_offset = 896
@@ -4378,7 +4374,7 @@ class RezoTileDisplay(wiring.Component):
         motion_label_init = [0] * 2048
         for value in range(256):
             rate = min(value, 200)
-            rate_text = f"{rate // 10:2d}.{rate % 10}"[-4:]
+            rate_text = f"{rate // 10}.{rate % 10}"[:4].ljust(4)
             for pos in range(4):
                 motion_label_init[(value << 2) | pos] = self.code(
                     rate_text[pos])
@@ -4395,7 +4391,7 @@ class RezoTileDisplay(wiring.Component):
             motion_label_init[motion_phase_blank_offset | pos] = 0
         for value in range(256):
             degrees = round(value * 360 / 256)
-            phase_text = f"{degrees:3d} "[-4:]
+            phase_text = f"{degrees:<4}"[:4]
             for pos in range(4):
                 motion_label_init[
                     motion_phase_offset | (value << 2) | pos
@@ -4445,7 +4441,7 @@ class RezoTileDisplay(wiring.Component):
                     compact_input_text_rows):
                 for pos in range(3):
                     writer_address_init[11 + n * 3 + pos] = writer_cell(
-                        2, 21, mode_row, pos)
+                        2, 20, mode_row, pos)
                     writer_address_init[23 + n * 3 + pos] = writer_cell(
                         2, 20, value_row, pos)
             for pos in range(5):
@@ -4458,8 +4454,7 @@ class RezoTileDisplay(wiring.Component):
                 writer_address_init[46 + pos] = writer_cell(5, 22, 17, pos)
             for pos in range(7):
                 writer_address_init[52 + pos] = writer_cell(5, 22, 21, pos)
-                # BANDS layout destinations are selected dynamically below so
-                # USER can use the narrower, independently centered origin.
+                # Every BANDS layout value uses the same fixed left origin.
                 writer_address_init[59 + pos] = writer_cell(6, 17, 11, pos)
             for pos in range(5):
                 writer_address_init[66 + pos] = writer_cell(6, 20, 22, pos)
@@ -4528,12 +4523,7 @@ class RezoTileDisplay(wiring.Component):
                 page_offsets[writer_page_q] +
                 (8 if self.compact_layout else 3) * 45 +
                 (33 if self.compact_layout else 39) + writer_index_q,
-                Mux(
-                    self.compact_layout &
-                    (writer_index_q >= 59) & (writer_index_q < 66) &
-                    (displayed_layout == RezoCore.LAYOUT_USER),
-                    writer_address_rport.data + 1,
-                    writer_address_rport.data))),
+                writer_address_rport.data)),
         ]
 
         with m.Switch(update_index):
@@ -4554,8 +4544,8 @@ class RezoTileDisplay(wiring.Component):
                 for pos in range(3):
                     with m.Case(11 + n * 3 + pos):
                         mode_chars = Array((
-                            Const(self.code(" L "[pos]), 6),
-                            Const(self.code(" R "[pos]), 6),
+                            Const(self.code("L  "[pos]), 6),
+                            Const(self.code("R  "[pos]), 6),
                             Const(self.code("CV "[pos]), 6),
                         ))
                         m.d.comb += writer_char.eq(
@@ -6173,8 +6163,8 @@ class RezoBeamTop(Elaboratable):
                  'assignable out', 'assignable out'],
         io_right=['', '', 'video out required', '', '', '']
     )
-    # This design's DVI PHY placement is seed-sensitive at 720p60. Seed 7 is
-    # the measured high-margin route for the optimized text renderer and
+    # This design's DVI PHY placement is seed-sensitive at 720p60. Seed 11 is
+    # the measured all-clock route for the fixed-left text pass and
     # coarse INPUT acceleration, while the environment override remains useful
     # for place-and-route experiments.
     # The polished BANDS renderer needs a density pass plus a lower ABC9 wire
@@ -6191,7 +6181,7 @@ class RezoBeamTop(Elaboratable):
     )
     nextpnr_opts = (
         "--timing-allow-fail --seed "
-        f"{os.getenv('TILIQUA_STREZO_SEED', os.getenv('TILIQUA_REZO_SEED', '7'))}"
+        f"{os.getenv('TILIQUA_STREZO_SEED', os.getenv('TILIQUA_REZO_SEED', '11'))}"
     )
 
     def __init__(self, clock_settings):

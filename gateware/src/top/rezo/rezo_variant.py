@@ -3476,7 +3476,7 @@ class RezoTileDisplay(wiring.Component):
             # BANK main page.
             put_native(0, "PRESET", 8, 11)
             put_native(0, "MODE", 24, 11)
-            put_native(0, "BANK", 31, 11)
+            put_native(0, "BANK", 30, 11)
             put_native(0, "BANDS", 8, 14)
             put_native(0, "FREQ:", 23, 14)
             # BANK occupies the first three slots of the same five-slot grid
@@ -3666,8 +3666,8 @@ class RezoTileDisplay(wiring.Component):
             m.d.comb += selected_band.eq(
                 selected_sync - RezoHardwareUI.TARGET_BAND_BASE)
 
-        # These fixed-width strings are padded per visible name so the text is
-        # centered inside the shared BANK selector rather than left-aligned.
+        # Fixed-width value slots are left-justified; trailing blanks clear
+        # characters left behind when a shorter value replaces a longer one.
         preset_names = ("ALL ", "ODD ", "EVEN", "LOW ", "MID ", "HIGH", "ZERO")
         def frequency_name(frequency):
             if frequency < 1000:
@@ -3690,7 +3690,7 @@ class RezoTileDisplay(wiring.Component):
                      for pos in range(4)]
         preset_chars = [Array(Const(self.code(name[pos]), 6) for name in preset_names)
                         for pos in range(4)]
-        damp_names = (" OFF ", "LIGHT", " MED ", "HEAVY", " MAX ")
+        damp_names = ("OFF  ", "LIGHT", "MED  ", "HEAVY", "MAX  ")
         damp_chars = [Array(Const(self.code(name[pos]), 6)
                             for name in damp_names)
                       for pos in range(5)]
@@ -3703,7 +3703,7 @@ class RezoTileDisplay(wiring.Component):
         frequency_full_offset = 1024
         frequency_label_init = [0] * 2048
         for index, name in enumerate(frequency_names):
-            full_name = f"{RezoCore.FREQUENCIES_HZ[index]:>5}"
+            full_name = f"{RezoCore.FREQUENCIES_HZ[index]:<5}"
             for pos in range(3):
                 frequency_label_init[(index << 3) | pos] = self.code(name[pos])
             for pos in range(5):
@@ -3739,21 +3739,21 @@ class RezoTileDisplay(wiring.Component):
                         m.d.comb += frequency_label_rport.addr.eq(
                             frequency_full_offset |
                             (bands_frequency_index << 3) | pos)
-        layout_names = (" LEGACY", " OCTAVE", "PERCEPT", "  USER ")
+        layout_names = ("LEGACY ", "OCTAVE ", "PERCEPT", "USER   ")
         layout_chars = [Array(Const(self.code(name[pos]), 6)
                               for name in layout_names)
                         for pos in range(7)]
         target_chars = [Array(Const(self.code(name[pos]), 6) for name in target_names)
                         for pos in range(3)]
-        filter_type_names = (" LP ", " HP ", " BP ", "NOT ")
+        filter_type_names = ("LP  ", "HP  ", "BP  ", "NOT ")
         filter_type_chars = [Array(Const(self.code(name[pos]), 6)
                                    for name in filter_type_names)
                              for pos in range(4)]
-        palette_names = ("  LCD ", " AMBER", " CYAN ", " GREEN", "VIOLET")
+        palette_names = ("LCD   ", "AMBER ", "CYAN  ", "GREEN ", "VIOLET")
         palette_chars = [Array(Const(self.code(name[pos]), 6)
                                for name in palette_names)
                          for pos in range(6)]
-        save_names = (" SAVE  ", "SAVING ", " SAVED ", " ERROR ",
+        save_names = ("SAVE   ", "SAVING ", "SAVED  ", "ERROR  ",
                       "NO SLOT")
         save_chars = [Array(Const(self.code(name[pos]), 6)
                             for name in save_names)
@@ -3790,9 +3790,7 @@ class RezoTileDisplay(wiring.Component):
             for pos in range(4):
                 writer_address_init[35 + pos] = native_text_address(
                     7, 14, 11, pos)
-                # The leading blank begins one cell before DRY, placing the
-                # visible three-character label at x=32 and centring it over
-                # the fifth native OUTPUT column.
+                # OUTPUT values share one fixed left origin.
                 writer_address_init[39 + pos] = native_text_address(
                     4, 31, 18, pos)
             for pos in range(3):
@@ -3805,7 +3803,7 @@ class RezoTileDisplay(wiring.Component):
                 writer_address_init[52 + pos] = native_text_address(
                     5, 22, 21, pos)
                 writer_address_init[59 + pos] = native_text_address(
-                    6, 16, 11, pos)
+                    6, 17, 11, pos)
             for pos in range(5):
                 writer_address_init[66 + pos] = native_text_address(
                     6, 20, 22, pos)
@@ -3886,7 +3884,7 @@ class RezoTileDisplay(wiring.Component):
                 for pos in range(3):
                     with m.Case(11 + n * 3 + pos):
                         audio_char = self.code("AUDIO"[pos])
-                        cv_char = self.code(" CV  "[pos])
+                        cv_char = self.code("CV   "[pos])
                         m.d.comb += writer_char.eq(Mux(
                             input_modes_sync[n], cv_char, audio_char))
                     with m.Case(23 + n * 3 + pos):
@@ -3897,7 +3895,7 @@ class RezoTileDisplay(wiring.Component):
                     for pos in range(2):
                         with m.Case(96 + n * 2 + pos):
                             audio_char = self.code("AUDIO"[pos + 3])
-                            cv_char = self.code(" CV  "[pos + 3])
+                            cv_char = self.code("CV   "[pos + 3])
                             m.d.comb += writer_char.eq(Mux(
                                 input_modes_sync[n], cv_char, audio_char))
             for pos in range(4):
@@ -3908,7 +3906,7 @@ class RezoTileDisplay(wiring.Component):
                 with m.Case(39 + pos):
                     m.d.comb += writer_char.eq(Mux(
                         filter_mode_sync, 0,
-                        Const(self.code(" DRY"[pos]), 6)))
+                        Const(self.code("DRY "[pos]), 6)))
             for pos in range(3):
                 with m.Case(43 + pos):
                     m.d.comb += writer_char.eq(Mux(
@@ -4087,10 +4085,8 @@ class RezoTileDisplay(wiring.Component):
                            tune_panel_x1, 450 + tune_y_shift)))))
         filter_meter_panel = active & filter_page & filter_meter_rows
         if self.compact_layout:
-            # Six- and seven-character dynamic values have an unavoidable
-            # half-cell visual phase in the 16px tile font. Offset their
-            # chips by half a cell so the visible glyphs, rather than merely
-            # the character slots, are centered in each box.
+            # Value-chip geometry is fixed while its text uses a stable,
+            # inexpensive left origin in the tile RAM.
             palette_chip = advanced_page & self.rect(
                 text_x, text_y, 344, 260, 456, 300)
             palette_select = advanced_page & (
@@ -4760,7 +4756,7 @@ class RezoTileDisplay(wiring.Component):
         # panel, matching the value-only treatment used elsewhere in REZO.
         # Native column 18 is the common right edge of MODE/VALUE/DEPTH. The
         # value chips begin at x=304, while their glyphs begin at column 20 so
-        # AUDIO/CV and the three-character targets share the chip center.
+        # AUDIO/CV and the three-character targets share one left origin.
         # Native compact lane bounds all derive from the same three-pixel
         # top inset relative to their text cells: MODE 3, VALUE 35, DEPTH 67.
         # This is intentionally one shared grid, not per-input correction.
@@ -5644,8 +5640,8 @@ class RezoBeamTop(Elaboratable):
                  'assignable out', 'assignable out'],
         io_right=['', '', 'video out required', '', '', '']
     )
-    # This design's placement is seed-sensitive at 720p60. Seed 4 is the
-    # measured all-clock route for the third compact-display pass, while the
+    # This design's placement is seed-sensitive at 720p60. Seed 7 is the
+    # measured all-clock route for the fixed-left text pass, while the
     # environment override remains useful for place-and-route experiments.
     # The compact renderer needs a density pass plus a lower ABC9 wire weight
     # than synth_ecp5's fixed 300 ps. The second photo-alignment pass no longer
@@ -5661,7 +5657,7 @@ class RezoBeamTop(Elaboratable):
         "autoname; hierarchy -check; stat; check -noinit; "
         "blackbox =A:whitebox"
     )
-    nextpnr_opts = f"--timing-allow-fail --seed {os.getenv('TILIQUA_REZO_SEED', '4')}"
+    nextpnr_opts = f"--timing-allow-fail --seed {os.getenv('TILIQUA_REZO_SEED', '7')}"
 
     def __init__(self, clock_settings):
         assert clock_settings.modeline is not None

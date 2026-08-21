@@ -59,16 +59,6 @@ def _render_text_bounds(*regions, page=0, palette=0, input_modes=(),
     return bounds
 
 
-def _assert_optically_centered(glyph_bounds, chip_bounds):
-    """Allow only the half-character phase inherent to fixed 16px cells."""
-    glyph_x0, glyph_y0, glyph_x1, glyph_y1 = glyph_bounds
-    chip_x0, chip_y0, chip_x1, chip_y1 = chip_bounds
-    assert abs((glyph_x0 + glyph_x1 - 1) -
-               (chip_x0 + chip_x1 - 1)) <= 10
-    assert abs((glyph_y0 + glyph_y1 - 1) -
-               (chip_y0 + chip_y1 - 1)) <= 2
-
-
 def test_standard_hdmi_compact_preview_is_native_size_and_unrotated():
     """Both targets render identical upright compact pixels at native size."""
     preview = RezoTileDisplay(
@@ -112,7 +102,7 @@ def test_standard_hdmi_compact_preview_is_native_size_and_unrotated():
     assert all(standard == circular for standard, circular in samples)
 
 
-def test_compact_input_and_options_values_are_optically_centered():
+def test_compact_input_and_options_values_use_fixed_left_origins():
     mode_chips = tuple(
         (304, 221 + 96 * index, 402, 241 + 96 * index)
         for index in range(4))
@@ -130,13 +120,15 @@ def test_compact_input_and_options_values_are_optically_centered():
                     RezoCore.CV_TARGET_GROUP_BASE + 3),
     )
     for bounds, chip in zip(input_bounds, mode_chips + value_chips):
-        _assert_optically_centered(bounds, chip)
+        assert 320 <= bounds[0] <= 322
+        assert bounds[2] <= chip[2]
 
     options_chips = ((344, 260, 456, 300), (328, 324, 456, 364))
     options_bounds = _render_text_bounds(
         *options_chips, page=5, palette=3, save_default_available=1)
     for bounds, chip in zip(options_bounds, options_chips):
-        _assert_optically_centered(bounds, chip)
+        assert 352 <= bounds[0] <= 354
+        assert bounds[2] <= chip[2]
 
 
 def test_compact_round_layout_keeps_native_text_and_uses_top_arc():
@@ -268,7 +260,7 @@ def test_compact_labels_use_native_control_rows():
         ctx.set(dut.filter_mode, 0)
         ctx.set(dut.page, 2)
         await sample(ctx, 12 * 16, 16 * 16)  # left of the VALUE chip
-        await sample(ctx, 20 * 16, 16 * 16)  # centered FB target
+        await sample(ctx, 20 * 16, 16 * 16)  # left-justified FB target
 
     sim.add_testbench(bench)
     sim.run()

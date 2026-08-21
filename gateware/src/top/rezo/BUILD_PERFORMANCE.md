@@ -159,6 +159,9 @@ also passing every constrained clock.
 | STREZO-CURVE-UI-S16 | `04c6e663`; corrected dynamic curve value and split OPTIONS panels | 16 | — | 22,937 | 1,351 | 6,875 | 21 | 373.13 | 75.74 | 66.13 | 71.96 | FAIL DVI and DVI5X margin; no flash |
 | **STREZO-CURVE-UI-S9** | **`04c6e663`; centered CROSS layout and dynamic LINEAR/LOG ADVANCED control** | **9** | **—** | **22,937** | **1,351** | **6,875** | **21** | **422.30** | **73.58** | **63.20** | **81.59** | **PASS 1.25% gate; standard archive flashed slot 4** |
 | **STREZO-UI-POLISH-S9** | **`72445513`; padded LAYOUT chip and top-to-bottom OPTIONS navigation** | **9** | **—** | **22,952** | **1,336** | **6,875** | **21** | **437.45** | **73.23** | **63.25** | **82.12** | **PASS 1.25% gate; standard archive flashed slot 4** |
+| **REZO-FIXED-LEFT-S7** | **Fixed-left value origins; exact authoritative JSON packaged without resynthesis** | **7** | **20,572** | **24,148** | **140** | **6,900** | **22** | **388.95** | **70.12** | **62.24** | **74.84** | **PASS; standard archive flashed slot 2** |
+| **REZOMO-FIXED-LEFT-ROM-S9** | **Fixed-left values; CLOCK character muxes replaced by one synchronous ROM** | **9** | **20,969** | **24,265** | **23** | **7,146** | **22** | **431.03** | **69.04** | **65.15** | **77.24** | **PASS; standard archive flashed slot 3** |
+| **STREZO-FIXED-LEFT-S11** | **Fixed-left family and stereo/motion values** | **11** | **20,092** | **23,392** | **896** | **6,919** | **21** | **448.83** | **71.82** | **63.76** | **78.18** | **PASS; standard archive flashed slot 4** |
 
 ## Notes
 

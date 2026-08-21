@@ -384,10 +384,10 @@ def test_feedback_damp_is_a_named_discrete_selector():
     async def bench(ctx):
         ctx.set(dut.page, 1)
         ctx.set(dut.damp_mode, 4)
-        # Initial text refresh writes " MAX " in the compact DAMPING row.
+        # Initial text refresh writes left-aligned "MAX" in the fixed slot.
         for _ in range(48):
             await ctx.tick("sync")
-        await sample(ctx, 228, 32 * 16)  # illuminated center of the A
+        await sample(ctx, 212, 32 * 16)  # illuminated center of the A
         await sample(ctx, 220, 512)      # compact button panel
         await sample(ctx, 400, 512)      # no full-width DAMP meter
         ctx.set(dut.selected, RezoHardwareUI.TARGET_DAMP)

@@ -48,7 +48,7 @@ TARGETS = {
         bitstream_name="REZO",
         artifact_name="REZO",
         modeline="1280x720p60",
-        default_seed=2,
+        default_seed=7,
     ),
     "rezo_round": BuildTarget(
         key="rezo_round",

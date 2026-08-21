@@ -112,18 +112,6 @@ def _render_text_bounds(*regions, **values):
     return result
 
 
-def _assert_optically_centered(glyph_bounds, chip_bounds):
-    glyph_x0, glyph_y0, glyph_x1, glyph_y1 = glyph_bounds
-    chip_x0, chip_y0, chip_x1, chip_y1 = chip_bounds
-    # Compare doubled centers so half-pixel centers remain exact. The cell
-    # renderer cannot represent a half-character origin. Chips split the two
-    # possible parity positions, keeping either case within five native pixels
-    # of center without adding a live pixel-coordinate mux.
-    assert abs((glyph_x0 + glyph_x1 - 1) -
-               (chip_x0 + chip_x1 - 1)) <= 10
-    assert (glyph_y0 + glyph_y1 - 1) == (chip_y0 + chip_y1 - 1)
-
-
 def test_native_canvas_is_centered_without_scaling_on_standard_video():
     points = ((106, 106), (613, 613), (105, 300), (614, 300))
     pixels = _render_samples(points=points)
@@ -244,7 +232,7 @@ def test_bank_mode_value_has_the_same_bright_chip_as_other_values():
     ]
 
 
-def test_bank_value_chips_use_parity_balanced_centered_fields():
+def test_bank_value_chips_keep_fixed_geometry_across_labels():
     panel = RezoTileDisplay.PALETTE["panel"]
     blank = RezoTileDisplay.PALETTE["blank"]
     assert _render_samples(
@@ -271,7 +259,7 @@ def test_even_preset_uses_all_four_visible_glyphs():
     assert bounds == (272, 176, 330, 190)
 
 
-def test_input_text_chips_use_centered_content_widths_and_shared_row_centres():
+def test_input_text_chips_use_fixed_widths_and_shared_row_centres():
     panel = RezoTileDisplay.PALETTE["panel"]
     background = RezoTileDisplay.PALETTE["background"]
     assert _render_samples(
@@ -292,12 +280,13 @@ def test_input_text_chips_use_centered_content_widths_and_shared_row_centres():
     ]
 
 
-def test_bank_and_input_value_glyphs_are_optically_centered():
+def test_bank_and_input_value_glyphs_use_fixed_left_origins():
     bank_chip = (464, 167, 564, 199)
     for clock_mode in (0, 1):
         bounds, = _render_text_bounds(
             bank_chip, page=0, clock_mode=clock_mode)
-        _assert_optically_centered(bounds, bank_chip)
+        assert 480 <= bounds[0] <= 482
+        assert bounds[2] <= bank_chip[2]
 
     input_mode_chip = (304, 221, 402, 241)
     input_value_chip = (304, 253, 370, 273)
@@ -306,18 +295,21 @@ def test_bank_and_input_value_glyphs_are_optically_centered():
         page=2,
         input_modes=(RezoCore.INPUT_MODE_AUDIO,) * 4,
     )
-    _assert_optically_centered(audio_bounds, input_mode_chip)
+    assert 320 <= audio_bounds[0] <= 322
+    assert audio_bounds[2] <= input_mode_chip[2]
     cv_bounds, fb_bounds = _render_text_bounds(
         input_mode_chip, input_value_chip,
         page=2,
         input_modes=(RezoCore.INPUT_MODE_CV,) * 4,
         cv_targets=(RezoCore.CV_TARGET_FEEDBACK,) * 4,
     )
-    _assert_optically_centered(cv_bounds, input_mode_chip)
-    _assert_optically_centered(fb_bounds, input_value_chip)
+    assert 320 <= cv_bounds[0] <= 322
+    assert cv_bounds[2] <= input_mode_chip[2]
+    assert 320 <= fb_bounds[0] <= 322
+    assert fb_bounds[2] <= input_value_chip[2]
 
 
-def test_clock_mode_specific_value_glyphs_are_optically_centered():
+def test_clock_mode_specific_value_glyphs_use_fixed_left_origins():
     turing_chips = ((304, 412, 370, 434), (304, 476, 354, 498))
     turing_bounds = _render_text_bounds(
         *turing_chips,
@@ -327,7 +319,8 @@ def test_clock_mode_specific_value_glyphs_are_optically_centered():
         turing_length=10,
     )
     for bounds, chip in zip(turing_bounds, turing_chips):
-        _assert_optically_centered(bounds, chip)
+        assert 320 <= bounds[0] <= 322
+        assert bounds[2] <= chip[2]
 
     walk_chips = (
         (304, 412, 386, 434),
@@ -343,7 +336,8 @@ def test_clock_mode_specific_value_glyphs_are_optically_centered():
         walk_chance_index=2,
     )
     for bounds, chip in zip(walk_bounds, walk_chips):
-        _assert_optically_centered(bounds, chip)
+        assert 320 <= bounds[0] <= 322
+        assert bounds[2] <= chip[2]
 
     data_chip = (304, 412, 466, 434)
     data_bounds, = _render_text_bounds(
@@ -352,7 +346,8 @@ def test_clock_mode_specific_value_glyphs_are_optically_centered():
         clock_algorithm=RezoCore.CLOCK_ALGORITHM_SHIFT,
         data_source=RezoCore.DATA_SOURCE_CV,
     )
-    _assert_optically_centered(data_bounds, data_chip)
+    assert 320 <= data_bounds[0] <= 322
+    assert data_bounds[2] <= data_chip[2]
 
 
 def test_round_rotation_preserves_native_pixels_without_scaling():
