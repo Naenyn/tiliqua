@@ -170,9 +170,15 @@ class DVIPHY(wiring.Component):
         ]
 
         # Serialization logic
-        tmds_ch0_shift = Signal(10)
-        tmds_ch1_shift = Signal(10)
-        tmds_ch2_shift = Signal(10)
+        # These serializer data registers are transient: the first active
+        # ``shift5[0]`` phase replaces every bit before any stable video is
+        # expected.  Keeping them resettable makes the phase bit feed the LSR
+        # muxes of all 30 flops, creating a high-fanout 5x-clock path that is
+        # needlessly sensitive to placement.  Leave only the phase ring
+        # resettable and allow these registers to power up unspecified.
+        tmds_ch0_shift = Signal(10, reset_less=True)
+        tmds_ch1_shift = Signal(10, reset_less=True)
+        tmds_ch2_shift = Signal(10, reset_less=True)
 
         # 5-bit circular shift buffer
         shift5 = Signal(5, reset=1)
