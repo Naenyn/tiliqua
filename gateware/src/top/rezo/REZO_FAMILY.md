@@ -27,7 +27,7 @@ accidentally as a standard artifact through `--skip-build`.
 seed. The older `TILIQUA_REZO_SEED=<n>` override remains compatible when the
 family-specific variable is unset.
 The qualified defaults are seed 8 for REZO standard, seed 2 for REZO circular,
-seed 9 for REZOMO standard, seed 4 for REZOMO circular, seed 7 for STREZO
+seed 9 for REZOMO standard, seed 4 for REZOMO circular, seed 8 for STREZO
 standard, and seed 1 for STREZO circular.
 
 REZO circular also selects the native `yosys` executable because its documented
@@ -54,6 +54,9 @@ mapper.
 - `display_common.py` owns the one family font, character sets, and semantic
   palettes used by every active tile renderer. `ui_common.py` owns shared page
   metadata, geometry, static labels, and navigation contracts.
+- `persistence_common.py` owns the exact common CRC implementation and SPI
+  flash transfer engine. The three persistence modules retain distinct journal
+  schemas, magic/version migration rules, and state machines.
 
 Variant selection occurs before Amaranth elaboration, so no image carries either
 REZOMO-only clock logic or STREZO-only linked-stereo DSP. The historical `rezo`,
@@ -76,6 +79,21 @@ should be extracted in small, independently tested steps:
 
 After each extraction, run every affected variant suite and compare synthesized
 resource and timing results before deleting duplicated code.
+
+### Shared-code audit checkpoint (2026-08-21)
+
+The post-display audit removed all three unused `RezoPeripheral`/`RezoSoc`
+shells and consolidated the byte-for-byte identical persistence transport into
+`persistence_common.py`. Product journals remain local because their payloads,
+compatibility rules, and control FSMs differ. The large renderer and DSP bodies
+also remain local: generated structure and names measurably affect packing and
+timing on the nearly full ECP5, even when source equations appear equivalent.
+
+The full family suite passes 199 tests. Standard-only routes pass the 1.25%
+margin gate at 24,035 cells for REZO seed 8, 23,792 cells for REZOMO seed 9,
+and 23,387 cells for STREZO seed 8. STREZO seed 7 was rejected for DVI5X timing,
+so seed 8 is the new standard default. No circular target was built or flashed,
+and no standard target was flashed during this checkpoint.
 
 ### Shared page-contract checkpoint (2026-08-20)
 

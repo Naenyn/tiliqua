@@ -33,8 +33,7 @@ from amaranth import *
 from amaranth.lib import data, stream, wiring
 from amaranth.lib.cdc import FFSynchronizer
 from amaranth.lib.memory import Memory
-from amaranth.lib.wiring import In, Out, connect, flipped
-from amaranth_soc import csr
+from amaranth.lib.wiring import In, Out
 from luna_soc.gateware.core import spiflash
 
 from amaranth_future import fixed
@@ -46,7 +45,6 @@ from tiliqua.build.types import BitstreamHelp
 from tiliqua.dsp import ASQ
 from tiliqua.periph import encoder, eurorack_pmod
 from tiliqua.platform import RebootProvider
-from tiliqua.tiliqua_soc import TiliquaSoc
 from tiliqua.video import dvi
 try:
     from .display_common import (
@@ -1864,94 +1862,6 @@ class RezoCore(wiring.Component):
         ]
         for n in range(4):
             m.d.comb += self.o.payload[n].eq(output_q[n])
-        return m
-
-
-class RezoPeripheral(wiring.Component):
-    class Level(csr.Register, access="w"):
-        value: csr.Field(csr.action.W, signed(16))
-
-    class UnsignedValue(csr.Register, access="w"):
-        value: csr.Field(csr.action.W, unsigned(16))
-
-    class SignedValue(csr.Register, access="w"):
-        value: csr.Field(csr.action.W, signed(16))
-
-    def __init__(self):
-        regs = csr.Builder(addr_width=7, data_width=8)
-        self._levels = [
-            regs.add(f"level{n}", self.Level(), offset=0x00 + 4*n)
-            for n in range(RezoCore.N_BANDS)
-        ]
-        self._dry = regs.add("dry", self.UnsignedValue(), offset=0x30)
-        self._resonance = regs.add("resonance", self.UnsignedValue(), offset=0x34)
-        self._feedback = regs.add("feedback", self.UnsignedValue(), offset=0x38)
-        self.core = None
-        self._bridge = csr.Bridge(regs.as_memory_map())
-
-        super().__init__({
-            "bus": In(csr.Signature(addr_width=regs.addr_width, data_width=regs.data_width)),
-        })
-        self.bus.memory_map = self._bridge.bus.memory_map
-
-    def elaborate(self, platform):
-        m = Module()
-        m.submodules.bridge = self._bridge
-        connect(m, flipped(self.bus), self._bridge.bus)
-
-        for n, reg in enumerate(self._levels):
-            with m.If(reg.f.value.w_stb):
-                m.d.sync += self.core.levels[n].eq(reg.f.value.w_data)
-        with m.If(self._dry.f.value.w_stb):
-            m.d.sync += self.core.dry.eq(self._dry.f.value.w_data)
-        with m.If(self._resonance.f.value.w_stb):
-            m.d.sync += self.core.resonance.eq(self._resonance.f.value.w_data)
-        with m.If(self._feedback.f.value.w_stb):
-            m.d.sync += self.core.feedback.eq(self._feedback.f.value.w_data)
-
-        return m
-
-
-class RezoSoc(TiliquaSoc):
-    module_docstring = sys.modules[__name__].__doc__
-
-    bitstream_help = BitstreamHelp(
-        brief="STREZO linked-stereo resonant filterbank.",
-        io_left=['audio / CV input', 'audio / CV input',
-                 'audio / CV input', 'audio / CV input',
-                 'assignable out', 'assignable out',
-                 'assignable out', 'assignable out'],
-        io_right=['navigate menu', '', 'video out required', '', '', '']
-    )
-
-    def __init__(self, **kwargs):
-        super().__init__(finalize_csr_bridge=False, **kwargs)
-
-        self.rezo_periph_base = 0x00001000
-        self.rezo_periph = RezoPeripheral()
-        self.csr_decoder.add(self.rezo_periph.bus, addr=self.rezo_periph_base, name="rezo_periph")
-
-        self.add_rust_constant(f"pub const N_BANDS: usize = {RezoCore.N_BANDS};\n")
-
-        self.finalize_csr_bridge()
-
-    def elaborate(self, platform):
-        m = Module()
-
-        m.submodules.rezo = rezo = RezoCore(fs=self.clock_settings.audio_clock.fs())
-        self.rezo_periph.core = rezo
-        m.submodules.rezo_periph = self.rezo_periph
-
-        m.submodules += super().elaborate(platform)
-
-        pmod0 = self.pmod0_periph.pmod
-        wiring.connect(m, pmod0.o_cal, rezo.i)
-        m.submodules.audio_out_fifo = audio_out_fifo = dsp.SyncFIFOBuffered(
-            shape=data.ArrayLayout(ASQ, 4), depth=4)
-
-        wiring.connect(m, rezo.o, audio_out_fifo.i)
-        wiring.connect(m, audio_out_fifo.o, pmod0.i_cal)
-
         return m
 
 
@@ -5742,10 +5652,10 @@ class RezoBeamTop(Elaboratable):
                  'assignable out', 'assignable out'],
         io_right=['', '', 'video out required', '', '', '']
     )
-    # This design's DVI PHY placement is seed-sensitive at 720p60. Seed 11 is
-    # the measured all-clock route for the fixed-left text pass and
-    # coarse INPUT acceleration, while the environment override remains useful
-    # for place-and-route experiments.
+    # This design's DVI PHY placement is seed-sensitive at 720p60. Seed 8 is
+    # the measured all-clock route after persistence-transport consolidation,
+    # while the environment override remains useful for place-and-route
+    # experiments.
     # The polished BANDS renderer needs a density pass plus a lower ABC9 wire
     # weight than synth_ecp5's fixed 300 ps. W=150 is the measured balance;
     # W=175 and W=200 both map over capacity. Keeping the staged commands on
@@ -5760,7 +5670,7 @@ class RezoBeamTop(Elaboratable):
     )
     nextpnr_opts = (
         "--timing-allow-fail --seed "
-        f"{os.getenv('TILIQUA_STREZO_SEED', os.getenv('TILIQUA_REZO_SEED', '7'))}"
+        f"{os.getenv('TILIQUA_STREZO_SEED', os.getenv('TILIQUA_REZO_SEED', '8'))}"
     )
 
     def __init__(self, clock_settings):

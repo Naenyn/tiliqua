@@ -9,6 +9,40 @@ before changing the design. The current operator guides are
 [`REZOMO_USER_GUIDE.md`](REZOMO_USER_GUIDE.md), and
 [`STREZO_USER_GUIDE.md`](STREZO_USER_GUIDE.md).
 
+## 2026-08-21 shared-code audit and persistence extraction
+
+This checkpoint completes the recommended follow-up audit. Only standard
+`1280x720p60` targets were built; no circular target was invoked, and nothing
+was flashed.
+
+- Deleted the three obsolete `RezoPeripheral`/`RezoSoc` implementations and
+  their unused CSR/SoC imports. All active family targets instantiate the
+  framebuffer-free top-level classes, so these copies were dead source rather
+  than alternate implementations.
+- Added `persistence_common.py` as the single source of the bit-exact BZIP2 CRC
+  step/table and `SPIFlashTransfer` transport engine. Each product retains its
+  own `RezoStateJournal`: record fields, magic/version handling, migration
+  policy, and journal FSM remain product-owned and were not generalized.
+- The complete family regression passes: `199 passed, 79 warnings in 807.33s`.
+  The focused target suite passes `5 passed`; the three persistence suites pass
+  `33 passed, 44 warnings`. The warnings are existing dependency deprecations.
+- Final standard routes from the exact audited source all pass the 1.25% timing
+  margin gate:
+  - REZO seed 8: 24,035 cells (253 free), 6,900 FF, 22 DP16KD; DVI5X
+    394.17, AUDIO 70.39, SYNC 63.61, DVI 79.83 MHz.
+  - REZOMO seed 9: 23,792 cells (496 free), 7,098 FF, 22 DP16KD; DVI5X
+    406.01, AUDIO 71.62, SYNC 64.55, DVI 78.03 MHz.
+  - STREZO seed 8: 23,387 cells (901 free), 6,919 FF, 21 DP16KD; DVI5X
+    392.46, AUDIO 71.98, SYNC 61.34, DVI 77.86 MHz.
+- STREZO seed 7 was rejected because its final DVI5X result was 355.87 MHz.
+  Seed 8 was rerouted from the identical synthesized JSON and is now the
+  standard default. REZO remains seed 8 and REZOMO remains seed 9.
+- The remaining large similarities are deliberately local: product journal
+  schemas/migrations, product-specific pages and DSP, and dense renderer RTL
+  whose generated naming and packing affect these near-full ECP5 images. Future
+  consolidation should begin with small pure contracts or exact byte-for-byte
+  helpers and must repeat full synthesis/timing qualification.
+
 ## 2026-08-21 display consolidation and REZOMO optimization
 
 This checkpoint supersedes the build defaults and capacity figures in the
