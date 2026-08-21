@@ -27,7 +27,7 @@ accidentally as a standard artifact through `--skip-build`.
 seed. The older `TILIQUA_REZO_SEED=<n>` override remains compatible when the
 family-specific variable is unset.
 The qualified defaults are seed 9 for REZO standard, seed 2 for REZO circular,
-seed 9 for REZOMO standard, seed 4 for REZOMO circular, seed 4 for STREZO
+seed 9 for REZOMO standard, seed 4 for REZOMO circular, seed 7 for STREZO
 standard, and seed 1 for STREZO circular.
 
 REZO circular also selects the native `yosys` executable because its documented
@@ -254,3 +254,21 @@ It was flashed successfully to slot 4 for hardware validation.
 The circular REZOMO target has not yet been rebuilt from this optimization
 commit. Its older seed-4 qualification remains the current reference until an
 exact circular build passes the same margin gate.
+
+## Shared page-contract qualification (2026-08-20)
+
+Commit `a40c6a83` centralizes the common page headers, support-page labels,
+coordinates, and FEEDBACK/INPUT/GROUPS navigation contracts described above.
+All 198 family DSP, display, persistence, target, and UI tests pass. Standard
+routes were built from that exact functional commit and accepted by the 1.25%
+timing-margin gate:
+
+| Target | Seed | Combinational cells | DVI5X / AUDIO / SYNC / DVI MHz |
+|---|---:|---:|---|
+| REZO standard | 9 | 24,062 (226 free) | 399.84 / 72.45 / 67.70 / 79.21 |
+| REZOMO standard | 9 | 23,999 (289 free) | 389.71 / 69.58 / 62.75 / 79.90 |
+| STREZO standard | 7 | 23,207 (1,081 free) | 391.85 / 74.95 / 63.17 / 78.31 |
+
+STREZO's prior default seed 4 was rejected because DVI5X reached only
+352.49 MHz. Seed 7 was selected from the recorded route history rather than a
+random search and is now the qualified standard default.
