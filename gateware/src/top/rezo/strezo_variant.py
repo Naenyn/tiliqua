@@ -4875,6 +4875,7 @@ class RezoTileDisplay(wiring.Component):
             init=motion_ui_init, attrs={"ram_style": "block"})
         motion_depth_rport = motion_ui_mem.read_port(domain="dvi")
         motion_monitor_rport = motion_ui_mem.read_port(domain="dvi")
+        motion_depth_endpoint_q = Signal.like(motion_depth_rport.data)
         motion_monitor_negative_q = Signal()
         motion_monitor_endpoint_q = Signal.like(motion_monitor_rport.data)
         motion_monitor_negative_q2 = Signal()
@@ -4887,6 +4888,10 @@ class RezoTileDisplay(wiring.Component):
         # this delay a zero crossing could combine a new sign with the prior
         # endpoint for one pixel clock.
         m.d.dvi += [
+            # As with the monitor endpoint below, stage the block-RAM result
+            # before the 10-bit pixel comparison. DEPTH changes many orders
+            # of magnitude more slowly than the pixel clock.
+            motion_depth_endpoint_q.eq(motion_depth_rport.data),
             motion_monitor_negative_q.eq(self.motion_monitor < 0),
             # Isolate the block-RAM clock-to-Q delay from the bipolar-line
             # geometry.  This is display-only telemetry; one 13 ns pixel
@@ -4896,7 +4901,7 @@ class RezoTileDisplay(wiring.Component):
         ]
         motion_depth_fill = (
             bands_page & (x >= motion_depth_fill_x0) &
-            (x < motion_depth_rport.data) &
+            (x < motion_depth_endpoint_q) &
             (y >= motion_bottom_y0 + 2) &
             (y < motion_bottom_y0 + motion_fader_height - 2))
         motion_depth_select = (
