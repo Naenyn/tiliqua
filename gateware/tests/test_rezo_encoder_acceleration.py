@@ -3,28 +3,11 @@
 import pytest
 from amaranth.sim import Simulator
 
+from rezo_ui_support import click as _click
+from rezo_ui_support import fast_click_ui as _fast_click_ui
 from top.rezo.rezo_variant import RezoHardwareUI as RezoUI
 from top.rezo.strezo_variant import RezoHardwareUI as StrezoUI
 from top.rezo.top import RezoHardwareUI as RezomoUI
-
-
-def _fast_click_ui(ui_class):
-    return type(
-        f"FastClick{ui_class.__module__.split('.')[-1]}UI",
-        (ui_class,),
-        {"CLICK_LOCKOUT_CYCLES": 1},
-    )
-
-
-async def _hold(ctx, signal, value, cycles=4):
-    ctx.set(signal, value)
-    for _ in range(cycles):
-        await ctx.tick()
-
-
-async def _click(ctx, dut):
-    await _hold(ctx, dut.button, 1, 5)
-    await _hold(ctx, dut.button, 0, 5)
 
 
 async def _turn(ctx, dut, endpoint, direction):

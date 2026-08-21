@@ -1,37 +1,13 @@
 from amaranth.sim import Simulator
 
+from rezo_ui_support import click as _click
+from rezo_ui_support import fast_click_ui
+from rezo_ui_support import hold as _hold
+from rezo_ui_support import turn as _turn
 from top.rezo.strezo_variant import RezoCore, RezoHardwareUI
 
 
-class FastClickRezoUI(RezoHardwareUI):
-    """Keep production debounce semantics without millions of test cycles."""
-
-    CLICK_LOCKOUT_CYCLES = 1
-
-
-async def _hold(ctx, signal, value, cycles=4):
-    ctx.set(signal, value)
-    for _ in range(cycles):
-        await ctx.tick()
-
-
-async def _click(ctx, dut):
-    await _hold(ctx, dut.button, 1, 5)
-    await _hold(ctx, dut.button, 0, 5)
-
-
-async def _turn(ctx, dut, endpoint, direction):
-    """Emit one complete detent and return its new 00/11 endpoint."""
-    if direction == 1:
-        states = (0b10, 0b11) if endpoint == 0b00 else (0b01, 0b00)
-    else:
-        states = (0b01, 0b11) if endpoint == 0b00 else (0b10, 0b00)
-    for state in states:
-        ctx.set(dut.enc_i, state & 1)
-        ctx.set(dut.enc_q, (state >> 1) & 1)
-        for _ in range(4):
-            await ctx.tick()
-    return states[-1]
+FastClickRezoUI = fast_click_ui(RezoHardwareUI)
 
 
 def test_ui_shared_feedback_toggle_path():

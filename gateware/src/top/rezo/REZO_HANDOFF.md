@@ -9,6 +9,34 @@ before changing the design. The current operator guides are
 [`REZOMO_USER_GUIDE.md`](REZOMO_USER_GUIDE.md), and
 [`STREZO_USER_GUIDE.md`](STREZO_USER_GUIDE.md).
 
+## 2026-08-21 DSP/UI/display test consolidation
+
+This checkpoint continues consolidation strictly in test code. No product RTL,
+firmware, build configuration, or generated bitstream changed, so no target was
+built or flashed.
+
+- Added `test_rezo_family_compare_contract.py` as the single parameterized
+  source for four identical DSP contracts exercised by REZO, REZOMO, and
+  STREZO: input telemetry, zero-bank wet/dry routing, the known-good band-5
+  drive vector, and resonator guard-bit continuity. The identical REZO and
+  REZOMO 192 kHz cycle-budget check also lives there; STREZO retains its
+  distinct local budget test.
+- Added `rezo_ui_support.py` as the common encoder detent, click/hold, and
+  shortened-debounce simulation driver used by all three UI suites and the
+  cross-family acceleration contract.
+- Added `rezo_display_support.py` as the common native-canvas coordinate
+  mapping and settled RGB sampling helper for REZOMO and STREZO. Their signal
+  setup and scene expectations remain product-owned because they differ.
+- Removed about 687 copied lines from the product test files and replaced them
+  with shared contracts plus small import adapters, a net reduction of more
+  than 400 test lines. Test collection is unchanged at 195 cases.
+- Focused compare/UI coverage passes 44 tests, focused native-display coverage
+  passes 34 tests, and the complete family regression passes `195 passed, 79
+  warnings in 803.22s`. The warnings are existing dependency deprecations.
+- This audit does not justify parameterizing merely similar display/UI tests.
+  Shared behavior should move into a family contract only when its setup and
+  expected result are truly identical; variant semantics should remain local.
+
 ## 2026-08-21 pure-contract and persistence-test consolidation
 
 This checkpoint continues the low-risk consolidation audit. Only standard

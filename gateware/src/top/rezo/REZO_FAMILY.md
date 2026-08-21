@@ -83,6 +83,20 @@ should be extracted in small, independently tested steps:
 After each extraction, run every affected variant suite and compare synthesized
 resource and timing results before deleting duplicated code.
 
+### DSP/UI/display test consolidation checkpoint (2026-08-21)
+
+Common test mechanics now exist once: `test_rezo_family_compare_contract.py`
+parameterizes the identical family DSP contracts, `rezo_ui_support.py` drives
+the shared encoder/button interaction (including acceleration tests), and
+`rezo_display_support.py` maps and samples native display coordinates.
+Product-specific DSP timing, UI semantics, display signal setup, and scene
+expectations remain in their variant suites.
+
+The change removes more than 400 net test lines without changing the 195-test
+collection. The complete family run passes all 195 tests with 79 existing
+dependency warnings. Because product and build sources are untouched, no
+standard or circular target was rebuilt and nothing was flashed.
+
 ### Pure-contract and test consolidation checkpoint (2026-08-21)
 
 REZO and STREZO now share their numeric filterbank contract through

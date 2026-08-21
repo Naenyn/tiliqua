@@ -1,5 +1,6 @@
 from amaranth.sim import Simulator
 
+from rezo_display_support import sample_native_rgb
 from top.rezo.strezo_variant import RezoCore, RezoHardwareUI, RezoTileDisplay
 from top.rezo.ui_common import (
     NATIVE_FEEDBACK_CEILING_Y0,
@@ -66,18 +67,8 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
         ctx.set(dut.de, 1)
         for _ in range(320):
             await ctx.tick("dvi")
-        for panel_x, panel_y in points:
-            if rotate_left:
-                physical_x = 719 - panel_y
-                physical_y = panel_x
-            else:
-                physical_x = dut.x_offset + panel_x
-                physical_y = panel_y
-            ctx.set(dut.x, physical_x)
-            ctx.set(dut.y, physical_y)
-            for _ in range(12):
-                await ctx.tick("dvi")
-            samples.append((ctx.get(dut.r), ctx.get(dut.g), ctx.get(dut.b)))
+        samples.extend(await sample_native_rgb(
+            ctx, dut, points, rotate_left=rotate_left))
 
     sim.add_testbench(bench)
     sim.run()
