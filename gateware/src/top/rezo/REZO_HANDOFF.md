@@ -9,6 +9,46 @@ before changing the design. The current operator guides are
 [`REZOMO_USER_GUIDE.md`](REZOMO_USER_GUIDE.md), and
 [`STREZO_USER_GUIDE.md`](STREZO_USER_GUIDE.md).
 
+## 2026-08-21 pure-contract and persistence-test consolidation
+
+This checkpoint continues the low-risk consolidation audit. Only standard
+`1280x720p60` targets were built; no circular target was invoked, and nothing
+was flashed.
+
+- Added `core_common.py` as the single source of the shared filterbank numeric
+  contract: band/input/drive limits, CV target bases, frequency layouts and
+  fine-frequency grid, frequency lookup, and cutoff coefficient. REZO and
+  STREZO inherit this signal-free mixin.
+- REZOMO deliberately retains its local copy. Applying the same pure mixin to
+  REZOMO changed generated structure from 23,792 to 23,836 cells and seed 9
+  failed DVI5X at 335.68 MHz. A further REZOMO-only CLOCK constants module also
+  produced a larger bitstream and failed DVI at 66.34 MHz. Both experiments
+  were rejected; no CLOCK signal or RTL assignment moved out of `top.py`.
+- Consolidated the three copied persistence test harnesses into
+  `rezo_persistence_support.py` and one parameterized
+  `test_rezo_persistence_contract.py`. Common flash, corruption, slot, save,
+  and page-boundary behavior is authored once and exercised against all three
+  journals. Only product migration tests remain local. This removes about 690
+  duplicated test lines.
+- The final retained family regression passes: `195 passed, 79 warnings in
+  805.01s`. The reduction from 199 tests is intentional: four duplicate
+  transport executions now run once. The warnings are existing dependency
+  deprecations.
+- Final standard routes all pass the 1.25% timing margin gate:
+  - REZO seed 8: 24,035 cells (253 free), 6,900 FF, 22 DP16KD; DVI5X
+    394.17, AUDIO 70.39, SYNC 63.61, DVI 79.83 MHz. Its bitstream is
+    byte-identical to the prior qualified image.
+  - REZOMO seed 8: 23,770 cells (518 free), 7,098 FF, 22 DP16KD; DVI5X
+    439.75, AUDIO 75.80, SYNC 61.44, DVI 77.71 MHz. Seed 9 failed DVI5X at
+    355.11 MHz on this exact synthesized JSON, so seed 8 is the new standard
+    default.
+  - STREZO seed 8: 23,332 cells (956 free), 6,919 FF, 21 DP16KD; DVI5X
+    384.91, AUDIO 72.03, SYNC 64.82, DVI 84.64 MHz.
+- The next safe consolidation work is test/contract oriented. REZOMO core and
+  CLOCK definitions, all dense renderer RTL, and product journal FSMs should
+  remain local unless a future capacity change creates room for controlled
+  structural experiments.
+
 ## 2026-08-21 shared-code audit and persistence extraction
 
 This checkpoint completes the recommended follow-up audit. Only standard

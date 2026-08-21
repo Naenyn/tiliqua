@@ -27,7 +27,7 @@ accidentally as a standard artifact through `--skip-build`.
 seed. The older `TILIQUA_REZO_SEED=<n>` override remains compatible when the
 family-specific variable is unset.
 The qualified defaults are seed 8 for REZO standard, seed 2 for REZO circular,
-seed 9 for REZOMO standard, seed 4 for REZOMO circular, seed 8 for STREZO
+seed 8 for REZOMO standard, seed 4 for REZOMO circular, seed 8 for STREZO
 standard, and seed 1 for STREZO circular.
 
 REZO circular also selects the native `yosys` executable because its documented
@@ -57,6 +57,9 @@ mapper.
 - `persistence_common.py` owns the exact common CRC implementation and SPI
   flash transfer engine. The three persistence modules retain distinct journal
   schemas, magic/version migration rules, and state machines.
+- `core_common.py` owns the signal-free filterbank numeric contract shared by
+  REZO and STREZO. REZOMO keeps these definitions local because inheriting the
+  same mixin measurably worsened its synthesized packing and timing.
 
 Variant selection occurs before Amaranth elaboration, so no image carries either
 REZOMO-only clock logic or STREZO-only linked-stereo DSP. The historical `rezo`,
@@ -79,6 +82,25 @@ should be extracted in small, independently tested steps:
 
 After each extraction, run every affected variant suite and compare synthesized
 resource and timing results before deleting duplicated code.
+
+### Pure-contract and test consolidation checkpoint (2026-08-21)
+
+REZO and STREZO now share their numeric filterbank contract through
+`core_common.py`. REZOMO was tested with the same extraction and with a separate
+pure CLOCK configuration module; both changed its generated structure and
+failed standard video timing, so both REZOMO experiments were reverted. This
+is now an explicit consolidation boundary rather than an untested assumption.
+
+The copied persistence simulation model and common journal behavior now exist
+once in `rezo_persistence_support.py` and
+`test_rezo_persistence_contract.py`. Product files contain only their distinct
+migration tests. The final family regression passes 195 tests with 79 existing
+warnings.
+
+Standard-only routes pass the 1.25% gate at 24,035 cells for REZO seed 8,
+23,770 cells for REZOMO seed 8, and 23,332 cells for STREZO seed 8. REZOMO seed
+8 replaces seed 9 as its standard default. No circular target was built and
+nothing was flashed during this checkpoint.
 
 ### Shared-code audit checkpoint (2026-08-21)
 

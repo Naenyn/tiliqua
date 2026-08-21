@@ -32,7 +32,6 @@ spectral compression are natural follow-up experiments once the mono core has
 some listening time on real hardware.
 """
 
-import math
 import os
 import sys
 
@@ -58,6 +57,7 @@ try:
         FONT_5X7, PALETTE_ROLES, RGB_PALETTES, SEMANTIC_PALETTE,
         TILE_CHARS,
     )
+    from .core_common import RezoCoreConstants
     from .encoder_acceleration import progressive_edit_level
     from .persistence import RezoStateJournal, SPIFlashTransfer
     from .ui_common import (
@@ -91,6 +91,7 @@ except ImportError:  # top_level_cli executes this file directly.
         FONT_5X7, PALETTE_ROLES, RGB_PALETTES, SEMANTIC_PALETTE,
         TILE_CHARS,
     )
+    from core_common import RezoCoreConstants
     from encoder_acceleration import progressive_edit_level
     from persistence import RezoStateJournal, SPIFlashTransfer
     from ui_common import (
@@ -121,80 +122,17 @@ except ImportError:  # top_level_cli executes this file directly.
     )
 
 
-class RezoCore(wiring.Component):
+class RezoCore(RezoCoreConstants, wiring.Component):
     """Ten-band mono resonant filterbank."""
 
-    N_BANDS = 10
-    INPUT_UNITY = 32768
-    INPUT_MAX = 65535
-    INPUT_UNITY_POS = 52428
-    PARAM_SLEW_STEP = 64
     FILTER_PARAM_SLEW_STEP = 256
-    # Proven input conditioner from the last hardware-clean DSP path. Keep it
-    # independent of the user-facing feedback safety controls: its job is only
-    # to prevent a hot Eurorack input from making an SVF state chatter.
-    INPUT_LIMIT_KNEE = 12288
-    INPUT_LIMIT_SHIFT = 3  # 8:1 above the knee
     INPUT_MODE_AUDIO = 0
     INPUT_MODE_CV = 1
-    CV_TARGET_FEEDBACK = 0
-    CV_TARGET_RESONANCE = 1
-    CV_TARGET_DRIVE = 2
-    CV_TARGET_GROUP_BASE = 3
-    N_GROUPS = 4
     FILTER_LP = 0
     FILTER_HP = 1
     FILTER_BP = 2
     FILTER_NOTCH = 3
     FILTER_PASS_LEVEL = 8192
-    DRIVE_FLOOR = 8192       # 0.25x resonator excitation
-    DRIVE_DEFAULT = 8192     # + floor = established 0.5x excitation
-    DRIVE_MAX = 24575        # + floor = just below 1.0x
-
-    # The original REZO prototype used the nominal centers of the filterbank
-    # that inspired it. Keep that layout as LEGACY, but make the neutral
-    # octave-spaced layout the factory default for new configurations.
-    LEGACY_FREQS_HZ = (29, 61, 115, 218, 411, 777, 1500, 2800, 5200, 11000)
-    OCTAVE_FREQS_HZ = (31, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000)
-    PERCEPT_FREQS_HZ = (50, 150, 300, 500, 770, 1150, 1700, 2700, 5300, 12000)
-    # Factory centers form the coarse grid retained by the version-2 save
-    # format. Manual editing inserts three logarithmic subdivisions between
-    # adjacent centers. The low five bits previously saved for each band still
-    # identify the same exact factory-union value; two former padding bits per
-    # band persist the new fine position without growing the record.
-    COARSE_FREQUENCIES_HZ = tuple(sorted(set((
-        *LEGACY_FREQS_HZ, *OCTAVE_FREQS_HZ, *PERCEPT_FREQS_HZ,
-    ))))
-    FREQ_COARSE_WIDTH = 5
-    FREQ_FINE_WIDTH = 2
-    FREQ_SUBDIVISIONS = 1 << FREQ_FINE_WIDTH
-
-    frequencies = []
-    for index, frequency in enumerate(COARSE_FREQUENCIES_HZ):
-        if index + 1 < len(COARSE_FREQUENCIES_HZ):
-            next_frequency = COARSE_FREQUENCIES_HZ[index + 1]
-        else:
-            next_frequency = round(
-                frequency * frequency / COARSE_FREQUENCIES_HZ[index - 1])
-        for subdivision in range(FREQ_SUBDIVISIONS):
-            interpolated = round(
-                frequency * (next_frequency / frequency) **
-                (subdivision / FREQ_SUBDIVISIONS))
-            if index + 1 < len(COARSE_FREQUENCIES_HZ):
-                interpolated = min(interpolated, next_frequency - 1)
-            frequencies.append(max(frequency, interpolated))
-    FREQUENCIES_HZ = tuple(frequencies)
-    del frequencies, index, frequency, next_frequency, subdivision, interpolated
-    FREQ_INDEX_WIDTH = (len(FREQUENCIES_HZ) - 1).bit_length()
-    LAYOUT_LEGACY = 0
-    LAYOUT_OCTAVE = 1
-    LAYOUT_PERCEPT = 2
-    LAYOUT_USER = 3
-
-    @classmethod
-    def frequency_index(cls, frequency):
-        return cls.FREQUENCIES_HZ.index(frequency)
-
     i: In(stream.Signature(data.ArrayLayout(ASQ, 4)))
     o: Out(stream.Signature(data.ArrayLayout(ASQ, 4)))
 
@@ -272,11 +210,6 @@ class RezoCore(wiring.Component):
         self.input_meters = [Signal(signed(16), name=f"input_meter{n}")
                              for n in range(4)]
         super().__init__()
-
-    @staticmethod
-    def cutoff_coeff(freq_hz, fs):
-        # Chamberlin SVF coefficient, kept below 1.0 for fixed-point headroom.
-        return min(0.98, 2.0 * math.sin(math.pi * freq_hz / (2.0 * fs)))
 
     def elaborate(self, platform):
         m = Module()

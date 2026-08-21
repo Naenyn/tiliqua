@@ -5996,7 +5996,7 @@ class RezoBeamTop(Elaboratable):
                  'assignable out', 'assignable out'],
         io_right=['', '', 'video out required', '', '', '']
     )
-    # This design's DVI PHY placement is seed-sensitive. Seed 9 is the
+    # This design's DVI PHY placement is seed-sensitive. Seed 8 is the
     # measured all-clock route for the standard 1280x720 target. The circular
     # entry point supplies its own measured seed while the environment
     # override remains useful for place-and-route experiments.
@@ -6012,7 +6012,7 @@ class RezoBeamTop(Elaboratable):
         "autoname; hierarchy -check; stat; check -noinit; "
         "blackbox =A:whitebox"
     )
-    nextpnr_opts = f"--timing-allow-fail --seed {os.getenv('TILIQUA_REZO_SEED', '9')}"
+    nextpnr_opts = f"--timing-allow-fail --seed {os.getenv('TILIQUA_REZO_SEED', '8')}"
 
     def __init__(self, clock_settings):
         assert clock_settings.modeline is not None
