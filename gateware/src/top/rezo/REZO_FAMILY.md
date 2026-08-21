@@ -26,8 +26,8 @@ accidentally as a standard artifact through `--skip-build`.
 `TILIQUA_REZO_FAMILY_SEED=<n>` overrides a target's qualified default placement
 seed. The older `TILIQUA_REZO_SEED=<n>` override remains compatible when the
 family-specific variable is unset.
-The qualified defaults are seed 7 for REZO standard, seed 2 for REZO circular,
-seed 9 for REZOMO standard, seed 4 for REZOMO circular, seed 11 for STREZO
+The qualified defaults are seed 8 for REZO standard, seed 2 for REZO circular,
+seed 9 for REZOMO standard, seed 4 for REZOMO circular, seed 7 for STREZO
 standard, and seed 1 for STREZO circular.
 
 REZO circular also selects the native `yosys` executable because its documented
@@ -51,6 +51,9 @@ mapper.
 - `rezo.py`, `rezo_round.py`, `rezomo.py`, `rezomo_round.py`, `strezo.py`, and
   `strezo_round.py` are deliberately thin build entry points.
 - `round.py` is a compatibility shim for the older circular-build script.
+- `display_common.py` owns the one family font, character sets, and semantic
+  palettes used by every active tile renderer. `ui_common.py` owns shared page
+  metadata, geometry, static labels, and navigation contracts.
 
 Variant selection occurs before Amaranth elaboration, so no image carries either
 REZOMO-only clock logic or STREZO-only linked-stereo DSP. The historical `rezo`,

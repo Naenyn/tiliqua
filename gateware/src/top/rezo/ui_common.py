@@ -6,6 +6,28 @@
 from amaranth import Mux
 
 
+COMMON_PAGE_TITLES = (
+    "BANK", "FEEDBACK", "INPUT", "GROUPS", "OUTPUT", "OPTIONS", "BANDS",
+)
+NAV_NAMES = ("NAV ", "EDIT")
+BASE_TARGET_NAMES = ("FB ", "RES", "DRV", "G1 ", "G2 ", "G3 ", "G4 ")
+LAYOUT_NAMES = ("LEGACY ", "OCTAVE ", "PERCEPT", "USER   ")
+PALETTE_NAMES = ("LCD   ", "AMBER ", "CYAN  ", "GREEN ", "VIOLET")
+DAMP_NAMES = ("OFF  ", "LIGHT", "MED  ", "HEAVY", "MAX  ")
+SAVE_NAMES = ("SAVE   ", "SAVING ", "SAVED  ", "ERROR  ", "NO SLOT")
+
+
+def format_frequency_name(frequency):
+    """Format the common compact three-character band-frequency label."""
+    if frequency < 1000:
+        return f"{frequency:<3}"[:3]
+    if frequency < 10_000:
+        whole, remainder = divmod(frequency, 1000)
+        tenth = (remainder + 50) // 100
+        return f"{whole}K{tenth}" if tenth else f"{whole}K "
+    return f"{round(frequency / 1000):02d}K"
+
+
 NATIVE_CONTENT_PANEL_X0 = 125
 NATIVE_CONTENT_PANEL_Y0 = 218
 NATIVE_CONTENT_PANEL_X1 = 594

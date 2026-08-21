@@ -9,6 +9,40 @@ before changing the design. The current operator guides are
 [`REZOMO_USER_GUIDE.md`](REZOMO_USER_GUIDE.md), and
 [`STREZO_USER_GUIDE.md`](STREZO_USER_GUIDE.md).
 
+## 2026-08-21 display consolidation and REZOMO optimization
+
+This checkpoint supersedes the build defaults and capacity figures in the
+fixed-left checkpoint below. Only standard `1280x720p60` targets were built;
+no circular target was invoked and nothing was flashed.
+
+- Added `display_common.py` as the single source of the 5x7 font, tile
+  character sets, semantic palette roles, and RGB themes. Removed all three
+  unused legacy `RezoBeamDisplay` implementations; the active designs had only
+  referenced their copied font dictionaries. Together with shared page
+  metadata extraction, this removes about 1,400 duplicated/dead source lines.
+- `ui_common.py` now also owns the common page-title sequence, navigation/CV
+  target strings, layout/palette/damping/save spellings, and compact frequency
+  formatter. Product-specific CLOCK, FILTER/MATRIX, and CROSS/stereo/motion
+  pages remain local. Dense dynamic pixel equations also remain local because
+  equivalent structural rewrites have repeatedly changed ECP5 packing.
+- Expanded REZOMO's existing synchronous CLOCK character ROM from 1Kx6 to
+  2Kx6 and moved its remaining constant value-name muxes into unused space.
+  It still maps to one DP16KD. Final REZOMO packing is 23,815 cells (473 free),
+  450 fewer cells than the prior 24,265-cell image, with 22 DP16KD total.
+- The five focused display suites pass: `82 passed, 36 warnings in 127.09s`.
+  The complete REZO/REZOMO/STREZO regression also passes: `199 passed, 79
+  warnings in 805.52s`. The warnings are existing dependency deprecations.
+- Final standard routes from the exact consolidated source:
+  - REZO seed 8: 24,148 cells (140 free), 22 DP16KD; DVI5X 440.14,
+    AUDIO 68.66, SYNC 64.31, DVI 75.75 MHz.
+  - REZOMO seed 9: 23,815 cells (473 free), 22 DP16KD; DVI5X 401.28,
+    AUDIO 76.09, SYNC 61.48, DVI 79.52 MHz.
+  - STREZO seed 7: 23,372 cells (916 free), 21 DP16KD; DVI5X 391.54,
+    AUDIO 74.23, SYNC 64.67, DVI 78.77 MHz.
+- Standard defaults are now REZO seed 8, REZOMO seed 9, and STREZO seed 7.
+  REZO seed 7 and STREZO seed 11 were rejected after source-derived net-name
+  changes reduced their DVI routes below the spread-spectrum margin gate.
+
 ## 2026-08-21 fixed-left value-chip implementation
 
 This checkpoint supersedes the exact-centering investigation immediately

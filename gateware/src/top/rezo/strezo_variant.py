@@ -49,9 +49,15 @@ from tiliqua.platform import RebootProvider
 from tiliqua.tiliqua_soc import TiliquaSoc
 from tiliqua.video import dvi
 try:
+    from .display_common import (
+        FONT_5X7, PALETTE_ROLES, RGB_PALETTES, SEMANTIC_PALETTE,
+        STEREO_TILE_CHARS,
+    )
     from .encoder_acceleration import progressive_edit_level
     from .persistence import RezoStateJournal, SPIFlashTransfer
     from .ui_common import (
+        BASE_TARGET_NAMES, COMMON_PAGE_TITLES, DAMP_NAMES, LAYOUT_NAMES,
+        NAV_NAMES, PALETTE_NAMES, SAVE_NAMES, format_frequency_name,
         NATIVE_FEEDBACK_AMOUNT_Y0, NATIVE_FEEDBACK_CEILING_Y0,
         NATIVE_FEEDBACK_FILL_X0, NATIVE_FEEDBACK_FILL_X1,
         NATIVE_FEEDBACK_TRACK_X0, NATIVE_FEEDBACK_TRACK_X1,
@@ -78,9 +84,15 @@ try:
         put_native_support_page_labels,
     )
 except ImportError:  # top_level_cli executes this file directly.
+    from display_common import (
+        FONT_5X7, PALETTE_ROLES, RGB_PALETTES, SEMANTIC_PALETTE,
+        STEREO_TILE_CHARS,
+    )
     from encoder_acceleration import progressive_edit_level
     from persistence import RezoStateJournal, SPIFlashTransfer
     from ui_common import (
+        BASE_TARGET_NAMES, COMMON_PAGE_TITLES, DAMP_NAMES, LAYOUT_NAMES,
+        NAV_NAMES, PALETTE_NAMES, SAVE_NAMES, format_frequency_name,
         NATIVE_FEEDBACK_AMOUNT_Y0, NATIVE_FEEDBACK_CEILING_Y0,
         NATIVE_FEEDBACK_FILL_X0, NATIVE_FEEDBACK_FILL_X1,
         NATIVE_FEEDBACK_TRACK_X0, NATIVE_FEEDBACK_TRACK_X1,
@@ -3341,397 +3353,6 @@ class RezoHardwareUI(wiring.Component):
         return m
 
 
-class RezoBeamDisplay(wiring.Component):
-    """Monochrome 720x720 beam-raced REZO panel.
-
-    The renderer is intentionally LCD-like: a bounded 720x720 coordinate space,
-    coarse shapes, small bitmap text, and cheap animation.  On 1280x720 it is
-    centered; on 720x720 it fills the display.  This keeps the UI predictable
-    and leaves headroom for DSP growth and modulation.
-    """
-
-    FONT_5X7 = {
-        " ": [0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000],
-        "0": [0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110],
-        "1": [0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110],
-        "2": [0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111],
-        "3": [0b11110, 0b00001, 0b00001, 0b01110, 0b00001, 0b00001, 0b11110],
-        "4": [0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010],
-        "5": [0b11111, 0b10000, 0b10000, 0b11110, 0b00001, 0b00001, 0b11110],
-        "6": [0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110],
-        "7": [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000],
-        "8": [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110],
-        "9": [0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100],
-        ".": [0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b01100, 0b01100],
-        "A": [0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001],
-        "B": [0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110],
-        "C": [0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110],
-        "D": [0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110],
-        "E": [0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111],
-        "F": [0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000],
-        "G": [0b01110, 0b10001, 0b10000, 0b10111, 0b10001, 0b10001, 0b01110],
-        "H": [0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001],
-        "I": [0b01110, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110],
-        "K": [0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001],
-        "L": [0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111],
-        "M": [0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001],
-        "N": [0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001],
-        "O": [0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
-        "P": [0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000],
-        "Q": [0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b10010, 0b01101],
-        "R": [0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001],
-        "S": [0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110],
-        "T": [0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100],
-        "U": [0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
-        "V": [0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100],
-        "W": [0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b10101, 0b01010],
-        "X": [0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001],
-        "Y": [0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100],
-        "Z": [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111],
-    }
-
-    PANEL_W = 720
-    PANEL_H = 720
-
-    def __init__(self, h_active=1280):
-        self.x_offset = max(0, (h_active - self.PANEL_W) // 2)
-        super().__init__({
-            "x": In(signed(12)),
-            "y": In(signed(12)),
-            "de": In(1),
-            "levels": In(data.ArrayLayout(signed(6), RezoCore.N_BANDS)),
-            "effective_levels": In(data.ArrayLayout(signed(6), RezoCore.N_BANDS)),
-            "resonance": In(unsigned(6)),
-            "feedback": In(unsigned(6)),
-            "effective_resonance": In(unsigned(6)),
-            "effective_feedback": In(unsigned(6)),
-            "same_feedback": In(unsigned(8)),
-            "cross_feedback": In(unsigned(8)),
-            "limit_knee": In(unsigned(6)),
-            "limit_cap": In(unsigned(6)),
-            "damp_mode": In(unsigned(3)),
-            "input_gains": In(data.ArrayLayout(unsigned(6), 4)),
-            "cv_mods": In(data.ArrayLayout(unsigned(6), 2)),
-            "selected": In(unsigned(7)),
-            "page": In(unsigned(2)),
-            "preset": In(unsigned(3)),
-            "editing": In(1),
-            "r": Out(8),
-            "g": Out(8),
-            "b": Out(8),
-        })
-
-    @classmethod
-    def text_pixel(cls, m, x, y, text, x0, y0, scale_shift=1, name="text"):
-        """Return a pixel signal for an 8x8-cell 5x7 bitmap text run.
-
-        scale_shift 1 means 2x pixels, 2 means 4x pixels.  Using power-of-two
-        cells keeps glyph lookup cheap compared with arbitrary rectangle text.
-        """
-        cell_shift = 3 + scale_shift
-        local_x = Signal(signed(12), name=f"{name}_lx")
-        local_y = Signal(signed(12), name=f"{name}_ly")
-        char_idx = Signal(unsigned(max(1, (len(text) - 1).bit_length())), name=f"{name}_ci")
-        glyph_col = Signal(3, name=f"{name}_col")
-        glyph_row = Signal(3, name=f"{name}_row")
-        row_bits = Signal(5, name=f"{name}_bits")
-        pixel = Signal(name=name)
-        in_text = Signal(name=f"{name}_in")
-
-        m.d.comb += [
-            local_x.eq(x - x0),
-            local_y.eq(y - y0),
-            in_text.eq((x >= x0) & (x < x0 + (len(text) << cell_shift)) &
-                       (y >= y0) & (y < y0 + (8 << scale_shift))),
-            char_idx.eq(local_x[cell_shift:cell_shift + max(1, (len(text) - 1).bit_length())]),
-            glyph_col.eq(local_x[scale_shift:scale_shift + 3]),
-            glyph_row.eq(local_y[scale_shift:scale_shift + 3]),
-            row_bits.eq(0),
-            pixel.eq(0),
-        ]
-
-        for char_i, char in enumerate(text):
-            glyph = cls.FONT_5X7.get(char, cls.FONT_5X7[" "])
-            for row, bits in enumerate(glyph):
-                with m.If(in_text & (char_idx == char_i) & (glyph_row == row)):
-                    m.d.comb += row_bits.eq(bits)
-
-        for col in range(5):
-            with m.If(in_text & (glyph_col == col)):
-                m.d.comb += pixel.eq(row_bits[4 - col])
-
-        return pixel
-
-    @classmethod
-    def fixed_text_pixel(cls, m, x, y, text, x0, y0, scale_shift=1, name="text"):
-        """Return a pixel signal for a fixed 5x7 text label.
-
-        Unlike ``text_pixel``, this pre-flattens the whole word into seven row
-        bitmaps at elaboration time.  The DVI logic then chooses only one row
-        and one bit.  This is much friendlier to 1280x720p60 timing than a
-        character-indexed glyph mux for every label.
-        """
-        cell_w = 6
-        text_cols = max(1, len(text) * cell_w - 1)
-        col_w = max(1, (text_cols - 1).bit_length())
-        row_masks = []
-        for row in range(7):
-            bits = []
-            for char_i, char in enumerate(text):
-                glyph = cls.FONT_5X7.get(char, cls.FONT_5X7[" "])
-                row_bits = glyph[row]
-                for col in range(5):
-                    bits.append((row_bits >> (4 - col)) & 1)
-                if char_i != len(text) - 1:
-                    bits.append(0)
-            mask = 0
-            for bit in bits:
-                mask = (mask << 1) | bit
-            row_masks.append(mask)
-
-        local_x = Signal(signed(12), name=f"{name}_lx")
-        local_y = Signal(signed(12), name=f"{name}_ly")
-        col = Signal(unsigned(col_w), name=f"{name}_col")
-        row = Signal(3, name=f"{name}_row")
-        bit_offset = Signal(unsigned(col_w), name=f"{name}_bit")
-        row_bits = Signal(text_cols, name=f"{name}_bits")
-        pixel = Signal(name=name)
-        in_text = Signal(name=f"{name}_in")
-
-        m.d.comb += [
-            local_x.eq(x - x0),
-            local_y.eq(y - y0),
-            in_text.eq((x >= x0) & (x < x0 + (text_cols << scale_shift)) &
-                       (y >= y0) & (y < y0 + (7 << scale_shift))),
-            col.eq(local_x[scale_shift:scale_shift + col_w]),
-            row.eq(local_y[scale_shift:scale_shift + 3]),
-            bit_offset.eq((text_cols - 1) - col),
-            row_bits.eq(0),
-        ]
-
-        for row_i, mask in enumerate(row_masks):
-            with m.If(in_text & (row == row_i)):
-                m.d.comb += row_bits.eq(mask)
-
-        m.d.comb += pixel.eq(in_text & row_bits.bit_select(bit_offset, 1))
-        return pixel
-
-    @staticmethod
-    def rect(x, y, x0, y0, x1, y1):
-        return (x >= x0) & (x < x1) & (y >= y0) & (y < y1)
-
-    @classmethod
-    def outline(cls, x, y, x0, y0, x1, y1, t=2):
-        return cls.rect(x, y, x0, y0, x1, y1) & (
-            (x < x0 + t) | (x >= x1 - t) | (y < y0 + t) | (y >= y1 - t))
-
-    def elaborate(self, platform):
-        m = Module()
-
-        sx = self.x
-        sy = self.y
-        # Rendering is clipped to a 720x720 panel before these local
-        # coordinates reach the pixel output. Keep them at their natural
-        # unsigned width: the former signed 12-bit shape widened every
-        # rectangle/outline comparator into an unnecessary carry chain.
-        x = Signal(unsigned(10))
-        y = Signal(unsigned(10))
-        active = Signal()
-        m.d.comb += [
-            x.eq(sx - self.x_offset),
-            y.eq(sy),
-            active.eq(self.de & (sx >= self.x_offset) &
-                      (sx < self.x_offset + self.PANEL_W) &
-                      (sy >= 0) & (sy < self.PANEL_H)),
-        ]
-
-        frame = Signal(8)
-        last_vblank = Signal()
-        vblank = Signal()
-        m.d.comb += vblank.eq(sy < 0)
-        m.d.dvi += last_vblank.eq(vblank)
-        with m.If(vblank & ~last_vblank):
-            m.d.dvi += frame.eq(frame + 1)
-
-        text_signals = [
-            self.fixed_text_pixel(m, x, y, "STREZO", 36, 28, scale_shift=2,
-                                  name="lcd_strezo"),
-            self.fixed_text_pixel(m, x, y, "PRESET", 36, 104,
-                                  name="lcd_preset"),
-            self.fixed_text_pixel(m, x, y, "BANDS", 36, 168,
-                                  name="lcd_bands"),
-            self.fixed_text_pixel(m, x, y, "DRY", 36, 604,
-                                  name="lcd_dry"),
-            self.fixed_text_pixel(m, x, y, "RES", 36, 648,
-                                  name="lcd_res"),
-        ]
-
-        preset_chip = Signal()
-        preset_select = Signal()
-        preset_chip_signals = []
-        preset_select_signals = []
-        preset_names = ["ALL", "ODD", "EVN", "LOW", "MID", "HI"]
-        for p in range(6):
-            x0 = 166 + 74 * p
-            preset_chip_signals.append(self.rect(x, y, x0, 96, x0 + 52, 132))
-            preset_select_signals.append(
-                (self.preset == p) & self.outline(x, y, x0 - 5, 91, x0 + 57, 137, t=3))
-            label = preset_names[p]
-            text_signals.append(
-                self.fixed_text_pixel(m, x, y, label, x0 + 6, 106,
-                                      name=f"lcd_preset_{p}"))
-
-        band_slot = Signal()
-        band_fill = Signal()
-        band_marker = Signal()
-        band_negative = Signal()
-        band_select = Signal()
-        band_zero = Signal()
-        band_slot_signals = []
-        band_fill_signals = []
-        band_marker_signals = []
-        band_negative_signals = []
-        band_select_signals = []
-        band_zero_signals = []
-        band_names = ["29", "61", "115", "218", "411", "777", "1K5", "2K8", "5K2", "11K"]
-        zero_y = 366
-        for n in range(RezoCore.N_BANDS):
-            x0 = 48 + 66 * n
-            x1 = x0 + 42
-            level = self.levels[n]
-            mag = Signal(unsigned(5), name=f"lcd_mag{n}")
-            top_y = Signal(signed(12), name=f"lcd_top{n}")
-            bottom_y = Signal(signed(12), name=f"lcd_bottom{n}")
-            selected_band = self.selected == RezoHardwareUI.TARGET_BAND_BASE + n
-            m.d.comb += [
-                mag.eq(Mux(level < 0, -level, level)),
-                top_y.eq(zero_y - (mag << 4)),
-                bottom_y.eq(zero_y + (mag << 4)),
-            ]
-            band_slot_signals.append(self.rect(x, y, x0, 202, x1, 532))
-            band_zero_signals.append(self.rect(x, y, x0 - 5, zero_y - 1, x1 + 5, zero_y + 2))
-            band_marker_signals.append(
-                ((level > 0) & self.rect(x, y, x0, zero_y - 130, x1, zero_y - 124)) |
-                ((level < 0) & self.rect(x, y, x0, zero_y + 124, x1, zero_y + 130)))
-            band_fill_signals.append(
-                selected_band &
-                ((self.rect(x, y, x0, top_y, x1, zero_y) & (level >= 0)) |
-                 (self.rect(x, y, x0, zero_y, x1, bottom_y) & (level < 0))))
-            band_negative_signals.append(
-                selected_band & self.rect(x, y, x0, zero_y, x1, bottom_y) & (level < 0))
-            band_select_signals.append(
-                selected_band & self.outline(x, y, x0 - 7, 195, x1 + 7, 539, t=3))
-            band_label = band_names[n]
-            band_label_x = x0 + (5 if len(band_label) == 3 else 10)
-            text_signals.append(
-                self.fixed_text_pixel(m, x, y, band_label, band_label_x, 548,
-                                      name=f"lcd_band_{n}"))
-
-        for target, signals in [
-                (preset_chip, preset_chip_signals),
-                (preset_select, preset_select_signals),
-                (band_slot, band_slot_signals),
-                (band_fill, band_fill_signals),
-                (band_marker, band_marker_signals),
-                (band_negative, band_negative_signals),
-                (band_select, band_select_signals),
-                (band_zero, band_zero_signals)]:
-            expr = Const(0)
-            for sig in signals:
-                expr = expr | sig
-            m.d.comb += target.eq(expr)
-
-        band_fill_q0 = Signal()
-        band_marker_q0 = Signal()
-        band_negative_q0 = Signal()
-        m.d.dvi += [
-            band_fill_q0.eq(band_fill),
-            band_marker_q0.eq(band_marker),
-            band_negative_q0.eq(band_negative),
-        ]
-
-        dry_fill = self.rect(x, y, 124, 604, 124 + (self.dry << 4), 624)
-        dry_select = (self.selected == RezoHardwareUI.TARGET_DRY) & self.outline(
-            x, y, 118, 596, 650, 632, t=3)
-        res_fill = self.rect(x, y, 124, 648, 124 + (self.resonance << 4), 668)
-        res_select = (self.selected == RezoHardwareUI.TARGET_RESONANCE) & self.outline(
-            x, y, 118, 640, 650, 676, t=3)
-
-        text = Signal()
-        text_group_q = []
-        for group_idx in range(0, len(text_signals), 1):
-            text_group = Signal(name=f"lcd_text_group{group_idx}")
-            text_group_q_sig = Signal(name=f"lcd_text_group{group_idx}_q")
-            text_expr = Const(0)
-            for sig in text_signals[group_idx:group_idx + 1]:
-                text_expr = text_expr | sig
-            m.d.comb += text_group.eq(text_expr)
-            m.d.dvi += text_group_q_sig.eq(text_group)
-            text_group_q.append(text_group_q_sig)
-        text_expr = Const(0)
-        for sig in text_group_q:
-            text_expr = text_expr | sig
-        m.d.comb += text.eq(text_expr)
-
-        border = active & self.outline(x, y, 12, 12, 708, 708, t=2)
-        title_panel = active & self.rect(x, y, 20, 20, 700, 82)
-        bands_panel = active & self.rect(x, y, 28, 190, 692, 574)
-        meter_panel = active & (self.rect(x, y, 118, 596, 650, 632) |
-                                self.rect(x, y, 118, 640, 650, 676))
-        grid = Const(0)
-        scan = Const(0)
-        selected = active & (preset_select | band_select | dry_select | res_select)
-
-        selected_q = Signal()
-        text_q = Signal()
-        band_negative_q = Signal()
-        fill_q = Signal()
-        line_q = Signal()
-        panel_q = Signal()
-        background_q = Signal()
-        active_q = Signal()
-        m.d.dvi += [
-            selected_q.eq(selected),
-            text_q.eq(text),
-            band_negative_q.eq(band_negative_q0),
-            fill_q.eq(band_fill_q0 | band_marker_q0 | dry_fill | res_fill),
-            line_q.eq(band_zero | border | scan),
-            panel_q.eq(preset_chip | band_slot | meter_panel),
-            background_q.eq(grid | title_panel | bands_panel),
-            active_q.eq(active),
-        ]
-
-        mono = Signal(8)
-        with m.If(selected_q):
-            m.d.comb += mono.eq(0xff)
-        with m.Elif(text_q):
-            m.d.comb += mono.eq(0xdc)
-        with m.Elif(band_negative_q):
-            m.d.comb += mono.eq(0xb0)
-        with m.Elif(fill_q):
-            m.d.comb += mono.eq(0x9a)
-        with m.Elif(line_q):
-            m.d.comb += mono.eq(0x72)
-        with m.Elif(panel_q):
-            m.d.comb += mono.eq(0x34)
-        with m.Elif(background_q):
-            m.d.comb += mono.eq(0x18)
-        with m.Elif(active_q):
-            m.d.comb += mono.eq(0x05)
-        with m.Else():
-            m.d.comb += mono.eq(0)
-
-        # Green monochrome LCD palette.  Color can come back later; the logic
-        # stays scalar for now so UI growth does not steal timing from DSP.
-        m.d.dvi += [
-            self.r.eq(mono >> 3),
-            self.g.eq(mono),
-            self.b.eq(mono >> 2),
-        ]
-
-        return m
-
-
 class RezoTileDisplay(wiring.Component):
     """Low-resolution, character-cell REZO UI.
 
@@ -3748,40 +3369,10 @@ class RezoTileDisplay(wiring.Component):
     # Semantic palette roles.  The current LCD theme maps every role to a
     # grayscale intensity; a future color palette can map the same roles to
     # related RGB colors without changing any geometry or modulation logic.
-    PALETTE = {
-        "selected": 0xff,
-        "text": 0xee,
-        "control": 0xb8,
-        "modulation": 0x78,
-        "line": 0x88,
-        "panel": 0x32,
-        "background": 0x14,
-        "blank": 0x00,
-    }
-
-    PALETTE_ROLES = (
-        "selected", "text", "control", "modulation",
-        "line", "panel", "background", "blank",
-    )
-    RGB_PALETTES = (
-        # LCD: preserve the existing grayscale renderer bit-for-bit.
-        (0xFFFFFF, 0xEEEEEE, 0xB8B8B8, 0x787878,
-         0x888888, 0x323232, 0x141414, 0x000000),
-        # Warm controls with a cool modulation accent.
-        (0xFFF4CC, 0xFFD166, 0xC98A20, 0x4EA5D9,
-         0x9A6A22, 0x35270F, 0x171006, 0x000000),
-        # Cool controls with a coral modulation accent.
-        (0xF4FFFF, 0xC8F7F8, 0x55CBCD, 0xFF7F6A,
-         0x2A9D9F, 0x16383A, 0x071718, 0x000000),
-        # Green LCD family with a magenta modulation accent.
-        (0xF3FFF6, 0xD8F3DC, 0x74C69D, 0xE56BCE,
-         0x40916C, 0x1B4332, 0x081C15, 0x000000),
-        # Violet controls with a gold modulation accent.
-        (0xFFF8DA, 0xE7DCF5, 0x9D7AD2, 0xF2C14E,
-         0x6C4AA3, 0x2B1D3A, 0x100A18, 0x000000),
-    )
-
-    CHARS = " 0123456789.ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    PALETTE = SEMANTIC_PALETTE
+    PALETTE_ROLES = PALETTE_ROLES
+    RGB_PALETTES = RGB_PALETTES
+    CHARS = STEREO_TILE_CHARS
     CHAR_CODES = {ch: i for i, ch in enumerate(CHARS)}
 
     def __init__(self, h_active=1280, rotate_left=False,
@@ -4055,8 +3646,7 @@ class RezoTileDisplay(wiring.Component):
             """Place text directly on the native 16px character grid."""
             put(page, text_value, x0, y0)
 
-        page_titles = ("BANK", "FEEDBACK", "INPUT", "GROUPS", "OUTPUT",
-                       "OPTIONS", "BANDS", "CROSS")
+        page_titles = COMMON_PAGE_TITLES + ("CROSS",)
         compact_input_text_rows = NATIVE_INPUT_TEXT_ROWS
         compact_group_text_rows = NATIVE_GROUP_TEXT_ROWS
         compact_group_centers = NATIVE_GROUP_CENTERS
@@ -4256,23 +3846,14 @@ class RezoTileDisplay(wiring.Component):
         # Fixed-width value slots are left-justified; trailing blanks clear
         # characters left behind when a shorter value replaces a longer one.
         preset_names = ("ALL ", "ODD ", "EVEN", "LOW ", "MID ", "HI  ", "ZERO")
-        def frequency_name(frequency):
-            if frequency < 1000:
-                return f"{frequency:<3}"[:3]
-            if frequency < 10_000:
-                whole, remainder = divmod(frequency, 1000)
-                tenth = (remainder + 50) // 100
-                return f"{whole}K{tenth}" if tenth else f"{whole}K "
-            return f"{round(frequency / 1000):02d}K"
-
-        frequency_names = tuple(frequency_name(frequency)
+        frequency_names = tuple(format_frequency_name(frequency)
                                 for frequency in RezoCore.FREQUENCIES_HZ)
         displayed_layout = Signal(unsigned(2))
         m.d.comb += displayed_layout.eq(Mux(
             editing_sync & (selected_sync == RezoHardwareUI.TARGET_BAND_LAYOUT),
             frequency_layout_preview_sync, frequency_layout_sync))
-        target_names = ("FB ", "RES", "DRV", "G1 ", "G2 ", "G3 ", "G4 ")
-        nav_names = ("NAV ", "EDIT")
+        target_names = BASE_TARGET_NAMES
+        nav_names = NAV_NAMES
         nav_chars = [Array(Const(self.code(name[pos]), 6) for name in nav_names)
                      for pos in range(4)]
         preset_chars = [Array(Const(self.code(name[pos]), 6) for name in preset_names)
@@ -4318,7 +3899,7 @@ class RezoTileDisplay(wiring.Component):
                             frequency_full_offset |
                             (bands_frequency_index << 3) | pos)
         # Every BANDS layout name shares column 17 as its fixed left origin.
-        layout_names = ("LEGACY ", "OCTAVE ", "PERCEPT", "USER   ")
+        layout_names = LAYOUT_NAMES
         layout_chars = [Array(Const(self.code(name[pos]), 6)
                               for name in layout_names)
                         for pos in range(7)]
@@ -4343,19 +3924,18 @@ class RezoTileDisplay(wiring.Component):
             cross_layout_preview_sync, cross_layout_sync))
         target_chars = [Array(Const(self.code(name[pos]), 6) for name in target_names)
                         for pos in range(3)]
-        palette_names = ("LCD   ", "AMBER ", "CYAN  ", "GREEN ", "VIOLET")
+        palette_names = PALETTE_NAMES
         palette_chars = [Array(Const(self.code(name[pos]), 6)
                                for name in palette_names)
                          for pos in range(6)]
-        damp_names = ("OFF  ", "LIGHT", "MED  ", "HEAVY", "MAX  ")
+        damp_names = DAMP_NAMES
         damp_chars = [Array(Const(self.code(name[pos]), 6)
                             for name in damp_names)
                       for pos in range(5)]
         damp_name_index = Signal(range(5))
         m.d.comb += damp_name_index.eq(Mux(
             damp_mode_sync > 4, 4, damp_mode_sync))
-        save_names = ("SAVE   ", "SAVING ", "SAVED  ", "ERROR  ",
-                      "NO SLOT")
+        save_names = SAVE_NAMES
         save_chars = [Array(Const(self.code(name[pos]), 6)
                             for name in save_names)
                       for pos in range(7)]
@@ -4639,8 +4219,7 @@ class RezoTileDisplay(wiring.Component):
         # end-to-end text latency.
         glyph_init = []
         for ch in self.CHARS:
-            glyph = RezoBeamDisplay.FONT_5X7.get(
-                ch, RezoBeamDisplay.FONT_5X7[" "])
+            glyph = FONT_5X7.get(ch, FONT_5X7[" "])
             glyph_init.extend((*glyph, 0))
         m.submodules.glyph_mem = glyph_mem = Memory(
             shape=unsigned(5), depth=len(glyph_init), init=glyph_init,
@@ -6181,7 +5760,7 @@ class RezoBeamTop(Elaboratable):
     )
     nextpnr_opts = (
         "--timing-allow-fail --seed "
-        f"{os.getenv('TILIQUA_STREZO_SEED', os.getenv('TILIQUA_REZO_SEED', '11'))}"
+        f"{os.getenv('TILIQUA_STREZO_SEED', os.getenv('TILIQUA_REZO_SEED', '7'))}"
     )
 
     def __init__(self, clock_settings):

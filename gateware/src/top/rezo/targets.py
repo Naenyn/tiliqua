@@ -48,7 +48,7 @@ TARGETS = {
         bitstream_name="REZO",
         artifact_name="REZO",
         modeline="1280x720p60",
-        default_seed=7,
+        default_seed=8,
     ),
     "rezo_round": BuildTarget(
         key="rezo_round",
@@ -95,7 +95,7 @@ TARGETS = {
         bitstream_name="STREZO",
         artifact_name="STREZO",
         modeline="1280x720p60",
-        default_seed=11,
+        default_seed=7,
         yosys="yosys",
         nextpnr_ecp5="nextpnr-ecp5",
         ecppack="ecppack",
