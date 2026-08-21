@@ -6,11 +6,29 @@
 from amaranth import Mux
 
 
-NATIVE_INPUT_PANEL_Y0 = 218
-NATIVE_INPUT_PANEL_Y1 = 599
+NATIVE_CONTENT_PANEL_X0 = 125
+NATIVE_CONTENT_PANEL_Y0 = 218
+NATIVE_CONTENT_PANEL_X1 = 594
+NATIVE_CONTENT_PANEL_Y1 = 599
+# Backwards-compatible aliases for the INPUT renderer. INPUT is the canonical
+# family content panel; every other native page now uses the same bounds.
+NATIVE_INPUT_PANEL_Y0 = NATIVE_CONTENT_PANEL_Y0
+NATIVE_INPUT_PANEL_Y1 = NATIVE_CONTENT_PANEL_Y1
 NATIVE_INPUT_CONTROL_X0 = 304
 NATIVE_INPUT_CONTROL_X1 = 576
 NATIVE_INPUT_CONTROL_MID = 440
+NATIVE_FADER_INSET = 2
+NATIVE_INPUT_FILL_X0 = NATIVE_INPUT_CONTROL_X0 + NATIVE_FADER_INSET
+NATIVE_INPUT_FILL_X1 = NATIVE_INPUT_CONTROL_X1 - NATIVE_FADER_INSET
+
+NATIVE_MAIN_TRACK_X0 = 283
+NATIVE_MAIN_TRACK_X1 = 594
+NATIVE_MAIN_FILL_X0 = NATIVE_MAIN_TRACK_X0 + NATIVE_FADER_INSET
+NATIVE_MAIN_FILL_X1 = NATIVE_MAIN_TRACK_X1 - NATIVE_FADER_INSET
+NATIVE_FEEDBACK_TRACK_X0 = 268
+NATIVE_FEEDBACK_TRACK_X1 = 579
+NATIVE_FEEDBACK_FILL_X0 = NATIVE_FEEDBACK_TRACK_X0 + NATIVE_FADER_INSET
+NATIVE_FEEDBACK_FILL_X1 = NATIVE_FEEDBACK_TRACK_X1 - NATIVE_FADER_INSET
 
 NATIVE_INPUT_TEXT_ROWS = (
     (14, 16, 18), (20, 22, 24),
@@ -79,7 +97,7 @@ def put_native_page_headers(put, identity, titles):
         put(page, title, 14 + ((8 - len(title)) // 2), 8)
 
 
-def put_native_support_page_labels(put, *, input_depth_labels=True):
+def put_native_support_page_labels(put):
     """Place the common FEEDBACK through BANDS native static labels.
 
     Product-specific additions such as STREZO's OPTIONS ADVANCED section and
@@ -93,8 +111,9 @@ def put_native_support_page_labels(put, *, input_depth_labels=True):
         put(2, f"IN{input_index}", 8, mode_row)
         put(2, "MODE", 14, mode_row)
         put(2, "VALUE", 13, value_row)
-        if input_depth_labels:
-            put(2, "DEPTH", 13, depth_row)
+        # DEPTH is mode-dependent and is written dynamically by each display
+        # renderer. Keeping it out of the static template prevents AUDIO lanes
+        # from inheriting a stale CV-only label.
 
     put(3, "BANK GROUPS", 8, 13)
     put(3, "BANKS", 20, 16)
@@ -275,21 +294,52 @@ LEGACY_OUTPUT_COL_SELECT_Y1 = 268
 
 
 def native_input_gain_endpoint(gain):
-    """Map an unsigned 8-bit gain onto the complete native VALUE lane."""
+    """Map an unsigned 8-bit gain onto the inset native VALUE fill lane."""
+    mapped = NATIVE_INPUT_FILL_X0 + gain + (gain >> 4)
     return Mux(
         gain == 255,
-        # The input renderer prefetches x by one pixel before comparing the
-        # registered endpoint.  Compensate here so full scale paints the last
-        # pixel of the half-open VALUE lane without spilling into x=576.
-        NATIVE_INPUT_CONTROL_X1 + 1,
-        NATIVE_INPUT_CONTROL_X0 + gain + (gain >> 4),
+        # The input renderer's registered comparison advances the visible
+        # endpoint by one pixel.  Keeping the endpoint at the half-open fill
+        # bound leaves two visible panel pixels at the chip's right edge.
+        NATIVE_INPUT_FILL_X1,
+        Mux(mapped > NATIVE_INPUT_FILL_X1,
+            NATIVE_INPUT_FILL_X1, mapped),
     )
+
+
+def native_input_depth_endpoint(depth):
+    """Map signed CV DEPTH onto the inset bipolar native control lane."""
+    mapped = NATIVE_INPUT_CONTROL_MID + depth + (depth >> 5)
+    return Mux(
+        depth <= -128, NATIVE_INPUT_FILL_X0,
+        Mux(depth >= 127, NATIVE_INPUT_FILL_X1,
+            Mux(mapped < NATIVE_INPUT_FILL_X0, NATIVE_INPUT_FILL_X0,
+                Mux(mapped > NATIVE_INPUT_FILL_X1,
+                    NATIVE_INPUT_FILL_X1, mapped))))
 
 
 def native_input_unity_x(unity_position):
     """Return the native x coordinate of a 16-bit gain's 0 dB marker."""
     coarse = unity_position >> 8
-    return NATIVE_INPUT_CONTROL_X0 + coarse + (coarse >> 4)
+    return NATIVE_INPUT_FILL_X0 + coarse + (coarse >> 4)
+
+
+def native_main_fader_endpoint(value, x0=NATIVE_MAIN_FILL_X0):
+    """Map a 0..128 long control across a 307-pixel inset fill lane."""
+    return (x0 + (value << 1) + (value >> 2) + (value >> 3) +
+            (value >> 6) + (value >> 7))
+
+
+def native_cross_fader_endpoint(value, x0=234):
+    """Map a 0..128 CROSS control across its 344-pixel inset fill lane."""
+    return (x0 + (value << 1) + (value >> 1) + (value >> 3) +
+            (value >> 4))
+
+
+def native_motion_depth_endpoint(value, x0=282):
+    """Map a 0..128 motion DEPTH across its 284-pixel inset fill lane."""
+    return (x0 + (value << 1) + (value >> 3) + (value >> 4) +
+            (value >> 5))
 
 
 def output_header_selection(*, page, row_active, col_active,

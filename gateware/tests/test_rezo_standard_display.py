@@ -416,13 +416,12 @@ def test_compact_feedback_sources_and_safety_share_centered_geometry():
         for _ in range(260):
             await ctx.tick("sync")
 
-        # KNEE and CEILING panels occupy native x=[268,567).  Their dynamic
-        # fill mapping deliberately remains the proven compact REZO mapping;
-        # the shared page contract owns the rows, labels, and navigation.
+        # KNEE and CEILING use the shared x=[268,579) track. Their maximum
+        # fill retains two visible panel pixels at the right edge.
         await sample(ctx, 268, 421)
         await sample(ctx, 260, 421)
-        await sample(ctx, 566, 421)
-        await sample(ctx, 574, 421)
+        await sample(ctx, 578, 421)
+        await sample(ctx, 579, 421)
 
         # DAMPING's native chip starts on the same physical x edge.
         await sample(ctx, 268, 486)
@@ -743,7 +742,7 @@ def test_input_page_draws_post_value_audio_and_raw_bipolar_cv_meters():
 
 
 def test_compact_audio_gain_fader_stays_inside_value_lane():
-    """Maximum audio gain must stop before the compact lane's x=576 edge."""
+    """Maximum audio gain leaves the standard two-pixel chip inset."""
     dut = RezoTileDisplay(h_active=1280, compact_layout=True)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
@@ -762,14 +761,19 @@ def test_compact_audio_gain_fader_stays_inside_value_lane():
         ctx.set(dut.page, 2)
         ctx.set(dut.input_modes[0], RezoCore.INPUT_MODE_AUDIO)
         ctx.set(dut.input_gains[0], 255)
-        await sample(ctx, 575, 260)  # maximum fills the complete VALUE lane
-        await sample(ctx, 576, 260)  # but never escapes its x=576 edge
+        await sample(ctx, 572, 260)  # last pixel inside the padded fill lane
+        await sample(ctx, 573, 260)  # first pixel of the right-hand padding
+        await sample(ctx, 574, 260)  # second pixel of the right-hand padding
+        await sample(ctx, 575, 260)  # outside the VALUE chip
 
     sim.add_testbench(bench)
     sim.run()
 
     palette = RezoTileDisplay.PALETTE
-    assert samples == [palette["control"], palette["background"]]
+    assert samples == [
+        palette["control"], palette["panel"], palette["panel"],
+        palette["background"],
+    ]
 
 
 def test_output_page_draws_standardized_header_selection_bars():

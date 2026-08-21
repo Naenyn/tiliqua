@@ -191,7 +191,9 @@ def test_clock_editor_value_chips_and_depth_end_at_their_content_widths():
             (431, 260), (432, 260),  # six-character algorithm field
             (479, 292), (480, 292),  # nine-character direction field
             (383, 356), (384, 356),  # three-character BPM field
-            (587, 388), (588, 388),  # DEPTH rail reaches the right inset
+            # DEPTH reaches its maximum while retaining the shared two-pixel
+            # inset at the right edge of the chip.
+            (585, 388), (586, 388), (587, 388), (588, 388),
             (369, 420), (370, 420),  # three-character CHANGE field
             (409, 452), (410, 452),  # five-character BANDS field
             (353, 516), (354, 516),  # two-character LENGTH field
@@ -201,7 +203,9 @@ def test_clock_editor_value_chips_and_depth_end_at_their_content_widths():
         (panel, panel, panel), (background, background, background),
         (panel, panel, panel), (background, background, background),
         (panel, panel, panel), (background, background, background),
-        (panel, panel, panel), (background, background, background),
+        (control, control, control),
+        (panel, panel, panel), (panel, panel, panel),
+        (background, background, background),
         (panel, panel, panel), (background, background, background),
         (panel, panel, panel), (background, background, background),
         (panel, panel, panel), (background, background, background),
@@ -386,13 +390,16 @@ def test_bands_enable_buttons_reuse_feedback_button_geometry():
 
 def test_input_audio_value_fill_stays_inside_its_panel():
     accent = RezoTileDisplay.PALETTE["control"]
+    panel = RezoTileDisplay.PALETTE["panel"]
+    background = RezoTileDisplay.PALETTE["background"]
     pixels = _render_samples(
         page=2,
         input_gains=(255,),
-        points=((575, 260), (576, 260)),
+        points=((572, 260), (573, 260), (574, 260), (575, 260)),
     )
     assert pixels[0] == (accent, accent, accent)
-    assert pixels[1] != (accent, accent, accent)
+    assert pixels[1:3] == [(panel, panel, panel)] * 2
+    assert pixels[3] == (background, background, background)
 
 
 def test_output_row_selector_uses_native_safe_square_coordinates():

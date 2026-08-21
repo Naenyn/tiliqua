@@ -60,17 +60,24 @@ try:
     from .persistence import RezoStateJournal, SPIFlashTransfer
     from .ui_common import (
         NATIVE_FEEDBACK_AMOUNT_Y0, NATIVE_FEEDBACK_CEILING_Y0,
+        NATIVE_FEEDBACK_FILL_X0, NATIVE_FEEDBACK_TRACK_X0,
+        NATIVE_FEEDBACK_TRACK_X1,
         NATIVE_FEEDBACK_DAMPING_CHIP_X0, NATIVE_FEEDBACK_DAMPING_CHIP_X1,
         NATIVE_FEEDBACK_DAMPING_CHIP_Y0, NATIVE_FEEDBACK_DAMPING_CHIP_Y1,
         NATIVE_FEEDBACK_DAMPING_TEXT_COL, NATIVE_FEEDBACK_DAMPING_TEXT_ROW,
         NATIVE_FEEDBACK_KNEE_Y0, NATIVE_GROUP_CENTERS,
         NATIVE_GROUP_TEXT_ROWS, NATIVE_INPUT_TEXT_ROWS,
+        NATIVE_CONTENT_PANEL_X0, NATIVE_CONTENT_PANEL_X1,
+        NATIVE_CONTENT_PANEL_Y0, NATIVE_CONTENT_PANEL_Y1,
+        NATIVE_INPUT_FILL_X0, NATIVE_INPUT_FILL_X1,
         NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
+        NATIVE_MAIN_FILL_X0, NATIVE_MAIN_FILL_X1,
         NATIVE_MAIN_CONTROL_TEXT_ROWS, NATIVE_MAIN_CONTROL_Y0S,
         NATIVE_OUTPUT_COL_CENTERS, NATIVE_OUTPUT_ROW_CENTERS,
         NATIVE_OUTPUT_TEXT_ROWS,
         add_feedback_navigation, add_group_navigation, add_input_navigation,
-        native_input_gain_endpoint, native_input_unity_x,
+        native_input_depth_endpoint, native_input_gain_endpoint,
+        native_input_unity_x,
         native_feedback_track_rows, output_header_selection,
         put_legacy_support_page_labels, put_native_page_headers,
         put_native_support_page_labels,
@@ -80,17 +87,24 @@ except ImportError:  # top_level_cli executes this file directly.
     from persistence import RezoStateJournal, SPIFlashTransfer
     from ui_common import (
         NATIVE_FEEDBACK_AMOUNT_Y0, NATIVE_FEEDBACK_CEILING_Y0,
+        NATIVE_FEEDBACK_FILL_X0, NATIVE_FEEDBACK_TRACK_X0,
+        NATIVE_FEEDBACK_TRACK_X1,
         NATIVE_FEEDBACK_DAMPING_CHIP_X0, NATIVE_FEEDBACK_DAMPING_CHIP_X1,
         NATIVE_FEEDBACK_DAMPING_CHIP_Y0, NATIVE_FEEDBACK_DAMPING_CHIP_Y1,
         NATIVE_FEEDBACK_DAMPING_TEXT_COL, NATIVE_FEEDBACK_DAMPING_TEXT_ROW,
         NATIVE_FEEDBACK_KNEE_Y0, NATIVE_GROUP_CENTERS,
         NATIVE_GROUP_TEXT_ROWS, NATIVE_INPUT_TEXT_ROWS,
+        NATIVE_CONTENT_PANEL_X0, NATIVE_CONTENT_PANEL_X1,
+        NATIVE_CONTENT_PANEL_Y0, NATIVE_CONTENT_PANEL_Y1,
+        NATIVE_INPUT_FILL_X0, NATIVE_INPUT_FILL_X1,
         NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
+        NATIVE_MAIN_FILL_X0, NATIVE_MAIN_FILL_X1,
         NATIVE_MAIN_CONTROL_TEXT_ROWS, NATIVE_MAIN_CONTROL_Y0S,
         NATIVE_OUTPUT_COL_CENTERS, NATIVE_OUTPUT_ROW_CENTERS,
         NATIVE_OUTPUT_TEXT_ROWS,
         add_feedback_navigation, add_group_navigation, add_input_navigation,
-        native_input_gain_endpoint, native_input_unity_x,
+        native_input_depth_endpoint, native_input_gain_endpoint,
+        native_input_unity_x,
         native_feedback_track_rows, output_header_selection,
         put_legacy_support_page_labels, put_native_page_headers,
         put_native_support_page_labels,
@@ -3473,8 +3487,7 @@ class RezoTileDisplay(wiring.Component):
 
             # Shared support pages. REZO writes INPUT DEPTH dynamically so
             # AUDIO lanes leave the inapplicable row completely blank.
-            put_native_support_page_labels(
-                put_native, input_depth_labels=False)
+            put_native_support_page_labels(put_native)
 
             # FILTER main page.
             put_native(7, "TYPE", 8, 11)
@@ -3509,7 +3522,7 @@ class RezoTileDisplay(wiring.Component):
             put(0, "RES", 2, 37)
             put(0, "FB", 2, 39)
             put_legacy_support_page_labels(
-                put, frequency_col=22,
+                put, frequency_col=22, input_depth_labels=False,
                 output_labels=("GRP1", "GRP2", "GRP3", "GRP4", ""))
             put(7, "TYPE", 2, 7)
             put(7, "BANDS", 2, 11)
@@ -4010,31 +4023,33 @@ class RezoTileDisplay(wiring.Component):
         # One shared rectangle keeps the pixel path shallow. FILTER needs the
         # deepest field because its fifth fader ends at y=690; ending its
         # background at y=666 left RESONANCE floating in the black margin.
-        content_y0 = Signal(unsigned(10), init=240 if self.compact_layout else 190)
-        content_y1 = Signal(unsigned(10), init=575 if self.compact_layout else 666)
+        content_y0 = Signal(unsigned(10), init=NATIVE_CONTENT_PANEL_Y0 if self.compact_layout else 190)
+        content_y1 = Signal(unsigned(10), init=NATIVE_CONTENT_PANEL_Y1 if self.compact_layout else 666)
         m.d.dvi += [
             # INPUT starts its field immediately above IN0 MODE (y=167), but
             # below the INPUT ROUTING heading. Other pages retain y=190.
-            content_y0.eq(Mux(input_page,
-                              NATIVE_INPUT_PANEL_Y0 if self.compact_layout else 160,
-                              240 if self.compact_layout else 190)),
-            content_y1.eq(Mux(filter_page | input_page,
-                              NATIVE_INPUT_PANEL_Y1 if self.compact_layout else 700,
+            content_y0.eq(Mux(self.compact_layout,
+                              NATIVE_CONTENT_PANEL_Y0,
+                              Mux(input_page, 160, 190))),
+            content_y1.eq(Mux(self.compact_layout,
+                              NATIVE_CONTENT_PANEL_Y1,
+                              Mux(filter_page | input_page, 700,
                               Mux(tune_page,
-                                  588 if self.compact_layout else 684,
-                                  575 if self.compact_layout else 666))),
+                                  684, 666)))),
         ]
         content_panel = active & self.rect(
-            x, y, 125 if self.compact_layout else 28, content_y0,
-            594 if self.compact_layout else 692, content_y1)
+            x, y, NATIVE_CONTENT_PANEL_X0 if self.compact_layout else 28,
+            content_y0,
+            NATIVE_CONTENT_PANEL_X1 if self.compact_layout else 692,
+            content_y1)
         control_panel_x0 = 283 if self.compact_layout else 118
         control_panel_x1 = 594 if self.compact_layout else 650
         control_fill_x0 = 289 if self.compact_layout else 124
         # FEEDBACK uses a native left-aligned value column. The DAMPING chip
         # and both safety faders begin on the same physical x coordinate.
-        tune_panel_x0 = 268 if self.compact_layout else 144
-        tune_panel_x1 = 567 if self.compact_layout else control_panel_x1
-        tune_fill_x0 = 289 if self.compact_layout else 156
+        tune_panel_x0 = NATIVE_FEEDBACK_TRACK_X0 if self.compact_layout else 144
+        tune_panel_x1 = NATIVE_FEEDBACK_TRACK_X1 if self.compact_layout else control_panel_x1
+        tune_fill_x0 = NATIVE_FEEDBACK_FILL_X0 if self.compact_layout else 156
         tune_y_shift = 0
         if self.compact_layout:
             bank_meter_rows = Const(0)
@@ -4183,8 +4198,7 @@ class RezoTileDisplay(wiring.Component):
                     input_gain_ends[n].eq(
                         native_input_gain_endpoint(self.input_gains[n])),
                     input_depth_ends[n].eq(
-                        440 + self.cv_depths[n] +
-                        (self.cv_depths[n] >> 1)),
+                        native_input_depth_endpoint(self.cv_depths[n])),
                     input_meter_ends[n].eq(Mux(
                         self.input_modes[n] == RezoCore.INPUT_MODE_CV,
                         440 + (self.input_meters[n] << 2) +
@@ -4377,8 +4391,8 @@ class RezoTileDisplay(wiring.Component):
         # this threshold preserves a full 0..128 range across the widened
         # control gutter without synthesizing dynamic coordinate arithmetic.
         if self.compact_layout:
-            compact_fader_x0 = 289
-            compact_fader_x1 = 588
+            compact_fader_x0 = NATIVE_MAIN_FILL_X0
+            compact_fader_x1 = NATIVE_MAIN_FILL_X1
             compact_fader_width = compact_fader_x1 - compact_fader_x0
             compact_fader_x_init = []
             for pixel_x in range(self.PANEL_W):
@@ -4394,7 +4408,7 @@ class RezoTileDisplay(wiring.Component):
                 attrs={"ram_style": "block"})
             compact_fader_x_rport = compact_fader_x_mem.read_port(
                 domain="dvi")
-            # FEEDBACK's safety block begins 21 native pixels to the left of
+            # FEEDBACK's safety block begins 15 native pixels to the left of
             # BANK/FILTER while retaining the same width and value mapping.
             compact_fader_prefetch_x = Signal(range(self.PANEL_W))
             compact_fader_lookup_x = Signal(range(self.PANEL_W))
@@ -4404,8 +4418,8 @@ class RezoTileDisplay(wiring.Component):
                     x < self.PANEL_W - 1, x + 1, 0)),
                 compact_fader_lookup_x.eq(Mux(
                     tune_page &
-                    (compact_fader_prefetch_x < self.PANEL_W - 21),
-                    compact_fader_prefetch_x + 21,
+                    (compact_fader_prefetch_x < self.PANEL_W - 15),
+                    compact_fader_prefetch_x + 15,
                     compact_fader_prefetch_x)),
                 compact_fader_x_rport.addr.eq(compact_fader_lookup_x),
             ]
@@ -4803,16 +4817,16 @@ class RezoTileDisplay(wiring.Component):
             Mux(~input_depth_negative_q,
                 self.rect(input_x_value_q, input_local_value_q,
                           440 if self.compact_layout else 490,
-                          68 if self.compact_layout else 75,
-                          input_depth_end_q, 80 if self.compact_layout else 89),
+                          66 if self.compact_layout else 75,
+                          input_depth_end_q, 82 if self.compact_layout else 89),
                 self.rect(input_x_value_q, input_local_value_q,
-                          input_depth_end_q, 68 if self.compact_layout else 75,
+                          input_depth_end_q, 66 if self.compact_layout else 75,
                           440 if self.compact_layout else 490,
-                          80 if self.compact_layout else 89)),
+                          82 if self.compact_layout else 89)),
             self.rect(input_x_value_q, input_local_value_q,
-                      304 if self.compact_layout else 326,
-                      36 if self.compact_layout else 43,
-                      input_gain_end_q, 48 if self.compact_layout else 57))
+                      NATIVE_INPUT_FILL_X0 if self.compact_layout else 326,
+                      34 if self.compact_layout else 43,
+                      input_gain_end_q, 50 if self.compact_layout else 57))
         input_unity_coarse = RezoCore.INPUT_UNITY_POS >> 8
         input_unity_x = (native_input_unity_x(RezoCore.INPUT_UNITY_POS)
                          if self.compact_layout else (

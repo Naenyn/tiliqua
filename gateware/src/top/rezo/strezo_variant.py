@@ -53,17 +53,26 @@ try:
     from .persistence import RezoStateJournal, SPIFlashTransfer
     from .ui_common import (
         NATIVE_FEEDBACK_AMOUNT_Y0, NATIVE_FEEDBACK_CEILING_Y0,
+        NATIVE_FEEDBACK_FILL_X0, NATIVE_FEEDBACK_FILL_X1,
+        NATIVE_FEEDBACK_TRACK_X0, NATIVE_FEEDBACK_TRACK_X1,
         NATIVE_FEEDBACK_DAMPING_CHIP_X0, NATIVE_FEEDBACK_DAMPING_CHIP_X1,
         NATIVE_FEEDBACK_DAMPING_CHIP_Y0, NATIVE_FEEDBACK_DAMPING_CHIP_Y1,
         NATIVE_FEEDBACK_DAMPING_TEXT_COL, NATIVE_FEEDBACK_DAMPING_TEXT_ROW,
         NATIVE_FEEDBACK_KNEE_Y0, NATIVE_GROUP_CENTERS,
         NATIVE_GROUP_TEXT_ROWS, NATIVE_INPUT_TEXT_ROWS,
+        NATIVE_CONTENT_PANEL_X0, NATIVE_CONTENT_PANEL_X1,
+        NATIVE_CONTENT_PANEL_Y0, NATIVE_CONTENT_PANEL_Y1,
+        NATIVE_INPUT_FILL_X0, NATIVE_INPUT_FILL_X1,
         NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
+        NATIVE_MAIN_FILL_X0, NATIVE_MAIN_FILL_X1,
         NATIVE_MAIN_CONTROL_TEXT_ROWS, NATIVE_MAIN_CONTROL_Y0S,
         NATIVE_OUTPUT_COL_CENTERS, NATIVE_OUTPUT_ROW_CENTERS,
         NATIVE_OUTPUT_TEXT_ROWS,
         add_feedback_navigation, add_group_navigation, add_input_navigation,
-        native_input_gain_endpoint, native_input_unity_x,
+        native_cross_fader_endpoint, native_input_depth_endpoint,
+        native_input_gain_endpoint, native_main_fader_endpoint,
+        native_motion_depth_endpoint,
+        native_input_unity_x,
         native_feedback_track_rows, output_header_selection,
         put_legacy_support_page_labels, put_native_page_headers,
         put_native_support_page_labels,
@@ -73,17 +82,26 @@ except ImportError:  # top_level_cli executes this file directly.
     from persistence import RezoStateJournal, SPIFlashTransfer
     from ui_common import (
         NATIVE_FEEDBACK_AMOUNT_Y0, NATIVE_FEEDBACK_CEILING_Y0,
+        NATIVE_FEEDBACK_FILL_X0, NATIVE_FEEDBACK_FILL_X1,
+        NATIVE_FEEDBACK_TRACK_X0, NATIVE_FEEDBACK_TRACK_X1,
         NATIVE_FEEDBACK_DAMPING_CHIP_X0, NATIVE_FEEDBACK_DAMPING_CHIP_X1,
         NATIVE_FEEDBACK_DAMPING_CHIP_Y0, NATIVE_FEEDBACK_DAMPING_CHIP_Y1,
         NATIVE_FEEDBACK_DAMPING_TEXT_COL, NATIVE_FEEDBACK_DAMPING_TEXT_ROW,
         NATIVE_FEEDBACK_KNEE_Y0, NATIVE_GROUP_CENTERS,
         NATIVE_GROUP_TEXT_ROWS, NATIVE_INPUT_TEXT_ROWS,
+        NATIVE_CONTENT_PANEL_X0, NATIVE_CONTENT_PANEL_X1,
+        NATIVE_CONTENT_PANEL_Y0, NATIVE_CONTENT_PANEL_Y1,
+        NATIVE_INPUT_FILL_X0, NATIVE_INPUT_FILL_X1,
         NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
+        NATIVE_MAIN_FILL_X0, NATIVE_MAIN_FILL_X1,
         NATIVE_MAIN_CONTROL_TEXT_ROWS, NATIVE_MAIN_CONTROL_Y0S,
         NATIVE_OUTPUT_COL_CENTERS, NATIVE_OUTPUT_ROW_CENTERS,
         NATIVE_OUTPUT_TEXT_ROWS,
         add_feedback_navigation, add_group_navigation, add_input_navigation,
-        native_input_gain_endpoint, native_input_unity_x,
+        native_cross_fader_endpoint, native_input_depth_endpoint,
+        native_input_gain_endpoint, native_main_fader_endpoint,
+        native_motion_depth_endpoint,
+        native_input_unity_x,
         native_feedback_track_rows, output_header_selection,
         put_legacy_support_page_labels, put_native_page_headers,
         put_native_support_page_labels,
@@ -4095,7 +4113,8 @@ class RezoTileDisplay(wiring.Component):
             put(0, "RES", 2, 37)
             put(0, "FB", 2, 39)
             put_legacy_support_page_labels(
-                put, frequency_col=18, output_row_col=2)
+                put, frequency_col=18, output_row_col=2,
+                input_depth_labels=False)
             put(5, "ADVANCED", 3, 25)
             put(5, "CROSS CURVE", 3, 29)
             put(6, "MOTION", 2, 30)
@@ -4203,7 +4222,7 @@ class RezoTileDisplay(wiring.Component):
             m.d.comb += bands_selected_band.eq(
                 selected_sync - RezoHardwareUI.TARGET_BAND_ENABLE_BASE)
 
-        update_index = Signal(range(107))
+        update_index = Signal(range(127))
         update_active = Signal(init=1)
         refresh_counter = Signal(range(4_000_000))
         writer_address = Signal(unsigned(15))
@@ -4455,6 +4474,10 @@ class RezoTileDisplay(wiring.Component):
                 writer_address_init[95 + pos] = writer_cell(6, 18, 33, pos)
             for pos in range(8):
                 writer_address_init[99 + pos] = writer_cell(5, 20, 31, pos)
+            for n, (_, _, depth_row) in enumerate(compact_input_text_rows):
+                for pos in range(5):
+                    writer_address_init[107 + n * 5 + pos] = writer_cell(
+                        2, 13, depth_row, pos)
         else:
             for pos in range(4):
                 writer_address_init[4 + pos] = writer_cell(0, 11, 7, pos)
@@ -4490,6 +4513,10 @@ class RezoTileDisplay(wiring.Component):
                 writer_address_init[95 + pos] = writer_cell(6, 34, 33, pos)
             for pos in range(8):
                 writer_address_init[99 + pos] = writer_cell(5, 20, 29, pos)
+            for n in range(4):
+                for pos in range(5):
+                    writer_address_init[107 + n * 5 + pos] = writer_cell(
+                        2, 8, 13 + n * 6 + 4, pos)
         m.submodules.writer_address_mem = writer_address_mem = Memory(
             shape=unsigned(15), depth=len(writer_address_init),
             init=writer_address_init, attrs={"ram_style": "block"})
@@ -4586,8 +4613,14 @@ class RezoTileDisplay(wiring.Component):
                 with m.Case(99 + pos):
                     m.d.comb += writer_char.eq(
                         cross_curve_chars[pos][cross_curve_sync])
+            for n in range(4):
+                for pos in range(5):
+                    with m.Case(107 + n * 5 + pos):
+                        m.d.comb += writer_char.eq(Mux(
+                            input_modes_sync[n] == RezoCore.INPUT_MODE_CV,
+                            Const(self.code("DEPTH"[pos]), 6), 0))
         with m.If(update_active):
-            with m.If(update_index == 106):
+            with m.If(update_index == 126):
                 m.d.sync += [update_active.eq(0), refresh_counter.eq(0)]
             with m.Else():
                 m.d.sync += update_index.eq(update_index + 1)
@@ -4660,35 +4693,22 @@ class RezoTileDisplay(wiring.Component):
         # a short lower field; all working pages use the taller field needed
         # by the matrix and fourth output row.
         content_y0 = Signal(
-            unsigned(10), init=218 if self.compact_layout else 190)
+            unsigned(10), init=NATIVE_CONTENT_PANEL_Y0 if self.compact_layout else 190)
         content_y1 = Signal(
-            unsigned(10), init=575 if self.compact_layout else 666)
+            unsigned(10), init=NATIVE_CONTENT_PANEL_Y1 if self.compact_layout else 666)
         m.d.dvi += [
-            content_y0.eq(
-                NATIVE_INPUT_PANEL_Y0 if self.compact_layout else 190),
-            content_y1.eq(Mux(
-                bands_page | cross_page,
-                603 if self.compact_layout else 684,
-                Mux(input_page,
-                    NATIVE_INPUT_PANEL_Y1 if self.compact_layout else 666,
-                    575 if self.compact_layout else 666))),
+            content_y0.eq(Mux(self.compact_layout,
+                              NATIVE_CONTENT_PANEL_Y0, 190)),
+            content_y1.eq(Mux(self.compact_layout,
+                              NATIVE_CONTENT_PANEL_Y1,
+                              Mux(bands_page | cross_page, 684, 666))),
         ]
         normal_content_panel = self.rect(
-            x, y, 125 if self.compact_layout else 28, content_y0,
-            594 if self.compact_layout else 692, content_y1)
-        options_content_panel = (
-            self.rect(x, y,
-                      125 if self.compact_layout else 28,
-                      218 if self.compact_layout else 190,
-                      594 if self.compact_layout else 692,
-                      400 if self.compact_layout else 412) |
-            self.rect(x, y,
-                      125 if self.compact_layout else 28,
-                      454 if self.compact_layout else 438,
-                      594 if self.compact_layout else 692,
-                      555 if self.compact_layout else 548))
-        content_panel = active & Mux(
-            advanced_page, options_content_panel, normal_content_panel)
+            x, y, NATIVE_CONTENT_PANEL_X0 if self.compact_layout else 28,
+            content_y0,
+            NATIVE_CONTENT_PANEL_X1 if self.compact_layout else 692,
+            content_y1)
+        content_panel = active & normal_content_panel
         bank_control_y0s = (
             compact_main_control_y0s if self.compact_layout
             else (556, 588, 620))
@@ -4705,7 +4725,8 @@ class RezoTileDisplay(wiring.Component):
             (tune_page & Mux(
                 self.compact_layout,
                 native_feedback_track_rows(
-                    self.rect, x, y, 268, 588),
+                    self.rect, x, y, NATIVE_FEEDBACK_TRACK_X0,
+                    NATIVE_FEEDBACK_TRACK_X1),
                 (self.rect(x, y, 150, 408, 650, 432) |
                  self.rect(x, y, 150, 456, 650, 480)))) |
             (cross_page & (
@@ -4747,6 +4768,7 @@ class RezoTileDisplay(wiring.Component):
         motion_phase_x1 = 360 if self.compact_layout else 640
         motion_depth_x0 = 280 if self.compact_layout else 512
         motion_depth_x1 = 568 if self.compact_layout else 640
+        motion_depth_fill_x0 = 282 if self.compact_layout else motion_depth_x0
         # Dynamic text occupies fourteen pixels at the bottom-biased tile
         # baseline. Inset compact chips by four pixels so their visible
         # padding is balanced above and below the glyphs.
@@ -4825,27 +4847,31 @@ class RezoTileDisplay(wiring.Component):
             (y < motion_bottom_y0 + motion_fader_height) &
             (x >= motion_depth_x0) & (x < motion_depth_x1))
 
-        # Store absolute endpoints in block memory to avoid a wide multiply in
-        # the near-capacity pixel path.
-        motion_ui_init = [motion_depth_x0 >> 2] * 512
+        # Store absolute pixel endpoints in block memory. Keeping full native
+        # coordinates (rather than quarter-pixel coordinates) lets DEPTH obey
+        # the same exact 2-pixel inset as every other long fader.
+        motion_ui_init = [motion_depth_fill_x0] * 512
         for depth_value in range(256):
             clamped_depth = min(depth_value, RezoCore.CROSS_DEPTH_MAX)
             motion_ui_init[depth_value] = (
-                motion_depth_x0 + (clamped_depth << 1) +
-                (clamped_depth >> 2)) >> 2
+                (native_motion_depth_endpoint(
+                    clamped_depth, motion_depth_fill_x0)
+                 if self.compact_layout else
+                 motion_depth_x0 + (clamped_depth << 1) +
+                 (clamped_depth >> 2)))
         for raw_value in range(64):
             signed_value = raw_value if raw_value < 32 else raw_value - 64
             # The depth-scaled monitor's reachable source extrema are -16
             # and +15. Map those asymmetrical integer limits onto equal
-            # 144-pixel excursions across the full 288-pixel DEPTH track.
+            # 142-pixel excursions across the inset 284-pixel DEPTH lane.
             # This table is display-only; DSP modulation remains unchanged.
             if signed_value >= 0:
-                scaled_value = min(36, round(signed_value * 36 / 15))
+                scaled_value = min(142, round(signed_value * 142 / 15))
             else:
-                scaled_value = round(signed_value * 36 / 16)
-            motion_ui_init[256 + raw_value] = 106 + scaled_value
+                scaled_value = round(signed_value * 142 / 16)
+            motion_ui_init[256 + raw_value] = 424 + scaled_value
         m.submodules.motion_ui_mem = motion_ui_mem = Memory(
-            shape=unsigned(8), depth=len(motion_ui_init),
+            shape=unsigned(10), depth=len(motion_ui_init),
             init=motion_ui_init, attrs={"ram_style": "block"})
         motion_depth_rport = motion_ui_mem.read_port(domain="dvi")
         motion_monitor_rport = motion_ui_mem.read_port(domain="dvi")
@@ -4860,10 +4886,10 @@ class RezoTileDisplay(wiring.Component):
         # endpoint for one pixel clock.
         m.d.dvi += motion_monitor_negative_q.eq(self.motion_monitor < 0)
         motion_depth_fill = (
-            bands_page & (x[2:10] >= (motion_depth_x0 >> 2)) &
-            (x[2:10] < motion_depth_rport.data[:8]) &
-            (y >= motion_bottom_y0) &
-            (y < motion_bottom_y0 + motion_fader_height))
+            bands_page & (x >= motion_depth_fill_x0) &
+            (x < motion_depth_rport.data) &
+            (y >= motion_bottom_y0 + 2) &
+            (y < motion_bottom_y0 + motion_fader_height - 2))
         motion_depth_select = (
             bands_page &
             (self.selected == RezoHardwareUI.TARGET_MOTION_DEPTH) &
@@ -4875,7 +4901,7 @@ class RezoTileDisplay(wiring.Component):
         # INPUT page. Its value comes from the audio engine's existing LFO;
         # the display does not synthesize another oscillator.
         motion_monitor_line = bands_page & self.bipolar_line(
-            x[2:10], y, 106, motion_monitor_rport.data,
+            x, y, 424, motion_monitor_rport.data,
             570, 572, motion_monitor_negative_q)
 
         damp_chip = tune_page & self.rect(
@@ -4968,8 +4994,7 @@ class RezoTileDisplay(wiring.Component):
                     input_gain_ends[n].eq(
                         native_input_gain_endpoint(self.input_gains[n])),
                     input_depth_ends[n].eq(
-                        440 + self.cv_depths[n] +
-                        (self.cv_depths[n] >> 1)),
+                        native_input_depth_endpoint(self.cv_depths[n])),
                     input_meter_ends[n].eq(Mux(
                         self.input_modes[n] == RezoCore.INPUT_MODE_CV,
                         440 + (self.input_meters[n] << 2) +
@@ -5351,19 +5376,19 @@ class RezoTileDisplay(wiring.Component):
             Mux(~input_depth_negative_q,
                 self.rect(input_x_value_q, input_local_value_q,
                           440 if self.compact_layout else 490,
-                          68 if self.compact_layout else 75,
+                          66 if self.compact_layout else 75,
                           input_depth_end_q,
-                          80 if self.compact_layout else 89),
+                          82 if self.compact_layout else 89),
                 self.rect(input_x_value_q, input_local_value_q,
                           input_depth_end_q,
-                          68 if self.compact_layout else 75,
+                          66 if self.compact_layout else 75,
                           440 if self.compact_layout else 490,
-                          80 if self.compact_layout else 89)),
+                          82 if self.compact_layout else 89)),
             self.rect(input_x_value_q, input_local_value_q,
-                      304 if self.compact_layout else 326,
-                      36 if self.compact_layout else 43,
+                      NATIVE_INPUT_FILL_X0 if self.compact_layout else 326,
+                      34 if self.compact_layout else 43,
                       input_gain_end_q,
-                      48 if self.compact_layout else 57))
+                      50 if self.compact_layout else 57))
         input_line_q0 = input_visible & (
             (input_is_cv & self.rect(
                 input_x_value_q, input_local_value_q,
@@ -5869,16 +5894,14 @@ class RezoTileDisplay(wiring.Component):
             bank_control_page_q.eq(bank_page),
         ]
         bank_control_visible = bank_control_page_q & bank_control_active_q
-        control_fill_x0 = 289 if self.compact_layout else 124
+        control_fill_x0 = NATIVE_MAIN_FILL_X0 if self.compact_layout else 124
         bank_control_end = (
-            control_fill_x0 + (bank_control_base_q << 1) +
-            (bank_control_base_q >> 2) + (bank_control_base_q >> 3)
+            native_main_fader_endpoint(bank_control_base_q, control_fill_x0)
             if self.compact_layout else
             control_fill_x0 + (bank_control_base_q << 2))
         bank_control_effective_end = (
-            control_fill_x0 + (bank_control_effective_q << 1) +
-            (bank_control_effective_q >> 2) +
-            (bank_control_effective_q >> 3)
+            native_main_fader_endpoint(bank_control_effective_q,
+                                       control_fill_x0)
             if self.compact_layout else
             control_fill_x0 + (bank_control_effective_q << 2))
         bank_control_fill = bank_control_visible & self.rect(
@@ -5895,16 +5918,16 @@ class RezoTileDisplay(wiring.Component):
             bank_control_end - 2, bank_control_y0_q - 2,
             bank_control_end + 2, bank_control_y0_q + 18)
 
-        cross_track_x0 = 236 if self.compact_layout else 124
+        cross_track_x0 = 234 if self.compact_layout else 124
         same_y0 = 544 if self.compact_layout else 620
         cross_y0 = 576 if self.compact_layout else 652
         same_feedback_width = (
-            (self.same_feedback << 1) + (self.same_feedback >> 1) +
-            (self.same_feedback >> 3)
+            native_cross_fader_endpoint(self.same_feedback, cross_track_x0) -
+            cross_track_x0
             if self.compact_layout else self.same_feedback << 2)
         cross_feedback_width = (
-            (self.cross_feedback << 1) + (self.cross_feedback >> 1) +
-            (self.cross_feedback >> 3)
+            native_cross_fader_endpoint(self.cross_feedback, cross_track_x0) -
+            cross_track_x0
             if self.compact_layout else self.cross_feedback << 2)
         same_fill = cross_page & self.rect(
             x, y, cross_track_x0, same_y0,
@@ -5921,21 +5944,18 @@ class RezoTileDisplay(wiring.Component):
             ((self.selected == RezoHardwareUI.TARGET_CROSS_FEEDBACK) &
              self.rect(x, y, cross_track_x0 - 6, cross_y0,
                        cross_track_x0 - 2, cross_y0 + 16)))
-        tune_fill_x0 = 268 if self.compact_layout else 156
+        tune_fill_x0 = NATIVE_FEEDBACK_FILL_X0 if self.compact_layout else 156
         tune_fill_scale_shift = 0 if self.compact_layout else 2
         compact_tune_feedback_end = (
-            tune_fill_x0 + (self.feedback << 1) +
-            (self.feedback >> 1))
+            native_main_fader_endpoint(self.feedback, tune_fill_x0))
         # KNEE and CEILING are user-facing 16..128 controls.  The old compact
         # map advanced only 1.125 pixels per step, so the valid maximum stopped
         # near the middle of the 320-pixel lane.  A 2.5x shift/add maps 128 to
         # the lane's exact right edge without changing the DSP coefficient.
         compact_tune_knee_end = (
-            tune_fill_x0 + (self.limit_knee << 1) +
-            (self.limit_knee >> 1))
+            native_main_fader_endpoint(self.limit_knee, tune_fill_x0))
         compact_tune_cap_end = (
-            tune_fill_x0 + (self.limit_cap << 1) +
-            (self.limit_cap >> 1))
+            native_main_fader_endpoint(self.limit_cap, tune_fill_x0))
         tune_feedback_fill = tune_page & self.rect(
             x, y, tune_fill_x0,
             NATIVE_FEEDBACK_AMOUNT_Y0 if self.compact_layout else 380,

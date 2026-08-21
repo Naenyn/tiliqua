@@ -123,16 +123,17 @@ def test_standard_and_circular_targets_render_identical_native_pixels():
 
 def test_input_audio_fill_remains_inside_its_native_value_lane():
     control = RezoTileDisplay.PALETTE["control"]
+    panel = RezoTileDisplay.PALETTE["panel"]
     background = RezoTileDisplay.PALETTE["background"]
     pixels = _render_samples(
         page=2,
         input_gains=(255,),
         input_modes=(RezoCore.INPUT_MODE_LEFT,),
-        points=((574, 257), (575, 257), (576, 257)),
+        points=((572, 257), (573, 257), (574, 257), (575, 257)),
     )
     assert pixels == [
         (control, control, control),
-        (control, control, control),
+        (panel, panel, panel), (panel, panel, panel),
         (background, background, background),
     ]
 
@@ -212,15 +213,15 @@ def test_cross_feedback_tracks_use_nearly_the_full_chip_width():
         page=7,
         same_feedback=128,
         cross_feedback=RezoCore.CROSS_DEPTH_MAX,
-        points=((231, 550), (232, 550), (235, 550), (236, 550),
-                (571, 550), (572, 550), (579, 550), (580, 550),
-                (236, 582), (571, 582), (572, 582)),
+        points=((231, 550), (232, 550), (233, 550), (234, 550),
+                (577, 550), (578, 550), (579, 550), (580, 550),
+                (577, 582), (578, 582), (579, 582)),
     ) == [
         (background, background, background), (panel, panel, panel),
         (panel, panel, panel), (control, control, control),
         (control, control, control), (panel, panel, panel),
         (panel, panel, panel), (background, background, background),
-        (control, control, control), (control, control, control),
+        (control, control, control), (panel, panel, panel),
         (panel, panel, panel),
     ]
 
@@ -233,42 +234,51 @@ def test_bank_control_maxima_fill_the_compact_tracks():
         drive=128,
         resonance=128,
         feedback=128,
-        points=((592, 456), (593, 456),
-                (592, 488), (593, 488),
-                (592, 520), (593, 520)),
+        points=((591, 456), (592, 456), (593, 456),
+                (591, 488), (592, 488), (593, 488),
+                (591, 520), (592, 520), (593, 520)),
     ) == [
-        (control, control, control), (line, line, line),
-        (control, control, control), (line, line, line),
-        (control, control, control), (line, line, line),
+        (control, control, control), (line, line, line), (line, line, line),
+        (control, control, control), (line, line, line), (line, line, line),
+        (control, control, control), (line, line, line), (line, line, line),
     ]
 
 
 def test_feedback_safety_maxima_fill_the_compact_tracks():
     control = RezoTileDisplay.PALETTE["control"]
+    panel = RezoTileDisplay.PALETTE["panel"]
     background = RezoTileDisplay.PALETTE["background"]
     assert _render_samples(
         page=1,
         limit_knee=128,
         limit_cap=128,
-        points=((587, NATIVE_FEEDBACK_KNEE_Y0 + 8),
-                (588, NATIVE_FEEDBACK_KNEE_Y0 + 8),
-                (587, NATIVE_FEEDBACK_CEILING_Y0 + 8),
-                (588, NATIVE_FEEDBACK_CEILING_Y0 + 8)),
+        points=((576, NATIVE_FEEDBACK_KNEE_Y0 + 8),
+                (577, NATIVE_FEEDBACK_KNEE_Y0 + 8),
+                (578, NATIVE_FEEDBACK_KNEE_Y0 + 8),
+                (579, NATIVE_FEEDBACK_KNEE_Y0 + 8),
+                (576, NATIVE_FEEDBACK_CEILING_Y0 + 8),
+                (577, NATIVE_FEEDBACK_CEILING_Y0 + 8),
+                (578, NATIVE_FEEDBACK_CEILING_Y0 + 8),
+                (579, NATIVE_FEEDBACK_CEILING_Y0 + 8)),
     ) == [
-        (control, control, control), (background, background, background),
-        (control, control, control), (background, background, background),
+        (control, control, control), (panel, panel, panel),
+        (panel, panel, panel), (background, background, background),
+        (control, control, control), (panel, panel, panel),
+        (panel, panel, panel), (background, background, background),
     ]
 
 
 def test_feedback_amount_maximum_fills_the_compact_track():
     control = RezoTileDisplay.PALETTE["control"]
+    panel = RezoTileDisplay.PALETTE["panel"]
     background = RezoTileDisplay.PALETTE["background"]
     assert _render_samples(
         page=1,
         feedback=128,
-        points=((587, 344), (588, 344)),
+        points=((576, 344), (577, 344), (578, 344), (579, 344)),
     ) == [
         (control, control, control),
+        (panel, panel, panel), (panel, panel, panel),
         (background, background, background),
     ]
 
@@ -299,7 +309,7 @@ def test_cross_lower_rows_have_balanced_clear_bands():
         (background, background, background),
         (panel, panel, panel), (panel, panel, panel),
         (background, background, background),
-        (background, background, background), (blank, blank, blank),
+        (blank, blank, blank), (blank, blank, blank),
     ]
 
 
@@ -322,8 +332,8 @@ def test_bands_motion_controls_form_one_complete_vertical_column():
         (background, background, background),
         (panel, panel, panel), (panel, panel, panel),
         (background, background, background),
-        (control, control, control), (control, control, control),
-        (panel, panel, panel), (panel, panel, panel),
+        (panel, panel, panel), (control, control, control),
+        (control, control, control), (panel, panel, panel),
         (background, background, background),
         (background, background, background),
         (background, background, background),
@@ -373,13 +383,13 @@ def test_bands_motion_monitor_is_a_centered_bipolar_line():
         points=((423, 571), (424, 571), (567, 571), (568, 571)),
     ) == [
         (panel, panel, panel), (mod, mod, mod),
-        (mod, mod, mod), (background, background, background),
+        (panel, panel, panel), (background, background, background),
     ]
     assert _render_samples(
         page=6,
         motion_monitor=-16,
         points=((279, 571), (280, 571), (423, 571), (424, 571)),
     ) == [
-        (background, background, background), (mod, mod, mod),
+        (background, background, background), (panel, panel, panel),
         (mod, mod, mod), (panel, panel, panel),
     ]
