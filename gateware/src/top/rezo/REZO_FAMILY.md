@@ -83,6 +83,25 @@ should be extracted in small, independently tested steps:
 After each extraction, run every affected variant suite and compare synthesized
 resource and timing results before deleting duplicated code.
 
+### Exact UI/display contract consolidation checkpoint (2026-08-21)
+
+`test_rezo_family_ui_contract.py` and
+`test_rezo_family_display_contract.py` now own every UI/display test body that
+was exactly duplicated across products. The common settled-pixel sampler also
+serves standard and native display tests. The identical REZO/REZOMO version-1
+persistence vector moved into the existing family persistence contract.
+
+The normalized AST audit now finds no exact duplicate test functions across
+the REZO-family suites. About 1,220 copied lines were replaced by about 525
+shared/adaptor lines, reducing test source by roughly 695 lines without
+changing the 195-case collection. Focused UI, display, and persistence suites
+pass 30, 82, and 29 tests respectively; the complete family run passes all 195
+tests with 79 existing warnings.
+
+Only test and documentation sources changed, so no standard or circular target
+was built and nothing was flashed. Similar-but-different variant tests and all
+packing-sensitive product RTL remain local.
+
 ### DSP/UI/display test consolidation checkpoint (2026-08-21)
 
 Common test mechanics now exist once: `test_rezo_family_compare_contract.py`

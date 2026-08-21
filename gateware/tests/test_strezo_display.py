@@ -470,43 +470,6 @@ def test_bands_motion_rate_label_supports_decimal_point():
     assert samples == [RezoTileDisplay.PALETTE["text"]]
 
 
-def test_disabled_band_has_bank_ghosts():
-    """Disabled BANK columns and group cells keep their positional frames."""
-    dut = RezoTileDisplay(h_active=1280)
-    sim = Simulator(dut)
-    sim.add_clock(1e-6, domain="sync")
-    sim.add_clock(1e-6, domain="dvi")
-    samples = []
-
-    async def sample(ctx, panel_x, panel_y):
-        ctx.set(dut.x, dut.x_offset + panel_x)
-        ctx.set(dut.y, panel_y)
-        ctx.set(dut.de, 1)
-        for _ in range(8):
-            await ctx.tick("dvi")
-        samples.append(ctx.get(dut.r))
-
-    async def bench(ctx):
-        ctx.set(dut.levels[0], 16)
-        ctx.set(dut.effective_levels[0], 16)
-        ctx.set(dut.band_enables[0], 0)
-        await sample(ctx, 42, 300)  # ghost frame edge
-        await sample(ctx, 60, 300)  # blank frame interior
-
-        ctx.set(dut.page, 3)
-        await sample(ctx, 150, 294)  # disabled group-cell top ghost rail
-        await sample(ctx, 150, 300)  # empty space between ghost rails
-
-    sim.add_testbench(bench)
-    sim.run()
-
-    palette = RezoTileDisplay.PALETTE
-    assert samples == [
-        palette["line"], palette["background"],
-        palette["line"], palette["background"],
-    ]
-
-
 def test_group_geometry_rom_decodes_every_band_and_row():
     """The BRAM coordinate decoder preserves all forty GROUPS cells."""
     dut = RezoTileDisplay(h_active=1280)
@@ -543,43 +506,6 @@ def test_group_geometry_rom_decodes_every_band_and_row():
                 palette["control"] if band % RezoCore.N_GROUPS == group
                 else palette["background"])
     assert samples == expected
-
-
-def test_tile_display_drive_modulation_shading():
-    """BANK DRIVE distinguishes its base setting from CV modulation."""
-    dut = RezoTileDisplay(h_active=1280)
-    sim = Simulator(dut)
-    sim.add_clock(1e-6, domain="sync")
-    sim.add_clock(1e-6, domain="dvi")
-    samples = []
-
-    async def sample(ctx, panel_x, panel_y):
-        ctx.set(dut.x, dut.x_offset + panel_x)
-        ctx.set(dut.y, panel_y)
-        ctx.set(dut.de, 1)
-        for _ in range(8):
-            await ctx.tick("dvi")
-        samples.append(ctx.get(dut.r))
-
-    async def bench(ctx):
-        ctx.set(dut.drive, 64)
-        ctx.set(dut.effective_drive, 96)
-
-        # BANK DRIVE occupies y=556..571. The extension beyond the base
-        # setting uses the modulation palette role.
-        await sample(ctx, 300, 560)
-        await sample(ctx, 450, 560)
-        await sample(ctx, 380, 554)
-
-    sim.add_testbench(bench)
-    sim.run()
-
-    palette = RezoTileDisplay.PALETTE
-    assert samples == [
-        palette["control"],
-        palette["modulation"],
-        palette["line"],
-    ]
 
 
 def test_cross_matrix_selection_tracks_all_four_rows():

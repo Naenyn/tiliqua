@@ -2,7 +2,6 @@ from amaranth.sim import Simulator
 
 from rezo_ui_support import click as _click
 from rezo_ui_support import fast_click_ui
-from rezo_ui_support import hold as _hold
 from rezo_ui_support import turn as _turn
 from top.rezo.strezo_variant import RezoCore, RezoHardwareUI
 
@@ -545,83 +544,6 @@ def test_ui_state_scan_preserves_all_compact_v5_parameters():
     sim.run()
 
 
-def test_ui_band_page_layout_toggle_and_transactional_user_edit():
-    """BANDS applies layouts, toggles masks, and commits edits into USER."""
-    dut = FastClickRezoUI()
-    sim = Simulator(dut)
-    sim.add_clock(1e-6)
-
-    async def bench(ctx):
-        endpoint = 0b00
-
-        # PAGE edit: BANK -> BANDS.
-        await _click(ctx, dut)
-        endpoint = await _turn(ctx, dut, endpoint, 1)
-        assert ctx.get(dut.page) == 6
-        await _click(ctx, dut)
-
-        # Select LAYOUT, preview PERCEPT, then commit it.
-        endpoint = await _turn(ctx, dut, endpoint, 1)
-        assert ctx.get(dut.selected) == dut.TARGET_BAND_LAYOUT
-        await _click(ctx, dut)
-        endpoint = await _turn(ctx, dut, endpoint, 1)
-        assert ctx.get(dut.frequency_layout) == 1  # preview is not live
-        await _click(ctx, dut)
-        for _ in range(RezoCore.N_BANDS + 1):
-            await ctx.tick()
-        assert ctx.get(dut.frequency_layout) == 2
-        percept = [RezoCore.frequency_index(f) for f in RezoCore.PERCEPT_FREQS_HZ]
-        assert [ctx.get(dut.band_frequencies[n]) for n in range(10)] == percept
-
-        # First enable target toggles immediately and retains its band value.
-        endpoint = await _turn(ctx, dut, endpoint, 1)
-        assert ctx.get(dut.selected) == dut.TARGET_BAND_ENABLE_BASE
-        await _click(ctx, dut)
-        assert ctx.get(dut.band_enables[0]) == 0
-
-        # Walk across the enable row to frequency 0. Editing previews without
-        # touching DSP state; commit snapshots PERCEPT into USER and changes
-        # only the selected center.
-        for _ in range(10):
-            endpoint = await _turn(ctx, dut, endpoint, 1)
-        assert ctx.get(dut.selected) == dut.TARGET_BAND_FREQ_BASE
-        old_frequency = ctx.get(dut.band_frequencies[0])
-        await _click(ctx, dut)
-        endpoint = await _turn(ctx, dut, endpoint, 1)
-        assert ctx.get(dut.band_frequencies[0]) == old_frequency
-        await _click(ctx, dut)
-        for _ in range(RezoCore.N_BANDS + 1):
-            await ctx.tick()
-        assert ctx.get(dut.frequency_layout) == 3
-        assert ctx.get(dut.band_frequencies[0]) == old_frequency + 1
-        assert [ctx.get(dut.band_frequencies[n]) for n in range(1, 10)] == percept[1:]
-
-        # USER is a working state, not a second recalled preset. Select a
-        # factory layout, then select USER again: it snapshots that factory
-        # vector rather than recalling the previous manual edit.
-        endpoint = await _turn(ctx, dut, endpoint, 0)
-        for _ in range(10):
-            endpoint = await _turn(ctx, dut, endpoint, 0)
-        assert ctx.get(dut.selected) == dut.TARGET_BAND_LAYOUT
-        await _click(ctx, dut)
-        endpoint = await _turn(ctx, dut, endpoint, 1)  # USER wraps to LEGACY
-        await _click(ctx, dut)
-        for _ in range(RezoCore.N_BANDS + 1):
-            await ctx.tick()
-        legacy = [RezoCore.frequency_index(f) for f in RezoCore.LEGACY_FREQS_HZ]
-        assert [ctx.get(dut.band_frequencies[n]) for n in range(10)] == legacy
-        await _click(ctx, dut)
-        endpoint = await _turn(ctx, dut, endpoint, 0)  # LEGACY wraps to USER
-        await _click(ctx, dut)
-        for _ in range(RezoCore.N_BANDS + 1):
-            await ctx.tick()
-        assert ctx.get(dut.frequency_layout) == RezoCore.LAYOUT_USER
-        assert [ctx.get(dut.band_frequencies[n]) for n in range(10)] == legacy
-
-    sim.add_testbench(bench)
-    sim.run()
-
-
 def test_ui_disabled_bank_controls_do_not_change_stored_values():
     """Muted bands remain configurable on BANDS but are inert on BANK."""
     dut = FastClickRezoUI()
@@ -665,18 +587,6 @@ def test_ui_disabled_bank_controls_do_not_change_stored_values():
 
     sim.add_testbench(bench)
     sim.run()
-
-
-def test_frequency_grid_preserves_factory_centers_and_adds_fine_steps():
-    """Every old five-bit index maps to its exact center at fine position zero."""
-    assert len(RezoCore.COARSE_FREQUENCIES_HZ) == 29
-    assert len(RezoCore.FREQUENCIES_HZ) == 116
-    for coarse_index, frequency in enumerate(RezoCore.COARSE_FREQUENCIES_HZ):
-        fine_index = coarse_index << RezoCore.FREQ_FINE_WIDTH
-        assert RezoCore.FREQUENCIES_HZ[fine_index] == frequency
-        assert RezoCore.frequency_index(frequency) == fine_index
-    assert all(a <= b for a, b in zip(
-        RezoCore.FREQUENCIES_HZ, RezoCore.FREQUENCIES_HZ[1:]))
 
 
 def test_ui_save_default_click_requests_once():

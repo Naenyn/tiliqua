@@ -9,6 +9,42 @@ before changing the design. The current operator guides are
 [`REZOMO_USER_GUIDE.md`](REZOMO_USER_GUIDE.md), and
 [`STREZO_USER_GUIDE.md`](STREZO_USER_GUIDE.md).
 
+## 2026-08-21 exact UI/display contract consolidation
+
+This checkpoint completes the exact-body test consolidation audit. It changes
+only test and documentation sources; no product RTL, firmware, target
+configuration, or generated bitstream changed, so nothing was built or
+flashed.
+
+- Added `test_rezo_family_ui_contract.py` as the single source for six shared
+  UI behaviors. Four apply to REZO and REZOMO, while BANDS transactional
+  editing and the fine-frequency grid apply to all three products. The 14
+  parameterized cases replace their copied product-local bodies.
+- Added `test_rezo_family_display_contract.py` as the single source for eight
+  shared display behaviors, producing 16 parameterized cases across the
+  applicable product pairs. Static glyphs, band geometry, BANDS controls,
+  five-digit frequencies, disabled-band ghosts, DRIVE shading, OUTPUT
+  selection bars, and semantic palette mapping now each have one definition.
+- Extended `rezo_display_support.py` with common settled video/panel pixel
+  sampling. Native REZOMO and STREZO sampling now uses the same primitive.
+- Moved the identical REZO/REZOMO version-1 compatibility vector into
+  `test_rezo_persistence_contract.py`; later product-specific migrations stay
+  local. The now-empty `test_rezo_standard_persistence.py` was deleted.
+- Removed about 1,220 copied lines and added about 525 shared/adaptor lines, a
+  net test-source reduction of roughly 695 lines. Collection remains exactly
+  195 cases.
+- A normalized AST fingerprint audit now reports no exact duplicate test
+  functions across `test_rezo*.py` and `test_strezo*.py`.
+- Focused results: UI `30 passed`, display `82 passed`, and persistence `29
+  passed`. The complete family regression passes `195 passed, 79 warnings in
+  796.11s`; the warnings are existing dependency deprecations.
+
+The remaining similarities are not exact contracts: STREZO navigation,
+stereo/cross-feedback DSP, display geometry, native scene setup, and journal
+migrations differ materially. Dense product RTL also remains local because
+prior structurally neutral extractions changed packing/timing on near-capacity
+images.
+
 ## 2026-08-21 DSP/UI/display test consolidation
 
 This checkpoint continues consolidation strictly in test code. No product RTL,
