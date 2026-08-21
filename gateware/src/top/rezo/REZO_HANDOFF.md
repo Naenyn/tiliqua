@@ -34,6 +34,14 @@ was flashed.
     406.01, AUDIO 71.62, SYNC 64.55, DVI 78.03 MHz.
   - STREZO seed 8: 23,387 cells (901 free), 6,919 FF, 21 DP16KD; DVI5X
     392.46, AUDIO 71.98, SYNC 61.34, DVI 77.86 MHz.
+- Commit `90fce999` archives were packaged from those exact routed bitstreams;
+  each archived `top.bit` matches its build-directory file:
+  - `build/rezo-r5/rezo-90fce999-r5.tar.gz`, SHA-256
+    `5490a87b83533b726f3a10c0102b40ece9ead6930cb79e1c8a463aa8f7fcaf0a`.
+  - `build/rezomo-r5/rezomo-90fce999-r5.tar.gz`, SHA-256
+    `e07e2cd78356965f94975ae7093f0f78034c5764e151294f969521c32a865ce0`.
+  - `build/strezo-r5/strezo-90fce999-r5.tar.gz`, SHA-256
+    `86b2350537ba16583154a1029cfdab681b05a641d937f3ea97ba7aea50aeb006`.
 - STREZO seed 7 was rejected because its final DVI5X result was 355.87 MHz.
   Seed 8 was rerouted from the identical synthesized JSON and is now the
   standard default. REZO remains seed 8 and REZOMO remains seed 9.
