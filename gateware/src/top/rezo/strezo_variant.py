@@ -5921,13 +5921,26 @@ class RezoTileDisplay(wiring.Component):
         cross_track_x0 = 234 if self.compact_layout else 124
         same_y0 = 544 if self.compact_layout else 620
         cross_y0 = 576 if self.compact_layout else 652
+        # Endpoint arithmetic used to sit on the same DVI-cycle path as the
+        # remaining page geometry and palette selection.  The controls update
+        # many orders of magnitude more slowly than the pixel clock, so stage
+        # both endpoints once here to keep the renderer's timing independent
+        # of the shift/add mapping without introducing perceptible UI latency.
+        same_feedback_end_q = Signal(unsigned(10))
+        cross_feedback_end_q = Signal(unsigned(10))
+        m.d.dvi += [
+            same_feedback_end_q.eq(
+                native_cross_fader_endpoint(self.same_feedback,
+                                             cross_track_x0)),
+            cross_feedback_end_q.eq(
+                native_cross_fader_endpoint(self.cross_feedback,
+                                             cross_track_x0)),
+        ]
         same_feedback_width = (
-            native_cross_fader_endpoint(self.same_feedback, cross_track_x0) -
-            cross_track_x0
+            same_feedback_end_q - cross_track_x0
             if self.compact_layout else self.same_feedback << 2)
         cross_feedback_width = (
-            native_cross_fader_endpoint(self.cross_feedback, cross_track_x0) -
-            cross_track_x0
+            cross_feedback_end_q - cross_track_x0
             if self.compact_layout else self.cross_feedback << 2)
         same_fill = cross_page & self.rect(
             x, y, cross_track_x0, same_y0,
