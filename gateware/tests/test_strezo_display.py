@@ -86,7 +86,9 @@ def test_tile_display_band_geometry_and_modulation_shading():
         ctx.set(dut.x, dut.x_offset + panel_x)
         ctx.set(dut.y, panel_y)
         ctx.set(dut.de, 1)
-        for _ in range(8):
+        # STREZO's extra band-value selection stage makes the first sample in
+        # a simulation require a few more clocks than subsequent pixels.
+        for _ in range(12):
             await ctx.tick("dvi")
         samples.append(ctx.get(dut.r))
 
@@ -313,7 +315,7 @@ def test_bands_page_draws_two_column_motion_controls():
         await sample(ctx, 200, 600)  # RATE chip, left column
         await sample(ctx, 520, 536)  # PHASE chip, right column
         await sample(ctx, 520, 600)  # DEPTH fill, right column
-        await sample(ctx, 560, 600)  # unfilled depth track
+        await sample(ctx, 620, 600)  # unfilled depth track
 
         ctx.set(dut.selected, RezoHardwareUI.TARGET_MOTION_DEPTH)
         await sample(ctx, 508, 600)  # large-fader edit marker

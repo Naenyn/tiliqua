@@ -416,15 +416,17 @@ def test_compact_feedback_sources_and_safety_share_centered_geometry():
         for _ in range(260):
             await ctx.tick("sync")
 
-        # KNEE and CEILING panels occupy native x=[268,567).
-        await sample(ctx, 268, 405)
-        await sample(ctx, 260, 405)
-        await sample(ctx, 566, 405)
-        await sample(ctx, 574, 405)
+        # KNEE and CEILING panels occupy native x=[268,567).  Their dynamic
+        # fill mapping deliberately remains the proven compact REZO mapping;
+        # the shared page contract owns the rows, labels, and navigation.
+        await sample(ctx, 268, 421)
+        await sample(ctx, 260, 421)
+        await sample(ctx, 566, 421)
+        await sample(ctx, 574, 421)
 
         # DAMPING's native chip starts on the same physical x edge.
-        await sample(ctx, 268, 470)
-        await sample(ctx, 260, 470)
+        await sample(ctx, 268, 486)
+        await sample(ctx, 260, 486)
 
     sim.add_testbench(bench)
     sim.run()

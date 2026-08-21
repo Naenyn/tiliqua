@@ -63,11 +63,17 @@ try:
         NATIVE_FEEDBACK_DAMPING_CHIP_X0, NATIVE_FEEDBACK_DAMPING_CHIP_X1,
         NATIVE_FEEDBACK_DAMPING_CHIP_Y0, NATIVE_FEEDBACK_DAMPING_CHIP_Y1,
         NATIVE_FEEDBACK_DAMPING_TEXT_COL, NATIVE_FEEDBACK_DAMPING_TEXT_ROW,
-        NATIVE_FEEDBACK_KNEE_Y0,
+        NATIVE_FEEDBACK_KNEE_Y0, NATIVE_GROUP_CENTERS,
+        NATIVE_GROUP_TEXT_ROWS, NATIVE_INPUT_TEXT_ROWS,
         NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
+        NATIVE_MAIN_CONTROL_TEXT_ROWS, NATIVE_MAIN_CONTROL_Y0S,
+        NATIVE_OUTPUT_COL_CENTERS, NATIVE_OUTPUT_ROW_CENTERS,
+        NATIVE_OUTPUT_TEXT_ROWS,
+        add_feedback_navigation, add_group_navigation, add_input_navigation,
         native_input_gain_endpoint, native_input_unity_x,
         native_feedback_track_rows, output_header_selection,
-        put_native_feedback_labels,
+        put_legacy_support_page_labels, put_native_page_headers,
+        put_native_support_page_labels,
     )
 except ImportError:  # top_level_cli executes this file directly.
     from encoder_acceleration import progressive_edit_level
@@ -77,11 +83,17 @@ except ImportError:  # top_level_cli executes this file directly.
         NATIVE_FEEDBACK_DAMPING_CHIP_X0, NATIVE_FEEDBACK_DAMPING_CHIP_X1,
         NATIVE_FEEDBACK_DAMPING_CHIP_Y0, NATIVE_FEEDBACK_DAMPING_CHIP_Y1,
         NATIVE_FEEDBACK_DAMPING_TEXT_COL, NATIVE_FEEDBACK_DAMPING_TEXT_ROW,
-        NATIVE_FEEDBACK_KNEE_Y0,
+        NATIVE_FEEDBACK_KNEE_Y0, NATIVE_GROUP_CENTERS,
+        NATIVE_GROUP_TEXT_ROWS, NATIVE_INPUT_TEXT_ROWS,
         NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
+        NATIVE_MAIN_CONTROL_TEXT_ROWS, NATIVE_MAIN_CONTROL_Y0S,
+        NATIVE_OUTPUT_COL_CENTERS, NATIVE_OUTPUT_ROW_CENTERS,
+        NATIVE_OUTPUT_TEXT_ROWS,
+        add_feedback_navigation, add_group_navigation, add_input_navigation,
         native_input_gain_endpoint, native_input_unity_x,
         native_feedback_track_rows, output_header_selection,
-        put_native_feedback_labels,
+        put_legacy_support_page_labels, put_native_page_headers,
+        put_native_support_page_labels,
     )
 
 
@@ -2880,95 +2892,32 @@ class RezoHardwareUI(wiring.Component):
                 with m.Else():
                     m.d.comb += next_selected.eq(selected - 1)
         with m.Elif(page == 1):
-            with m.If(edit_direction):
-                with m.If(~tune_target_visible):
-                    m.d.comb += next_selected.eq(self.TARGET_FEEDBACK_SEND_BASE)
-                with m.Elif(selected == self.TARGET_PAGE):
-                    m.d.comb += next_selected.eq(self.TARGET_FEEDBACK_SEND_BASE)
-                with m.Elif(selected == self.TARGET_DAMP):
-                    m.d.comb += next_selected.eq(self.TARGET_PAGE)
-                with m.Elif(selected ==
-                            self.TARGET_FEEDBACK_SEND_BASE + RezoCore.N_BANDS - 1):
-                    m.d.comb += next_selected.eq(self.TARGET_FEEDBACK)
-                with m.Elif(selected == self.TARGET_FEEDBACK):
-                    m.d.comb += next_selected.eq(self.TARGET_LIMIT_KNEE)
-                with m.Else():
-                    m.d.comb += next_selected.eq(selected + 1)
-            with m.Else():
-                with m.If(~tune_target_visible):
-                    m.d.comb += next_selected.eq(self.TARGET_DAMP)
-                with m.Elif(selected == self.TARGET_PAGE):
-                    m.d.comb += next_selected.eq(self.TARGET_DAMP)
-                with m.Elif(selected == self.TARGET_FEEDBACK_SEND_BASE):
-                    m.d.comb += next_selected.eq(self.TARGET_PAGE)
-                with m.Elif(selected == self.TARGET_LIMIT_KNEE):
-                    m.d.comb += next_selected.eq(self.TARGET_FEEDBACK)
-                with m.Elif(selected == self.TARGET_FEEDBACK):
-                    m.d.comb += next_selected.eq(
-                        self.TARGET_FEEDBACK_SEND_BASE + RezoCore.N_BANDS - 1)
-                with m.Else():
-                    m.d.comb += next_selected.eq(selected - 1)
+            add_feedback_navigation(
+                m, edit_direction=edit_direction, selected=selected,
+                next_selected=next_selected,
+                target_visible=tune_target_visible,
+                page_target=self.TARGET_PAGE,
+                send_base=self.TARGET_FEEDBACK_SEND_BASE,
+                feedback_target=self.TARGET_FEEDBACK,
+                knee_target=self.TARGET_LIMIT_KNEE,
+                damping_target=self.TARGET_DAMP,
+                band_count=RezoCore.N_BANDS)
         with m.Elif(page == 2):
-            with m.If(edit_direction):
-                with m.If(~input_target_visible):
-                    m.d.comb += next_selected.eq(self.TARGET_INPUT_BASE)
-                with m.Elif(selected == self.TARGET_PAGE):
-                    m.d.comb += next_selected.eq(self.TARGET_INPUT_BASE)
-                for n in range(4):
-                    target_base = self.TARGET_INPUT_BASE + n * 3
-                    next_input = self.TARGET_PAGE if n == 3 else target_base + 3
-                    with m.Elif(selected == target_base):
-                        m.d.comb += next_selected.eq(target_base + 1)
-                    with m.Elif(selected == target_base + 1):
-                        m.d.comb += next_selected.eq(
-                            Mux(input_modes[n] == RezoCore.INPUT_MODE_CV,
-                                target_base + 2, next_input))
-                    with m.Elif(selected == target_base + 2):
-                        m.d.comb += next_selected.eq(next_input)
-            with m.Else():
-                with m.If(~input_target_visible):
-                    m.d.comb += next_selected.eq(
-                        Mux(input_modes[3] == RezoCore.INPUT_MODE_CV,
-                            self.TARGET_INPUT_BASE + 11,
-                            self.TARGET_INPUT_BASE + 10))
-                with m.Elif(selected == self.TARGET_PAGE):
-                    m.d.comb += next_selected.eq(
-                        Mux(input_modes[3] == RezoCore.INPUT_MODE_CV,
-                            self.TARGET_INPUT_BASE + 11,
-                            self.TARGET_INPUT_BASE + 10))
-                for n in range(4):
-                    target_base = self.TARGET_INPUT_BASE + n * 3
-                    if n == 0:
-                        previous_input = Const(self.TARGET_PAGE)
-                    else:
-                        previous_base = self.TARGET_INPUT_BASE + (n - 1) * 3
-                        previous_input = Mux(input_modes[n - 1] == RezoCore.INPUT_MODE_CV,
-                                             previous_base + 2, previous_base + 1)
-                    with m.Elif(selected == target_base):
-                        m.d.comb += next_selected.eq(previous_input)
-                    with m.Elif(selected == target_base + 1):
-                        m.d.comb += next_selected.eq(target_base)
-                    with m.Elif(selected == target_base + 2):
-                        m.d.comb += next_selected.eq(target_base + 1)
+            add_input_navigation(
+                m, edit_direction=edit_direction, selected=selected,
+                next_selected=next_selected,
+                target_visible=input_target_visible,
+                page_target=self.TARGET_PAGE,
+                input_base=self.TARGET_INPUT_BASE,
+                input_modes=input_modes, cv_mode=RezoCore.INPUT_MODE_CV)
         with m.Elif(page == 3):
-            with m.If(edit_direction):
-                with m.If(~group_target_visible):
-                    m.d.comb += next_selected.eq(self.TARGET_GROUP_BASE)
-                with m.Elif(selected == self.TARGET_PAGE):
-                    m.d.comb += next_selected.eq(self.TARGET_GROUP_BASE)
-                with m.Elif(selected == self.TARGET_GROUP_BASE + RezoCore.N_BANDS - 1):
-                    m.d.comb += next_selected.eq(self.TARGET_PAGE)
-                with m.Else():
-                    m.d.comb += next_selected.eq(selected + 1)
-            with m.Else():
-                with m.If(~group_target_visible):
-                    m.d.comb += next_selected.eq(self.TARGET_GROUP_BASE + RezoCore.N_BANDS - 1)
-                with m.Elif(selected == self.TARGET_PAGE):
-                    m.d.comb += next_selected.eq(self.TARGET_GROUP_BASE + RezoCore.N_BANDS - 1)
-                with m.Elif(selected == self.TARGET_GROUP_BASE):
-                    m.d.comb += next_selected.eq(self.TARGET_PAGE)
-                with m.Else():
-                    m.d.comb += next_selected.eq(selected - 1)
+            add_group_navigation(
+                m, edit_direction=edit_direction, selected=selected,
+                next_selected=next_selected,
+                target_visible=group_target_visible,
+                page_target=self.TARGET_PAGE,
+                group_base=self.TARGET_GROUP_BASE,
+                group_count=RezoCore.N_BANDS)
         with m.Elif(page == 4):
             # Five column headers, followed by each row header and its five
             # send cells. Turning a header adjusts its sends relatively.
@@ -4390,20 +4339,14 @@ class RezoTileDisplay(wiring.Component):
                 if 0 <= x0 + offset < 45 and 0 <= y0 < 45:
                     text_init[page * page_cells + y0 * 45 + x0 + offset] = self.code(ch)
 
-        compact_input_text_rows = (
-            (14, 16, 18), (20, 22, 24),
-            (26, 28, 30), (32, 34, 36))
-        compact_group_text_rows = (20, 23, 26, 29)
-        compact_group_centers = tuple(
-            row * 16 + 6 for row in compact_group_text_rows)
-        compact_output_text_rows = (21, 25, 29, 33)
-        compact_output_row_centers = tuple(
-            row * 16 + 6 for row in compact_output_text_rows)
-        compact_output_col_centers = (
-            16 * 16 + 14, 20 * 16 + 14, 24 * 16 + 14,
-            28 * 16 + 14, 32 * 16 + 22)
-        compact_main_control_text_rows = (28, 30, 32, 34, 36)
-        compact_main_control_y0s = (448, 480, 512, 544, 576)
+        compact_input_text_rows = NATIVE_INPUT_TEXT_ROWS
+        compact_group_text_rows = NATIVE_GROUP_TEXT_ROWS
+        compact_group_centers = NATIVE_GROUP_CENTERS
+        compact_output_text_rows = NATIVE_OUTPUT_TEXT_ROWS
+        compact_output_row_centers = NATIVE_OUTPUT_ROW_CENTERS
+        compact_output_col_centers = NATIVE_OUTPUT_COL_CENTERS
+        compact_main_control_text_rows = NATIVE_MAIN_CONTROL_TEXT_ROWS
+        compact_main_control_y0s = NATIVE_MAIN_CONTROL_Y0S
         compact_fader_threshold = Const(0, unsigned(8))
         compact_fader_x_valid = Const(0)
 
@@ -4447,13 +4390,10 @@ class RezoTileDisplay(wiring.Component):
 
         page_titles = ("BANK", "FEEDBACK", "INPUT", "GROUPS", "OUTPUT",
                        "OPTIONS", "BANDS", "CLOCK")
-        for page_number, title in enumerate(page_titles):
-            if self.compact_layout:
-                put(page_number, "REZOMO", 19, 2)
-                put(page_number, "PAGE", 8, 8)
-                put(page_number, title,
-                    14 + ((8 - len(title)) // 2), 8)
-            else:
+        if self.compact_layout:
+            put_native_page_headers(put, "REZOMO", page_titles)
+        else:
+            for page_number, title in enumerate(page_titles):
                 put(page_number, "REZOMO", 2, 3)
                 title_x = 29 + max(0, (8 - len(title)) // 2)
                 put(page_number, title, title_x, 3)
@@ -4468,35 +4408,7 @@ class RezoTileDisplay(wiring.Component):
             put(0, "RESONANCE", 8, compact_main_control_text_rows[1])
             put(0, "FEEDBACK", 9, compact_main_control_text_rows[2])
 
-            put_native_feedback_labels(put)
-
-            put(2, "INPUT ROUTING", 8, 12)
-            for n, (mode_row, value_row, _) in enumerate(
-                    compact_input_text_rows):
-                put(2, f"IN{n}", 8, mode_row)
-                put(2, "MODE", 14, mode_row)
-                put(2, "VALUE", 13, value_row)
-                put(2, "DEPTH", 13, compact_input_text_rows[n][2])
-
-            put(3, "BANK GROUPS", 8, 13)
-            put(3, "BANKS", 20, 16)
-            for group, row in enumerate(compact_group_text_rows):
-                put(3, f"GRP{group + 1}", 8, row)
-
-            put(4, "OUTPUT ROUTING", 8, 13)
-            for x0, label in zip((16, 20, 24, 28, 32),
-                                 ("G1", "G2", "G3", "G4", "DRY")):
-                put(4, label, x0, 18)
-            for n, row in enumerate(compact_output_text_rows):
-                put(4, f"OUT{n}", 9, row)
-
-            put(5, "STATE AND DISPLAY", 8, 13)
-            put(5, "PALETTE", 13, 17)
-            put(5, "SAVE DEFAULT", 8, 21)
-            put(6, "PRESET", 8, 11)
-            put(6, "ENABLE", 8, 16)
-            put(6, "SET FREQ", 8, 22)
-            put(6, "HZ", 26, 22)
+            put_native_support_page_labels(put)
 
             # CLOCK is REZOMO-specific, but follows the same native row grid
             # as the shared pages.  Every possible control occupies one row
@@ -4515,37 +4427,7 @@ class RezoTileDisplay(wiring.Component):
             put(0, "DRIVE", 2, 35)
             put(0, "RES", 2, 37)
             put(0, "FB", 2, 39)
-            put(1, "FEEDBACK SOURCES", 2, 8)
-            put(1, "BANDS", 2, 11)
-            put(1, "FREQ:", 22, 11)
-            put(1, "FEEDBACK SAFETY", 2, 23)
-            put(1, "KNEE", 2, 26)
-            put(1, "CEILING", 2, 29)
-            put(1, "DAMPING", 2, 32)
-            put(2, "INPUT ROUTING", 2, 11)
-            for n in range(4):
-                row = 13 + n * 6
-                put(2, f"IN{n}", 3, row)
-                put(2, "MODE", 8, row)
-                put(2, "VALUE", 8, row + 2)
-                put(2, "DEPTH", 8, row + 4)
-            put(3, "BANK GROUPS", 2, 11)
-            put(3, "BANKS", 21, 15)
-            for group in range(4):
-                put(3, f"GRP{group + 1}", 3, 19 + group * 4)
-            put(4, "OUTPUT ROUTING", 2, 11)
-            for source, label in enumerate(
-                    ("GRP1", "GRP2", "GRP3", "GRP4", "DRY")):
-                put(4, label, 12 + source * 6, 17)
-            for n in range(4):
-                put(4, f"OUT{n}", 3, 21 + n * 5)
-            put(5, "STATE AND DISPLAY", 2, 11)
-            put(5, "PALETTE", 8, 15)
-            put(5, "SAVE DEFAULT", 3, 19)
-            put(6, "PRESET", 2, 7)
-            put(6, "ENABLE", 2, 12)
-            put(6, "SET FREQ", 2, 22)
-            put(6, "HZ", 20, 22)
+            put_legacy_support_page_labels(put, frequency_col=22)
             put(7, "MODE", 2, 7)
             put(7, "DIRECTION", 2, 15)
             put(7, "SOURCE", 5, 20)

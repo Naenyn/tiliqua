@@ -74,6 +74,23 @@ should be extracted in small, independently tested steps:
 After each extraction, run every affected variant suite and compare synthesized
 resource and timing results before deleting duplicated code.
 
+### Shared page-contract checkpoint (2026-08-20)
+
+The common support pages now use `ui_common.py` as their structural source of
+truth. REZO, REZOMO, and STREZO share native and legacy page headers, static
+INPUT/GROUPS/OUTPUT/FEEDBACK labels, native row and column coordinates, and the
+FEEDBACK, INPUT, and GROUPS navigation emitters. Shared tests exercise those
+contracts directly, so a label, row, or navigation-order correction is made
+once and checked against all three products.
+
+The dense dynamic pixel engines remain variant-local deliberately. REZO and
+REZOMO reuse tightly packed BRAM-backed mappings while STREZO has different
+product data and endpoint arithmetic; making those expressions textually
+identical has previously changed packing on near-full images. Their visible
+contracts are instead tied together by common constants and cross-variant
+display tests. Product-only BANK, BANDS, CLOCK, CROSS, and FILTER behavior also
+remains in its owning variant.
+
 ## STREZO coexistence checkpoint (2026-08-14)
 
 STREZO is now an explicit third product in the family matrix. Its accepted
