@@ -4876,6 +4876,8 @@ class RezoTileDisplay(wiring.Component):
         motion_depth_rport = motion_ui_mem.read_port(domain="dvi")
         motion_monitor_rport = motion_ui_mem.read_port(domain="dvi")
         motion_monitor_negative_q = Signal()
+        motion_monitor_endpoint_q = Signal.like(motion_monitor_rport.data)
+        motion_monitor_negative_q2 = Signal()
         m.d.comb += [
             motion_depth_rport.addr.eq(self.motion_depth),
             motion_monitor_rport.addr.eq(
@@ -4884,7 +4886,14 @@ class RezoTileDisplay(wiring.Component):
         # Align the sign with the synchronous endpoint-table read.  Without
         # this delay a zero crossing could combine a new sign with the prior
         # endpoint for one pixel clock.
-        m.d.dvi += motion_monitor_negative_q.eq(self.motion_monitor < 0)
+        m.d.dvi += [
+            motion_monitor_negative_q.eq(self.motion_monitor < 0),
+            # Isolate the block-RAM clock-to-Q delay from the bipolar-line
+            # geometry.  This is display-only telemetry; one 13 ns pixel
+            # cycle of latency is invisible and leaves the DSP untouched.
+            motion_monitor_endpoint_q.eq(motion_monitor_rport.data),
+            motion_monitor_negative_q2.eq(motion_monitor_negative_q),
+        ]
         motion_depth_fill = (
             bands_page & (x >= motion_depth_fill_x0) &
             (x < motion_depth_rport.data) &
@@ -4901,8 +4910,8 @@ class RezoTileDisplay(wiring.Component):
         # INPUT page. Its value comes from the audio engine's existing LFO;
         # the display does not synthesize another oscillator.
         motion_monitor_line = bands_page & self.bipolar_line(
-            x, y, 424, motion_monitor_rport.data,
-            570, 572, motion_monitor_negative_q)
+            x, y, 424, motion_monitor_endpoint_q,
+            570, 572, motion_monitor_negative_q2)
 
         damp_chip = tune_page & self.rect(
             x, y, (NATIVE_FEEDBACK_DAMPING_CHIP_X0
