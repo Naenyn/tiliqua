@@ -44,6 +44,14 @@ was flashed.
     default.
   - STREZO seed 8: 23,332 cells (956 free), 6,919 FF, 21 DP16KD; DVI5X
     384.91, AUDIO 72.03, SYNC 64.82, DVI 84.64 MHz.
+- Commit `17936729` archives were packaged from those exact routed bitstreams;
+  each archived `top.bit` matches its build-directory file:
+  - `build/rezo-r5/rezo-17936729-r5.tar.gz`, SHA-256
+    `a0526c5c2449215e254547249e7b2152be64d9c734f8f97e4c96f7b4eeb881bc`.
+  - `build/rezomo-r5/rezomo-17936729-r5.tar.gz`, SHA-256
+    `044ebdba129db71f21dcbf638565d4645b793ef19ffb859836b83ab181c2899b`.
+  - `build/strezo-r5/strezo-17936729-r5.tar.gz`, SHA-256
+    `a070dc2403ea1fb89e9dd6aeaac7f1b12a4a1b73ca36e18416c36bafa7b5f6ef`.
 - The next safe consolidation work is test/contract oriented. REZOMO core and
   CLOCK definitions, all dense renderer RTL, and product journal FSMs should
   remain local unless a future capacity change creates room for controlled
