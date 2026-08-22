@@ -37,9 +37,11 @@ from top.rezo.ui_common import (
     NATIVE_PAGE_HEADER_CHIP_Y1,
     NATIVE_PAGE_HEADER_SELECT_Y0,
     NATIVE_PAGE_HEADER_SELECT_Y1,
+    NATIVE_VALUE_CHIP_TEXT_INSET,
     native_feedback_track_rows,
     native_input_unity_x,
     native_main_fader_endpoint,
+    native_value_chip_x0,
     put_legacy_support_page_labels,
     put_native_feedback_labels,
     put_native_page_heading,
@@ -65,11 +67,19 @@ def test_shared_native_page_geometry_matches_the_508_pixel_layout():
         NATIVE_FEEDBACK_DAMPING_CHIP_X1,
         NATIVE_FEEDBACK_DAMPING_CHIP_Y0,
         NATIVE_FEEDBACK_DAMPING_CHIP_Y1,
-    ) == (264, 360, 472, 504)
+    ) == (256, 360, 472, 504)
     assert (
         NATIVE_FEEDBACK_DAMPING_TEXT_COL,
         NATIVE_FEEDBACK_DAMPING_TEXT_ROW,
     ) == (17, NATIVE_FEEDBACK_DAMPING_ROW)
+    assert NATIVE_FEEDBACK_DAMPING_CHIP_X0 == native_value_chip_x0(
+        NATIVE_FEEDBACK_DAMPING_TEXT_COL)
+
+
+def test_native_value_chips_use_one_text_cell_of_left_padding():
+    assert NATIVE_VALUE_CHIP_TEXT_INSET == 16
+    for text_col in (13, 14, 16, 17, 18, 20, 22):
+        assert text_col * 16 - native_value_chip_x0(text_col) == 16
 
 
 def test_shared_input_unity_marker_uses_the_established_gain_mapping():

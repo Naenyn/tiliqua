@@ -84,7 +84,7 @@ try:
         NATIVE_OUTPUT_TEXT_ROWS,
         add_feedback_navigation, add_group_navigation, add_input_navigation,
         native_input_depth_endpoint, native_input_gain_endpoint,
-        native_input_unity_x,
+        native_input_unity_x, native_value_chip_x0,
         native_feedback_track_rows, output_header_selection,
         put_legacy_support_page_labels, put_native_page_heading,
         put_native_page_headers,
@@ -122,7 +122,7 @@ except ImportError:  # top_level_cli executes this file directly.
         NATIVE_OUTPUT_TEXT_ROWS,
         add_feedback_navigation, add_group_navigation, add_input_navigation,
         native_input_depth_endpoint, native_input_gain_endpoint,
-        native_input_unity_x,
+        native_input_unity_x, native_value_chip_x0,
         native_feedback_track_rows, output_header_selection,
         put_legacy_support_page_labels, put_native_page_heading,
         put_native_page_headers,
@@ -3213,7 +3213,7 @@ class RezoTileDisplay(wiring.Component):
                     7, 14, NATIVE_PAGE_HEADING_ROW, pos)
                 # OUTPUT values share one fixed left origin.
                 writer_address_init[39 + pos] = native_text_address(
-                    4, 31, 18, pos)
+                    4, 32, 18, pos)
             for pos in range(3):
                 writer_address_init[43 + pos] = native_text_address(
                     1, 29, 16, pos)
@@ -3508,15 +3508,17 @@ class RezoTileDisplay(wiring.Component):
             # Value-chip geometry is fixed while its text uses a stable,
             # inexpensive left origin in the tile RAM.
             palette_chip = advanced_page & self.rect(
-                text_x, text_y, 344, 260, 456, 300)
+                text_x, text_y, native_value_chip_x0(22), 260, 456, 300)
             palette_select = advanced_page & (
                 self.selected == RezoHardwareUI.TARGET_PALETTE) & self.outline(
-                    text_x, text_y, 340, 256, 460, 304, t=3)
+                    text_x, text_y, native_value_chip_x0(22) - 4,
+                    256, 460, 304, t=3)
             save_default_chip = advanced_page & self.rect(
-                text_x, text_y, 328, 324, 456, 364)
+                text_x, text_y, native_value_chip_x0(22), 324, 472, 364)
             save_default_select = advanced_page & (
                 self.selected == RezoHardwareUI.TARGET_SAVE_DEFAULT) & self.outline(
-                    text_x, text_y, 324, 320, 460, 368, t=3)
+                    text_x, text_y, native_value_chip_x0(22) - 4,
+                    320, 476, 368, t=3)
             damp_chip = tune_page & self.rect(
                 text_x, text_y, NATIVE_FEEDBACK_DAMPING_CHIP_X0,
                 NATIVE_FEEDBACK_DAMPING_CHIP_Y0,
@@ -3524,7 +3526,7 @@ class RezoTileDisplay(wiring.Component):
                 NATIVE_FEEDBACK_DAMPING_CHIP_Y1)
             damp_select = tune_page & (
                 self.selected == RezoHardwareUI.TARGET_DAMP) & self.outline(
-                    text_x, text_y, 260,
+                    text_x, text_y, NATIVE_FEEDBACK_DAMPING_CHIP_X0 - 4,
                     NATIVE_FEEDBACK_DAMPING_CHIP_Y0 - 4, 364,
                     NATIVE_FEEDBACK_DAMPING_CHIP_Y1 + 4, t=3)
             layout_chip = bands_page & self.rect(
@@ -3580,11 +3582,13 @@ class RezoTileDisplay(wiring.Component):
                     text_x, text_y, 460, NATIVE_PAGE_HEADER_SELECT_Y0,
                     588, NATIVE_PAGE_HEADER_SELECT_Y1, t=3)
             filter_type_chip = filter_page & self.rect(
-                text_x, text_y, 216, NATIVE_PAGE_HEADER_CHIP_Y0,
+                text_x, text_y, native_value_chip_x0(14),
+                NATIVE_PAGE_HEADER_CHIP_Y0,
                 288, NATIVE_PAGE_HEADER_CHIP_Y1)
             filter_type_select = filter_page & (
                 self.selected == RezoHardwareUI.TARGET_FILTER_TYPE) & self.outline(
-                    text_x, text_y, 212, NATIVE_PAGE_HEADER_SELECT_Y0,
+                    text_x, text_y, native_value_chip_x0(14) - 4,
+                    NATIVE_PAGE_HEADER_SELECT_Y0,
                     292, NATIVE_PAGE_HEADER_SELECT_Y1, t=3)
         else:
             mode_chip = home_page & self.rect(x, y, 456, 32, 596, 76)
@@ -3795,12 +3799,13 @@ class RezoTileDisplay(wiring.Component):
 
         if self.compact_layout:
             preset_chip_signals.append(bank_page & self.rect(
-                text_x, text_y, 248, NATIVE_PAGE_HEADER_CHIP_Y0,
+                text_x, text_y, native_value_chip_x0(16),
+                NATIVE_PAGE_HEADER_CHIP_Y0,
                 328, NATIVE_PAGE_HEADER_CHIP_Y1))
             preset_select_signals.append(
                 bank_page & self.editing &
                 (self.selected == RezoHardwareUI.TARGET_PRESET) &
-                self.outline(text_x, text_y, 244,
+                self.outline(text_x, text_y, native_value_chip_x0(16) - 4,
                              NATIVE_PAGE_HEADER_SELECT_Y0, 332,
                              NATIVE_PAGE_HEADER_SELECT_Y1, t=3))
         else:
@@ -4490,7 +4495,8 @@ class RezoTileDisplay(wiring.Component):
             cell_x0 = (
                 compact_output_col_centers[source] - 27
                 if self.compact_layout else 188 + source * 96)
-            with m.If((output_geom_x >= cell_x0) &
+            source_visible = ~self.filter_mode if source == 4 else Const(1)
+            with m.If(source_visible & (output_geom_x >= cell_x0) &
                       (output_geom_x < cell_x0 + cell_width)):
                 m.d.comb += [
                     output_source.eq(source),
@@ -4622,7 +4628,9 @@ class RezoTileDisplay(wiring.Component):
                 bank_page &
                 (self.selected == RezoHardwareUI.TARGET_PRESET) &
                 ~self.editing & self.outline(
-                    text_x, text_y, 244, 164, 332, 204, t=3))
+                    text_x, text_y, native_value_chip_x0(16) - 4,
+                    NATIVE_PAGE_HEADER_SELECT_Y0, 332,
+                    NATIVE_PAGE_HEADER_SELECT_Y1, t=3))
         else:
             m.d.comb += preset_group_select.eq(
                 bank_page &

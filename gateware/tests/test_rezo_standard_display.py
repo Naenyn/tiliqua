@@ -5,7 +5,8 @@ from top.rezo.rezo_variant import RezoCore, RezoHardwareUI, RezoTileDisplay
 
 
 def _render_text_bounds(*regions, page=0, palette=0, input_modes=(),
-                        cv_targets=(), save_default_available=0):
+                        cv_targets=(), save_default_available=0,
+                        filter_mode=0):
     """Return visible glyph bounds inside native compact value chips."""
     dut = RezoTileDisplay(
         h_active=1280, rotate_left=False, compact_layout=True)
@@ -16,6 +17,7 @@ def _render_text_bounds(*regions, page=0, palette=0, input_modes=(),
 
     async def bench(ctx):
         ctx.set(dut.page, page)
+        ctx.set(dut.filter_mode, filter_mode)
         ctx.set(dut.palette, palette)
         ctx.set(dut.save_default_available, save_default_available)
         for index, value in enumerate(input_modes):
@@ -123,12 +125,69 @@ def test_compact_input_and_options_values_use_fixed_left_origins():
         assert 320 <= bounds[0] <= 322
         assert bounds[2] <= chip[2]
 
-    options_chips = ((344, 260, 456, 300), (328, 324, 456, 364))
+    options_chips = ((336, 260, 456, 300), (336, 324, 472, 364))
     options_bounds = _render_text_bounds(
         *options_chips, page=5, palette=3, save_default_available=1)
     for bounds, chip in zip(options_bounds, options_chips):
         assert 352 <= bounds[0] <= 354
+        assert bounds[0] - chip[0] in (16, 17, 18)
         assert bounds[2] <= chip[2]
+
+
+def test_output_dry_label_is_centered_and_hidden_with_its_filter_column():
+    dry_bounds, = _render_text_bounds((500, 280, 568, 308), page=4)
+    assert dry_bounds[0] + dry_bounds[2] in range(1066, 1074)
+
+    dut = RezoTileDisplay(
+        h_active=1280, rotate_left=False, compact_layout=True)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6, domain="sync")
+    sim.add_clock(1e-6, domain="dvi")
+    samples = []
+
+    async def sample(ctx, filter_mode):
+        ctx.set(dut.filter_mode, filter_mode)
+        ctx.set(dut.x, dut.x_offset + 534)
+        ctx.set(dut.y, 329)
+        for _ in range(16):
+            await ctx.tick("dvi")
+        samples.append(ctx.get(dut.r))
+
+    async def bench(ctx):
+        ctx.set(dut.page, 4)
+        ctx.set(dut.de, 1)
+        await sample(ctx, 0)
+        await sample(ctx, 1)
+
+    sim.add_testbench(bench)
+    sim.run()
+    palette = RezoTileDisplay.PALETTE
+    assert samples == [palette["panel"], palette["background"]]
+
+
+def test_main_preset_selection_uses_the_shared_header_outline():
+    dut = RezoTileDisplay(
+        h_active=1280, rotate_left=False, compact_layout=True)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6, domain="sync")
+    sim.add_clock(1e-6, domain="dvi")
+    samples = []
+
+    async def bench(ctx):
+        ctx.set(dut.page, 0)
+        ctx.set(dut.selected, RezoHardwareUI.TARGET_PRESET)
+        ctx.set(dut.de, 1)
+        for y in (164, 180):
+            ctx.set(dut.x, dut.x_offset + 250)
+            ctx.set(dut.y, y)
+            for _ in range(16):
+                await ctx.tick("dvi")
+            samples.append(ctx.get(dut.r))
+
+    sim.add_testbench(bench)
+    sim.run()
+    palette = RezoTileDisplay.PALETTE
+    assert samples == [palette["blank"], palette["selected"]]
 
 
 def test_compact_round_layout_keeps_native_text_and_uses_top_arc():
@@ -415,9 +474,9 @@ def test_compact_feedback_sources_and_safety_share_centered_geometry():
         await sample(ctx, 578, 421)
         await sample(ctx, 579, 421)
 
-        # DAMPING's native chip starts on the same physical x edge.
-        await sample(ctx, 268, 486)
-        await sample(ctx, 260, 486)
+        # DAMPING's native chip provides one 16px cell before text at x=272.
+        await sample(ctx, 256, 474)
+        await sample(ctx, 255, 474)
 
     sim.add_testbench(bench)
     sim.run()

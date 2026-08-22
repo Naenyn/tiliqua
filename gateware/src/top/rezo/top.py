@@ -83,7 +83,7 @@ try:
         NATIVE_OUTPUT_TEXT_ROWS,
         add_feedback_navigation, add_group_navigation, add_input_navigation,
         native_input_depth_endpoint, native_input_gain_endpoint,
-        native_input_unity_x,
+        native_input_unity_x, native_value_chip_x0,
         native_feedback_track_rows, output_header_selection,
         put_legacy_support_page_labels, put_native_page_heading,
         put_native_page_headers,
@@ -119,7 +119,7 @@ except ImportError:  # top_level_cli executes this file directly.
         NATIVE_OUTPUT_TEXT_ROWS,
         add_feedback_navigation, add_group_navigation, add_input_navigation,
         native_input_depth_endpoint, native_input_gain_endpoint,
-        native_input_unity_x,
+        native_input_unity_x, native_value_chip_x0,
         native_feedback_track_rows, output_header_selection,
         put_legacy_support_page_labels, put_native_page_heading,
         put_native_page_headers,
@@ -4733,24 +4733,26 @@ class RezoTileDisplay(wiring.Component):
                  self.rect(x, y, tune_panel_x0, 456,
                            tune_panel_x1, 480)))))
         palette_chip = advanced_page & self.rect(
-            x, y, 344 if self.compact_layout else 264,
+            x, y, native_value_chip_x0(22) if self.compact_layout else 264,
             260 if self.compact_layout else 228,
             456 if self.compact_layout else 408,
             300 if self.compact_layout else 268)
         palette_select = advanced_page & (
             self.selected == RezoHardwareUI.TARGET_PALETTE) & self.outline(
-                x, y, 340 if self.compact_layout else 260,
+                x, y, (native_value_chip_x0(22) - 4
+                       if self.compact_layout else 260),
                 256 if self.compact_layout else 224,
                 460 if self.compact_layout else 412,
                 304 if self.compact_layout else 272, t=3)
         save_default_chip = advanced_page & self.rect(
-            x, y, 344 if self.compact_layout else 264,
+            x, y, native_value_chip_x0(22) if self.compact_layout else 264,
             324 if self.compact_layout else 292,
             472 if self.compact_layout else 408,
             364 if self.compact_layout else 332)
         save_default_select = advanced_page & (
             self.selected == RezoHardwareUI.TARGET_SAVE_DEFAULT) & self.outline(
-                x, y, 340 if self.compact_layout else 260,
+                x, y, (native_value_chip_x0(22) - 4
+                       if self.compact_layout else 260),
                 320 if self.compact_layout else 288,
                 476 if self.compact_layout else 412,
                 368 if self.compact_layout else 336, t=3)
@@ -4763,7 +4765,8 @@ class RezoTileDisplay(wiring.Component):
             NATIVE_FEEDBACK_DAMPING_CHIP_Y1 if self.compact_layout else 536)
         damp_select = tune_page & (
             self.selected == RezoHardwareUI.TARGET_DAMP) & self.outline(
-                x, y, 260 if self.compact_layout else 150,
+                x, y, (NATIVE_FEEDBACK_DAMPING_CHIP_X0 - 4
+                       if self.compact_layout else 150),
                 (NATIVE_FEEDBACK_DAMPING_CHIP_Y0 - 4
                  if self.compact_layout else 500),
                 364 if self.compact_layout else 322,
@@ -5746,9 +5749,11 @@ class RezoTileDisplay(wiring.Component):
             ~self.editing & self.outline(
                 x, y,
                 252 if self.compact_layout else 131,
-                164 if self.compact_layout else 95,
+                (NATIVE_PAGE_HEADER_SELECT_Y0
+                 if self.compact_layout else 95),
                 356 if self.compact_layout else 269,
-                204 if self.compact_layout else 143, t=3))
+                (NATIVE_PAGE_HEADER_SELECT_Y1
+                 if self.compact_layout else 143), t=3))
         bank_control_y0s = (
             compact_main_control_y0s[:3] if self.compact_layout
             else (556, 588, 620))
@@ -5855,8 +5860,8 @@ class RezoTileDisplay(wiring.Component):
             tune_page &
             (self.selected == RezoHardwareUI.TARGET_FEEDBACK) & Mux(
                 self.compact_layout,
-                self.outline(x, y, 283,
-                             NATIVE_FEEDBACK_AMOUNT_Y0 - 4, 594,
+                self.outline(x, y, tune_panel_x0,
+                             NATIVE_FEEDBACK_AMOUNT_Y0 - 4, tune_panel_x1,
                              NATIVE_FEEDBACK_AMOUNT_Y0 + 20, t=3),
                 self.rect(x, y, 144, 376, 148, 400)))
         dry_fill = Mux(
@@ -5868,8 +5873,12 @@ class RezoTileDisplay(wiring.Component):
             tune_page & self.rect(
                 x, y, 156, 412, 124 + (self.limit_knee << 2), 428))
         dry_select = (tune_page &
-                      (self.selected == RezoHardwareUI.TARGET_LIMIT_KNEE)) & self.rect(
-            x, y, 144, 412, 148, 428)
+                      (self.selected == RezoHardwareUI.TARGET_LIMIT_KNEE)) & Mux(
+            self.compact_layout,
+            self.outline(x, y, tune_panel_x0,
+                         NATIVE_FEEDBACK_KNEE_Y0 - 4, tune_panel_x1,
+                         NATIVE_FEEDBACK_KNEE_Y0 + 20, t=3),
+            self.rect(x, y, 144, 412, 148, 428))
         tune_cap_fill = Mux(
             self.compact_layout,
             tune_page & compact_fader_x_valid &
@@ -5884,7 +5893,13 @@ class RezoTileDisplay(wiring.Component):
                 x, y, 283 if self.compact_layout else 118,
                 bank_panel_bounds[1][0], 594 if self.compact_layout else 650,
                 bank_panel_bounds[1][1], t=3)) |
-            (tune_page & self.rect(x, y, 144, 460, 148, 476)))
+            (tune_page & Mux(
+                self.compact_layout,
+                self.outline(x, y, tune_panel_x0,
+                             NATIVE_FEEDBACK_CEILING_Y0 - 4,
+                             tune_panel_x1,
+                             NATIVE_FEEDBACK_CEILING_Y0 + 20, t=3),
+                self.rect(x, y, 144, 460, 148, 476))))
         fb_select = (bank_page &
                      (self.selected == RezoHardwareUI.TARGET_FEEDBACK) &
                      self.outline(

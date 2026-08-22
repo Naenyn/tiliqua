@@ -75,6 +75,18 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
     return samples
 
 
+def _render_text_bounds(region, **values):
+    x0, y0, x1, y1 = region
+    points = tuple((x, y) for y in range(y0, y1) for x in range(x0, x1))
+    pixels = _render_samples(points=points, **values)
+    text = RezoTileDisplay.PALETTE["text"]
+    lit = [point for point, rgb in zip(points, pixels)
+           if rgb == (text, text, text)]
+    assert lit
+    return (min(x for x, _ in lit), min(y for _, y in lit),
+            max(x for x, _ in lit) + 1, max(y for _, y in lit) + 1)
+
+
 def test_native_canvas_uses_the_508_pixel_safe_square():
     points = ((106, 106), (613, 613), (105, 300), (614, 300))
     line = RezoTileDisplay.PALETTE["line"]
@@ -167,13 +179,34 @@ def test_cross_layout_chip_has_symmetric_horizontal_padding():
     assert _render_samples(
         page=7,
         cross_layout=RezoCore.CROSS_LAYOUT_DIAGONAL,
-        points=((247, 184), (248, 184), (255, 184),
+        points=((239, 184), (240, 184), (255, 184),
                 (384, 184), (391, 184), (392, 184)),
     ) == [
         (blank, blank, blank),
         (panel, panel, panel), (panel, panel, panel),
         (panel, panel, panel), (panel, panel, panel),
         (blank, blank, blank),
+    ]
+
+
+def test_cross_curve_text_has_the_shared_one_cell_left_inset():
+    chip = (304, 484, 448, 524)
+    bounds = _render_text_bounds(
+        chip, page=5, cross_curve=RezoCore.CROSS_CURVE_LINEAR)
+    assert 320 <= bounds[0] <= 322
+    assert bounds[0] - chip[0] in (16, 17, 18)
+
+
+def test_main_preset_selection_uses_the_shared_header_outline():
+    selected = RezoTileDisplay.PALETTE["selected"]
+    blank = RezoTileDisplay.PALETTE["blank"]
+    assert _render_samples(
+        page=0,
+        selected=RezoHardwareUI.TARGET_PRESET,
+        points=((250, 164), (250, 180)),
+    ) == [
+        (blank, blank, blank),
+        (selected, selected, selected),
     ]
 
 
@@ -311,9 +344,9 @@ def test_bands_motion_controls_form_one_complete_vertical_column():
     assert _render_samples(
         page=6,
         motion_depth=32,
-        points=((280, 470), (423, 470), (424, 470),
-                (280, 502), (359, 502), (360, 502),
-                (280, 534), (359, 534), (360, 534),
+        points=((272, 470), (423, 470), (424, 470),
+                (272, 502), (359, 502), (360, 502),
+                (272, 534), (359, 534), (360, 534),
                 (280, 566), (351, 566), (352, 566), (567, 566),
                 (568, 566), (448, 470), (448, 534)),
     ) == [

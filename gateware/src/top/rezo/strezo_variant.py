@@ -80,7 +80,7 @@ try:
         native_cross_fader_endpoint, native_input_depth_endpoint,
         native_input_gain_endpoint, native_main_fader_endpoint,
         native_motion_depth_endpoint,
-        native_input_unity_x,
+        native_input_unity_x, native_value_chip_x0,
         native_feedback_track_rows, output_header_selection,
         put_legacy_support_page_labels, put_native_page_heading,
         put_native_page_headers,
@@ -120,7 +120,7 @@ except ImportError:  # top_level_cli executes this file directly.
         native_cross_fader_endpoint, native_input_depth_endpoint,
         native_input_gain_endpoint, native_main_fader_endpoint,
         native_motion_depth_endpoint,
-        native_input_unity_x,
+        native_input_unity_x, native_value_chip_x0,
         native_feedback_track_rows, output_header_selection,
         put_legacy_support_page_labels, put_native_page_heading,
         put_native_page_headers,
@@ -4164,32 +4164,36 @@ class RezoTileDisplay(wiring.Component):
                           580 if self.compact_layout else 650,
                           594 if self.compact_layout else 672))))
         palette_chip = advanced_page & self.rect(
-            x, y, 344 if self.compact_layout else 264,
+            x, y, native_value_chip_x0(22) if self.compact_layout else 264,
             260 if self.compact_layout else 228,
             456 if self.compact_layout else 408,
             300 if self.compact_layout else 268)
         palette_select = advanced_page & (
             self.selected == RezoHardwareUI.TARGET_PALETTE) & self.outline(
-                x, y, 340 if self.compact_layout else 260,
+                x, y, (native_value_chip_x0(22) - 4
+                       if self.compact_layout else 260),
                 256 if self.compact_layout else 224,
                 460 if self.compact_layout else 412,
                 304 if self.compact_layout else 272, t=3)
         save_default_chip = advanced_page & self.rect(
-            x, y, 344 if self.compact_layout else 264,
+            x, y, native_value_chip_x0(22) if self.compact_layout else 264,
             324 if self.compact_layout else 292,
             472 if self.compact_layout else 408,
             364 if self.compact_layout else 332)
         save_default_select = advanced_page & (
             self.selected == RezoHardwareUI.TARGET_SAVE_DEFAULT) & self.outline(
-                x, y, 340 if self.compact_layout else 260,
+                x, y, (native_value_chip_x0(22) - 4
+                       if self.compact_layout else 260),
                 320 if self.compact_layout else 288,
                 476 if self.compact_layout else 412,
                 368 if self.compact_layout else 336, t=3)
-        motion_source_x0 = 280 if self.compact_layout else 160
+        motion_source_x0 = (
+            native_value_chip_x0(18) if self.compact_layout else 160)
         motion_source_x1 = 424 if self.compact_layout else 296
-        motion_rate_x0 = 280 if self.compact_layout else 160
+        motion_rate_x0 = native_value_chip_x0(18) if self.compact_layout else 160
         motion_rate_x1 = 360 if self.compact_layout else 296
-        motion_phase_x0 = 280 if self.compact_layout else 512
+        motion_phase_x0 = (
+            native_value_chip_x0(18) if self.compact_layout else 512)
         motion_phase_x1 = 360 if self.compact_layout else 640
         motion_depth_x0 = 280 if self.compact_layout else 512
         motion_depth_x1 = 568 if self.compact_layout else 640
@@ -4373,25 +4377,29 @@ class RezoTileDisplay(wiring.Component):
                 NATIVE_PAGE_HEADER_SELECT_Y1 if self.compact_layout else 143,
                 t=3)
         cross_layout_chip = cross_page & self.rect(
-            x, y, 248 if self.compact_layout else 128,
+            x, y, (native_value_chip_x0(16)
+                   if self.compact_layout else 128),
             NATIVE_PAGE_HEADER_CHIP_Y0 if self.compact_layout else 100,
             392 if self.compact_layout else 272,
             NATIVE_PAGE_HEADER_CHIP_Y1 if self.compact_layout else 138)
         cross_layout_select = cross_page & (
             self.selected == RezoHardwareUI.TARGET_CROSS_LAYOUT) & self.outline(
-                x, y, 244 if self.compact_layout else 123,
+                x, y, (native_value_chip_x0(16) - 4
+                       if self.compact_layout else 123),
                 NATIVE_PAGE_HEADER_SELECT_Y0 if self.compact_layout else 95,
                 396 if self.compact_layout else 277,
                 NATIVE_PAGE_HEADER_SELECT_Y1 if self.compact_layout else 143,
                 t=3)
         cross_curve_chip = advanced_page & self.rect(
-            x, y, 320,
+            x, y, (native_value_chip_x0(20)
+                   if self.compact_layout else 320),
             484 if self.compact_layout else 452,
             448,
             524 if self.compact_layout else 492)
         cross_curve_select = advanced_page & (
             self.selected == RezoHardwareUI.TARGET_CROSS_CURVE) & self.outline(
-                x, y, 316,
+                x, y, (native_value_chip_x0(20) - 4
+                       if self.compact_layout else 316),
                 480 if self.compact_layout else 448,
                 452,
                 528 if self.compact_layout else 496, t=3)
@@ -4461,12 +4469,13 @@ class RezoTileDisplay(wiring.Component):
 
         if self.compact_layout:
             preset_chip_signals.append(bank_page & self.rect(
-                text_x, text_y, 248, NATIVE_PAGE_HEADER_CHIP_Y0,
+                text_x, text_y, native_value_chip_x0(16),
+                NATIVE_PAGE_HEADER_CHIP_Y0,
                 328, NATIVE_PAGE_HEADER_CHIP_Y1))
             preset_select_signals.append(
                 bank_page & self.editing &
                 (self.selected == RezoHardwareUI.TARGET_PRESET) &
-                self.outline(text_x, text_y, 244,
+                self.outline(text_x, text_y, native_value_chip_x0(16) - 4,
                              NATIVE_PAGE_HEADER_SELECT_Y0, 332,
                              NATIVE_PAGE_HEADER_SELECT_Y1, t=3))
         else:
@@ -5148,14 +5157,17 @@ class RezoTileDisplay(wiring.Component):
                            (output_row_edge | output_col_edge)),
             output_side_chip.eq(
                 output_page & output_row_active &
-                (x >= (204 if self.compact_layout else 100)) &
+                (x >= (native_value_chip_x0(13)
+                       if self.compact_layout else 100)) &
                 (x < (236 if self.compact_layout else 156))),
             output_side_select.eq(
                 output_page & output_row_active &
                 (self.selected == RezoHardwareUI.TARGET_OUTPUT_SIDE_BASE + output_row) &
-                (x >= (200 if self.compact_layout else 96)) &
+                (x >= ((native_value_chip_x0(13) - 4)
+                       if self.compact_layout else 96)) &
                 (x < (240 if self.compact_layout else 160)) &
-                ((x < (204 if self.compact_layout else 100)) |
+                ((x < (native_value_chip_x0(13)
+                       if self.compact_layout else 100)) |
                  (x >= (236 if self.compact_layout else 156)) |
                  output_row_edge)),
             output_fill.eq(
@@ -5276,10 +5288,13 @@ class RezoTileDisplay(wiring.Component):
             ~self.editing & self.outline(
                 text_x if self.compact_layout else x,
                 text_y if self.compact_layout else y,
-                244 if self.compact_layout else 131,
-                164 if self.compact_layout else 95,
+                (native_value_chip_x0(16) - 4
+                 if self.compact_layout else 131),
+                (NATIVE_PAGE_HEADER_SELECT_Y0
+                 if self.compact_layout else 95),
                 332 if self.compact_layout else 269,
-                204 if self.compact_layout else 143, t=3))
+                (NATIVE_PAGE_HEADER_SELECT_Y1
+                 if self.compact_layout else 143), t=3))
         drive_select = (
             bank_page & (self.selected == RezoHardwareUI.TARGET_DRIVE) &
             self.outline(x, y, bank_panel_x0,

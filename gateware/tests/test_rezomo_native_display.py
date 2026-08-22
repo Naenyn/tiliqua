@@ -249,6 +249,23 @@ def test_even_preset_uses_all_four_visible_glyphs():
     assert bounds == (272, 192, 330, 206)
 
 
+def test_feedback_navigation_outlines_share_the_native_track_edges():
+    selected = RezoTileDisplay.PALETTE["selected"]
+    background = RezoTileDisplay.PALETTE["background"]
+    for target, y in (
+        (RezoHardwareUI.TARGET_FEEDBACK, 344),
+        (RezoHardwareUI.TARGET_LIMIT_KNEE, 424),
+        (RezoHardwareUI.TARGET_LIMIT_CAP, 456),
+    ):
+        assert _render_samples(
+            page=1, selected=target, points=((267, y), (268, y), (269, y)),
+        ) == [
+            (background, background, background),
+            (selected, selected, selected),
+            (selected, selected, selected),
+        ]
+
+
 def test_input_text_chips_use_fixed_widths_and_shared_row_centres():
     panel = RezoTileDisplay.PALETTE["panel"]
     background = RezoTileDisplay.PALETTE["background"]
@@ -271,7 +288,7 @@ def test_input_text_chips_use_fixed_widths_and_shared_row_centres():
 
 
 def test_bank_and_input_value_glyphs_use_fixed_left_origins():
-    bank_chip = (464, 167, 564, 199)
+    bank_chip = (464, 184, 564, 216)
     for clock_mode in (0, 1):
         bounds, = _render_text_bounds(
             bank_chip, page=0, clock_mode=clock_mode)
