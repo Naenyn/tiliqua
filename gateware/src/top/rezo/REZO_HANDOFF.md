@@ -1572,3 +1572,28 @@ These are deliberately standard-display builds only. No circular target was
 rebuilt for this checkpoint. Continue to use slots 2, 3, and 4 for REZO,
 REZOMO, and STREZO respectively unless the user explicitly changes the
 assignment.
+
+## Standard-display chip-alignment checkpoint (2026-08-22)
+
+Commit `f7ebab7` normalizes the remaining native value-column alignment:
+FEEDBACK DAMPING now follows the KNEE/CEILING column, STREZO CROSS CURVE follows
+the OPTIONS value column, and MAIN/BANDS PRESET values share the REZO/STREZO
+MAIN left origin across all three products. The full family suite passes 205
+tests.
+
+Only the standard `1280x720p60` targets were built. The final archives carry
+seed-record commit `775de97b`; no circular target was invoked. Every archived
+`top.bit` was checked byte-for-byte against its timing-qualified routed file.
+
+| Target | Seed | COMB / free | LUT4 | FF | BRAM | DVI5X / AUDIO / SYNC / DVI MHz | Archive SHA-256 | `top.bit` SHA-256 | Slot |
+|---|---:|---|---:|---:|---:|---|---|---|---:|
+| REZO | 2 | 24,083 / 205 | 20,485 | 6,907 | 22 | 380.37 / 73.03 / 62.17 / 79.21 | `c7e6c640d3c0086329b341a914909ad09cf05bb3529596a9d82c709b7944bb94` | `cd2b1965e6d0e5d4d59b8814709e0a573577a9bac2d37c7a20d6635e7cc42260` | 2 |
+| REZOMO | 9 | 23,868 / 420 | 20,568 | 7,105 | 22 | 391.08 / 72.71 / 62.90 / 77.78 | `e33e4d9a799a17f0039132ddac8ff24924b9d41810cbcaa70bf9d908d169e52b` | `baa37c2d57536b5199af9559e29244990a0a128bce9917ab2d2421d6576f6a44` | 3 |
+| STREZO | 4 | 23,248 / 1,040 | 19,992 | 6,926 | 21 | 434.22 / 74.45 / 62.36 / 75.19 | `97944560f50684c178c40faf0ec51db362082950ecb9ae6ebfcfa4b2d590dc56` | `7a0a450e8f3d4ed87e0f27483c0e455d4403c2c90722cbb8e622e2c7fe2bebc2` | 4 |
+
+The exact archives are `rezo-775de97b-r5.tar.gz`,
+`rezomo-775de97b-r5.tar.gz`, and `strezo-775de97b-r5.tar.gz`. All three flash
+operations completed successfully on Tiliqua R5 serial `E46534A193222B21`.
+REZO's prior default seed 9 missed DVI, and STREZO's prior default seed 8 missed
+DVI5X and DVI; the checked-in standard defaults are therefore now seeds 2 and
+4 respectively. REZOMO retains seed 9.

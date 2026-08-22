@@ -555,3 +555,22 @@ REZOMO seed 8 failed DVI5X at 366.43 MHz. STREZO seed 11 failed DVI5X
 at 351.37 MHz on the final committed synthesis; seed 8 was rerouted from that
 exact JSON, passed the 1.25% margin gate, and was packaged without resynthesis.
 No circular target was invoked.
+
+## 2026-08-22 value-column alignment checkpoint
+
+The remaining native chip alignment changes were verified by the full
+REZO-family suite (`205 passed`) and built only for standard 1280x720 video.
+The final routes all clear the 1.25% timing-margin gate and were flashed in the
+stable slot assignment:
+
+| Target | Source / seed | LUT4 / COMB | Free COMB | FF | BRAM | DVI5X / AUDIO / SYNC / DVI MHz | Result |
+|---|---|---|---:|---:|---:|---|---|
+| REZO | `775de97b` / 2 | 20,485 / 24,083 | 205 | 6,907 | 22 | 380.37 / 73.03 / 62.17 / 79.21 | PASS; flashed slot 2 |
+| REZOMO | `775de97b` / 9 | 20,568 / 23,868 | 420 | 7,105 | 22 | 391.08 / 72.71 / 62.90 / 77.78 | PASS; flashed slot 3 |
+| STREZO | `775de97b` / 4 | 19,992 / 23,248 | 1,040 | 6,926 | 21 | 434.22 / 74.45 / 62.36 / 75.19 | PASS; flashed slot 4 |
+
+REZO seed 9 failed DVI and seed 6 failed DVI5X; seed 4 was stopped after a
+prolonged congestion search. STREZO seed 8 failed DVI5X and DVI. The retained
+seed-2 REZO and seed-4 STREZO configurations were packed directly from the
+same synthesized JSON and packaged without resynthesis. Archived bitstreams
+match those routed files exactly. No circular target was invoked.
