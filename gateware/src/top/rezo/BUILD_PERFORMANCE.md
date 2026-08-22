@@ -583,3 +583,13 @@ uses 20,049 LUT4, 23,307 COMB (981 free), 6,926 FF, and 21 DP16KD. It passes
 the 1.25% gate at 384.32 / 72.85 / 66.34 / 76.23 MHz for DVI5X / AUDIO / SYNC /
 DVI. The verified archive `strezo-7583d9bb-r5.tar.gz` was flashed to slot 4.
 No circular target was invoked.
+
+## 2026-08-22 STREZO MOTION panel/row correction
+
+The photo-derived MOTION containment and vertical-centering correction at
+`0400fbf4` passes the STREZO and shared-family regression sets (`79 passed`).
+Standard STREZO seed 4 uses 19,998 LUT4, 23,264 COMB (1,024 free), 6,926 FF,
+and 21 DP16KD. It passes the 1.25% gate at 388.80 / 73.05 / 65.49 / 76.06 MHz
+for DVI5X / AUDIO / SYNC / DVI. The verified archive
+`strezo-0400fbf4-r5.tar.gz` was flashed to slot 4. No circular target was
+invoked.

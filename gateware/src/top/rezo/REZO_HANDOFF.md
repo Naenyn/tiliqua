@@ -1619,3 +1619,26 @@ AUDIO, 66.34 MHz SYNC, and 76.23 MHz DVI. Archive
 its verified `top.bit` SHA-256 is
 `584c37d7dbe64ce1d60c5bd348e44205deee05396102102660340fbad7055f81`.
 The archive was flashed successfully to slot 4. No circular target was built.
+
+## STREZO MOTION photo-derived correction (2026-08-22)
+
+Hardware photo `7A734714-3158-406B-8ED1-39C509E188F5.JPG` exposed two gaps in
+the prior regression contract: it checked a shared label edge without checking
+content-panel containment, and it checked control boundaries without comparing
+the rendered glyph ink to those rows. Commit `0400fbf4` now enforces both.
+
+The complete MOTION section moved one native cell right. Labels end at column
+17 and remain inside the x=125 content panel; the value/control column starts
+at x=288 after a 16-pixel gutter. DEPTH spans x=288..576, safely inside the
+panel's x=594 edge. The three value chips now have exact 2-pixel vertical ink
+padding, while the 20-pixel DEPTH lane has exact 3-pixel padding around its
+label ink. Selection and bipolar-monitor geometry follow those same bounds.
+
+The STREZO and shared-family suites pass 79 tests. Only standard
+`1280x720p60` STREZO was built. Seed 4 passes at 388.80 MHz DVI5X, 73.05 MHz
+AUDIO, 65.49 MHz SYNC, and 76.06 MHz DVI. Archive
+`strezo-0400fbf4-r5.tar.gz` has SHA-256
+`032ccd69e7d76cd83aff0a841be3ca9ec3d4f426da9bcb11d178c30d95ea0b96`;
+its verified `top.bit` SHA-256 is
+`5c3a7db33cc3b935a4a7986326132d0a47562aed8ec0f308a396baee15f28156`.
+The archive was flashed successfully to slot 4. No circular target was built.
