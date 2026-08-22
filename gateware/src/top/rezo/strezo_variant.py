@@ -128,11 +128,11 @@ except ImportError:  # top_level_cli executes this file directly.
     )
 
 
-NATIVE_MOTION_LABEL_RIGHT = 16
-NATIVE_MOTION_VALUE_TEXT_COL = 18
+NATIVE_MOTION_LABEL_RIGHT = 17
+NATIVE_MOTION_VALUE_TEXT_COL = 19
 NATIVE_MOTION_CONTROL_X0 = native_value_chip_x0(
     NATIVE_MOTION_VALUE_TEXT_COL)
-NATIVE_MOTION_CONTROL_X1 = 560
+NATIVE_MOTION_CONTROL_X1 = 576
 NATIVE_MOTION_FILL_X0 = NATIVE_MOTION_CONTROL_X0 + 2
 NATIVE_MOTION_CENTER_X = (
     NATIVE_MOTION_CONTROL_X0 + NATIVE_MOTION_CONTROL_X1) // 2
@@ -4202,12 +4202,12 @@ class RezoTileDisplay(wiring.Component):
                 368 if self.compact_layout else 336, t=3)
         motion_source_x0 = (
             NATIVE_MOTION_CONTROL_X0 if self.compact_layout else 160)
-        motion_source_x1 = 424 if self.compact_layout else 296
+        motion_source_x1 = 440 if self.compact_layout else 296
         motion_rate_x0 = NATIVE_MOTION_CONTROL_X0 if self.compact_layout else 160
-        motion_rate_x1 = 360 if self.compact_layout else 296
+        motion_rate_x1 = 376 if self.compact_layout else 296
         motion_phase_x0 = (
             NATIVE_MOTION_CONTROL_X0 if self.compact_layout else 512)
-        motion_phase_x1 = 360 if self.compact_layout else 640
+        motion_phase_x1 = 376 if self.compact_layout else 640
         motion_depth_x0 = (
             NATIVE_MOTION_CONTROL_X0 if self.compact_layout else 512)
         motion_depth_x1 = (
@@ -4216,17 +4216,19 @@ class RezoTileDisplay(wiring.Component):
             NATIVE_MOTION_FILL_X0 if self.compact_layout else motion_depth_x0)
         motion_center_x = (
             NATIVE_MOTION_CENTER_X if self.compact_layout else 424)
-        # Dynamic text occupies fourteen pixels at the bottom-biased tile
-        # baseline. Inset compact chips by four pixels so their visible
-        # padding is balanced above and below the glyphs.
-        motion_top_y0 = 460 if self.compact_layout else 520
+        # Native glyph ink occupies y=[row*16, row*16+14). Starting each
+        # compact chip two pixels above that span gives exact 2px top/bottom
+        # padding instead of leaving the shaded row one pixel above the text.
+        motion_top_y0 = 462 if self.compact_layout else 520
         motion_top_y1 = 480 if self.compact_layout else 552
-        motion_rate_y0 = 492 if self.compact_layout else 584
+        motion_rate_y0 = 494 if self.compact_layout else 584
         motion_rate_y1 = 512 if self.compact_layout else 616
-        motion_phase_y0 = 524 if self.compact_layout else 520
+        motion_phase_y0 = 526 if self.compact_layout else 520
         motion_phase_y1 = 544 if self.compact_layout else 552
-        motion_bottom_y0 = 552 if self.compact_layout else 584
-        motion_bottom_y1 = 572 if self.compact_layout else 616
+        # DEPTH uses a 20px fader row, so three pixels around the same 14px
+        # glyph span center both the label and lane at y=567.
+        motion_bottom_y0 = 557 if self.compact_layout else 584
+        motion_bottom_y1 = 577 if self.compact_layout else 616
         # SOURCE, RATE, and PHASE share the same 24-on/8-off vertical cadence.
         # Decode the column once instead of synthesizing three full rectangles.
         motion_value_x1 = Signal(unsigned(10), init=motion_rate_x1)
@@ -4281,7 +4283,7 @@ class RezoTileDisplay(wiring.Component):
                     motion_select_y0.eq(motion_phase_y0 - 4),
                     motion_chip_selected.eq(1),
                 ]
-        motion_outline_height = 28 if self.compact_layout else 40
+        motion_outline_height = 26 if self.compact_layout else 40
         motion_chip_select = (
             bands_page & motion_chip_selected &
             self.outline(x, y, motion_select_x0, motion_select_y0,
@@ -4364,7 +4366,9 @@ class RezoTileDisplay(wiring.Component):
         # the display does not synthesize another oscillator.
         motion_monitor_line = bands_page & self.bipolar_line(
             x, y, motion_center_x, motion_monitor_endpoint_q,
-            570, 572, motion_monitor_negative_q2)
+            (motion_bottom_y0 + 18 if self.compact_layout else 570),
+            (motion_bottom_y0 + 20 if self.compact_layout else 572),
+            motion_monitor_negative_q2)
 
         damp_chip = tune_page & self.rect(
             x, y, (NATIVE_FEEDBACK_DAMPING_CHIP_X0

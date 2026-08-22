@@ -1,7 +1,13 @@
 from amaranth.sim import Simulator
 
 from rezo_display_support import sample_native_rgb
-from top.rezo.strezo_variant import RezoCore, RezoHardwareUI, RezoTileDisplay
+from top.rezo.strezo_variant import (
+    NATIVE_MOTION_CONTROL_X0,
+    NATIVE_MOTION_CONTROL_X1,
+    RezoCore,
+    RezoHardwareUI,
+    RezoTileDisplay,
+)
 from top.rezo.ui_common import (
     NATIVE_FEEDBACK_CEILING_Y0,
     NATIVE_FEEDBACK_KNEE_Y0,
@@ -344,11 +350,11 @@ def test_bands_motion_controls_form_one_complete_vertical_column():
     assert _render_samples(
         page=6,
         motion_depth=32,
-        points=((272, 470), (423, 470), (424, 470),
-                (272, 502), (359, 502), (360, 502),
-                (272, 534), (359, 534), (360, 534),
-                (271, 566), (272, 566), (273, 566), (274, 566),
-                (344, 566), (345, 566), (559, 566), (560, 566),
+        points=((288, 470), (439, 470), (440, 470),
+                (288, 502), (375, 502), (376, 502),
+                (288, 534), (375, 534), (376, 534),
+                (287, 566), (288, 566), (289, 566), (290, 566),
+                (360, 566), (361, 566), (575, 566), (576, 566),
                 (448, 470), (448, 534)),
     ) == [
         (panel, panel, panel), (panel, panel, panel),
@@ -367,20 +373,31 @@ def test_bands_motion_controls_form_one_complete_vertical_column():
 
 
 def test_bands_motion_labels_share_a_right_edge_and_value_gutter():
-    for row in (29, 31, 33, 35):
+    for row, control_y0, control_y1, padding in (
+        (29, 462, 480, 2),
+        (31, 494, 512, 2),
+        (33, 526, 544, 2),
+        (35, 557, 577, 3),
+    ):
         bounds = _render_text_bounds(
-            (100, row * 16, 272, (row + 1) * 16), page=6)
-        assert bounds[2] == 250
+            (125, row * 16, NATIVE_MOTION_CONTROL_X0, (row + 1) * 16),
+            page=6)
+        assert bounds[0] >= 125
+        assert bounds[2] == 266
+        assert bounds[1] - control_y0 == padding
+        assert control_y1 - bounds[3] == padding
+    assert NATIVE_MOTION_CONTROL_X0 - 17 * 16 == 16
+    assert NATIVE_MOTION_CONTROL_X1 <= 594
 
 
-def test_bands_motion_text_chips_share_centered_twenty_pixel_rows():
+def test_bands_motion_text_chips_share_vertically_centered_rows():
     panel = RezoTileDisplay.PALETTE["panel"]
     background = RezoTileDisplay.PALETTE["background"]
     assert _render_samples(
         page=6,
-        points=((300, 459), (300, 460), (300, 479), (300, 480),
-                (300, 491), (300, 492), (300, 511), (300, 512),
-                (300, 523), (300, 524), (300, 543), (300, 544)),
+        points=((300, 461), (300, 462), (300, 479), (300, 480),
+                (300, 493), (300, 494), (300, 511), (300, 512),
+                (300, 525), (300, 526), (300, 543), (300, 544)),
     ) == [
         (background, background, background),
         (panel, panel, panel), (panel, panel, panel),
@@ -413,7 +430,7 @@ def test_bands_motion_monitor_is_a_centered_bipolar_line():
     assert _render_samples(
         page=6,
         motion_monitor=16,
-        points=((415, 571), (416, 571), (559, 571), (560, 571)),
+        points=((431, 576), (432, 576), (575, 576), (576, 576)),
     ) == [
         (panel, panel, panel), (mod, mod, mod),
         (panel, panel, panel), (background, background, background),
@@ -421,7 +438,7 @@ def test_bands_motion_monitor_is_a_centered_bipolar_line():
     assert _render_samples(
         page=6,
         motion_monitor=-16,
-        points=((271, 571), (272, 571), (415, 571), (416, 571)),
+        points=((287, 576), (288, 576), (431, 576), (432, 576)),
     ) == [
         (background, background, background), (panel, panel, panel),
         (mod, mod, mod), (panel, panel, panel),
