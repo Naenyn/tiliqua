@@ -539,3 +539,19 @@ slightly below the conservative 1.25% release gate; its independently clocked
 video paths retain 9.10% DVI5X and 6.28% DVI margin. Seeds 8 and 7 failed sync,
 so seed 9 is retained as the measured standard default for this netlist.
 REZOMO seeds 3 and 4 failed DVI5X before seed 9 passed with margin.
+
+## 2026-08-21 chip-geometry checkpoint
+
+Standard-display-only routes after aligning PRESET overlays, OUTPUT DRY
+geometry, REZOMO FEEDBACK navigation, and the family value-chip inset:
+
+| Target | Source / seed | LUT4 / COMB | Free COMB | FF | BRAM | DVI5X / AUDIO / SYNC / DVI MHz | Result |
+|---|---|---|---:|---:|---:|---|---|
+| REZO | `d5dc1eda` / 9 | 20,527 / 24,123 | 165 | 6,907 | 22 | 379.08 / 71.07 / 60.99 / 77.78 | PASS; flashed slot 2 |
+| REZOMO | `84646703` / 9 | 20,595 / 23,863 | 425 | 7,105 | 22 | 420.34 / 63.23 / 65.84 / 75.92 | PASS; flashed slot 3 |
+| STREZO | `001b4d3e` / 8 | 20,066 / 23,330 | 958 | 6,926 | 21 | 395.73 / 70.85 / 63.98 / 75.49 | PASS; flashed slot 4 |
+
+REZOMO seed 8 failed DVI5X at 366.43 MHz. STREZO seed 11 failed DVI5X
+at 351.37 MHz on the final committed synthesis; seed 8 was rerouted from that
+exact JSON, passed the 1.25% margin gate, and was packaged without resynthesis.
+No circular target was invoked.

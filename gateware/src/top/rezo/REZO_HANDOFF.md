@@ -9,6 +9,49 @@ before changing the design. The current operator guides are
 [`REZOMO_USER_GUIDE.md`](REZOMO_USER_GUIDE.md), and
 [`STREZO_USER_GUIDE.md`](STREZO_USER_GUIDE.md).
 
+## 2026-08-21 chip geometry and routing-overlay fixes
+
+The reported standard-display inconsistencies are fixed across the family:
+
+- REZO and STREZO MAIN PRESET selection outlines now use the shared header
+  bounds at y=180..218 in both edit and navigation states.
+- REZO's dynamic OUTPUT writer now writes `DRY` at column 32, matching the
+  shared static label and centering it over the fifth column. In FILTER mode,
+  the fifth column's cell, fill, selection, and header geometry are all
+  suppressed rather than merely removed from navigation.
+- REZOMO FEEDBACK, KNEE, and CEILING navigation outlines now use the same
+  native track endpoints and row bounds as their faders.
+- `native_value_chip_x0()` is the family contract for one 16-pixel text-cell
+  inset. The audit applied it to OPTIONS, DAMPING, REZO/STREZO PRESET,
+  REZO FILTER TYPE, and STREZO CROSS LAYOUT, CROSS CURVE, motion values, and
+  OUTPUT side chips. STREZO `LINEAR` therefore begins one full cell inside its
+  CROSS CURVE chip instead of at the chip edge.
+
+The apparent shared-page discrepancies came from the split architecture:
+static labels and several geometry helpers are shared, but each product keeps
+its dense dynamic text writer and selection/cell overlay renderer local to
+preserve packing and timing. REZO's local writer overlaid the shared `DRY`
+label one column left, while REZOMO did not. Conversely, REZOMO retained
+legacy local FEEDBACK selection rectangles even though the shared labels and
+track helper were already correct. The regressions now cover these local
+overlays explicitly.
+
+Focused display coverage passes `66 passed`; the complete family regression
+passes `202 passed, 79 warnings in 815.99s`. Only standard `1280x720p60`
+targets were built. The final routes all clear the 1.25% timing-margin gate:
+
+| Target | Seed | LUT4 / COMB | DVI5X / AUDIO / SYNC / DVI MHz | Archive | Slot | Archive SHA-256 |
+|---|---:|---|---|---|---:|---|
+| REZO | 9 | 20,527 / 24,123 | 379.08 / 71.07 / 60.99 / 77.78 | `rezo-d5dc1eda-r5.tar.gz` | 2 | `e04fa671eb592c9d4dd6a47072d895ecafca9b4eab2b03d52d7a86fd580cacb7` |
+| REZOMO | 9 | 20,595 / 23,863 | 420.34 / 63.23 / 65.84 / 75.92 | `rezomo-84646703-r5.tar.gz` | 3 | `0ece66281d16ae7af29a11d90c05157dde253ad1b12f5481eba5981274aac16b` |
+| STREZO | 8 | 20,066 / 23,330 | 395.73 / 70.85 / 63.98 / 75.49 | `strezo-001b4d3e-r5.tar.gz` | 4 | `bab0d478815e606243551e21ed3e7e000e81d6fa664bae457f0a02a68896b26c` |
+
+All three archives' embedded `top.bit` payloads match their qualified routed
+files and flashed successfully to slots 2/3/4. REZOMO seed 8 and STREZO seed
+11 missed DVI5X; alternate routes were evaluated against fixed synthesized
+JSON. The checked-in standard defaults are now REZO 9, REZOMO 9, and STREZO
+8. No circular target was built or flashed.
+
 ## 2026-08-21 native page-heading alignment
 
 All standard-display REZO-family page-content headings now use native text row
