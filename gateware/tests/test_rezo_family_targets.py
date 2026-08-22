@@ -41,11 +41,11 @@ def test_family_variants_are_selected_before_elaboration():
     assert TARGETS["rezomo_round"].module == "top"
     assert TARGETS["strezo"].module == "strezo_variant"
     assert TARGETS["strezo_round"].module == "strezo_variant"
-    assert TARGETS["rezo"].default_seed == 8
+    assert TARGETS["rezo"].default_seed == 9
     assert TARGETS["rezo_round"].default_seed == 2
     assert TARGETS["rezomo"].default_seed == 8
     assert TARGETS["rezomo_round"].default_seed == 4
-    assert TARGETS["strezo"].default_seed == 8
+    assert TARGETS["strezo"].default_seed == 11
     assert TARGETS["strezo_round"].default_seed == 1
     assert TARGETS["rezo_round"].yosys == "yosys"
     assert TARGETS["rezo"].yosys is None

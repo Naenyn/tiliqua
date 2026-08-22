@@ -9,6 +9,47 @@ before changing the design. The current operator guides are
 [`REZOMO_USER_GUIDE.md`](REZOMO_USER_GUIDE.md), and
 [`STREZO_USER_GUIDE.md`](STREZO_USER_GUIDE.md).
 
+## 2026-08-21 native page-heading alignment
+
+All standard-display REZO-family page-content headings now use native text row
+12. Their 16-pixel cells draw through y=205, leaving a consistent 12-pixel
+gutter before the shared shaded content panel begins at y=218. BANK, FILTER,
+BANDS, and STREZO CROSS pages also carry interactive PRESET, MODE, TYPE, or
+LAYOUT controls in that strip, so their value text, chips, and selection
+outlines move together. Header chips occupy y=184..216 and selection outlines
+end exactly where the content panel begins; no text or selection geometry
+overlaps the field.
+
+`ui_common.py` is the single source for the heading row, header-chip geometry,
+and common support-page headings. Product-only BANK/FILTER/CLOCK/CROSS headings
+use the same helper and constants. The complete family regression passes `196
+passed, 79 warnings in 800.14s`; the extra case is the new shared heading-band
+contract.
+
+Only standard `1280x720p60` targets were built. REZO seed 8 missed sync timing
+and STREZO seed 8 missed DVI5X; the qualified standard defaults are therefore
+now REZO seed 9, REZOMO seed 8, and STREZO seed 11. All final routes clear the
+project's 1.25% timing-margin gate:
+
+- REZO: 20,595 LUT4, 6,907 DFF, 22 DP16KD; DVI5X 414.08, AUDIO
+  77.20, SYNC 63.26, DVI 81.55 MHz.
+- REZOMO: 20,387 LUT4, 7,105 DFF, 22 DP16KD; DVI5X 421.23, AUDIO
+  75.64, SYNC 62.64, DVI 76.21 MHz.
+- STREZO: 20,108 LUT4, 6,926 DFF, 21 DP16KD; DVI5X 446.03, AUDIO
+  74.42, SYNC 65.28, DVI 75.95 MHz.
+
+Commit `98f79f86` archives were built with those qualified seeds and flashed
+successfully to the requested slots:
+
+- slot 2: `build/rezo-r5/rezo-98f79f86-r5.tar.gz`, SHA-256
+  `1def708ee9d5ac6262a5e9fec36111b76db043ffb88a032dee0ed95c39ec8562`.
+- slot 3: `build/rezomo-r5/rezomo-98f79f86-r5.tar.gz`, SHA-256
+  `da738252986886e49974df8f54e69684f12decd19779b407138a4c4ee76a902d`.
+- slot 4: `build/strezo-r5/strezo-98f79f86-r5.tar.gz`, SHA-256
+  `651610c70b041d76ad92562d4b76733feded010c8f790770483de8faecf6e0f2`.
+
+No circular target was built or flashed.
+
 ## 2026-08-21 production-helper audit and consolidation stop point
 
 The follow-up production audit tested the safest remaining exact helper: the
