@@ -128,6 +128,16 @@ except ImportError:  # top_level_cli executes this file directly.
     )
 
 
+NATIVE_MOTION_LABEL_RIGHT = 16
+NATIVE_MOTION_VALUE_TEXT_COL = 18
+NATIVE_MOTION_CONTROL_X0 = native_value_chip_x0(
+    NATIVE_MOTION_VALUE_TEXT_COL)
+NATIVE_MOTION_CONTROL_X1 = 560
+NATIVE_MOTION_FILL_X0 = NATIVE_MOTION_CONTROL_X0 + 2
+NATIVE_MOTION_CENTER_X = (
+    NATIVE_MOTION_CONTROL_X0 + NATIVE_MOTION_CONTROL_X1) // 2
+
+
 class RezoCore(RezoCoreConstants, wiring.Component):
     """Ten-band linked-stereo resonant filterbank."""
 
@@ -3531,10 +3541,10 @@ class RezoTileDisplay(wiring.Component):
             put_native(5, "CROSS CURVE", 9, 31)
 
             put_native(6, "MOTION", 8, 27)
-            put_native(6, "LFO SHAPE", 8, 29)
-            put_native(6, "RATE HZ", 8, 31)
-            put_native(6, "PHASE", 8, 33)
-            put_native(6, "DEPTH", 8, 35)
+            for label, row in (("LFO SHAPE", 29), ("RATE HZ", 31),
+                               ("PHASE", 33), ("DEPTH", 35)):
+                put_native(6, label,
+                           NATIVE_MOTION_LABEL_RIGHT - len(label), row)
 
             put_native_page_heading(put_native, 7, "LAYOUT")
             put_native(7, "TO", 15, 15)
@@ -3899,10 +3909,13 @@ class RezoTileDisplay(wiring.Component):
                 writer_address_init[75 + pos] = writer_cell(
                     7, 16, NATIVE_PAGE_HEADING_ROW, pos)
             for pos in range(8):
-                writer_address_init[83 + pos] = writer_cell(6, 18, 29, pos)
+                writer_address_init[83 + pos] = writer_cell(
+                    6, NATIVE_MOTION_VALUE_TEXT_COL, 29, pos)
             for pos in range(4):
-                writer_address_init[91 + pos] = writer_cell(6, 18, 31, pos)
-                writer_address_init[95 + pos] = writer_cell(6, 18, 33, pos)
+                writer_address_init[91 + pos] = writer_cell(
+                    6, NATIVE_MOTION_VALUE_TEXT_COL, 31, pos)
+                writer_address_init[95 + pos] = writer_cell(
+                    6, NATIVE_MOTION_VALUE_TEXT_COL, 33, pos)
             for pos in range(8):
                 writer_address_init[99 + pos] = writer_cell(5, 22, 31, pos)
             for n, (_, _, depth_row) in enumerate(compact_input_text_rows):
@@ -4188,16 +4201,21 @@ class RezoTileDisplay(wiring.Component):
                 476 if self.compact_layout else 412,
                 368 if self.compact_layout else 336, t=3)
         motion_source_x0 = (
-            native_value_chip_x0(18) if self.compact_layout else 160)
+            NATIVE_MOTION_CONTROL_X0 if self.compact_layout else 160)
         motion_source_x1 = 424 if self.compact_layout else 296
-        motion_rate_x0 = native_value_chip_x0(18) if self.compact_layout else 160
+        motion_rate_x0 = NATIVE_MOTION_CONTROL_X0 if self.compact_layout else 160
         motion_rate_x1 = 360 if self.compact_layout else 296
         motion_phase_x0 = (
-            native_value_chip_x0(18) if self.compact_layout else 512)
+            NATIVE_MOTION_CONTROL_X0 if self.compact_layout else 512)
         motion_phase_x1 = 360 if self.compact_layout else 640
-        motion_depth_x0 = 280 if self.compact_layout else 512
-        motion_depth_x1 = 568 if self.compact_layout else 640
-        motion_depth_fill_x0 = 282 if self.compact_layout else motion_depth_x0
+        motion_depth_x0 = (
+            NATIVE_MOTION_CONTROL_X0 if self.compact_layout else 512)
+        motion_depth_x1 = (
+            NATIVE_MOTION_CONTROL_X1 if self.compact_layout else 640)
+        motion_depth_fill_x0 = (
+            NATIVE_MOTION_FILL_X0 if self.compact_layout else motion_depth_x0)
+        motion_center_x = (
+            NATIVE_MOTION_CENTER_X if self.compact_layout else 424)
         # Dynamic text occupies fourteen pixels at the bottom-biased tile
         # baseline. Inset compact chips by four pixels so their visible
         # padding is balanced above and below the glyphs.
@@ -4298,7 +4316,8 @@ class RezoTileDisplay(wiring.Component):
                 scaled_value = min(142, round(signed_value * 142 / 15))
             else:
                 scaled_value = round(signed_value * 142 / 16)
-            motion_ui_init[256 + raw_value] = 424 + scaled_value
+            motion_ui_init[256 + raw_value] = (
+                motion_center_x + scaled_value)
         m.submodules.motion_ui_mem = motion_ui_mem = Memory(
             shape=unsigned(10), depth=len(motion_ui_init),
             init=motion_ui_init, attrs={"ram_style": "block"})
@@ -4344,7 +4363,7 @@ class RezoTileDisplay(wiring.Component):
         # INPUT page. Its value comes from the audio engine's existing LFO;
         # the display does not synthesize another oscillator.
         motion_monitor_line = bands_page & self.bipolar_line(
-            x, y, 424, motion_monitor_endpoint_q,
+            x, y, motion_center_x, motion_monitor_endpoint_q,
             570, 572, motion_monitor_negative_q2)
 
         damp_chip = tune_page & self.rect(

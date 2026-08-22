@@ -347,8 +347,9 @@ def test_bands_motion_controls_form_one_complete_vertical_column():
         points=((272, 470), (423, 470), (424, 470),
                 (272, 502), (359, 502), (360, 502),
                 (272, 534), (359, 534), (360, 534),
-                (280, 566), (351, 566), (352, 566), (567, 566),
-                (568, 566), (448, 470), (448, 534)),
+                (271, 566), (272, 566), (273, 566), (274, 566),
+                (344, 566), (345, 566), (559, 566), (560, 566),
+                (448, 470), (448, 534)),
     ) == [
         (panel, panel, panel), (panel, panel, panel),
         (background, background, background),
@@ -356,12 +357,20 @@ def test_bands_motion_controls_form_one_complete_vertical_column():
         (background, background, background),
         (panel, panel, panel), (panel, panel, panel),
         (background, background, background),
+        (background, background, background), (panel, panel, panel),
         (panel, panel, panel), (control, control, control),
         (control, control, control), (panel, panel, panel),
-        (background, background, background),
+        (panel, panel, panel), (background, background, background),
         (background, background, background),
         (background, background, background),
     ]
+
+
+def test_bands_motion_labels_share_a_right_edge_and_value_gutter():
+    for row in (29, 31, 33, 35):
+        bounds = _render_text_bounds(
+            (100, row * 16, 272, (row + 1) * 16), page=6)
+        assert bounds[2] == 250
 
 
 def test_bands_motion_text_chips_share_centered_twenty_pixel_rows():
@@ -404,7 +413,7 @@ def test_bands_motion_monitor_is_a_centered_bipolar_line():
     assert _render_samples(
         page=6,
         motion_monitor=16,
-        points=((423, 571), (424, 571), (567, 571), (568, 571)),
+        points=((415, 571), (416, 571), (559, 571), (560, 571)),
     ) == [
         (panel, panel, panel), (mod, mod, mod),
         (panel, panel, panel), (background, background, background),
@@ -412,7 +421,7 @@ def test_bands_motion_monitor_is_a_centered_bipolar_line():
     assert _render_samples(
         page=6,
         motion_monitor=-16,
-        points=((279, 571), (280, 571), (423, 571), (424, 571)),
+        points=((271, 571), (272, 571), (415, 571), (416, 571)),
     ) == [
         (background, background, background), (panel, panel, panel),
         (mod, mod, mod), (panel, panel, panel),
