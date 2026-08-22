@@ -1597,3 +1597,25 @@ operations completed successfully on Tiliqua R5 serial `E46534A193222B21`.
 REZO's prior default seed 9 missed DVI, and STREZO's prior default seed 8 missed
 DVI5X and DVI; the checked-in standard defaults are therefore now seeds 2 and
 4 respectively. REZOMO retains seed 9.
+
+## STREZO MOTION alignment correction (2026-08-22)
+
+Commit `7583d9bb` restores the BANDS/MOTION two-column layout. LFO SHAPE,
+RATE HZ, PHASE, and DEPTH now share a right edge at native column 16, followed
+by a 16-pixel gutter and the value/control column at x=272. The complete DEPTH
+track, fill, selection marker, and bipolar monitor moved left from x=280..568
+to x=272..560 so they align with the chips above.
+
+The DAMPING chip remains intentionally four pixels inside the FEEDBACK fader
+track: its surrounding selection outline begins at x=268, exactly matching the
+fader selection outlines, while preserving the family chip's standard text
+inset.
+
+The STREZO and shared-family regression sets pass 79 tests. Only standard
+`1280x720p60` STREZO was built. Seed 4 passes at 384.32 MHz DVI5X, 72.85 MHz
+AUDIO, 66.34 MHz SYNC, and 76.23 MHz DVI. Archive
+`strezo-7583d9bb-r5.tar.gz` has SHA-256
+`d4ea7785d8a0fad2177e456d58d4c3ffe5df29058b73206cc025f8303547beff`;
+its verified `top.bit` SHA-256 is
+`584c37d7dbe64ce1d60c5bd348e44205deee05396102102660340fbad7055f81`.
+The archive was flashed successfully to slot 4. No circular target was built.
