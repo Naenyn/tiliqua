@@ -133,6 +133,13 @@ NATIVE_MOTION_VALUE_TEXT_COL = 19
 NATIVE_MOTION_CONTROL_X0 = native_value_chip_x0(
     NATIVE_MOTION_VALUE_TEXT_COL)
 NATIVE_MOTION_CONTROL_X1 = 576
+
+# STREZO adds a one-character L/R source chip ahead of each OUTPUT matrix
+# row.  Its right edge stays aligned with the established routing matrix;
+# the narrower left edge leaves a clear gutter after the OUT# label.
+NATIVE_OUTPUT_SIDE_CHIP_X0 = 196
+NATIVE_OUTPUT_SIDE_CHIP_X1 = 236
+NATIVE_OUTPUT_SIDE_TEXT_COL = 13
 NATIVE_MOTION_FILL_X0 = NATIVE_MOTION_CONTROL_X0 + 2
 NATIVE_MOTION_CENTER_X = (
     NATIVE_MOTION_CONTROL_X0 + NATIVE_MOTION_CONTROL_X1) // 2
@@ -3536,7 +3543,7 @@ class RezoTileDisplay(wiring.Component):
             put_native(0, "RESONANCE", 8, compact_main_control_text_rows[1])
             put_native(0, "FEEDBACK", 9, compact_main_control_text_rows[2])
 
-            put_native_support_page_labels(put_native)
+            put_native_support_page_labels(put_native, output_label_col=8)
             put_native(5, "ADVANCED", 8, 27)
             put_native(5, "CROSS CURVE", 9, 31)
 
@@ -3904,7 +3911,8 @@ class RezoTileDisplay(wiring.Component):
             for pos in range(5):
                 writer_address_init[66 + pos] = writer_cell(6, 20, 22, pos)
             for n, row in enumerate(compact_output_text_rows):
-                writer_address_init[71 + n] = writer_cell(4, 13, row)
+                writer_address_init[71 + n] = writer_cell(
+                    4, NATIVE_OUTPUT_SIDE_TEXT_COL, row)
             for pos in range(8):
                 writer_address_init[75 + pos] = writer_cell(
                     7, 16, NATIVE_PAGE_HEADING_ROW, pos)
@@ -5182,18 +5190,21 @@ class RezoTileDisplay(wiring.Component):
                            (output_row_edge | output_col_edge)),
             output_side_chip.eq(
                 output_page & output_row_active &
-                (x >= (native_value_chip_x0(13)
+                (x >= (NATIVE_OUTPUT_SIDE_CHIP_X0
                        if self.compact_layout else 100)) &
-                (x < (236 if self.compact_layout else 156))),
+                (x < (NATIVE_OUTPUT_SIDE_CHIP_X1
+                       if self.compact_layout else 156))),
             output_side_select.eq(
                 output_page & output_row_active &
                 (self.selected == RezoHardwareUI.TARGET_OUTPUT_SIDE_BASE + output_row) &
-                (x >= ((native_value_chip_x0(13) - 4)
+                (x >= ((NATIVE_OUTPUT_SIDE_CHIP_X0 - 4)
                        if self.compact_layout else 96)) &
-                (x < (240 if self.compact_layout else 160)) &
-                ((x < (native_value_chip_x0(13)
+                (x < ((NATIVE_OUTPUT_SIDE_CHIP_X1 + 4)
+                       if self.compact_layout else 160)) &
+                ((x < (NATIVE_OUTPUT_SIDE_CHIP_X0
                        if self.compact_layout else 100)) |
-                 (x >= (236 if self.compact_layout else 156)) |
+                 (x >= (NATIVE_OUTPUT_SIDE_CHIP_X1
+                        if self.compact_layout else 156)) |
                  output_row_edge)),
             output_fill.eq(
                 (output_page_q | (cross_page_q & cross_column_visible_q)) &

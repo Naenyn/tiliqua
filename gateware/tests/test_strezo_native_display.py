@@ -4,6 +4,8 @@ from rezo_display_support import sample_native_rgb
 from top.rezo.strezo_variant import (
     NATIVE_MOTION_CONTROL_X0,
     NATIVE_MOTION_CONTROL_X1,
+    NATIVE_OUTPUT_SIDE_CHIP_X0,
+    NATIVE_OUTPUT_SIDE_CHIP_X1,
     RezoCore,
     RezoHardwareUI,
     RezoTileDisplay,
@@ -22,7 +24,8 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
                     drive=0, resonance=0, feedback=0,
                     limit_knee=32, limit_cap=112, selected=0,
                     matrix_values=(), motion_source=0, motion_rate=12,
-                    motion_phase=28, motion_depth=0, motion_monitor=0):
+                    motion_phase=28, motion_depth=0, motion_monitor=0,
+                    output_sides=()):
     """Render settled pixels from STREZO's upright native canvas."""
     dut = RezoTileDisplay(
         h_active=h_active,
@@ -64,6 +67,8 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
         ctx.set(dut.motion_phase, motion_phase)
         ctx.set(dut.motion_depth, motion_depth)
         ctx.set(dut.motion_monitor, motion_monitor)
+        for index, value in enumerate(output_sides):
+            ctx.set(dut.output_sides[index], value)
         for index, value in enumerate(matrix_values):
             ctx.set(dut.output_send_write_addr, index)
             ctx.set(dut.output_send_write_data, value)
@@ -320,6 +325,45 @@ def test_output_dry_header_has_the_same_visible_selection_bar_as_groups():
         selected=RezoHardwareUI.TARGET_OUTPUT_DRY_COL,
         points=((538, 281),),
     ) == [(selected, selected, selected)]
+
+
+def test_output_side_chip_clears_row_label_and_keeps_right_edge():
+    panel = RezoTileDisplay.PALETTE["panel"]
+    background = RezoTileDisplay.PALETTE["background"]
+    label_bounds = _render_text_bounds(
+        (120, 336, NATIVE_OUTPUT_SIDE_CHIP_X0, 352), page=4)
+    side_bounds = _render_text_bounds(
+        (NATIVE_OUTPUT_SIDE_CHIP_X0, 336,
+         NATIVE_OUTPUT_SIDE_CHIP_X1, 352),
+        page=4, output_sides=(0,))
+    # OUT0 has a measured gutter before the narrowed chip, and the L glyph
+    # remains wholly inside the fixed right edge.
+    assert NATIVE_OUTPUT_SIDE_CHIP_X0 - label_bounds[2] >= 8
+    assert side_bounds[0] >= NATIVE_OUTPUT_SIDE_CHIP_X0
+    assert side_bounds[2] <= NATIVE_OUTPUT_SIDE_CHIP_X1
+    assert _render_samples(
+        page=4,
+        points=((NATIVE_OUTPUT_SIDE_CHIP_X0 - 1, 342),
+                (NATIVE_OUTPUT_SIDE_CHIP_X0, 342),
+                (NATIVE_OUTPUT_SIDE_CHIP_X1 - 1, 342),
+                (NATIVE_OUTPUT_SIDE_CHIP_X1, 342)),
+    ) == [
+        (background, background, background),
+        (panel, panel, panel), (panel, panel, panel),
+        (background, background, background),
+    ]
+
+
+def test_output_side_value_has_balanced_padding_in_narrow_chip():
+    bounds = _render_text_bounds(
+        (NATIVE_OUTPUT_SIDE_CHIP_X0, 336,
+         NATIVE_OUTPUT_SIDE_CHIP_X1, 352),
+        page=4, output_sides=(0,))
+    left = bounds[0] - NATIVE_OUTPUT_SIDE_CHIP_X0
+    right = NATIVE_OUTPUT_SIDE_CHIP_X1 - bounds[2]
+    assert left >= 8
+    assert right >= 8
+    assert abs(left - right) <= 8
 
 
 def test_cross_lower_rows_have_balanced_clear_bands():

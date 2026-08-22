@@ -139,7 +139,7 @@ def put_native_page_heading(put, page, text, x0=8):
     put(page, text, x0, NATIVE_PAGE_HEADING_ROW)
 
 
-def put_native_support_page_labels(put):
+def put_native_support_page_labels(put, *, output_label_col=9):
     """Place the common FEEDBACK through BANDS native static labels.
 
     Product-specific additions such as STREZO's OPTIONS ADVANCED section and
@@ -167,7 +167,7 @@ def put_native_support_page_labels(put):
                          ("G1", "G2", "G3", "G4", "DRY")):
         put(4, label, x0, 18)
     for output, row in enumerate(NATIVE_OUTPUT_TEXT_ROWS):
-        put(4, f"OUT{output}", 9, row)
+        put(4, f"OUT{output}", output_label_col, row)
 
     put_native_page_heading(put, 5, "STATE AND DISPLAY")
     put(5, "PALETTE", 13, 17)
