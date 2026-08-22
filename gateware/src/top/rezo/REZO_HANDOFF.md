@@ -1643,6 +1643,35 @@ its verified `top.bit` SHA-256 is
 `5c3a7db33cc3b935a4a7986326132d0a47562aed8ec0f308a396baee15f28156`.
 The archive was flashed successfully to slot 4. No circular target was built.
 
+## Circular-viewport preview guide (2026-08-22)
+
+Branch `codex/rezo-circular-viewport-ui` begins the circular-layout study from
+the accepted REZO-family checkpoint. Implementation commit `97c7fe0c` removes
+the 508x508 safe-square outline from all three native renderers and replaces it
+with a thin, centred guide for the official panel's full 720-pixel-diameter
+edge. Interactive geometry remains unchanged inside its existing bounds.
+
+The guide is generated from one shared 720-row boundary table. A first direct
+circle-equation experiment reduced REZO DVI timing to 54.16 MHz; the retained
+implementation prefetches the row bounds through the existing coordinate
+pipeline and uses two small comparisons. It costs two DP16KD blocks per
+product, but avoids live multipliers and restores normal DVI timing.
+
+The final native display suite passes 79 tests across REZO, REZOMO, STREZO,
+and the shared family contract. Only standard `1280x720p60` targets were
+built. No round target was invoked and the rack was powered down, so nothing
+was flashed. The exact final archives and routes are:
+
+| Target | Route seed | LUT4 / COMB | Free COMB | FF | BRAM | DVI5X / AUDIO / SYNC / DVI MHz | Archive SHA-256 | `top.bit` SHA-256 |
+|---|---:|---|---:|---:|---:|---|---|---|
+| REZO | 5 | 20,492 / 24,072 | 216 | 6,907 | 24 | 401.45 / 71.67 / 62.19 / 81.04 | `e348d67fcc3f133b2edc121f15cfb8915a66c3ae3ef1a2d753d630021483bdac` | `0b44faa709d8c67a92d6d688e7829f286a0b66745211f30d970b677e50999b2e` |
+| REZOMO | 8 | 20,582 / 23,862 | 426 | 7,105 | 24 | 445.04 / 73.03 / 63.18 / 77.35 | `81788e644da731f31e3d022a6a569f0352e10a2c6111a029079c72007a6b4368` | `f7e20355091852e395b235e27de5b9419697cc5dcf778524314ede7d769f32cc` |
+| STREZO | 2 | 20,019 / 23,263 | 1,025 | 6,926 | 23 | 423.73 / 72.08 / 61.45 / 78.11 | `e6c5a3599872db3fb01e3e40ea7bb822112e3ad4a7889cbc6fb5b87b1cbf90c7` | `e9d7c583ae998b035b14b29239ff0f153bd5cef7069c3c5679e123a99166fa66` |
+
+The archives are `rezo-97c7fe0c-r5.tar.gz`,
+`rezomo-97c7fe0c-r5.tar.gz`, and `strezo-97c7fe0c-r5.tar.gz`. Each archived
+`top.bit` was checked byte-for-byte against its timing-qualified routed file.
+
 ## STREZO OUTPUT side-chip correction (2026-08-22)
 
 Hardware photo `2FBB3F76-027D-43C4-8DB0-0B51956F248F.JPG` showed that

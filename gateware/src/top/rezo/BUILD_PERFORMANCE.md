@@ -584,6 +584,24 @@ the 1.25% gate at 384.32 / 72.85 / 66.34 / 76.23 MHz for DVI5X / AUDIO / SYNC /
 DVI. The verified archive `strezo-7583d9bb-r5.tar.gz` was flashed to slot 4.
 No circular target was invoked.
 
+## 2026-08-22 circular-viewport preview guide
+
+Implementation `97c7fe0c` replaces the native 508x508 square frame with a
+shared full-panel circular guide while leaving page geometry untouched. The
+retained renderer uses a two-DP16KD row-boundary lookup; a discarded direct
+squared-distance implementation failed REZO DVI at 54.16 MHz.
+
+| Target | Seed | LUT4 / COMB | Free COMB | FF | BRAM | DVI5X / AUDIO / SYNC / DVI MHz | Result |
+|---|---:|---|---:|---:|---:|---|---|
+| REZO standard | 5 | 20,492 / 24,072 | 216 | 6,907 | 24 | 401.45 / 71.67 / 62.19 / 81.04 | PASS; built, not flashed |
+| REZOMO standard | 8 | 20,582 / 23,862 | 426 | 7,105 | 24 | 445.04 / 73.03 / 63.18 / 77.35 | PASS; built, not flashed |
+| STREZO standard | 2 | 20,019 / 23,263 | 1,025 | 6,926 | 23 | 423.73 / 72.08 / 61.45 / 78.11 | PASS; built, not flashed |
+
+The final native display suite passes 79 tests. Only standard `1280x720p60`
+targets were invoked. REZOMO seed 8 and STREZO seed 2 were routed from their
+exact final synthesized JSON and packaged without resynthesis. No archive was
+flashed because the rack was powered down.
+
 ## 2026-08-22 STREZO MOTION panel/row correction
 
 The photo-derived MOTION containment and vertical-centering correction at
