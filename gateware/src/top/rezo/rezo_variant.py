@@ -73,6 +73,9 @@ try:
         NATIVE_GROUP_TEXT_ROWS, NATIVE_INPUT_TEXT_ROWS,
         NATIVE_CONTENT_PANEL_X0, NATIVE_CONTENT_PANEL_X1,
         NATIVE_CONTENT_PANEL_Y0, NATIVE_CONTENT_PANEL_Y1,
+        NATIVE_PAGE_HEADING_ROW, NATIVE_PAGE_HEADER_CHIP_Y0,
+        NATIVE_PAGE_HEADER_CHIP_Y1, NATIVE_PAGE_HEADER_SELECT_Y0,
+        NATIVE_PAGE_HEADER_SELECT_Y1,
         NATIVE_INPUT_FILL_X0, NATIVE_INPUT_FILL_X1,
         NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
         NATIVE_MAIN_FILL_X0, NATIVE_MAIN_FILL_X1,
@@ -83,7 +86,8 @@ try:
         native_input_depth_endpoint, native_input_gain_endpoint,
         native_input_unity_x,
         native_feedback_track_rows, output_header_selection,
-        put_legacy_support_page_labels, put_native_page_headers,
+        put_legacy_support_page_labels, put_native_page_heading,
+        put_native_page_headers,
         put_native_support_page_labels,
     )
 except ImportError:  # top_level_cli executes this file directly.
@@ -107,6 +111,9 @@ except ImportError:  # top_level_cli executes this file directly.
         NATIVE_GROUP_TEXT_ROWS, NATIVE_INPUT_TEXT_ROWS,
         NATIVE_CONTENT_PANEL_X0, NATIVE_CONTENT_PANEL_X1,
         NATIVE_CONTENT_PANEL_Y0, NATIVE_CONTENT_PANEL_Y1,
+        NATIVE_PAGE_HEADING_ROW, NATIVE_PAGE_HEADER_CHIP_Y0,
+        NATIVE_PAGE_HEADER_CHIP_Y1, NATIVE_PAGE_HEADER_SELECT_Y0,
+        NATIVE_PAGE_HEADER_SELECT_Y1,
         NATIVE_INPUT_FILL_X0, NATIVE_INPUT_FILL_X1,
         NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
         NATIVE_MAIN_FILL_X0, NATIVE_MAIN_FILL_X1,
@@ -117,7 +124,8 @@ except ImportError:  # top_level_cli executes this file directly.
         native_input_depth_endpoint, native_input_gain_endpoint,
         native_input_unity_x,
         native_feedback_track_rows, output_header_selection,
-        put_legacy_support_page_labels, put_native_page_headers,
+        put_legacy_support_page_labels, put_native_page_heading,
+        put_native_page_headers,
         put_native_support_page_labels,
     )
 
@@ -2897,9 +2905,9 @@ class RezoTileDisplay(wiring.Component):
             put_native_page_headers(put_native, "REZO", compact_titles)
 
             # BANK main page.
-            put_native(0, "PRESET", 8, 11)
-            put_native(0, "MODE", 24, 11)
-            put_native(0, "BANK", 30, 11)
+            put_native_page_heading(put_native, 0, "PRESET")
+            put_native_page_heading(put_native, 0, "MODE", 24)
+            put_native_page_heading(put_native, 0, "BANK", 30)
             put_native(0, "BANDS", 8, 14)
             put_native(0, "FREQ:", 23, 14)
             # BANK occupies the first three slots of the same five-slot grid
@@ -2913,9 +2921,9 @@ class RezoTileDisplay(wiring.Component):
             put_native_support_page_labels(put_native)
 
             # FILTER main page.
-            put_native(7, "TYPE", 8, 11)
-            put_native(7, "MODE", 24, 11)
-            put_native(7, "FILTER", 30, 11)
+            put_native_page_heading(put_native, 7, "TYPE")
+            put_native_page_heading(put_native, 7, "MODE", 24)
+            put_native_page_heading(put_native, 7, "FILTER", 30)
             put_native(7, "BANDS", 8, 14)
             # FILTER uses all five shared slots. Right-align every label at
             # x=272, immediately before the common native fader gutter.
@@ -2925,7 +2933,7 @@ class RezoTileDisplay(wiring.Component):
                 put_native(7, label, x0, row)
 
             # FILTER modulation matrix.
-            put_native(8, "MOD MATRIX", 8, 13)
+            put_native_page_heading(put_native, 8, "MOD MATRIX")
             put_native(8, "IN 1", 18, 16)
             put_native(8, "IN 2", 25, 16)
             put_native(8, "IN 3", 32, 16)
@@ -3186,7 +3194,7 @@ class RezoTileDisplay(wiring.Component):
         if self.compact_layout:
             for pos in range(4):
                 writer_address_init[4 + pos] = native_text_address(
-                    0, 16, 11, pos)
+                    0, 16, NATIVE_PAGE_HEADING_ROW, pos)
             for pos in range(3):
                 writer_address_init[8 + pos] = native_text_address(
                     0, 29, 14, pos)
@@ -3202,7 +3210,7 @@ class RezoTileDisplay(wiring.Component):
                         2, 20, mode_row, pos + 3)
             for pos in range(4):
                 writer_address_init[35 + pos] = native_text_address(
-                    7, 14, 11, pos)
+                    7, 14, NATIVE_PAGE_HEADING_ROW, pos)
                 # OUTPUT values share one fixed left origin.
                 writer_address_init[39 + pos] = native_text_address(
                     4, 31, 18, pos)
@@ -3216,7 +3224,7 @@ class RezoTileDisplay(wiring.Component):
                 writer_address_init[52 + pos] = native_text_address(
                     5, 22, 21, pos)
                 writer_address_init[59 + pos] = native_text_address(
-                    6, 17, 11, pos)
+                    6, 17, NATIVE_PAGE_HEADING_ROW, pos)
             for pos in range(5):
                 writer_address_init[66 + pos] = native_text_address(
                     6, 20, 22, pos)
@@ -3520,10 +3528,12 @@ class RezoTileDisplay(wiring.Component):
                     NATIVE_FEEDBACK_DAMPING_CHIP_Y0 - 4, 364,
                     NATIVE_FEEDBACK_DAMPING_CHIP_Y1 + 4, t=3)
             layout_chip = bands_page & self.rect(
-                text_x, text_y, 256, 168, 384, 200)
+                text_x, text_y, 256, NATIVE_PAGE_HEADER_CHIP_Y0,
+                384, NATIVE_PAGE_HEADER_CHIP_Y1)
             layout_select = bands_page & (
                 self.selected == RezoHardwareUI.TARGET_BAND_LAYOUT) & self.outline(
-                    text_x, text_y, 252, 164, 388, 204, t=3)
+                    text_x, text_y, 252, NATIVE_PAGE_HEADER_SELECT_Y0,
+                    388, NATIVE_PAGE_HEADER_SELECT_Y1, t=3)
         else:
             palette_chip = advanced_page & self.rect(x, y, 264, 228, 408, 268)
             palette_select = advanced_page & (
@@ -3563,15 +3573,19 @@ class RezoTileDisplay(wiring.Component):
         if self.compact_layout:
             # BANK/FILTER is a main-page control; PAGE owns the header.
             mode_chip = home_page & self.rect(
-                text_x, text_y, 464, 168, 584, 200)
+                text_x, text_y, 464, NATIVE_PAGE_HEADER_CHIP_Y0,
+                584, NATIVE_PAGE_HEADER_CHIP_Y1)
             mode_select = home_page & (
                 self.selected == RezoHardwareUI.TARGET_MODE) & self.outline(
-                    text_x, text_y, 460, 164, 588, 204, t=3)
+                    text_x, text_y, 460, NATIVE_PAGE_HEADER_SELECT_Y0,
+                    588, NATIVE_PAGE_HEADER_SELECT_Y1, t=3)
             filter_type_chip = filter_page & self.rect(
-                text_x, text_y, 216, 168, 288, 200)
+                text_x, text_y, 216, NATIVE_PAGE_HEADER_CHIP_Y0,
+                288, NATIVE_PAGE_HEADER_CHIP_Y1)
             filter_type_select = filter_page & (
                 self.selected == RezoHardwareUI.TARGET_FILTER_TYPE) & self.outline(
-                    text_x, text_y, 212, 164, 292, 204, t=3)
+                    text_x, text_y, 212, NATIVE_PAGE_HEADER_SELECT_Y0,
+                    292, NATIVE_PAGE_HEADER_SELECT_Y1, t=3)
         else:
             mode_chip = home_page & self.rect(x, y, 456, 32, 596, 76)
             mode_select = home_page & (
@@ -3781,11 +3795,14 @@ class RezoTileDisplay(wiring.Component):
 
         if self.compact_layout:
             preset_chip_signals.append(bank_page & self.rect(
-                text_x, text_y, 248, 168, 328, 200))
+                text_x, text_y, 248, NATIVE_PAGE_HEADER_CHIP_Y0,
+                328, NATIVE_PAGE_HEADER_CHIP_Y1))
             preset_select_signals.append(
                 bank_page & self.editing &
                 (self.selected == RezoHardwareUI.TARGET_PRESET) &
-                self.outline(text_x, text_y, 244, 164, 332, 204, t=3))
+                self.outline(text_x, text_y, 244,
+                             NATIVE_PAGE_HEADER_SELECT_Y0, 332,
+                             NATIVE_PAGE_HEADER_SELECT_Y1, t=3))
         else:
             preset_chip_signals.append(
                 bank_page & self.rect(x, y, 136, 100, 264, 138))

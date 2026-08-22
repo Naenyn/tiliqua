@@ -72,6 +72,9 @@ try:
         NATIVE_GROUP_TEXT_ROWS, NATIVE_INPUT_TEXT_ROWS,
         NATIVE_CONTENT_PANEL_X0, NATIVE_CONTENT_PANEL_X1,
         NATIVE_CONTENT_PANEL_Y0, NATIVE_CONTENT_PANEL_Y1,
+        NATIVE_PAGE_HEADING_ROW, NATIVE_PAGE_HEADER_CHIP_Y0,
+        NATIVE_PAGE_HEADER_CHIP_Y1, NATIVE_PAGE_HEADER_SELECT_Y0,
+        NATIVE_PAGE_HEADER_SELECT_Y1,
         NATIVE_INPUT_FILL_X0, NATIVE_INPUT_FILL_X1,
         NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
         NATIVE_MAIN_FILL_X0, NATIVE_MAIN_FILL_X1,
@@ -82,7 +85,8 @@ try:
         native_input_depth_endpoint, native_input_gain_endpoint,
         native_input_unity_x,
         native_feedback_track_rows, output_header_selection,
-        put_legacy_support_page_labels, put_native_page_headers,
+        put_legacy_support_page_labels, put_native_page_heading,
+        put_native_page_headers,
         put_native_support_page_labels,
     )
 except ImportError:  # top_level_cli executes this file directly.
@@ -104,6 +108,9 @@ except ImportError:  # top_level_cli executes this file directly.
         NATIVE_GROUP_TEXT_ROWS, NATIVE_INPUT_TEXT_ROWS,
         NATIVE_CONTENT_PANEL_X0, NATIVE_CONTENT_PANEL_X1,
         NATIVE_CONTENT_PANEL_Y0, NATIVE_CONTENT_PANEL_Y1,
+        NATIVE_PAGE_HEADING_ROW, NATIVE_PAGE_HEADER_CHIP_Y0,
+        NATIVE_PAGE_HEADER_CHIP_Y1, NATIVE_PAGE_HEADER_SELECT_Y0,
+        NATIVE_PAGE_HEADER_SELECT_Y1,
         NATIVE_INPUT_FILL_X0, NATIVE_INPUT_FILL_X1,
         NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
         NATIVE_MAIN_FILL_X0, NATIVE_MAIN_FILL_X1,
@@ -114,7 +121,8 @@ except ImportError:  # top_level_cli executes this file directly.
         native_input_depth_endpoint, native_input_gain_endpoint,
         native_input_unity_x,
         native_feedback_track_rows, output_header_selection,
-        put_legacy_support_page_labels, put_native_page_headers,
+        put_legacy_support_page_labels, put_native_page_heading,
+        put_native_page_headers,
         put_native_support_page_labels,
     )
 
@@ -3903,8 +3911,8 @@ class RezoTileDisplay(wiring.Component):
         if self.compact_layout:
             # Shared REZO-family pages use the hardware-validated native
             # 508px grid. CLOCK remains REZOMO-specific below.
-            put(0, "PRESET", 8, 11)
-            put(0, "MODE", 24, 11)
+            put_native_page_heading(put, 0, "PRESET")
+            put_native_page_heading(put, 0, "MODE", 24)
             put(0, "BANDS", 8, 14)
             put(0, "FREQ:", 23, 14)
             put(0, "DRIVE", 12, compact_main_control_text_rows[0])
@@ -3917,7 +3925,7 @@ class RezoTileDisplay(wiring.Component):
             # as the shared pages.  Every possible control occupies one row
             # of a 32px-pitch stack.  Labels end at column 18 and values begin
             # at column 19, so neither field depends on the label's length.
-            put(7, "CLOCKED SETTINGS", 8, 12)
+            put_native_page_heading(put, 7, "CLOCKED SETTINGS")
             put(7, "MODE", 14, 16)
             put(7, "DIRECTION", 9, 18)
             put(7, "SOURCE", 12, 20)
@@ -4287,7 +4295,8 @@ class RezoTileDisplay(wiring.Component):
                         writer_address.eq(writer_cell(
                             # Preset names are fixed-width and use one native
                             # cell of left padding in the selector chip.
-                            0, 11, 17 + pos, 7, 11 + pos)),
+                            0, NATIVE_PAGE_HEADING_ROW, 17 + pos,
+                            7, 11 + pos)),
                         clock_value_address.eq(
                             clock_value_bases["preset"] |
                             (preset_sync << 4) | pos),
@@ -4307,7 +4316,8 @@ class RezoTileDisplay(wiring.Component):
                 with m.Case(39 + pos):
                     m.d.comb += [
                         writer_address.eq(writer_cell(
-                            0, 11, 30 + pos, 3, 29 + pos)),
+                            0, NATIVE_PAGE_HEADING_ROW, 30 + pos,
+                            3, 29 + pos)),
                         clock_value_address.eq(
                             clock_value_bases["mode"] |
                             (clock_mode_sync << 4) | pos),
@@ -4385,7 +4395,8 @@ class RezoTileDisplay(wiring.Component):
                 with m.Case(59 + pos):
                     m.d.comb += [
                         writer_address.eq(writer_cell(
-                            6, 11, 17 + pos, 7, 9 + pos)),
+                            6, NATIVE_PAGE_HEADING_ROW, 17 + pos,
+                            7, 9 + pos)),
                         clock_value_address.eq(
                             clock_value_bases["layout"] |
                             (displayed_layout << 4) | pos),
@@ -4406,7 +4417,8 @@ class RezoTileDisplay(wiring.Component):
                 with m.Case(68 + pos):
                     m.d.comb += [
                         writer_address.eq(writer_cell(
-                            0, 11, 30 + pos, 3, 29 + pos)),
+                            0, NATIVE_PAGE_HEADING_ROW, 30 + pos,
+                            3, 29 + pos)),
                         clock_value_address.eq(
                             clock_value_bases["mode"] |
                             (clock_mode_sync << 4) | pos),
@@ -4759,15 +4771,16 @@ class RezoTileDisplay(wiring.Component):
                  if self.compact_layout else 540), t=3)
         layout_chip = bands_page & self.rect(
             x, y, 256 if self.compact_layout else 136,
-            168 if self.compact_layout else 100,
+            NATIVE_PAGE_HEADER_CHIP_Y0 if self.compact_layout else 100,
             384 if self.compact_layout else 264,
-            200 if self.compact_layout else 138)
+            NATIVE_PAGE_HEADER_CHIP_Y1 if self.compact_layout else 138)
         layout_select = bands_page & (
             self.selected == RezoHardwareUI.TARGET_BAND_LAYOUT) & self.outline(
                 x, y, 252 if self.compact_layout else 131,
-                164 if self.compact_layout else 95,
+                NATIVE_PAGE_HEADER_SELECT_Y0 if self.compact_layout else 95,
                 388 if self.compact_layout else 269,
-                204 if self.compact_layout else 143, t=3)
+                NATIVE_PAGE_HEADER_SELECT_Y1 if self.compact_layout else 143,
+                t=3)
 
         preset_chip = Signal()
         preset_select = Signal()
@@ -4787,15 +4800,16 @@ class RezoTileDisplay(wiring.Component):
         compact_mode_x1 = 564
         mode_chip = home_page & self.rect(
             x, y, 464 if self.compact_layout else 452,
-            167 if self.compact_layout else 28,
+            NATIVE_PAGE_HEADER_CHIP_Y0 if self.compact_layout else 28,
             compact_mode_x1 if self.compact_layout else 600,
-            199 if self.compact_layout else 80)
+            NATIVE_PAGE_HEADER_CHIP_Y1 if self.compact_layout else 80)
         mode_select = home_page & (
             self.selected == RezoHardwareUI.TARGET_MODE) & self.outline(
                 x, y, 460 if self.compact_layout else 452,
-                163 if self.compact_layout else 28,
+                NATIVE_PAGE_HEADER_SELECT_Y0 if self.compact_layout else 28,
                 compact_mode_x1 + 4 if self.compact_layout else 600,
-                203 if self.compact_layout else 80, t=3)
+                NATIVE_PAGE_HEADER_SELECT_Y1 if self.compact_layout else 80,
+                t=3)
         clock_turing_active = clock_page & (
             self.clock_algorithm == RezoCore.CLOCK_ALGORITHM_TURING)
         clock_data_active = clock_page & (
@@ -5033,17 +5047,18 @@ class RezoTileDisplay(wiring.Component):
         preset_chip_signals.append(bank_page & self.rect(
             x, y,
             256 if self.compact_layout else 136,
-            167 if self.compact_layout else 100,
+            NATIVE_PAGE_HEADER_CHIP_Y0 if self.compact_layout else 100,
             compact_preset_x1 if self.compact_layout else 264,
-            199 if self.compact_layout else 138))
+            NATIVE_PAGE_HEADER_CHIP_Y1 if self.compact_layout else 138))
         preset_select_signals.append(
             bank_page & self.editing & (self.selected == RezoHardwareUI.TARGET_PRESET) &
             self.outline(
                 x, y,
                 252 if self.compact_layout else 131,
-                163 if self.compact_layout else 95,
+                NATIVE_PAGE_HEADER_SELECT_Y0 if self.compact_layout else 95,
                 compact_preset_x1 + 4 if self.compact_layout else 269,
-                203 if self.compact_layout else 143, t=3))
+                NATIVE_PAGE_HEADER_SELECT_Y1 if self.compact_layout else 143,
+                t=3))
 
         # The ten band columns have identical vertical geometry. Decode their
         # fixed horizontal layout once in a small ROM, then select the active

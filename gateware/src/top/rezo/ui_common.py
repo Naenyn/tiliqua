@@ -32,6 +32,15 @@ NATIVE_CONTENT_PANEL_X0 = 125
 NATIVE_CONTENT_PANEL_Y0 = 218
 NATIVE_CONTENT_PANEL_X1 = 594
 NATIVE_CONTENT_PANEL_Y1 = 599
+# Every native page's descriptive heading occupies this final text row above
+# the common content panel. A 16px cell on row 12 draws through y=205, leaving
+# a consistent 12px gutter before the panel begins at y=218.
+NATIVE_PAGE_HEADING_ROW = 12
+# Interactive values sharing the heading band use one vertical chip geometry.
+NATIVE_PAGE_HEADER_CHIP_Y0 = 184
+NATIVE_PAGE_HEADER_CHIP_Y1 = 216
+NATIVE_PAGE_HEADER_SELECT_Y0 = 180
+NATIVE_PAGE_HEADER_SELECT_Y1 = 218
 # Backwards-compatible aliases for the INPUT renderer. INPUT is the canonical
 # family content panel; every other native page now uses the same bounds.
 NATIVE_INPUT_PANEL_Y0 = NATIVE_CONTENT_PANEL_Y0
@@ -97,7 +106,7 @@ def native_feedback_track_rows(rect, x, y, x0, x1):
 
 def put_native_feedback_labels(put):
     """Place the labels shared by every native REZO FEEDBACK page."""
-    put(1, "FEEDBACK SOURCES", 8, 13)
+    put_native_page_heading(put, 1, "FEEDBACK SOURCES")
     put(1, "BANDS", 8, 16)
     put(1, "FREQ:", 23, 16)
     put(1, "FEEDBACK", NATIVE_FEEDBACK_LABEL_RIGHT - len("FEEDBACK"),
@@ -119,6 +128,11 @@ def put_native_page_headers(put, identity, titles):
         put(page, title, 14 + ((8 - len(title)) // 2), 8)
 
 
+def put_native_page_heading(put, page, text, x0=8):
+    """Place a native page's descriptive heading above the content panel."""
+    put(page, text, x0, NATIVE_PAGE_HEADING_ROW)
+
+
 def put_native_support_page_labels(put):
     """Place the common FEEDBACK through BANDS native static labels.
 
@@ -127,7 +141,7 @@ def put_native_support_page_labels(put):
     """
     put_native_feedback_labels(put)
 
-    put(2, "INPUT ROUTING", 8, 12)
+    put_native_page_heading(put, 2, "INPUT ROUTING")
     for input_index, (mode_row, value_row, depth_row) in enumerate(
             NATIVE_INPUT_TEXT_ROWS):
         put(2, f"IN{input_index}", 8, mode_row)
@@ -137,23 +151,23 @@ def put_native_support_page_labels(put):
         # renderer. Keeping it out of the static template prevents AUDIO lanes
         # from inheriting a stale CV-only label.
 
-    put(3, "BANK GROUPS", 8, 13)
+    put_native_page_heading(put, 3, "BANK GROUPS")
     put(3, "BANKS", 20, 16)
     for group, row in enumerate(NATIVE_GROUP_TEXT_ROWS):
         put(3, f"GRP{group + 1}", 8, row)
 
-    put(4, "OUTPUT ROUTING", 8, 13)
+    put_native_page_heading(put, 4, "OUTPUT ROUTING")
     for x0, label in zip((16, 20, 24, 28, 32),
                          ("G1", "G2", "G3", "G4", "DRY")):
         put(4, label, x0, 18)
     for output, row in enumerate(NATIVE_OUTPUT_TEXT_ROWS):
         put(4, f"OUT{output}", 9, row)
 
-    put(5, "STATE AND DISPLAY", 8, 13)
+    put_native_page_heading(put, 5, "STATE AND DISPLAY")
     put(5, "PALETTE", 13, 17)
     put(5, "SAVE DEFAULT", 8, 21)
 
-    put(6, "PRESET", 8, 11)
+    put_native_page_heading(put, 6, "PRESET")
     put(6, "ENABLE", 8, 16)
     put(6, "SET FREQ", 8, 22)
     put(6, "HZ", 26, 22)

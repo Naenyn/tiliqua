@@ -32,11 +32,17 @@ from top.rezo.ui_common import (
     NATIVE_OUTPUT_ROW_CENTERS,
     NATIVE_OUTPUT_ROW_SELECT_X0,
     NATIVE_OUTPUT_TEXT_ROWS,
+    NATIVE_PAGE_HEADING_ROW,
+    NATIVE_PAGE_HEADER_CHIP_Y0,
+    NATIVE_PAGE_HEADER_CHIP_Y1,
+    NATIVE_PAGE_HEADER_SELECT_Y0,
+    NATIVE_PAGE_HEADER_SELECT_Y1,
     native_feedback_track_rows,
     native_input_unity_x,
     native_main_fader_endpoint,
     put_legacy_support_page_labels,
     put_native_feedback_labels,
+    put_native_page_heading,
     put_native_page_headers,
     put_native_support_page_labels,
 )
@@ -126,6 +132,23 @@ def test_shared_native_rows_and_centers_match_family_layout():
     assert NATIVE_OUTPUT_COL_CENTERS == (270, 334, 398, 462, 534)
     assert NATIVE_MAIN_CONTROL_TEXT_ROWS == (28, 30, 32, 34, 36)
     assert NATIVE_MAIN_CONTROL_Y0S == (448, 480, 512, 544, 576)
+    assert NATIVE_PAGE_HEADING_ROW == 12
+    assert (NATIVE_PAGE_HEADER_CHIP_Y0,
+            NATIVE_PAGE_HEADER_CHIP_Y1) == (184, 216)
+    assert (NATIVE_PAGE_HEADER_SELECT_Y0,
+            NATIVE_PAGE_HEADER_SELECT_Y1) == (180, 218)
+    assert NATIVE_PAGE_HEADER_SELECT_Y1 == NATIVE_INPUT_PANEL_Y0
+
+
+def test_native_page_heading_uses_the_shared_row_and_accepts_a_column():
+    calls = []
+    put_native_page_heading(lambda *args: calls.append(args), 7, "LAYOUT")
+    put_native_page_heading(lambda *args: calls.append(args), 0, "MODE", 24)
+
+    assert calls == [
+        (7, "LAYOUT", 8, NATIVE_PAGE_HEADING_ROW),
+        (0, "MODE", 24, NATIVE_PAGE_HEADING_ROW),
+    ]
 
 
 def test_shared_native_headers_preserve_product_identity_and_title_centers():
@@ -149,7 +172,12 @@ def test_shared_support_labels_cover_every_common_page():
     put_native_support_page_labels(lambda *args: calls.append(args))
 
     assert (1, "FEEDBACK", 8, NATIVE_FEEDBACK_AMOUNT_ROW) in calls
-    assert (2, "INPUT ROUTING", 8, 12) in calls
+    assert (1, "FEEDBACK SOURCES", 8, NATIVE_PAGE_HEADING_ROW) in calls
+    assert (2, "INPUT ROUTING", 8, NATIVE_PAGE_HEADING_ROW) in calls
+    assert (3, "BANK GROUPS", 8, NATIVE_PAGE_HEADING_ROW) in calls
+    assert (4, "OUTPUT ROUTING", 8, NATIVE_PAGE_HEADING_ROW) in calls
+    assert (5, "STATE AND DISPLAY", 8, NATIVE_PAGE_HEADING_ROW) in calls
+    assert (6, "PRESET", 8, NATIVE_PAGE_HEADING_ROW) in calls
     assert not any(page == 2 and text == "DEPTH"
                    for page, text, _x, _row in calls)
     assert (3, "GRP4", 8, 29) in calls

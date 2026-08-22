@@ -217,7 +217,7 @@ def test_clock_walk_and_shift_chips_use_their_own_semantic_widths():
 
 def test_bank_mode_value_has_the_same_bright_chip_as_other_values():
     panel = RezoTileDisplay.PALETTE["panel"]
-    assert _render_samples(page=0, points=((500, 180),)) == [
+    assert _render_samples(page=0, points=((500, 200),)) == [
         (panel, panel, panel),
     ]
 
@@ -227,7 +227,7 @@ def test_bank_value_chips_keep_fixed_geometry_across_labels():
     blank = RezoTileDisplay.PALETTE["blank"]
     assert _render_samples(
         page=0,
-        points=((351, 180), (352, 180), (563, 180), (564, 180)),
+        points=((351, 200), (352, 200), (563, 200), (564, 200)),
     ) == [
         (panel, panel, panel), (blank, blank, blank),
         (panel, panel, panel), (blank, blank, blank),
@@ -236,7 +236,7 @@ def test_bank_value_chips_keep_fixed_geometry_across_labels():
         page=0,
         preset=6,
         clock_mode=1,
-        points=((351, 180), (352, 180), (563, 180), (564, 180)),
+        points=((351, 200), (352, 200), (563, 200), (564, 200)),
     ) == [
         (panel, panel, panel), (blank, blank, blank),
         (panel, panel, panel), (blank, blank, blank),
@@ -245,8 +245,8 @@ def test_bank_value_chips_keep_fixed_geometry_across_labels():
 
 def test_even_preset_uses_all_four_visible_glyphs():
     bounds, = _render_text_bounds(
-        (252, 164, 352, 200), page=0, preset=2)
-    assert bounds == (272, 176, 330, 190)
+        (252, 180, 352, 218), page=0, preset=2)
+    assert bounds == (272, 192, 330, 206)
 
 
 def test_input_text_chips_use_fixed_widths_and_shared_row_centres():
