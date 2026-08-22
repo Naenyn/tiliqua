@@ -3528,7 +3528,7 @@ class RezoTileDisplay(wiring.Component):
 
             put_native_support_page_labels(put_native)
             put_native(5, "ADVANCED", 8, 27)
-            put_native(5, "CROSS CURVE", 8, 31)
+            put_native(5, "CROSS CURVE", 9, 31)
 
             put_native(6, "MOTION", 8, 27)
             put_native(6, "LFO SHAPE", 8, 29)
@@ -3890,7 +3890,7 @@ class RezoTileDisplay(wiring.Component):
                 writer_address_init[52 + pos] = writer_cell(5, 22, 21, pos)
                 # Every BANDS layout value uses the same fixed left origin.
                 writer_address_init[59 + pos] = writer_cell(
-                    6, 17, NATIVE_PAGE_HEADING_ROW, pos)
+                    6, 16, NATIVE_PAGE_HEADING_ROW, pos)
             for pos in range(5):
                 writer_address_init[66 + pos] = writer_cell(6, 20, 22, pos)
             for n, row in enumerate(compact_output_text_rows):
@@ -3904,7 +3904,7 @@ class RezoTileDisplay(wiring.Component):
                 writer_address_init[91 + pos] = writer_cell(6, 18, 31, pos)
                 writer_address_init[95 + pos] = writer_cell(6, 18, 33, pos)
             for pos in range(8):
-                writer_address_init[99 + pos] = writer_cell(5, 20, 31, pos)
+                writer_address_init[99 + pos] = writer_cell(5, 22, 31, pos)
             for n, (_, _, depth_row) in enumerate(compact_input_text_rows):
                 for pos in range(5):
                     writer_address_init[107 + n * 5 + pos] = writer_cell(
@@ -4365,15 +4365,17 @@ class RezoTileDisplay(wiring.Component):
                 (NATIVE_FEEDBACK_DAMPING_CHIP_Y1 + 4
                  if self.compact_layout else 540), t=3)
         layout_chip = bands_page & self.rect(
-            x, y, 256 if self.compact_layout else 136,
+            x, y, (native_value_chip_x0(16)
+                   if self.compact_layout else 136),
             NATIVE_PAGE_HEADER_CHIP_Y0 if self.compact_layout else 100,
-            384 if self.compact_layout else 264,
+            368 if self.compact_layout else 264,
             NATIVE_PAGE_HEADER_CHIP_Y1 if self.compact_layout else 138)
         layout_select = bands_page & (
             self.selected == RezoHardwareUI.TARGET_BAND_LAYOUT) & self.outline(
-                x, y, 252 if self.compact_layout else 131,
+                x, y, (native_value_chip_x0(16) - 4
+                       if self.compact_layout else 131),
                 NATIVE_PAGE_HEADER_SELECT_Y0 if self.compact_layout else 95,
-                388 if self.compact_layout else 269,
+                372 if self.compact_layout else 269,
                 NATIVE_PAGE_HEADER_SELECT_Y1 if self.compact_layout else 143,
                 t=3)
         cross_layout_chip = cross_page & self.rect(
@@ -4391,17 +4393,17 @@ class RezoTileDisplay(wiring.Component):
                 NATIVE_PAGE_HEADER_SELECT_Y1 if self.compact_layout else 143,
                 t=3)
         cross_curve_chip = advanced_page & self.rect(
-            x, y, (native_value_chip_x0(20)
+            x, y, (native_value_chip_x0(22)
                    if self.compact_layout else 320),
             484 if self.compact_layout else 452,
-            448,
+            488 if self.compact_layout else 448,
             524 if self.compact_layout else 492)
         cross_curve_select = advanced_page & (
             self.selected == RezoHardwareUI.TARGET_CROSS_CURVE) & self.outline(
-                x, y, (native_value_chip_x0(20) - 4
+                x, y, (native_value_chip_x0(22) - 4
                        if self.compact_layout else 316),
                 480 if self.compact_layout else 448,
-                452,
+                492 if self.compact_layout else 452,
                 528 if self.compact_layout else 496, t=3)
 
         preset_chip = Signal()

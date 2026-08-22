@@ -4295,7 +4295,7 @@ class RezoTileDisplay(wiring.Component):
                         writer_address.eq(writer_cell(
                             # Preset names are fixed-width and use one native
                             # cell of left padding in the selector chip.
-                            0, NATIVE_PAGE_HEADING_ROW, 17 + pos,
+                            0, NATIVE_PAGE_HEADING_ROW, 16 + pos,
                             7, 11 + pos)),
                         clock_value_address.eq(
                             clock_value_bases["preset"] |
@@ -4395,7 +4395,7 @@ class RezoTileDisplay(wiring.Component):
                 with m.Case(59 + pos):
                     m.d.comb += [
                         writer_address.eq(writer_cell(
-                            6, NATIVE_PAGE_HEADING_ROW, 17 + pos,
+                            6, NATIVE_PAGE_HEADING_ROW, 16 + pos,
                             7, 9 + pos)),
                         clock_value_address.eq(
                             clock_value_bases["layout"] |
@@ -4769,19 +4769,22 @@ class RezoTileDisplay(wiring.Component):
                        if self.compact_layout else 150),
                 (NATIVE_FEEDBACK_DAMPING_CHIP_Y0 - 4
                  if self.compact_layout else 500),
-                364 if self.compact_layout else 322,
+                (NATIVE_FEEDBACK_DAMPING_CHIP_X1 + 4
+                 if self.compact_layout else 322),
                 (NATIVE_FEEDBACK_DAMPING_CHIP_Y1 + 4
                  if self.compact_layout else 540), t=3)
         layout_chip = bands_page & self.rect(
-            x, y, 256 if self.compact_layout else 136,
+            x, y, (native_value_chip_x0(16)
+                   if self.compact_layout else 136),
             NATIVE_PAGE_HEADER_CHIP_Y0 if self.compact_layout else 100,
-            384 if self.compact_layout else 264,
+            368 if self.compact_layout else 264,
             NATIVE_PAGE_HEADER_CHIP_Y1 if self.compact_layout else 138)
         layout_select = bands_page & (
             self.selected == RezoHardwareUI.TARGET_BAND_LAYOUT) & self.outline(
-                x, y, 252 if self.compact_layout else 131,
+                x, y, (native_value_chip_x0(16) - 4
+                       if self.compact_layout else 131),
                 NATIVE_PAGE_HEADER_SELECT_Y0 if self.compact_layout else 95,
-                388 if self.compact_layout else 269,
+                372 if self.compact_layout else 269,
                 NATIVE_PAGE_HEADER_SELECT_Y1 if self.compact_layout else 143,
                 t=3)
 
@@ -5046,10 +5049,10 @@ class RezoTileDisplay(wiring.Component):
                 ]
 
         # A shared four-cell value field with a fixed one-cell left inset.
-        compact_preset_x1 = 352
+        compact_preset_x1 = 328
         preset_chip_signals.append(bank_page & self.rect(
             x, y,
-            256 if self.compact_layout else 136,
+            native_value_chip_x0(16) if self.compact_layout else 136,
             NATIVE_PAGE_HEADER_CHIP_Y0 if self.compact_layout else 100,
             compact_preset_x1 if self.compact_layout else 264,
             NATIVE_PAGE_HEADER_CHIP_Y1 if self.compact_layout else 138))
@@ -5057,7 +5060,8 @@ class RezoTileDisplay(wiring.Component):
             bank_page & self.editing & (self.selected == RezoHardwareUI.TARGET_PRESET) &
             self.outline(
                 x, y,
-                252 if self.compact_layout else 131,
+                (native_value_chip_x0(16) - 4
+                 if self.compact_layout else 131),
                 NATIVE_PAGE_HEADER_SELECT_Y0 if self.compact_layout else 95,
                 compact_preset_x1 + 4 if self.compact_layout else 269,
                 NATIVE_PAGE_HEADER_SELECT_Y1 if self.compact_layout else 143,
@@ -5748,10 +5752,11 @@ class RezoTileDisplay(wiring.Component):
             bank_page & (self.selected == RezoHardwareUI.TARGET_PRESET) &
             ~self.editing & self.outline(
                 x, y,
-                252 if self.compact_layout else 131,
+                (native_value_chip_x0(16) - 4
+                 if self.compact_layout else 131),
                 (NATIVE_PAGE_HEADER_SELECT_Y0
                  if self.compact_layout else 95),
-                356 if self.compact_layout else 269,
+                332 if self.compact_layout else 269,
                 (NATIVE_PAGE_HEADER_SELECT_Y1
                  if self.compact_layout else 143), t=3))
         bank_control_y0s = (

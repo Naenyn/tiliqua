@@ -23,6 +23,11 @@ REZOMO_AND_STREZO_DISPLAYS = (
     pytest.param(RezomoTileDisplay, id="rezomo"),
     pytest.param(StrezoTileDisplay, id="strezo"),
 )
+ALL_FAMILY_DISPLAYS = (
+    pytest.param(RezoTileDisplay, id="rezo"),
+    pytest.param(RezomoTileDisplay, id="rezomo"),
+    pytest.param(StrezoTileDisplay, id="strezo"),
+)
 REZO_AND_REZOMO_UI_DISPLAYS = (
     pytest.param(RezoHardwareUI, RezoTileDisplay, id="rezo"),
     pytest.param(RezomoHardwareUI, RezomoTileDisplay, id="rezomo"),
@@ -35,6 +40,32 @@ def make_sim(display_type):
     sim.add_clock(1e-6, domain="sync")
     sim.add_clock(1e-6, domain="dvi")
     return dut, sim
+
+
+@pytest.mark.parametrize("display_type", ALL_FAMILY_DISPLAYS)
+def test_main_and_bands_preset_chips_share_the_same_left_origin(display_type):
+    dut = display_type(h_active=1280, compact_layout=True)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6, domain="sync")
+    sim.add_clock(1e-6, domain="dvi")
+    samples = []
+
+    async def bench(ctx):
+        for page, x1 in ((0, 328), (6, 368)):
+            ctx.set(dut.page, page)
+            for x in (239, 240, x1 - 1, x1):
+                # Sample below the row-11 glyphs so the chip boundary, rather
+                # than the PRESET/layout text, determines the pixel color.
+                samples.append((await sample_panel_rgb(ctx, dut, x, 214))[0])
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    palette = display_type.PALETTE
+    assert samples == [
+        palette["blank"], palette["panel"],
+        palette["panel"], palette["blank"],
+    ] * 2
 
 
 @pytest.mark.parametrize("display_type", REZO_AND_REZOMO_DISPLAYS)

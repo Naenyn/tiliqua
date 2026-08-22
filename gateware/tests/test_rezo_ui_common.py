@@ -67,11 +67,11 @@ def test_shared_native_page_geometry_matches_the_508_pixel_layout():
         NATIVE_FEEDBACK_DAMPING_CHIP_X1,
         NATIVE_FEEDBACK_DAMPING_CHIP_Y0,
         NATIVE_FEEDBACK_DAMPING_CHIP_Y1,
-    ) == (256, 360, 472, 504)
+    ) == (272, 376, 472, 504)
     assert (
         NATIVE_FEEDBACK_DAMPING_TEXT_COL,
         NATIVE_FEEDBACK_DAMPING_TEXT_ROW,
-    ) == (17, NATIVE_FEEDBACK_DAMPING_ROW)
+    ) == (18, NATIVE_FEEDBACK_DAMPING_ROW)
     assert NATIVE_FEEDBACK_DAMPING_CHIP_X0 == native_value_chip_x0(
         NATIVE_FEEDBACK_DAMPING_TEXT_COL)
 

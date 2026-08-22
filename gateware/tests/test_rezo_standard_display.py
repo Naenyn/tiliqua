@@ -474,9 +474,9 @@ def test_compact_feedback_sources_and_safety_share_centered_geometry():
         await sample(ctx, 578, 421)
         await sample(ctx, 579, 421)
 
-        # DAMPING's native chip provides one 16px cell before text at x=272.
-        await sample(ctx, 256, 474)
-        await sample(ctx, 255, 474)
+        # DAMPING leaves one label-to-chip cell, then one chip-to-text cell.
+        await sample(ctx, 272, 474)
+        await sample(ctx, 271, 474)
 
     sim.add_testbench(bench)
     sim.run()

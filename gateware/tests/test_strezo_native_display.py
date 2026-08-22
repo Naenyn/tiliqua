@@ -190,10 +190,10 @@ def test_cross_layout_chip_has_symmetric_horizontal_padding():
 
 
 def test_cross_curve_text_has_the_shared_one_cell_left_inset():
-    chip = (304, 484, 448, 524)
+    chip = (336, 484, 488, 524)
     bounds = _render_text_bounds(
         chip, page=5, cross_curve=RezoCore.CROSS_CURVE_LINEAR)
-    assert 320 <= bounds[0] <= 322
+    assert 352 <= bounds[0] <= 354
     assert bounds[0] - chip[0] in (16, 17, 18)
 
 

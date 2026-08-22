@@ -227,7 +227,7 @@ def test_bank_value_chips_keep_fixed_geometry_across_labels():
     blank = RezoTileDisplay.PALETTE["blank"]
     assert _render_samples(
         page=0,
-        points=((351, 200), (352, 200), (563, 200), (564, 200)),
+        points=((327, 200), (328, 200), (563, 200), (564, 200)),
     ) == [
         (panel, panel, panel), (blank, blank, blank),
         (panel, panel, panel), (blank, blank, blank),
@@ -236,7 +236,7 @@ def test_bank_value_chips_keep_fixed_geometry_across_labels():
         page=0,
         preset=6,
         clock_mode=1,
-        points=((351, 200), (352, 200), (563, 200), (564, 200)),
+        points=((327, 200), (328, 200), (563, 200), (564, 200)),
     ) == [
         (panel, panel, panel), (blank, blank, blank),
         (panel, panel, panel), (blank, blank, blank),
@@ -245,8 +245,8 @@ def test_bank_value_chips_keep_fixed_geometry_across_labels():
 
 def test_even_preset_uses_all_four_visible_glyphs():
     bounds, = _render_text_bounds(
-        (252, 180, 352, 218), page=0, preset=2)
-    assert bounds == (272, 192, 330, 206)
+        (236, 180, 332, 218), page=0, preset=2)
+    assert bounds == (256, 192, 314, 206)
 
 
 def test_feedback_navigation_outlines_share_the_native_track_edges():

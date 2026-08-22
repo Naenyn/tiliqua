@@ -3224,7 +3224,7 @@ class RezoTileDisplay(wiring.Component):
                 writer_address_init[52 + pos] = native_text_address(
                     5, 22, 21, pos)
                 writer_address_init[59 + pos] = native_text_address(
-                    6, 17, NATIVE_PAGE_HEADING_ROW, pos)
+                    6, 16, NATIVE_PAGE_HEADING_ROW, pos)
             for pos in range(5):
                 writer_address_init[66 + pos] = native_text_address(
                     6, 20, 22, pos)
@@ -3527,15 +3527,18 @@ class RezoTileDisplay(wiring.Component):
             damp_select = tune_page & (
                 self.selected == RezoHardwareUI.TARGET_DAMP) & self.outline(
                     text_x, text_y, NATIVE_FEEDBACK_DAMPING_CHIP_X0 - 4,
-                    NATIVE_FEEDBACK_DAMPING_CHIP_Y0 - 4, 364,
+                    NATIVE_FEEDBACK_DAMPING_CHIP_Y0 - 4,
+                    NATIVE_FEEDBACK_DAMPING_CHIP_X1 + 4,
                     NATIVE_FEEDBACK_DAMPING_CHIP_Y1 + 4, t=3)
             layout_chip = bands_page & self.rect(
-                text_x, text_y, 256, NATIVE_PAGE_HEADER_CHIP_Y0,
-                384, NATIVE_PAGE_HEADER_CHIP_Y1)
+                text_x, text_y, native_value_chip_x0(16),
+                NATIVE_PAGE_HEADER_CHIP_Y0, 368,
+                NATIVE_PAGE_HEADER_CHIP_Y1)
             layout_select = bands_page & (
                 self.selected == RezoHardwareUI.TARGET_BAND_LAYOUT) & self.outline(
-                    text_x, text_y, 252, NATIVE_PAGE_HEADER_SELECT_Y0,
-                    388, NATIVE_PAGE_HEADER_SELECT_Y1, t=3)
+                    text_x, text_y, native_value_chip_x0(16) - 4,
+                    NATIVE_PAGE_HEADER_SELECT_Y0, 372,
+                    NATIVE_PAGE_HEADER_SELECT_Y1, t=3)
         else:
             palette_chip = advanced_page & self.rect(x, y, 264, 228, 408, 268)
             palette_select = advanced_page & (
