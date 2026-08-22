@@ -84,7 +84,8 @@ try:
         add_feedback_navigation, add_group_navigation, add_input_navigation,
         native_input_depth_endpoint, native_input_gain_endpoint,
         native_input_unity_x, native_value_chip_x0,
-        native_feedback_track_rows, output_header_selection,
+        native_feedback_track_rows, native_viewport_circle_outline,
+        output_header_selection,
         put_legacy_support_page_labels, put_native_page_heading,
         put_native_page_headers,
         put_native_support_page_labels,
@@ -120,7 +121,8 @@ except ImportError:  # top_level_cli executes this file directly.
         add_feedback_navigation, add_group_navigation, add_input_navigation,
         native_input_depth_endpoint, native_input_gain_endpoint,
         native_input_unity_x, native_value_chip_x0,
-        native_feedback_track_rows, output_header_selection,
+        native_feedback_track_rows, native_viewport_circle_outline,
+        output_header_selection,
         put_legacy_support_page_labels, put_native_page_heading,
         put_native_page_headers,
         put_native_support_page_labels,
@@ -4679,12 +4681,10 @@ class RezoTileDisplay(wiring.Component):
             text_active_q & (glyph_col_q < 5) &
             glyph_rport.data.bit_select(glyph_bit, 1))
 
-        border = active & self.outline(
-            x, y,
-            106 if self.compact_layout else 12,
-            106 if self.compact_layout else 12,
-            614 if self.compact_layout else 708,
-            614 if self.compact_layout else 708, t=2)
+        border = active & (
+            native_viewport_circle_outline(m, x, text_y_pre)
+            if self.compact_layout else
+            self.outline(x, y, 12, 12, 708, 708, t=2))
         title_panel = active & self.rect(
             x, y,
             112 if self.compact_layout else 20,

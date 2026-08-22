@@ -102,8 +102,8 @@ def _render_text_bounds(*regions, **values):
     return result
 
 
-def test_native_canvas_is_centered_without_scaling_on_standard_video():
-    points = ((106, 106), (613, 613), (105, 300), (614, 300))
+def test_native_canvas_shows_round_panel_edge_on_standard_video():
+    points = ((0, 359), (719, 360), (106, 300), (613, 300))
     pixels = _render_samples(points=points)
     line = RezoTileDisplay.PALETTE["line"]
     blank = RezoTileDisplay.PALETTE["blank"]

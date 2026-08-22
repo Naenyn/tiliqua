@@ -43,6 +43,39 @@ def make_sim(display_type):
 
 
 @pytest.mark.parametrize("display_type", ALL_FAMILY_DISPLAYS)
+def test_native_preview_draws_round_panel_edge_not_safe_square(display_type):
+    dut = display_type(h_active=1280, compact_layout=True)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6, domain="sync")
+    sim.add_clock(1e-6, domain="dvi")
+    samples = []
+
+    async def bench(ctx):
+        # Cardinal points touch the 720x720 canvas boundary. The former
+        # 508x508 square's side midpoints must now be blank.
+        for x, y in ((0, 359), (1, 359), (2, 359),
+                     (719, 360), (718, 360), (717, 360),
+                     (359, 0), (359, 1), (359, 2),
+                     (360, 719), (360, 718), (360, 717),
+                     (106, 300), (613, 300),
+                     (300, 106), (300, 613)):
+            samples.append((await sample_panel_rgb(ctx, dut, x, y))[0])
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    line = display_type.PALETTE["line"]
+    blank = display_type.PALETTE["blank"]
+    assert samples == [
+        line, line, blank,
+        line, line, blank,
+        line, line, blank,
+        line, line, blank,
+        blank, blank, blank, blank,
+    ]
+
+
+@pytest.mark.parametrize("display_type", ALL_FAMILY_DISPLAYS)
 def test_main_and_bands_preset_chips_share_the_same_left_origin(display_type):
     dut = display_type(h_active=1280, compact_layout=True)
     sim = Simulator(dut)

@@ -236,8 +236,8 @@ def test_compact_round_layout_keeps_native_text_and_uses_top_arc():
     ]
 
 
-def test_compact_safe_square_has_exact_native_508px_bounds():
-    """The page outline is authored directly at [106,614), not rescaled."""
+def test_compact_safe_square_outline_is_removed():
+    """Interactive layout bounds remain, but their old frame is absent."""
     dut = RezoTileDisplay(
         h_active=720, rotate_left=False, compact_layout=True)
     sim = Simulator(dut)
@@ -268,12 +268,7 @@ def test_compact_safe_square_has_exact_native_508px_bounds():
 
     palette = RezoTileDisplay.PALETTE
     assert 614 - 106 == 508
-    assert samples == [
-        palette["blank"], palette["line"],
-        palette["line"], palette["blank"],
-        palette["blank"], palette["line"],
-        palette["line"], palette["blank"],
-    ]
+    assert samples == [palette["blank"]] * len(samples)
 
 
 def test_compact_labels_use_native_control_rows():

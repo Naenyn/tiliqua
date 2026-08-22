@@ -98,8 +98,8 @@ def _render_text_bounds(region, **values):
             max(x for x, _ in lit) + 1, max(y for _, y in lit) + 1)
 
 
-def test_native_canvas_uses_the_508_pixel_safe_square():
-    points = ((106, 106), (613, 613), (105, 300), (614, 300))
+def test_native_canvas_shows_the_round_panel_edge():
+    points = ((0, 359), (719, 360), (106, 300), (613, 300))
     line = RezoTileDisplay.PALETTE["line"]
     blank = RezoTileDisplay.PALETTE["blank"]
     assert _render_samples(points=points) == [

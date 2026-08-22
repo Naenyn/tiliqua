@@ -3,7 +3,10 @@
 # SPDX-License-Identifier: CERN-OHL-S-2.0
 """Shared REZO-family page geometry and small rendering expressions."""
 
-from amaranth import Mux
+from math import isqrt
+
+from amaranth import Mux, unsigned
+from amaranth.lib.memory import Memory
 
 
 COMMON_PAGE_TITLES = (
@@ -97,6 +100,40 @@ NATIVE_FEEDBACK_DAMPING_TEXT_ROW = NATIVE_FEEDBACK_DAMPING_ROW
 def native_value_chip_x0(text_col):
     """Return the chip edge one standard inset left of a text-RAM column."""
     return text_col * 16 - NATIVE_VALUE_CHIP_TEXT_INSET
+
+
+def native_viewport_circle_outline(m, x, lookup_y):
+    """Return a thin guide for the edge of the native 720px round panel.
+
+    Native pixels are centred between coordinates 359 and 360, so doubled
+    absolute coordinates keep the ring exactly symmetric without fractional
+    arithmetic. A synchronous row lookup is prefetched alongside the existing
+    coordinate pipeline; this avoids putting two live squares on the DVI path.
+    A two-pixel inward ring keeps the nominal 360px-radius edge visible at all
+    four active-video boundaries.
+    """
+    inner_squared = 716 * 716
+    outer_squared = 720 * 720
+    bounds_init = []
+    for pixel_y in range(720):
+        dy2 = abs((pixel_y << 1) - 719)
+        inner_remainder = max(0, inner_squared - dy2 * dy2)
+        outer_remainder = outer_squared - dy2 * dy2
+        min_dx2 = isqrt(inner_remainder)
+        if min_dx2 * min_dx2 < inner_remainder:
+            min_dx2 += 1
+        max_dx2 = isqrt(outer_remainder)
+        bounds_init.append(min_dx2 | (max_dx2 << 10))
+
+    m.submodules.native_viewport_circle_mem = circle_mem = Memory(
+        shape=unsigned(20), depth=720, init=bounds_init,
+        attrs={"ram_style": "block"})
+    circle_rport = circle_mem.read_port(domain="dvi")
+    m.d.comb += circle_rport.addr.eq(lookup_y)
+
+    dx2 = Mux(x < 360, 719 - (x << 1), (x << 1) - 719)
+    return ((dx2 >= circle_rport.data[:10]) &
+            (dx2 <= circle_rport.data[10:20]))
 
 
 def native_feedback_track_rows(rect, x, y, x0, x1):
