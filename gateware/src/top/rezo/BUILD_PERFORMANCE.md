@@ -593,3 +593,12 @@ and 21 DP16KD. It passes the 1.25% gate at 388.80 / 73.05 / 65.49 / 76.06 MHz
 for DVI5X / AUDIO / SYNC / DVI. The verified archive
 `strezo-0400fbf4-r5.tar.gz` was flashed to slot 4. No circular target was
 invoked.
+
+## 2026-08-22 STREZO OUTPUT side-chip correction
+
+The STREZO-only OUTPUT label/chip correction at `a7f4a56e` passes the STREZO
+and shared-family regression sets (`81 passed`). Standard STREZO seed 4 uses
+19,982 LUT4, 23,240 COMB (1,048 free), 6,926 FF, and 21 DP16KD. It passes the
+1.25% gate at 473.04 / 69.09 / 63.04 / 80.48 MHz for DVI5X / AUDIO / SYNC /
+DVI. The verified archive `strezo-a7f4a56e-r5.tar.gz` was flashed to slot 4.
+No circular target was invoked.

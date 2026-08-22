@@ -1642,3 +1642,22 @@ AUDIO, 65.49 MHz SYNC, and 76.06 MHz DVI. Archive
 its verified `top.bit` SHA-256 is
 `5c3a7db33cc3b935a4a7986326132d0a47562aed8ec0f308a396baee15f28156`.
 The archive was flashed successfully to slot 4. No circular target was built.
+
+## STREZO OUTPUT side-chip correction (2026-08-22)
+
+Hardware photo `2FBB3F76-027D-43C4-8DB0-0B51956F248F.JPG` showed that
+STREZO's extra L/R source chip began inside the `OUT#` label area. Commit
+`a7f4a56e` moves only STREZO's row labels one native cell left and narrows the
+chip from x=192..236 to x=196..236. Its right and vertical edges are unchanged;
+the L/R writer remains at column 13, which gives the glyph balanced visible
+padding in the narrower chip. The selection outline follows the new left edge.
+
+The STREZO and shared-family suites pass 81 tests, including measured label
+gutter, chip boundaries, and glyph-padding contracts. Only standard
+`1280x720p60` STREZO was built. Seed 4 passes at 473.04 MHz DVI5X, 69.09 MHz
+AUDIO, 63.04 MHz SYNC, and 80.48 MHz DVI. Archive
+`strezo-a7f4a56e-r5.tar.gz` has SHA-256
+`5073e01e7a504031483a1f4bded6edbb36b14bfe87dc48c8df58b0f065b8f7f0`;
+its verified `top.bit` SHA-256 is
+`544c1902ea21355d610516e4f066b7755f4144625cc230d3e3f08079cdf28e80`.
+The archive was flashed successfully to slot 4. No circular target was built.
