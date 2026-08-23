@@ -11,9 +11,33 @@ pub fn step_group_index(index: u32, delta: i32) -> u32 {
     (index as i32 + delta).rem_euclid(16) as u32
 }
 
+/// Move through one circular navigation list in encoder direction order.
+pub fn step_target(current: u8, targets: &[u8], direction: i8) -> u8 {
+    let position = targets
+        .iter()
+        .position(|target| *target == current)
+        .unwrap_or(0);
+    let next = if direction > 0 {
+        (position + 1) % targets.len()
+    } else if position == 0 {
+        targets.len() - 1
+    } else {
+        position - 1
+    };
+    targets[next]
+}
+
 /// Apply one or more coarse 1/256 UI steps to a 16-bit control value.
 pub fn clamp_control(value: u32, delta: i32, lo: u32, hi: u32) -> u32 {
     (value as i32 + delta * 256).clamp(lo as i32, hi as i32) as u32
+}
+
+/// Step the editable high byte of a 16-bit value without disturbing its
+/// precision byte. REZO input gain keeps 0xCC in that byte so exact unity and
+/// the CPU-less endpoint behavior survive every encoder edit.
+pub fn step_coarse_byte(value: u32, delta: i32) -> u32 {
+    let coarse = ((value >> 8) as i32 + delta).clamp(0, 255) as u32;
+    (coarse << 8) | (value & 0xff)
 }
 
 pub const ACCEL_WINDOW_LOOPS: u8 = 60;
@@ -87,6 +111,17 @@ mod tests {
     }
 
     #[test]
+    fn navigation_wraps_and_recovers_from_an_invisible_target() {
+        let targets = [0, 4, 7, 9];
+        assert_eq!(step_target(0, &targets, 1), 4);
+        assert_eq!(step_target(9, &targets, 1), 0);
+        assert_eq!(step_target(0, &targets, -1), 9);
+        assert_eq!(step_target(4, &targets, -1), 0);
+        assert_eq!(step_target(99, &targets, 1), 4);
+        assert_eq!(step_target(99, &targets, -1), 9);
+    }
+
+    #[test]
     fn scalar_steps_match_cpu_less_coarse_ranges() {
         assert_eq!(clamp_control(0x2000, 1, 0, 0x8000), 0x2100);
         assert_eq!(clamp_control(0x2000, -1, 0, 0x8000), 0x1f00);
@@ -96,6 +131,12 @@ mod tests {
         assert_eq!(clamp_control(0x2000, -64, 0x1000, 0x8000), 0x1000);
         assert_eq!(clamp_control(0x7000, 32, 0x1000, 0x8000), 0x8000);
         assert_eq!(clamp_control(0x2000, 128, 0, 0x5fff), 0x5fff);
+
+        assert_eq!(step_coarse_byte(0xcccc, 1), 0xcdcc);
+        assert_eq!(step_coarse_byte(0xcccc, -1), 0xcbcc);
+        assert_eq!(step_coarse_byte(0xffcc, 1), 0xffcc);
+        assert_eq!(step_coarse_byte(0x00cc, -1), 0x00cc);
+        assert_eq!(step_coarse_byte(0x0000, 255), 0xff00);
     }
 
     #[test]

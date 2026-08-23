@@ -5,7 +5,7 @@ use core::ptr::{read_volatile, write_volatile};
 use panic_halt as _;
 use rezo_hybrid_probe_fw::{
     clamp_control, crc32_bzip2_update, gray_encode, pack_bits, progressive_edit_level,
-    step_group_index, unpack_bits, GROUP_INDEX_DEFAULTS,
+    step_coarse_byte, step_group_index, step_target, unpack_bits, GROUP_INDEX_DEFAULTS,
 };
 use riscv_rt::entry;
 
@@ -64,7 +64,9 @@ const LEGACY_STATE_WORDS: usize = 42;
 const HEADER_BYTES: usize = 16;
 const RECORD_BYTES: usize = HEADER_BYTES + STATE_WORDS * 2;
 const MAGIC: u32 = 0x4f5a4552;
-const VERSION: u16 = 3;
+// The CPU and CPU-less implementations use the exact same 46-word schema.
+// Retaining version 2 keeps saved defaults interchangeable between them.
+const VERSION: u16 = 2;
 
 const PAGE: u8 = 0;
 const PRESET: u8 = 1;
@@ -92,9 +94,9 @@ const ENABLE: u8 = 93;
 const FREQUENCY: u8 = 103;
 
 const MAIN_BANK: &[u8] = &[0, 1, 60, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
-const MAIN_FILTER: &[u8] = &[0, 61, 60, 62, 63, 64, 12, 13];
+const MAIN_FILTER_NARROW: &[u8] = &[0, 61, 60, 62, 63, 12, 13];
+const MAIN_FILTER_WIDE: &[u8] = &[0, 61, 60, 62, 63, 64, 12, 13];
 const FEEDBACK_PAGE: &[u8] = &[0, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 14, 15, 16, 17];
-const INPUT_PAGE: &[u8] = &[0, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29];
 const GROUP_PAGE: &[u8] = &[0, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39];
 const OUTPUT_BANK: &[u8] = &[
     0, 117, 118, 119, 120, 121, 113, 40, 41, 42, 43, 44, 114, 45, 46, 47, 48, 49, 115, 50, 51, 52,
@@ -234,7 +236,6 @@ unsafe fn scan_sector(
     let version = read_u16(record, 4);
     let declared_words = read_u16(record, 6) as usize;
     let accepted = (version == VERSION && declared_words == STATE_WORDS)
-        || (version == 2 && declared_words == STATE_WORDS)
         || (version == 1 && declared_words == LEGACY_STATE_WORDS);
     if !accepted {
         return None;
@@ -436,10 +437,10 @@ impl State {
 
     fn targets(&self) -> &'static [u8] {
         match self.page {
-            0 if self.filter_mode => MAIN_FILTER,
+            0 if self.filter_mode && self.filter_type >= 2 => MAIN_FILTER_WIDE,
+            0 if self.filter_mode => MAIN_FILTER_NARROW,
             0 => MAIN_BANK,
             1 => FEEDBACK_PAGE,
-            2 => INPUT_PAGE,
             3 => GROUP_PAGE,
             4 if self.filter_mode => OUTPUT_FILTER,
             4 => OUTPUT_BANK,
@@ -451,19 +452,26 @@ impl State {
     }
 
     fn navigate(&mut self, direction: i8) {
+        if self.page == 2 {
+            // AUDIO lanes expose MODE and GAIN. CV lanes expose MODE, TARGET,
+            // and DEPTH. Match the CPU-less conditional navigation exactly.
+            let mut input_targets = [0u8; 13];
+            let mut len = 1;
+            for lane in 0..4 {
+                let target = INPUT + lane * 3;
+                input_targets[len] = target;
+                input_targets[len + 1] = target + 1;
+                len += 2;
+                if self.input_modes[lane as usize] != 0 {
+                    input_targets[len] = target + 2;
+                    len += 1;
+                }
+            }
+            self.selected = step_target(self.selected, &input_targets[..len], direction);
+            return;
+        }
         let targets = self.targets();
-        let p = targets
-            .iter()
-            .position(|x| *x == self.selected)
-            .unwrap_or(0);
-        let p = if direction > 0 {
-            (p + 1) % targets.len()
-        } else if p == 0 {
-            targets.len() - 1
-        } else {
-            p - 1
-        };
-        self.selected = targets[p];
+        self.selected = step_target(self.selected, targets, direction);
     }
 
     fn change_page(&mut self, direction: i8) {
@@ -506,9 +514,14 @@ impl State {
             }
             self.editing = false;
         } else {
-            if (BAND..BAND + 10).contains(&self.selected)
-                && self.enables[(self.selected - BAND) as usize] == 0
-            {
+            let disabled_bank_band = if (BAND..BAND + 10).contains(&self.selected) {
+                self.enables[(self.selected - BAND) as usize] == 0
+            } else if (GROUP..GROUP + 10).contains(&self.selected) {
+                !self.filter_mode && self.enables[(self.selected - GROUP) as usize] == 0
+            } else {
+                false
+            };
+            if disabled_bank_band {
                 return false;
             }
             if self.selected == LAYOUT {
@@ -565,7 +578,7 @@ impl State {
                         self.input_modes[n] ^= 1;
                     }
                     1 if self.input_modes[n] == 0 => {
-                        self.input_gains[n] = add(self.input_gains[n], d * 256, 0, 0xFFFF);
+                        self.input_gains[n] = step_coarse_byte(self.input_gains[n], d);
                     }
                     1 => {
                         self.cv_targets[n] = (self.cv_targets[n] as i32 + d).rem_euclid(7) as u32;
@@ -759,6 +772,13 @@ impl State {
         }
         self.layout = unpack_bits(words, &mut bit, 2);
         self.frequencies[9] |= unpack_bits(words, &mut bit, 2);
+        // Older V2 records could retain a dormant USER vector while naming a
+        // factory layout. The CPU-less UI materializes that factory vector on
+        // restore; do the same here for exact cross-implementation behavior.
+        if self.layout != 3 {
+            self.layout_preview = self.layout;
+            self.apply_layout();
+        }
         self.layout_preview = self.layout;
         self.frequency_preview = self.frequencies[0];
         self.editing = false;
@@ -972,14 +992,16 @@ fn main() -> ! {
         // Wait until the bootloader's slot detector has either supplied a
         // validated slot or explicitly reported that no safe slot exists.
         // The flash peripheral itself independently enforces this decision.
-        flash_available = (0..BOOT_SLOT_TIMEOUT_POLLS).find_map(|_| {
-            let slot = read32(FLASH_SLOT);
-            if slot & 1 != 0 {
-                Some(slot & 2 != 0)
-            } else {
-                None
-            }
-        }).unwrap_or(false);
+        flash_available = (0..BOOT_SLOT_TIMEOUT_POLLS)
+            .find_map(|_| {
+                let slot = read32(FLASH_SLOT);
+                if slot & 1 != 0 {
+                    Some(slot & 2 != 0)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(false);
         if flash_available {
             if let Some(generation) = scan_sector(0, &mut record, &mut words) {
                 state.load_words(&words);
