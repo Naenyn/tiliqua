@@ -1693,13 +1693,13 @@ The archive was flashed successfully to slot 4. No circular target was built.
 
 ## CPU-owned REZO control plane (2026-08-23)
 
-Branch `codex/rezo-cpu-framebuffer-prototype` now contains a production-oriented
-CPU control target rather than a framebuffer experiment. VexiiRiscv owns
-navigation, parameter state, and slot-local persistence; the existing hardware
-continues to own all audio DSP, CV, LEDs, and scanline rendering. The target is
-`rezo_cpu`, and its implementation now lives with the REZO family under
-`cpu_control.py` and `cpu_fw/`; the temporary hybrid-probe package has been
-removed.
+Branch `codex/rezo-cpu-framebuffer-prototype`, implementation commit
+`22f0a23b`, now contains a production-oriented CPU control target rather than a
+framebuffer experiment. VexiiRiscv owns navigation, parameter state, and
+slot-local persistence; the existing hardware continues to own all audio DSP,
+CV, LEDs, and scanline rendering. The target is `rezo_cpu`, and its
+implementation now lives with the REZO family under `cpu_control.py` and
+`cpu_fw/`; the temporary hybrid-probe package has been removed.
 
 The firmware navigation and persistence paths were audited against CPU-less
 REZO. BANK/FILTER page order, conditional INPUT targets, conditional WIDTH,
@@ -1723,12 +1723,13 @@ The final standard `1280x720p60` route uses seed 1 and passes at 423.37 MHz
 DVI5X, 71.75 MHz AUDIO, 77.83 MHz DVI, and 61.84 MHz SYNC. Utilization is
 21,878 / 24,288 TRELLIS_COMB (90%), 8,119 TRELLIS_FF (33%), and 36 / 56
 DP16KD (64%). The 14,884-byte firmware image fits inside its 16 KiB ROM.
-Archive `rezo-cpu-77706ed9-r5.tar.gz` has SHA-256
-`2014d222f9e773f14b8b31a31c7e92ff988fab82afac8017324c626eb26be797`;
+Archive `rezo-cpu-22f0a23b-r5.tar.gz` has SHA-256
+`d7a0a572394c7528fe7d076eba4b1bca853817171b46164d73b4fa2e6a45943f`;
 its routed and archived `top.bit` SHA-256 is
 `2c5ccbc1ceb7f3a9b30860302a7ab777c725750b73868b69ce90873969bea1fb`.
-The archive tag reflects the dirty-tree base commit. No circular target was
-built and, with the rack powered down, nothing was flashed.
+This is byte-for-byte identical to the preceding hardware-tested dirty build.
+The clean archive was flashed successfully to slot 2 on Tiliqua R5 serial
+`E46534A193222B21`. No circular target was built.
 
 Subsequent hardware validation exercised maximum DRIVE, RES, and FB with the
 loosest KNEE, CEIL, and DAMP settings. The combination can still enter a harsh,
