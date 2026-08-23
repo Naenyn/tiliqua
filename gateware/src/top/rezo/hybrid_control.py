@@ -8,10 +8,12 @@ range is limited to the active slot's option sectors.
 """
 
 from amaranth import Array, Module, Signal, signed, unsigned
-from amaranth.lib import wiring
+from amaranth.lib import memory, wiring
 from amaranth.lib.wiring import Component
+from amaranth.utils import exact_log2
 from amaranth_soc import csr, wishbone
 from amaranth_soc.csr.wishbone import WishboneCSRBridge
+from amaranth_soc.memory import MemoryMap
 from luna_soc.gateware.core import blockram
 from luna_soc.util import readbin
 
@@ -24,6 +26,88 @@ try:
 except ImportError:  # top_level_cli executes the REZO source directly.
     from core_common import RezoCoreConstants
     from flash_window import RezoFlashWindowPeripheral
+
+
+class RezoProgramMemory(wiring.Component):
+    """Dual-read-port firmware ROM with a direct CPU instruction port.
+
+    Vexii's instruction and data buses previously shared an arbiter before
+    reaching the program ROM. That made data-address decode part of the CPU's
+    instruction-response critical path. A native ECP5 dual-port block RAM
+    serves instruction fetches directly while retaining a second read port for
+    constants loaded through the data bus, without duplicating storage.
+    """
+
+    def __init__(self, *, size, init=()):
+        if not isinstance(size, int) or size <= 0 or size & (size - 1):
+            raise ValueError("size must be a positive power of two")
+        depth = size // 4
+        self._mem = memory.Memory(shape=unsigned(32), depth=depth, init=init)
+        local_addr_width = exact_log2(depth)
+        features = {"cti", "bte", "err"}
+        super().__init__({
+            "ibus": wiring.In(wishbone.Signature(
+                addr_width=30, data_width=32, granularity=8,
+                features=features)),
+            "dbus": wiring.In(wishbone.Signature(
+                addr_width=local_addr_width, data_width=32, granularity=8,
+                features=features)),
+        })
+
+        ibus_map = MemoryMap(addr_width=32, data_width=8)
+        ibus_map.add_resource(
+            self, name=("memory", "code_ibus"), size=size)
+        self.ibus.memory_map = ibus_map
+        dbus_map = MemoryMap(addr_width=exact_log2(size), data_width=8)
+        dbus_map.add_resource(
+            self, name=("memory", "code_dbus"), size=size)
+        self.dbus.memory_map = dbus_map
+
+    @property
+    def init(self):
+        return self._mem.init
+
+    @init.setter
+    def init(self, init):
+        self._mem.init = init
+
+    @staticmethod
+    def _attach_read_port(m, bus, read_port):
+        incremented = Signal.like(bus.adr)
+        with m.Switch(bus.bte):
+            with m.Case(wishbone.BurstTypeExt.LINEAR):
+                m.d.comb += incremented.eq(bus.adr + 1)
+            with m.Case(wishbone.BurstTypeExt.WRAP_4):
+                m.d.comb += [
+                    incremented[:2].eq(bus.adr[:2] + 1),
+                    incremented[2:].eq(bus.adr[2:]),
+                ]
+            with m.Case(wishbone.BurstTypeExt.WRAP_8):
+                m.d.comb += [
+                    incremented[:3].eq(bus.adr[:3] + 1),
+                    incremented[3:].eq(bus.adr[3:]),
+                ]
+            with m.Case(wishbone.BurstTypeExt.WRAP_16):
+                m.d.comb += [
+                    incremented[:4].eq(bus.adr[:4] + 1),
+                    incremented[4:].eq(bus.adr[4:]),
+                ]
+
+        m.d.comb += [
+            read_port.addr.eq(bus.adr),
+            bus.dat_r.eq(read_port.data),
+            bus.err.eq(0),
+        ]
+        with m.If((bus.cti == wishbone.CycleType.INCR_BURST) & bus.ack):
+            m.d.comb += read_port.addr.eq(incremented)
+        m.d.sync += bus.ack.eq(bus.cyc & bus.stb & ~bus.ack)
+
+    def elaborate(self, platform):
+        m = Module()
+        m.submodules.mem = self._mem
+        self._attach_read_port(m, self.ibus, self._mem.read_port())
+        self._attach_read_port(m, self.dbus, self._mem.read_port())
+        return m
 
 
 class RezoFirmwareUIState:
@@ -259,23 +343,19 @@ class RezoHybridControlPlane(Component):
             reset_addr=self.MAINRAM_BASE,
         )
 
-        self.wb_arbiter = wishbone.Arbiter(
-            addr_width=30, data_width=32, granularity=8,
-            features={"cti", "bte", "err"})
-        self.wb_decoder = wishbone.Decoder(
+        self.dbus_decoder = wishbone.Decoder(
             addr_width=30, data_width=32, granularity=8,
             alignment=0, features={"cti", "bte", "err"})
 
         # Keep immutable firmware and mutable stack/state in separate banks.
         # Persistence raises the code budget to 16 KiB, while the bounded UI
         # state and measured 1,136-byte main frame fit in the 2 KiB data RAM.
-        self.mainram = blockram.Peripheral(
-            size=self.CODE_SIZE, writable=False, name="code")
-        self.wb_decoder.add(
-            self.mainram.bus, addr=self.MAINRAM_BASE, name="code")
+        self.mainram = RezoProgramMemory(size=self.CODE_SIZE)
+        self.dbus_decoder.add(
+            self.mainram.dbus, addr=self.MAINRAM_BASE, name="code")
         self.dataram = blockram.Peripheral(
             size=self.DATA_SIZE, name="data")
-        self.wb_decoder.add(
+        self.dbus_decoder.add(
             self.dataram.bus, addr=self.DATA_BASE, name="data")
 
         self.csr_decoder = csr.Decoder(addr_width=28, data_width=8)
@@ -292,7 +372,7 @@ class RezoHybridControlPlane(Component):
             name="flash_window")
         self.wb_to_csr = WishboneCSRBridge(
             self.csr_decoder.bus, data_width=32)
-        self.wb_decoder.add(
+        self.dbus_decoder.add(
             self.wb_to_csr.wb_bus, addr=self.CSR_BASE,
             sparse=False, name="wb_to_csr")
 
@@ -303,13 +383,11 @@ class RezoHybridControlPlane(Component):
             self.firmware_bin_path, data_width=32, endianness="little")
         assert self.mainram.init
 
-        m.submodules.wb_arbiter = self.wb_arbiter
-        m.submodules.wb_decoder = self.wb_decoder
-        wiring.connect(m, self.wb_arbiter.bus, self.wb_decoder.bus)
+        m.submodules.dbus_decoder = self.dbus_decoder
 
         m.submodules.cpu = self.cpu
-        self.wb_arbiter.add(self.cpu.ibus)
-        self.wb_arbiter.add(self.cpu.dbus)
+        wiring.connect(m, self.cpu.ibus, self.mainram.ibus)
+        wiring.connect(m, self.cpu.dbus, self.dbus_decoder.bus)
         m.d.comb += self.cpu.irq_external.eq(0)
 
         m.submodules.mainram = self.mainram
