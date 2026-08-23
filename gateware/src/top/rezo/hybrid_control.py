@@ -20,8 +20,10 @@ from vendor.vexiiriscv import VexiiRiscv
 
 try:
     from .core_common import RezoCoreConstants
+    from .flash_window import RezoFlashWindowPeripheral
 except ImportError:  # top_level_cli executes the REZO source directly.
     from core_common import RezoCoreConstants
+    from flash_window import RezoFlashWindowPeripheral
 
 
 class RezoFirmwareUIState:
@@ -77,9 +79,10 @@ class RezoFirmwareUIState:
         self.palette = Signal(3)
         self.editing = Signal()
 
-        self.save_default_available = Signal(init=1)
+        self.save_default_available = Signal()
         self.save_default_busy = Signal()
         self.save_default_status = Signal(2)
+        self.startup_done = Signal()
 
 
 class RezoUIControlPeripheral(Component):
@@ -217,6 +220,9 @@ class RezoUIControlPeripheral(Component):
                         self.ui.save_default_busy.eq(value[1]),
                         self.ui.save_default_status.eq(value[2:4]),
                     ]
+            with m.Case(31):
+                with m.If(command.element.w_stb):
+                    m.d.sync += self.ui.startup_done.eq(value[0])
 
         return m
 
@@ -225,14 +231,15 @@ class RezoHybridControlPlane(Component):
     """Minimal firmware control plane, without video or audio ownership."""
 
     MAINRAM_BASE = 0x00000000
-    MAINRAM_SIZE = 0x4000
-    CODE_SIZE = 0x2000
+    MAINRAM_SIZE = 0x8000
+    CODE_SIZE = 0x4000
     DATA_BASE = CODE_SIZE
     DATA_SIZE = 0x0800
     CSR_BASE = 0xF0000000
 
     ENCODER_BASE = 0x600
     REZO_UI_BASE = 0x1000
+    FLASH_WINDOW_BASE = 0x1200
 
     def __init__(self, clock_settings, *, firmware_bin_path):
         super().__init__({})
@@ -259,11 +266,9 @@ class RezoHybridControlPlane(Component):
             addr_width=30, data_width=32, granularity=8,
             alignment=0, features={"cti", "bte", "err"})
 
-        # Keep immutable firmware and mutable stack/state in separate memories.
-        # The control firmware occupies less than 8 KiB and needs no writable
-        # globals. A dedicated 2 KiB data RAM is ample for its bounded stack.
-        # This uses five ECP5 block-RAM banks instead of eight for a monolithic
-        # 16 KiB memory, materially reducing placement congestion.
+        # Keep immutable firmware and mutable stack/state in separate banks.
+        # Persistence raises the code budget to 16 KiB, while the bounded UI
+        # state and measured 1,136-byte main frame fit in the 2 KiB data RAM.
         self.mainram = blockram.Peripheral(
             size=self.CODE_SIZE, writable=False, name="code")
         self.wb_decoder.add(
@@ -281,6 +286,10 @@ class RezoHybridControlPlane(Component):
         self.rezo_ui = RezoUIControlPeripheral(self.ui)
         self.csr_decoder.add(
             self.rezo_ui.bus, addr=self.REZO_UI_BASE, name="rezo_ui")
+        self.flash_window = RezoFlashWindowPeripheral()
+        self.csr_decoder.add(
+            self.flash_window.bus, addr=self.FLASH_WINDOW_BASE,
+            name="flash_window")
         self.wb_to_csr = WishboneCSRBridge(
             self.csr_decoder.bus, data_width=32)
         self.wb_decoder.add(
@@ -309,5 +318,6 @@ class RezoHybridControlPlane(Component):
         m.submodules.wb_to_csr = self.wb_to_csr
         m.submodules.encoder0 = self.encoder0
         m.submodules.rezo_ui = self.rezo_ui
+        m.submodules.flash_window = self.flash_window
 
         return m

@@ -5165,6 +5165,44 @@ class RezoBeamTop(Elaboratable):
         m.submodules.pmod0 = pmod0 = self.pmod0
         m.submodules.rezo = rezo = RezoCore(fs=self.clock_settings.audio_clock.fs())
         ui = hybrid_control.ui if hybrid_control_probe else RezoHardwareUI()
+        if hybrid_control_probe and sim.is_hw(platform):
+            m.submodules.hybrid_spi_transfer = hybrid_spi_transfer = \
+                SPIFlashTransfer()
+            m.submodules.hybrid_spi_phy = hybrid_spi_phy = \
+                spiflash.SPIPHYController(domain="sync", divisor=1)
+            m.submodules.hybrid_spi_provider = hybrid_spi_provider = \
+                spiflash.ECP5ConfigurationFlashProvider()
+            wiring.connect(m, hybrid_spi_transfer.spi, hybrid_spi_phy.ctrl)
+            wiring.connect(m, hybrid_spi_phy.pins, hybrid_spi_provider.pins)
+            m.d.comb += [
+                hybrid_control.flash_window.boot_slot.eq(pmod0.boot_slot),
+                hybrid_control.flash_window.boot_slot_valid.eq(
+                    pmod0.boot_slot_valid),
+                hybrid_control.flash_window.boot_slot_checked.eq(
+                    pmod0.boot_slot_checked),
+                hybrid_spi_transfer.start.eq(
+                    hybrid_control.flash_window.xfer_start),
+                hybrid_spi_transfer.chip_select.eq(
+                    hybrid_control.flash_window.xfer_cs),
+                hybrid_spi_transfer.tx_data.eq(
+                    hybrid_control.flash_window.xfer_tx),
+                hybrid_spi_transfer.length.eq(
+                    hybrid_control.flash_window.xfer_length),
+                hybrid_spi_transfer.output_mask.eq(
+                    hybrid_control.flash_window.xfer_mask),
+                hybrid_control.flash_window.xfer_rx.eq(
+                    hybrid_spi_transfer.rx_data),
+                hybrid_control.flash_window.xfer_done.eq(
+                    hybrid_spi_transfer.done),
+            ]
+        elif hybrid_control_probe:
+            m.d.comb += [
+                hybrid_control.flash_window.boot_slot.eq(0),
+                hybrid_control.flash_window.boot_slot_valid.eq(0),
+                hybrid_control.flash_window.boot_slot_checked.eq(1),
+                hybrid_control.flash_window.xfer_rx.eq(0),
+                hybrid_control.flash_window.xfer_done.eq(0),
+            ]
         if not static_ui_probe:
             m.submodules.ui = ui
             m.submodules.state_journal = state_journal = RezoStateJournal(
@@ -5215,7 +5253,8 @@ class RezoBeamTop(Elaboratable):
             m.d.comb += pmod0.codec_mute.eq(
                 reboot.mute | ~state_journal.startup_done)
         elif sim.is_hw(platform):
-            m.d.comb += pmod0.codec_mute.eq(reboot.mute)
+            m.d.comb += pmod0.codec_mute.eq(
+                reboot.mute | ~ui.startup_done)
 
         if sim.is_hw(platform):
             m.d.comb += [
