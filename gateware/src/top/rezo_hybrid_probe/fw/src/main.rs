@@ -10,16 +10,7 @@ use riscv_rt::entry;
 
 const ENCODER_STEP: usize = 0xF000_0600;
 const ENCODER_BUTTON: usize = 0xF000_0601;
-const REZO_UI: usize = 0xF000_1000;
-const NAVIGATION: usize = REZO_UI;
-const DRIVE_RESONANCE: usize = REZO_UI + 0x04;
-const FEEDBACK_MODE: usize = REZO_UI + 0x08;
-const LIMITS: usize = REZO_UI + 0x0C;
-const FILTER_SHAPE: usize = REZO_UI + 0x10;
-const FILTER_WIDTH_LAYOUT: usize = REZO_UI + 0x14;
-const SAVE_STATUS: usize = REZO_UI + 0x18;
-const LEVEL0: usize = REZO_UI + 0x20;
-const ARRAY_COMMAND: usize = REZO_UI + 0x60;
+const UI_COMMAND: usize = 0xF000_1000;
 const BAND_ENABLE: u32 = 0;
 const BAND_FREQUENCY: u32 = 1;
 const INPUT_GAIN: u32 = 2;
@@ -30,6 +21,27 @@ const BANK_GROUP: u32 = 6;
 const FEEDBACK_SEND: u32 = 7;
 const FILTER_CV: u32 = 8;
 const OUTPUT_SEND: u32 = 9;
+const PAGE_STATE: u32 = 10;
+const SELECTED_STATE: u32 = 11;
+const PRESET_STATE: u32 = 12;
+const PALETTE_STATE: u32 = 13;
+const EDITING_STATE: u32 = 14;
+const DRIVE_STATE: u32 = 15;
+const RESONANCE_STATE: u32 = 16;
+const FEEDBACK_STATE: u32 = 17;
+const FILTER_MODE_STATE: u32 = 18;
+const FILTER_TYPE_STATE: u32 = 19;
+const DAMP_STATE: u32 = 20;
+const KNEE_STATE: u32 = 21;
+const CEILING_STATE: u32 = 22;
+const CUTOFF_STATE: u32 = 23;
+const SLOPE_STATE: u32 = 24;
+const WIDTH_STATE: u32 = 25;
+const LAYOUT_STATE: u32 = 26;
+const LAYOUT_PREVIEW_STATE: u32 = 27;
+const FREQUENCY_PREVIEW_STATE: u32 = 28;
+const LEVEL_STATE: u32 = 29;
+const SAVE_STATE: u32 = 30;
 
 const PAGE: u8 = 0;
 const PRESET: u8 = 1;
@@ -94,10 +106,10 @@ unsafe fn write32(address: usize, value: u32) {
 unsafe fn read8(address: usize) -> u8 {
     read_volatile(address as *const u8)
 }
-unsafe fn array_write(kind: u32, index: usize, value: u32) {
+unsafe fn ui_write(kind: u32, index: usize, value: u32) {
     write32(
-        ARRAY_COMMAND,
-        kind | ((index as u32) << 4) | ((value & 0xFFFF) << 9),
+        UI_COMMAND,
+        kind | ((index as u32) << 5) | ((value & 0xFFFF) << 10),
     );
 }
 fn add(value: u32, delta: i32, lo: u32, hi: u32) -> u32 {
@@ -311,7 +323,7 @@ impl State {
             self.enables[n] ^= 1;
         } else if self.selected == SAVE {
             // Flash persistence follows as a separately testable milestone.
-            write32(SAVE_STATUS, (1 << 1) | (2 << 5));
+            ui_write(SAVE_STATE, 0, 1 | (2 << 2));
         } else if self.editing {
             match self.selected {
                 PRESET => self.apply_preset(),
@@ -419,53 +431,49 @@ impl State {
     }
 
     unsafe fn write_scalars(&self) {
-        let nav = self.page as u32
-            | ((self.selected as u32) << 3)
-            | ((self.preset as u32) << 10)
-            | ((self.palette as u32) << 13)
-            | ((self.editing as u32) << 16);
-        write32(NAVIGATION, nav);
-        write32(DRIVE_RESONANCE, self.drive() | (self.resonance << 16));
-        write32(
-            FEEDBACK_MODE,
-            self.feedback()
-                | ((self.filter_mode as u32) << 16)
-                | (self.filter_type << 17)
-                | (self.damp << 19),
-        );
-        write32(LIMITS, self.knee | (self.ceiling << 16));
-        write32(FILTER_SHAPE, self.cutoff | (self.slope << 16));
-        write32(
-            FILTER_WIDTH_LAYOUT,
-            self.width
-                | (self.layout << 16)
-                | (self.layout_preview << 18)
-                | (self.frequency_preview << 20),
-        );
+        ui_write(PAGE_STATE, 0, self.page as u32);
+        ui_write(SELECTED_STATE, 0, self.selected as u32);
+        ui_write(PRESET_STATE, 0, self.preset as u32);
+        ui_write(PALETTE_STATE, 0, self.palette as u32);
+        ui_write(EDITING_STATE, 0, self.editing as u32);
+        ui_write(DRIVE_STATE, 0, self.drive());
+        ui_write(RESONANCE_STATE, 0, self.resonance);
+        ui_write(FEEDBACK_STATE, 0, self.feedback());
+        ui_write(FILTER_MODE_STATE, 0, self.filter_mode as u32);
+        ui_write(FILTER_TYPE_STATE, 0, self.filter_type);
+        ui_write(DAMP_STATE, 0, self.damp);
+        ui_write(KNEE_STATE, 0, self.knee);
+        ui_write(CEILING_STATE, 0, self.ceiling);
+        ui_write(CUTOFF_STATE, 0, self.cutoff);
+        ui_write(SLOPE_STATE, 0, self.slope);
+        ui_write(WIDTH_STATE, 0, self.width);
+        ui_write(LAYOUT_STATE, 0, self.layout);
+        ui_write(LAYOUT_PREVIEW_STATE, 0, self.layout_preview);
+        ui_write(FREQUENCY_PREVIEW_STATE, 0, self.frequency_preview);
         for n in 0..10 {
-            write32(LEVEL0 + 4 * n, self.levels[n] as u32);
+            ui_write(LEVEL_STATE, n, self.levels[n] as u32);
         }
     }
 
     unsafe fn write_packed(&self) {
         for n in 0..10 {
-            array_write(BAND_ENABLE, n, self.enables[n]);
-            array_write(BAND_FREQUENCY, n, self.frequencies[n]);
+            ui_write(BAND_ENABLE, n, self.enables[n]);
+            ui_write(BAND_FREQUENCY, n, self.frequencies[n]);
             let index = self.group_indices[n];
-            array_write(BANK_GROUP, n, gray_encode(index));
-            array_write(FEEDBACK_SEND, n, self.feedback_sends[n]);
+            ui_write(BANK_GROUP, n, gray_encode(index));
+            ui_write(FEEDBACK_SEND, n, self.feedback_sends[n]);
         }
         for n in 0..4 {
-            array_write(INPUT_GAIN, n, self.input_gains[n]);
-            array_write(INPUT_MODE, n, self.input_modes[n]);
-            array_write(CV_TARGET, n, self.cv_targets[n]);
-            array_write(CV_DEPTH, n, self.cv_depths[n] as u32);
+            ui_write(INPUT_GAIN, n, self.input_gains[n]);
+            ui_write(INPUT_MODE, n, self.input_modes[n]);
+            ui_write(CV_TARGET, n, self.cv_targets[n]);
+            ui_write(CV_DEPTH, n, self.cv_depths[n] as u32);
         }
         for n in 0..15 {
-            array_write(FILTER_CV, n, self.filter_cv[n] as u32);
+            ui_write(FILTER_CV, n, self.filter_cv[n] as u32);
         }
         for n in 0..20 {
-            array_write(
+            ui_write(
                 OUTPUT_SEND,
                 n,
                 if self.filter_mode {
@@ -488,7 +496,7 @@ fn main() -> ! {
     unsafe {
         state.write_scalars();
         state.write_packed();
-        write32(SAVE_STATUS, 1 << 1);
+        ui_write(SAVE_STATE, 0, 1);
     }
     loop {
         let mut dirty = false;

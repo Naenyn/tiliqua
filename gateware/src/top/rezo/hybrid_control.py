@@ -77,92 +77,29 @@ class RezoFirmwareUIState:
         self.palette = Signal(3)
         self.editing = Signal()
 
-        self.save_default_request = Signal()
         self.save_default_available = Signal(init=1)
         self.save_default_busy = Signal()
-        self.save_default_done = Signal()
-        self.save_default_error = Signal()
         self.save_default_status = Signal(2)
 
 
 class RezoUIControlPeripheral(Component):
     """Firmware-owned REZO UI state.
 
-    Frequently-used scalar controls have direct registers. The larger state
-    vectors use an indexed window so the CPU interface does not duplicate a
-    wide address decoder for every band, input, and routing cell.
+    Firmware is the sole owner of this state, so hardware never needs a wide
+    readable register file. A single write-only command port updates both
+    scalar and indexed values. This keeps the CPU/renderer boundary compact
+    and avoids a large CSR read mux on an already-congested device.
     """
 
-    class NavigationReg(csr.Register, access="rw"):
-        page: csr.Field(csr.action.RW, unsigned(3))
-        selected: csr.Field(csr.action.RW, unsigned(7))
-        preset: csr.Field(csr.action.RW, unsigned(3))
-        palette: csr.Field(csr.action.RW, unsigned(3))
-        editing: csr.Field(csr.action.RW, unsigned(1))
-
-    class DriveResonanceReg(csr.Register, access="rw"):
-        drive: csr.Field(csr.action.RW, unsigned(16))
-        resonance: csr.Field(csr.action.RW, unsigned(16))
-
-    class FeedbackModeReg(csr.Register, access="rw"):
-        feedback: csr.Field(csr.action.RW, unsigned(16))
-        filter_mode: csr.Field(csr.action.RW, unsigned(1))
-        filter_type: csr.Field(csr.action.RW, unsigned(2))
-        damp_mode: csr.Field(csr.action.RW, unsigned(3))
-
-    class LimitsReg(csr.Register, access="rw"):
-        knee: csr.Field(csr.action.RW, unsigned(16))
-        ceiling: csr.Field(csr.action.RW, unsigned(16))
-
-    class FilterShapeReg(csr.Register, access="rw"):
-        cutoff: csr.Field(csr.action.RW, unsigned(16))
-        slope: csr.Field(csr.action.RW, unsigned(16))
-
-    class FilterWidthLayoutReg(csr.Register, access="rw"):
-        width: csr.Field(csr.action.RW, unsigned(16))
-        layout: csr.Field(csr.action.RW, unsigned(2))
-        layout_preview: csr.Field(csr.action.RW, unsigned(2))
-        frequency_preview: csr.Field(
-            csr.action.RW, unsigned(RezoCoreConstants.FREQ_INDEX_WIDTH))
-
-    class SaveStatusReg(csr.Register, access="rw"):
-        request: csr.Field(csr.action.RW, unsigned(1))
-        available: csr.Field(csr.action.RW, unsigned(1))
-        busy: csr.Field(csr.action.RW, unsigned(1))
-        done: csr.Field(csr.action.RW, unsigned(1))
-        error: csr.Field(csr.action.RW, unsigned(1))
-        status: csr.Field(csr.action.RW, unsigned(2))
-
-    class LevelReg(csr.Register, access="rw"):
-        level: csr.Field(csr.action.RW, signed(16))
-
-    class ArrayCommandReg(csr.Register, access="w"):
-        kind: csr.Field(csr.action.W, unsigned(4))
+    class CommandReg(csr.Register, access="w"):
+        kind: csr.Field(csr.action.W, unsigned(5))
         index: csr.Field(csr.action.W, unsigned(5))
         value: csr.Field(csr.action.W, unsigned(16))
 
     def __init__(self, ui):
         self.ui = ui
         regs = csr.Builder(addr_width=8, data_width=8)
-        self._navigation = regs.add(
-            "navigation", self.NavigationReg(), offset=0x00)
-        self._drive_resonance = regs.add(
-            "drive_resonance", self.DriveResonanceReg(), offset=0x04)
-        self._feedback_mode = regs.add(
-            "feedback_mode", self.FeedbackModeReg(), offset=0x08)
-        self._limits = regs.add("limits", self.LimitsReg(), offset=0x0C)
-        self._filter_shape = regs.add(
-            "filter_shape", self.FilterShapeReg(), offset=0x10)
-        self._filter_width_layout = regs.add(
-            "filter_width_layout", self.FilterWidthLayoutReg(), offset=0x14)
-        self._save_status = regs.add(
-            "save_status", self.SaveStatusReg(), offset=0x18)
-        self._levels = [
-            regs.add(f"level{n}", self.LevelReg(), offset=0x20 + 4 * n)
-            for n in range(10)
-        ]
-        self._array_command = regs.add(
-            "array_command", self.ArrayCommandReg(), offset=0x60)
+        self._command = regs.add("command", self.CommandReg(), offset=0x00)
         self._bridge = csr.Bridge(regs.as_memory_map())
         super().__init__({
             "bus": wiring.In(csr.Signature(
@@ -170,52 +107,12 @@ class RezoUIControlPeripheral(Component):
         })
         self.bus.memory_map = self._bridge.bus.memory_map
 
-    @staticmethod
-    def _rw(m, field, signal):
-        # RW actions provide their own storage and expose the retained value as
-        # ``data``. The UI state signals remain a simple hardware-facing view.
-        m.d.comb += signal.eq(field.data)
-
     def elaborate(self, platform):
         m = Module()
         m.submodules.bridge = self._bridge
         wiring.connect(m, wiring.flipped(self.bus), self._bridge.bus)
 
-        self._rw(m, self._navigation.f.page, self.ui.page)
-        self._rw(m, self._navigation.f.selected, self.ui.selected)
-        self._rw(m, self._navigation.f.preset, self.ui.preset)
-        self._rw(m, self._navigation.f.palette, self.ui.palette)
-        self._rw(m, self._navigation.f.editing, self.ui.editing)
-        self._rw(m, self._drive_resonance.f.drive, self.ui.drive)
-        self._rw(m, self._drive_resonance.f.resonance, self.ui.resonance)
-        self._rw(m, self._feedback_mode.f.feedback, self.ui.feedback)
-        self._rw(m, self._feedback_mode.f.filter_mode, self.ui.filter_mode)
-        self._rw(m, self._feedback_mode.f.filter_type, self.ui.filter_type)
-        self._rw(m, self._feedback_mode.f.damp_mode, self.ui.damp_mode)
-        self._rw(m, self._limits.f.knee, self.ui.limit_knee)
-        self._rw(m, self._limits.f.ceiling, self.ui.limit_cap)
-        self._rw(m, self._filter_shape.f.cutoff, self.ui.filter_cutoff)
-        self._rw(m, self._filter_shape.f.slope, self.ui.filter_slope)
-        self._rw(m, self._filter_width_layout.f.width, self.ui.filter_width)
-        self._rw(m, self._filter_width_layout.f.layout,
-                 self.ui.frequency_layout)
-        self._rw(m, self._filter_width_layout.f.layout_preview,
-                 self.ui.frequency_layout_preview)
-        self._rw(m, self._filter_width_layout.f.frequency_preview,
-                 self.ui.frequency_preview)
-        self._rw(m, self._save_status.f.request,
-                 self.ui.save_default_request)
-        self._rw(m, self._save_status.f.available,
-                 self.ui.save_default_available)
-        self._rw(m, self._save_status.f.busy, self.ui.save_default_busy)
-        self._rw(m, self._save_status.f.done, self.ui.save_default_done)
-        self._rw(m, self._save_status.f.error, self.ui.save_default_error)
-        self._rw(m, self._save_status.f.status,
-                 self.ui.save_default_status)
-        for register, level in zip(self._levels, self.ui.levels):
-            self._rw(m, register.f.level, level)
-
-        command = self._array_command
+        command = self._command
         kind = command.f.kind.w_data
         index = command.f.index.w_data
         value = command.f.value.w_data
@@ -252,6 +149,74 @@ class RezoUIControlPeripheral(Component):
             with m.Case(9):
                 with m.If((index < 20) & command.element.w_stb):
                     m.d.sync += Array(self.ui.output_sends)[index].eq(value[:5])
+            with m.Case(10):
+                with m.If(command.element.w_stb):
+                    m.d.sync += self.ui.page.eq(value[:3])
+            with m.Case(11):
+                with m.If(command.element.w_stb):
+                    m.d.sync += self.ui.selected.eq(value[:7])
+            with m.Case(12):
+                with m.If(command.element.w_stb):
+                    m.d.sync += self.ui.preset.eq(value[:3])
+            with m.Case(13):
+                with m.If(command.element.w_stb):
+                    m.d.sync += self.ui.palette.eq(value[:3])
+            with m.Case(14):
+                with m.If(command.element.w_stb):
+                    m.d.sync += self.ui.editing.eq(value[0])
+            with m.Case(15):
+                with m.If(command.element.w_stb):
+                    m.d.sync += self.ui.drive.eq(value)
+            with m.Case(16):
+                with m.If(command.element.w_stb):
+                    m.d.sync += self.ui.resonance.eq(value)
+            with m.Case(17):
+                with m.If(command.element.w_stb):
+                    m.d.sync += self.ui.feedback.eq(value)
+            with m.Case(18):
+                with m.If(command.element.w_stb):
+                    m.d.sync += self.ui.filter_mode.eq(value[0])
+            with m.Case(19):
+                with m.If(command.element.w_stb):
+                    m.d.sync += self.ui.filter_type.eq(value[:2])
+            with m.Case(20):
+                with m.If(command.element.w_stb):
+                    m.d.sync += self.ui.damp_mode.eq(value[:3])
+            with m.Case(21):
+                with m.If(command.element.w_stb):
+                    m.d.sync += self.ui.limit_knee.eq(value)
+            with m.Case(22):
+                with m.If(command.element.w_stb):
+                    m.d.sync += self.ui.limit_cap.eq(value)
+            with m.Case(23):
+                with m.If(command.element.w_stb):
+                    m.d.sync += self.ui.filter_cutoff.eq(value)
+            with m.Case(24):
+                with m.If(command.element.w_stb):
+                    m.d.sync += self.ui.filter_slope.eq(value)
+            with m.Case(25):
+                with m.If(command.element.w_stb):
+                    m.d.sync += self.ui.filter_width.eq(value)
+            with m.Case(26):
+                with m.If(command.element.w_stb):
+                    m.d.sync += self.ui.frequency_layout.eq(value[:2])
+            with m.Case(27):
+                with m.If(command.element.w_stb):
+                    m.d.sync += self.ui.frequency_layout_preview.eq(value[:2])
+            with m.Case(28):
+                with m.If(command.element.w_stb):
+                    m.d.sync += self.ui.frequency_preview.eq(
+                        value[:RezoCoreConstants.FREQ_INDEX_WIDTH])
+            with m.Case(29):
+                with m.If((index < 10) & command.element.w_stb):
+                    m.d.sync += Array(self.ui.levels)[index].eq(value)
+            with m.Case(30):
+                with m.If(command.element.w_stb):
+                    m.d.sync += [
+                        self.ui.save_default_available.eq(value[0]),
+                        self.ui.save_default_busy.eq(value[1]),
+                        self.ui.save_default_status.eq(value[2:4]),
+                    ]
 
         return m
 
