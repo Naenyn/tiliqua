@@ -2,7 +2,7 @@
 
 from amaranth.sim import Simulator
 
-from top.rezo.hybrid_control import RezoProgramMemory
+from top.rezo.cpu_control import RezoProgramMemory
 
 
 def test_instruction_and_data_ports_read_concurrently():

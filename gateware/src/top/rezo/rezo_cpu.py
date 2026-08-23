@@ -20,13 +20,12 @@ class RezoCpuTop(RezoBeamTop):
     nextpnr_opts = (
         "--timing-allow-fail "
         f"--seed {os.getenv('TILIQUA_REZO_CPU_SEED', '1')}")
-    # Seed 1 is qualified on hardware. Its weakest measured clock margin is
-    # 3.66%, so retain a 3% release gate while leaving a small tool-version
-    # tolerance.
+    # Seed 1's weakest measured margin is 3.07% on sync. Retain the 3% gate so
+    # marginal routes are rejected rather than silently packaged.
     minimum_timing_headroom_percent = 3.0
 
 
-FW_ROOT = Path(__file__).resolve().parents[1] / "rezo_hybrid_probe" / "fw"
+FW_ROOT = Path(__file__).resolve().parent / "cpu_fw"
 
 
 def compile_firmware(args):

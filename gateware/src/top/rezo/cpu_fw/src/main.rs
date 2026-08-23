@@ -3,7 +3,7 @@
 
 use core::ptr::{read_volatile, write_volatile};
 use panic_halt as _;
-use rezo_hybrid_probe_fw::{
+use rezo_cpu_fw::{
     clamp_control, crc32_bzip2_update, gray_encode, pack_bits, progressive_edit_level,
     step_coarse_byte, step_group_index, step_target, unpack_bits, GROUP_INDEX_DEFAULTS,
 };

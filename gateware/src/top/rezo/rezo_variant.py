@@ -84,7 +84,8 @@ try:
         NATIVE_OUTPUT_TEXT_ROWS,
         add_feedback_navigation, add_group_navigation, add_input_navigation,
         native_input_depth_endpoint, native_input_gain_endpoint,
-        native_input_unity_x, native_value_chip_x0,
+        native_input_meter_endpoint, native_input_unity_x,
+        native_value_chip_x0,
         native_feedback_track_rows, native_viewport_circle_outline,
         output_header_selection,
         put_legacy_support_page_labels, put_native_page_heading,
@@ -123,7 +124,8 @@ except ImportError:  # top_level_cli executes this file directly.
         NATIVE_OUTPUT_TEXT_ROWS,
         add_feedback_navigation, add_group_navigation, add_input_navigation,
         native_input_depth_endpoint, native_input_gain_endpoint,
-        native_input_unity_x, native_value_chip_x0,
+        native_input_meter_endpoint, native_input_unity_x,
+        native_value_chip_x0,
         native_feedback_track_rows, native_viewport_circle_outline,
         output_header_selection,
         put_legacy_support_page_labels, put_native_page_heading,
@@ -498,14 +500,11 @@ class RezoCore(RezoCoreConstants, wiring.Component):
         svf_storage = svf_shape.as_shape()
         alp = Array([Signal(svf_storage, name=f"alp{n}") for n in range(self.N_BANDS)])
         abp = Array([Signal(svf_storage, name=f"abp{n}") for n in range(self.N_BANDS)])
-        ahp = Array([Signal(svf_storage, name=f"ahp{n}") for n in range(self.N_BANDS)])
         alp_cur_raw = Signal(svf_storage)
         abp_cur_raw = Signal(svf_storage)
-        ahp_cur_raw = Signal(svf_storage)
         cutoff_cur_raw = Signal(dsp.mac.SQNative.as_shape())
         alp_cur = svf_shape(alp_cur_raw)
         abp_cur = svf_shape(abp_cur_raw)
-        ahp_cur = svf_shape(ahp_cur_raw)
         cutoff_cur = dsp.mac.SQNative(cutoff_cur_raw)
 
         mac_a_q = Signal(dsp.mac.SQNative)
@@ -516,22 +515,34 @@ class RezoCore(RezoCoreConstants, wiring.Component):
         svf_product = svf_shape(svf_product_raw)
         svf_product_q = svf_shape(svf_product_q_raw)
         hp_offset_q = Signal(svf_shape)
-        alp_next = Signal(svf_shape)
-        ahp_next = Signal(svf_shape)
-        abp_next = Signal(svf_shape)
+        svf_update_base = Signal(svf_shape)
+        svf_next = Signal(svf_shape)
+        # LP, HP, and BP updates occupy distinct FSM states. One widened
+        # adder and one overflow clamp therefore serve all three equations.
+        alp_next = ahp_next = abp_next = svf_next
+
+        def saturate_svf_update(value):
+            """Clamp a widened signed SVF add before narrowing can wrap it."""
+            raw = value.as_value()
+            width = svf_storage.width
+            return svf_shape(Mux(
+                raw[-1] == raw[width - 1], raw[:width],
+                Mux(raw[-1],
+                    Const(1 << (width - 1), width),
+                    Const((1 << (width - 1)) - 1, width))))
+
+        svf_next_safe = saturate_svf_update(
+            svf_product_q + svf_update_base)
 
         m.d.comb += [
             alp_cur_raw.eq(alp[band]),
             abp_cur_raw.eq(abp[band]),
-            ahp_cur_raw.eq(ahp[band]),
             cutoff_rport.addr.eq(frequency_array[cutoff_band]),
             cutoff_cur_raw.eq(cutoff_rport.data),
             mac_z.eq(mac_a_q * mac_b_q),
             svf_product_raw.eq(
                 mac_z.as_value().as_signed() >> dsp.mac.SQNative.f_bits),
-            alp_next.eq(svf_product_q + alp_cur),
-            ahp_next.eq(svf_product_q + hp_offset_q),
-            abp_next.eq(svf_product_q + abp_cur),
+            svf_next.eq(svf_next_safe),
         ]
 
         mix_shape = signed(ASQ.as_shape().width + 5)
@@ -1180,27 +1191,28 @@ class RezoCore(RezoCoreConstants, wiring.Component):
             with m.Case(state_mac0_commit):
                 m.d.sync += [
                     svf_product_q_raw.eq(svf_product_raw),
+                    svf_update_base.eq(alp_cur),
                     state.eq(state_mac1_setup),
                 ]
 
             with m.Case(state_mac1_setup):
                 m.d.sync += [
-                    alp[band].eq(alp_next.saturate(svf_shape).as_value()),
+                    alp[band].eq(alp_next.as_value()),
                     mac_a_q.eq(abp_cur),
                     mac_b_q.eq(-resonance),
-                    hp_offset_q.eq(x - alp_next),
+                    hp_offset_q.eq(saturate_svf_update(x - alp_next)),
                     state.eq(state_mac1_commit),
                 ]
 
             with m.Case(state_mac1_commit):
                 m.d.sync += [
                     svf_product_q_raw.eq(svf_product_raw),
+                    svf_update_base.eq(hp_offset_q),
                     state.eq(state_mac2_setup),
                 ]
 
             with m.Case(state_mac2_setup):
                 m.d.sync += [
-                    ahp[band].eq(ahp_next.saturate(svf_shape).as_value()),
                     mac_a_q.eq(ahp_next),
                     mac_b_q.eq(cutoff_cur),
                     state.eq(state_mac2_commit),
@@ -1209,11 +1221,12 @@ class RezoCore(RezoCoreConstants, wiring.Component):
             with m.Case(state_mac2_commit):
                 m.d.sync += [
                     svf_product_q_raw.eq(svf_product_raw),
+                    svf_update_base.eq(abp_cur),
                     state.eq(state_mac2_apply),
                 ]
 
             with m.Case(state_mac2_apply):
-                m.d.sync += abp[band].eq(abp_next.saturate(svf_shape).as_value())
+                m.d.sync += abp[band].eq(abp_next.as_value())
                 with m.If(~oversample):
                     m.d.sync += [
                         oversample.eq(1),
@@ -2619,6 +2632,7 @@ class RezoTileDisplay(wiring.Component):
             "cv_targets": In(data.ArrayLayout(unsigned(3), 4)),
             "cv_depths": In(data.ArrayLayout(signed(8), 4)),
             "input_meters": In(data.ArrayLayout(signed(6), 4)),
+            "input_clips": In(data.ArrayLayout(unsigned(1), 4)),
             "filter_cv_write_addr": In(unsigned(4)),
             "filter_cv_write_data": In(signed(6)),
             "filter_cv_write_en": In(1),
@@ -3640,12 +3654,9 @@ class RezoTileDisplay(wiring.Component):
                         native_input_gain_endpoint(self.input_gains[n])),
                     input_depth_ends[n].eq(
                         native_input_depth_endpoint(self.cv_depths[n])),
-                    input_meter_ends[n].eq(Mux(
-                        self.input_modes[n] == RezoCore.INPUT_MODE_CV,
-                        440 + (self.input_meters[n] << 2) +
-                              (self.input_meters[n] << 1),
-                        304 + (self.input_meters[n] << 3) +
-                              (self.input_meters[n] << 2))),
+                    input_meter_ends[n].eq(native_input_meter_endpoint(
+                        self.input_meters[n],
+                        self.input_modes[n] == RezoCore.INPUT_MODE_CV)),
                 ]
             else:
                 m.d.dvi += [
@@ -4158,6 +4169,7 @@ class RezoTileDisplay(wiring.Component):
         input_mode = Array(self.input_modes)[input_index]
         input_depth = Array(self.cv_depths)[input_index]
         input_meter = Array(self.input_meters)[input_index]
+        input_clip = Array(self.input_clips)[input_index]
         input_gain_end = Array(input_gain_ends)[input_index]
         input_depth_end = Array(input_depth_ends)[input_index]
         input_meter_end = Array(input_meter_ends)[input_index]
@@ -4176,6 +4188,7 @@ class RezoTileDisplay(wiring.Component):
         input_is_cv_value_q = Signal()
         input_depth_negative_q = Signal()
         input_meter_negative_q = Signal()
+        input_clip_q = Signal()
         input_gain_end_q = Signal.like(input_gain_end)
         input_depth_end_q = Signal.like(input_depth_end)
         input_meter_end_q = Signal.like(input_meter_end)
@@ -4189,6 +4202,7 @@ class RezoTileDisplay(wiring.Component):
             input_is_cv_value_q.eq(input_mode == RezoCore.INPUT_MODE_CV),
             input_depth_negative_q.eq(input_depth < 0),
             input_meter_negative_q.eq(input_meter < 0),
+            input_clip_q.eq(input_clip),
             input_gain_end_q.eq(input_gain_end),
             input_depth_end_q.eq(input_depth_end),
             input_meter_end_q.eq(input_meter_end),
@@ -4311,6 +4325,14 @@ class RezoTileDisplay(wiring.Component):
                       304 if self.compact_layout else 326,
                       input_audio_meter_y0,
                       input_meter_end_q, input_audio_meter_y1))
+        # The audio path already saturates at full scale. Keep its peak line
+        # inside the lane and make overload explicit with a bright end stop.
+        input_clip_q0 = input_visible & ~input_is_cv & input_clip_q & self.rect(
+            input_x_value_q, input_local_value_q,
+            572 if self.compact_layout else 650,
+            46 if self.compact_layout else 59,
+            576 if self.compact_layout else 656,
+            54 if self.compact_layout else 67)
 
         for group in range(RezoCore.N_GROUPS):
             if self.compact_layout:
@@ -5031,7 +5053,7 @@ class RezoTileDisplay(wiring.Component):
         ]
         m.d.dvi += [
             selected_q.eq(selected),
-            text_q.eq(text),
+            text_q.eq(text | input_clip_q0),
             fill_q.eq(geometry_fill_q0 |
                       input_fill_q0 | group_fill_q0 | output_fill_q0 |
                       filter_cv_fill_q0),
@@ -5120,15 +5142,13 @@ class RezoBeamTop(Elaboratable):
 
     def elaborate(self, platform):
         m = Module()
-        hybrid_firmware_path = (
+        cpu_firmware_path = (
             self.firmware_bin_path or
-            os.getenv("TILIQUA_REZO_HYBRID_FIRMWARE"))
-        hybrid_control_probe = (
-            hybrid_firmware_path is not None or
-            os.getenv("TILIQUA_REZO_HYBRID_CONTROL_PROBE") == "1")
+            os.getenv("TILIQUA_REZO_CPU_FIRMWARE"))
+        cpu_control_enabled = cpu_firmware_path is not None
         static_ui_probe = (
             os.getenv("TILIQUA_REZO_STATIC_UI_PROBE") == "1" or
-            hybrid_control_probe)
+            cpu_control_enabled)
 
         if sim.is_hw(platform):
             m.submodules.car = platform.clock_domain_generator(self.clock_settings)
@@ -5142,66 +5162,62 @@ class RezoBeamTop(Elaboratable):
             m.submodules.car = sim.FakeTiliquaDomainGenerator()
             enc_pins = None
 
-        if hybrid_control_probe:
+        if cpu_control_enabled:
             try:
-                from .hybrid_control import RezoHybridControlPlane
+                from .cpu_control import RezoCpuControlPlane
             except ImportError:  # top_level_cli executes this file directly.
-                from hybrid_control import RezoHybridControlPlane
-            if not hybrid_firmware_path:
-                raise ValueError(
-                    "TILIQUA_REZO_HYBRID_FIRMWARE is required for the "
-                    "hybrid control probe")
-            m.submodules.hybrid_control = hybrid_control = \
-                RezoHybridControlPlane(
+                from cpu_control import RezoCpuControlPlane
+            m.submodules.cpu_control = cpu_control = \
+                RezoCpuControlPlane(
                     self.clock_settings,
-                    firmware_bin_path=hybrid_firmware_path)
+                    firmware_bin_path=cpu_firmware_path)
             if sim.is_hw(platform):
                 m.d.comb += [
-                    hybrid_control.encoder0.pins.i.eq(enc_pins.i.i),
-                    hybrid_control.encoder0.pins.q.eq(enc_pins.q.i),
-                    hybrid_control.encoder0.pins.s.eq(enc_pins.s.i),
+                    cpu_control.encoder0.pins.i.eq(enc_pins.i.i),
+                    cpu_control.encoder0.pins.q.eq(enc_pins.q.i),
+                    cpu_control.encoder0.pins.s.eq(enc_pins.s.i),
                 ]
 
         m.submodules.pmod0 = pmod0 = self.pmod0
         m.submodules.rezo = rezo = RezoCore(fs=self.clock_settings.audio_clock.fs())
-        ui = hybrid_control.ui if hybrid_control_probe else RezoHardwareUI()
-        if hybrid_control_probe and sim.is_hw(platform):
-            m.submodules.hybrid_spi_transfer = hybrid_spi_transfer = \
+        ui = cpu_control.ui if cpu_control_enabled else RezoHardwareUI()
+        if cpu_control_enabled and sim.is_hw(platform):
+            m.submodules.cpu_spi_transfer = cpu_spi_transfer = \
                 SPIFlashTransfer()
-            m.submodules.hybrid_spi_phy = hybrid_spi_phy = \
+            m.submodules.cpu_spi_phy = cpu_spi_phy = \
                 spiflash.SPIPHYController(domain="sync", divisor=1)
-            m.submodules.hybrid_spi_provider = hybrid_spi_provider = \
+            m.submodules.cpu_spi_provider = cpu_spi_provider = \
                 spiflash.ECP5ConfigurationFlashProvider()
-            wiring.connect(m, hybrid_spi_transfer.spi, hybrid_spi_phy.ctrl)
-            wiring.connect(m, hybrid_spi_phy.pins, hybrid_spi_provider.pins)
+            wiring.connect(m, cpu_spi_transfer.spi, cpu_spi_phy.ctrl)
+            wiring.connect(m, cpu_spi_phy.pins, cpu_spi_provider.pins)
             m.d.comb += [
-                hybrid_control.flash_window.boot_slot.eq(pmod0.boot_slot),
-                hybrid_control.flash_window.boot_slot_valid.eq(
+                cpu_control.flash_window.boot_slot.eq(pmod0.boot_slot),
+                cpu_control.flash_window.boot_slot_valid.eq(
                     pmod0.boot_slot_valid),
-                hybrid_control.flash_window.boot_slot_checked.eq(
+                cpu_control.flash_window.boot_slot_checked.eq(
                     pmod0.boot_slot_checked),
-                hybrid_spi_transfer.start.eq(
-                    hybrid_control.flash_window.xfer_start),
-                hybrid_spi_transfer.chip_select.eq(
-                    hybrid_control.flash_window.xfer_cs),
-                hybrid_spi_transfer.tx_data.eq(
-                    hybrid_control.flash_window.xfer_tx),
-                hybrid_spi_transfer.length.eq(
-                    hybrid_control.flash_window.xfer_length),
-                hybrid_spi_transfer.output_mask.eq(
-                    hybrid_control.flash_window.xfer_mask),
-                hybrid_control.flash_window.xfer_rx.eq(
-                    hybrid_spi_transfer.rx_data),
-                hybrid_control.flash_window.xfer_done.eq(
-                    hybrid_spi_transfer.done),
+                cpu_spi_transfer.start.eq(
+                    cpu_control.flash_window.xfer_start),
+                cpu_spi_transfer.chip_select.eq(
+                    cpu_control.flash_window.xfer_cs),
+                cpu_spi_transfer.tx_data.eq(
+                    cpu_control.flash_window.xfer_tx),
+                cpu_spi_transfer.length.eq(
+                    cpu_control.flash_window.xfer_length),
+                cpu_spi_transfer.output_mask.eq(
+                    cpu_control.flash_window.xfer_mask),
+                cpu_control.flash_window.xfer_rx.eq(
+                    cpu_spi_transfer.rx_data),
+                cpu_control.flash_window.xfer_done.eq(
+                    cpu_spi_transfer.done),
             ]
-        elif hybrid_control_probe:
+        elif cpu_control_enabled:
             m.d.comb += [
-                hybrid_control.flash_window.boot_slot.eq(0),
-                hybrid_control.flash_window.boot_slot_valid.eq(0),
-                hybrid_control.flash_window.boot_slot_checked.eq(1),
-                hybrid_control.flash_window.xfer_rx.eq(0),
-                hybrid_control.flash_window.xfer_done.eq(0),
+                cpu_control.flash_window.boot_slot.eq(0),
+                cpu_control.flash_window.boot_slot_valid.eq(0),
+                cpu_control.flash_window.boot_slot_checked.eq(1),
+                cpu_control.flash_window.xfer_rx.eq(0),
+                cpu_control.flash_window.xfer_done.eq(0),
             ]
         if not static_ui_probe:
             m.submodules.ui = ui
@@ -5367,6 +5383,10 @@ class RezoBeamTop(Elaboratable):
                              for n in range(4)]
         display_input_meters = [Signal(signed(6), name=f"display_input_meter{n}")
                                 for n in range(4)]
+        display_input_clips = [Signal(name=f"display_input_clip{n}")
+                               for n in range(4)]
+        input_clip_holds = [Signal(6, name=f"input_clip_hold{n}")
+                            for n in range(4)]
         filter_cv_write_index = Signal(range(15))
         filter_cv_write_data = Signal(signed(6))
         filter_cv_matrix_array = Array(ui.filter_cv_matrix)
@@ -5395,6 +5415,19 @@ class RezoBeamTop(Elaboratable):
             ]
             m.d.sync += display_input_meters[n].eq(
                 rezo.input_meters[n] >> 10)
+            raw_input_clip = Signal(name=f"raw_input_clip{n}")
+            m.d.comb += raw_input_clip.eq(
+                (ui.input_modes[n] == RezoCore.INPUT_MODE_AUDIO) &
+                (rezo.input_meters[n] >= 32767))
+            m.submodules += FFSynchronizer(
+                i=raw_input_clip, o=display_input_clips[n], o_domain="dvi")
+            with m.If(display_input_clips[n]):
+                # About three quarters of a second at 60 Hz. The frame-rate
+                # hold makes a single clipped sample visible to the performer.
+                m.d.dvi += input_clip_holds[n].eq(45)
+            with m.Elif((dvi_tgen.x == 0) & (dvi_tgen.y == 0) &
+                        (input_clip_holds[n] != 0)):
+                m.d.dvi += input_clip_holds[n].eq(input_clip_holds[n] - 1)
         m.d.comb += [
             filter_cv_write_data.eq(filter_cv_matrix_array[filter_cv_write_index] >> 2),
             display.filter_cv_write_addr.eq(filter_cv_write_index),
@@ -5464,6 +5497,7 @@ class RezoBeamTop(Elaboratable):
                 i=display_cv_depths[n], o=display.cv_depths[n], o_domain="dvi")
             m.submodules += FFSynchronizer(
                 i=display_input_meters[n], o=display.input_meters[n], o_domain="dvi")
+            m.d.comb += display.input_clips[n].eq(input_clip_holds[n] != 0)
         for n in range(RezoCore.N_BANDS):
             m.submodules += FFSynchronizer(
                 i=ui.bank_groups[n], o=display.bank_groups[n], o_domain="dvi")

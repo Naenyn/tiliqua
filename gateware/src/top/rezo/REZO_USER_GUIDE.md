@@ -145,6 +145,9 @@ For an AUDIO input:
 - **MODE** selects AUDIO.
 - **VALUE** sets its input gain.
 - The signal joins the mono input mix feeding the resonators.
+- The activity line is bounded by the VALUE lane. A bright mark at its right
+  edge is held briefly when the input mix reaches full scale, making overloads
+  visible without allowing the meter to spill into adjacent UI elements.
 
 For a CV input:
 
@@ -199,7 +202,10 @@ The three safety controls shape and constrain the returning signal:
 
 Start with modest FB and RES settings, especially when several bands feed the
 loop. KNEE and CEIL reduce runaway behavior, but they do not make every extreme
-setting quiet.
+setting quiet. With DRIVE, RES, and FB all near maximum—especially with a low
+KNEE, high CEIL, and light DAMP—the output can become harsh, digitally clipped,
+and noisy. This is an intentional overload region rather than an additional
+sound-safety range. Reduce DRIVE, RES, or FB to return to normal operation.
 
 ### OPTIONS page
 

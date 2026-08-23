@@ -1,10 +1,10 @@
-"""Lean CPU control-plane footprint probe for the REZO family.
+"""Lean production CPU control plane for REZO.
 
 This keeps only the infrastructure needed by firmware-owned UI state:
 VexiiRiscv, block-RAM execution, encoder CSR, and the CSR bridge. It
 intentionally has no framebuffer, raster accelerators, or unrestricted flash
-interface. Persistence will use a separate interface whose hardware address
-range is limited to the active slot's option sectors.
+interface. Persistence uses a separate interface whose hardware address range
+is limited to the active slot's option sectors.
 """
 
 from amaranth import Array, Module, Signal, signed, unsigned
@@ -311,7 +311,7 @@ class RezoUIControlPeripheral(Component):
         return m
 
 
-class RezoHybridControlPlane(Component):
+class RezoCpuControlPlane(Component):
     """Minimal firmware control plane, without video or audio ownership."""
 
     MAINRAM_BASE = 0x00000000

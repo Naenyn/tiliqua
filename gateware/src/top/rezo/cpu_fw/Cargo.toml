@@ -1,5 +1,5 @@
 [package]
-name = "rezo-hybrid-probe-fw"
+name = "rezo-cpu-fw"
 version = "0.1.0"
 edition = "2021"
 

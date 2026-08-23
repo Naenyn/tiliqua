@@ -397,6 +397,19 @@ def native_input_depth_endpoint(depth):
                     NATIVE_INPUT_FILL_X1, mapped))))
 
 
+def native_input_meter_endpoint(meter, is_cv):
+    """Map INPUT telemetry into the compact control lane, never beyond it."""
+    mapped = Mux(
+        is_cv,
+        NATIVE_INPUT_CONTROL_MID + (meter << 2) + (meter << 1),
+        NATIVE_INPUT_CONTROL_X0 + (meter << 3) + (meter << 2),
+    )
+    return Mux(mapped < NATIVE_INPUT_CONTROL_X0,
+               NATIVE_INPUT_CONTROL_X0,
+               Mux(mapped > NATIVE_INPUT_CONTROL_X1,
+                   NATIVE_INPUT_CONTROL_X1, mapped))
+
+
 def native_input_unity_x(unity_position):
     """Return the native x coordinate of a 16-bit gain's 0 dB marker."""
     coarse = unity_position >> 8

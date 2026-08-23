@@ -1690,3 +1690,50 @@ AUDIO, 63.04 MHz SYNC, and 80.48 MHz DVI. Archive
 its verified `top.bit` SHA-256 is
 `544c1902ea21355d610516e4f066b7755f4144625cc230d3e3f08079cdf28e80`.
 The archive was flashed successfully to slot 4. No circular target was built.
+
+## CPU-owned REZO control plane (2026-08-23)
+
+Branch `codex/rezo-cpu-framebuffer-prototype` now contains a production-oriented
+CPU control target rather than a framebuffer experiment. VexiiRiscv owns
+navigation, parameter state, and slot-local persistence; the existing hardware
+continues to own all audio DSP, CV, LEDs, and scanline rendering. The target is
+`rezo_cpu`, and its implementation now lives with the REZO family under
+`cpu_control.py` and `cpu_fw/`; the temporary hybrid-probe package has been
+removed.
+
+The firmware navigation and persistence paths were audited against CPU-less
+REZO. BANK/FILTER page order, conditional INPUT targets, conditional WIDTH,
+disabled-band behavior, group cycling, coarse/fine edits, factory frequency
+layouts, and the 46-word V2/42-word legacy persistence contract match. The
+compact CSR remains write-only and command based, and instruction fetch uses a
+dedicated port of the dual-port firmware ROM.
+
+Two safety corrections accompany the production cleanup. AUDIO-input activity
+is clamped to its UI lane and a held end-stop reports full-scale clipping. More
+importantly, every state-variable-filter update is now widened and clamped
+before storage; the earlier ordering could narrow and wrap an overflowing
+state before the apparent saturation step, creating an unrecoverable noisy
+orbit at high resonance, feedback, or drive. A long stress-and-retreat
+simulation now covers that failure mode.
+
+See `REZO_CPU_ARCHITECTURE.md` for the ownership boundary, memory map, startup
+behavior, build command, and hardware qualification checklist.
+
+The final standard `1280x720p60` route uses seed 1 and passes at 423.37 MHz
+DVI5X, 71.75 MHz AUDIO, 77.83 MHz DVI, and 61.84 MHz SYNC. Utilization is
+21,878 / 24,288 TRELLIS_COMB (90%), 8,119 TRELLIS_FF (33%), and 36 / 56
+DP16KD (64%). The 14,884-byte firmware image fits inside its 16 KiB ROM.
+Archive `rezo-cpu-77706ed9-r5.tar.gz` has SHA-256
+`2014d222f9e773f14b8b31a31c7e92ff988fab82afac8017324c626eb26be797`;
+its routed and archived `top.bit` SHA-256 is
+`2c5ccbc1ceb7f3a9b30860302a7ab777c725750b73868b69ce90873969bea1fb`.
+The archive tag reflects the dirty-tree base commit. No circular target was
+built and, with the rack powered down, nothing was flashed.
+
+Subsequent hardware validation exercised maximum DRIVE, RES, and FB with the
+loosest KNEE, CEIL, and DAMP settings. The combination can still enter a harsh,
+digitally clipped noise region, but it now exits reliably when the controls are
+reduced. This is the accepted 1.0 boundary: extreme overload may sound extreme,
+but persistent DSP state must never remain trapped after retreating. The user
+guide documents the overload region and the simulation regression preserves
+the recovery requirement.

@@ -1,6 +1,76 @@
+import math
+
 from amaranth.sim import Simulator
 
 from top.rezo.rezo_variant import RezoCore
+
+
+def test_extreme_resonance_feedback_and_drive_recovers_after_controls_retreat():
+    """Saturated SVF state must not wrap into a persistent full-scale orbit."""
+    dut = RezoCore(fs=192_000)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+    recovered = []
+
+    def swarm_sample(n):
+        # Nearby non-harmonic components repeatedly align and separate, which
+        # excites the same high-Q multi-band condition reported on hardware.
+        return sum(int(9000 * math.sin(n * phase))
+                   for phase in (0.071, 0.083, 0.097)) // 3
+
+    async def send(ctx, sample):
+        ctx.set(dut.i.payload[0].as_value(), sample)
+        for channel in range(1, 4):
+            ctx.set(dut.i.payload[channel].as_value(), 0)
+        ctx.set(dut.i.valid, 1)
+        await ctx.tick().until(dut.i.ready == 1)
+        ctx.set(dut.i.valid, 0)
+        ctx.set(dut.o.ready, 1)
+        values = await ctx.tick().sample(
+            *[dut.o.payload[channel].as_value() for channel in range(4)]
+        ).until(dut.o.valid == 1)
+        return values[0]
+
+    async def bench(ctx):
+        for n, level in enumerate(dut.levels):
+            ctx.set(level, 8192 if n & 1 else 0)
+            ctx.set(dut.band_enables[n], n not in (0, 2, 4))
+            ctx.set(dut.bank_groups[n], 1)
+            ctx.set(dut.feedback_sends[n], 1)
+        ctx.set(dut.drive, 24_575)
+        ctx.set(dut.resonance, 32_768)
+        ctx.set(dut.feedback, 32_768)
+        ctx.set(dut.damp_mode, 0)
+        ctx.set(dut.limit_knee, 19_660)
+        ctx.set(dut.limit_cap, 32_767)
+        for n in range(1536):
+            await send(ctx, swarm_sample(n))
+
+        # Pull every destabilizing control back while input continues. A
+        # healthy filter should leave the rails without requiring a reboot.
+        for level in dut.levels:
+            ctx.set(level, 0)
+        ctx.set(dut.drive, dut.DRIVE_DEFAULT)
+        ctx.set(dut.resonance, 8192)
+        ctx.set(dut.feedback, 0)
+        ctx.set(dut.damp_mode, 3)
+        ctx.set(dut.limit_knee, 12_288)
+        ctx.set(dut.limit_cap, 28_672)
+        for n in range(512):
+            await send(ctx, swarm_sample(1536 + n))
+
+        ctx.set(dut.levels[5], 1024)
+        for n in range(512):
+            value = await send(ctx, swarm_sample(2048 + n))
+            if n >= 384:
+                recovered.append(value)
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    peak = max(abs(value) for value in recovered)
+    rail_count = sum(value in (-32768, 32767) for value in recovered)
+    assert peak < 8000 and rail_count == 0, (peak, rail_count, recovered[-32:])
 
 
 def test_filter_profile_band_tags_do_not_wrap():

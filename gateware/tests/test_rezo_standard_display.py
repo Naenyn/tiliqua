@@ -649,6 +649,42 @@ def test_compact_audio_gain_fader_stays_inside_value_lane():
     ]
 
 
+def test_compact_input_meter_clamps_and_marks_clipping_inside_value_lane():
+    """Full-scale telemetry cannot escape the chip; clipping gets an end stop."""
+    dut = RezoTileDisplay(h_active=1280, compact_layout=True)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6, domain="sync")
+    sim.add_clock(1e-6, domain="dvi")
+    samples = []
+
+    async def sample(ctx, panel_x, panel_y):
+        ctx.set(dut.x, dut.x_offset + panel_x)
+        ctx.set(dut.y, panel_y)
+        ctx.set(dut.de, 1)
+        for _ in range(12):
+            await ctx.tick("dvi")
+        samples.append(ctx.get(dut.r))
+
+    async def bench(ctx):
+        ctx.set(dut.page, 2)
+        ctx.set(dut.input_modes[0], RezoCore.INPUT_MODE_AUDIO)
+        ctx.set(dut.input_meters[0], 31)
+        await sample(ctx, 574, 271)  # final meter pixel inside the value chip
+        await sample(ctx, 576, 271)  # no telemetry beyond the chip
+        ctx.set(dut.input_clips[0], 1)
+        await sample(ctx, 573, 268)  # bright clip end stop
+        await sample(ctx, 576, 268)  # marker also remains inside the chip
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    palette = RezoTileDisplay.PALETTE
+    assert samples == [
+        palette["modulation"], palette["background"],
+        palette["text"], palette["background"],
+    ]
+
+
 def test_compact_output_cells_share_native_label_centers():
     """Every OUTPUT cell is centred from the same native label coordinate."""
     dut = RezoTileDisplay(
