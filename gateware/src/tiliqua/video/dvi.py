@@ -179,27 +179,39 @@ class DVIPHY(wiring.Component):
         tmds_ch0_shift = Signal(10, reset_less=True)
         tmds_ch1_shift = Signal(10, reset_less=True)
         tmds_ch2_shift = Signal(10, reset_less=True)
+        tmds_clk_shift = Signal(10, reset_less=True)
 
-        # 5-bit circular shift buffer
+        # One phase ring defines the shared word boundary. Register four kept
+        # local copies of its load strobe so each lane only drives its own ten
+        # shift flops. This preserves exact lane alignment without making one
+        # 371 MHz signal span all four serializers.
         shift5 = Signal(5, reset=1)
+        load_strobes = [
+            Signal(reset_less=True, name=f"tmds_load{n}",
+                   attrs={"keep": True})
+            for n in range(4)
+        ]
 
         # Serialization in the 5x DVI clock domain
         m.d.dvi5x += [
-            shift5.eq(Cat(shift5[4], shift5[0:4]))
+            shift5.eq(Cat(shift5[4], shift5[0:4])),
+            *(strobe.eq(shift5[0]) for strobe in load_strobes),
         ]
 
-        with m.If(shift5[0]):
-            m.d.dvi5x += [
-                tmds_ch0_shift.eq(s_tmds_ch0),
-                tmds_ch1_shift.eq(s_tmds_ch1),
-                tmds_ch2_shift.eq(s_tmds_ch2)
-            ]
-        with m.Else():
-            m.d.dvi5x += [
-                tmds_ch0_shift.eq(Cat(tmds_ch0_shift[2:10], Const(0, 2))),
-                tmds_ch1_shift.eq(Cat(tmds_ch1_shift[2:10], Const(0, 2))),
-                tmds_ch2_shift.eq(Cat(tmds_ch2_shift[2:10], Const(0, 2)))
-            ]
+        def serialize_lane(shift, load, word):
+            with m.If(load):
+                m.d.dvi5x += shift.eq(word)
+            with m.Else():
+                m.d.dvi5x += shift.eq(Cat(
+                    shift[2:10], Const(0, 2)))
+
+        serialize_lane(tmds_ch0_shift, load_strobes[0], s_tmds_ch0)
+        serialize_lane(tmds_ch1_shift, load_strobes[1], s_tmds_ch1)
+        serialize_lane(tmds_ch2_shift, load_strobes[2], s_tmds_ch2)
+        # Serialize the TMDS clock through the same phase ring and DDR path as
+        # the data lanes. Driving the clock pin directly from the pixel clock
+        # made word alignment depend on route-dependent clock/reset skew.
+        serialize_lane(tmds_clk_shift, load_strobes[3], 0b0000011111)
 
         if sim.is_hw(platform):
             dvi_pins = platform.request("dvi")
@@ -225,10 +237,13 @@ class DVIPHY(wiring.Component):
                     i_RST=ResetSignal("dvi5x"),
                     o_Q=dvi_pins.d2.o
                 ),
+                Instance("ODDRX1F",
+                    i_D0=tmds_clk_shift[0],
+                    i_D1=tmds_clk_shift[1],
+                    i_SCLK=ClockSignal("dvi5x"),
+                    i_RST=ResetSignal("dvi5x"),
+                    o_Q=dvi_pins.ck.o
+                ),
             ]
-
-        # Clock output
-        with m.If(~ResetSignal("dvi")):
-            m.d.comb += dvi_pins.ck.o.eq(ClockSignal("dvi"))
 
         return m

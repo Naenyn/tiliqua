@@ -2832,7 +2832,13 @@ class RezoTileDisplay(wiring.Component):
             advanced_page.eq(self.page == 5),
             bands_page.eq(self.page == 6),
         ]
-        page_cells = 45 * 45
+        # Use power-of-two row and page strides. The earlier packed 45x45
+        # layout saved a few BRAMs but put a cell_y*45 multiplier and a wide
+        # page-offset adder directly in front of the pixel-clock text RAM.
+        # BRAM is plentiful in the CPU build; a sparse 64x64 page makes the
+        # live read address pure concatenation and removes that timing path.
+        text_row_stride = 64
+        page_cells = 64 * 64
         text_init = [0] * (9 * page_cells)
 
         def compact_cell(value):
@@ -2852,20 +2858,24 @@ class RezoTileDisplay(wiring.Component):
             y0 = text_cell_y(y0)
             for offset, ch in enumerate(text_value):
                 if 0 <= x0 + offset < 45 and 0 <= y0 < 45:
-                    text_init[page * page_cells + y0 * 45 + x0 + offset] = self.code(ch)
+                    text_init[page * page_cells +
+                              y0 * text_row_stride + x0 + offset] = self.code(ch)
 
         def put_native(page, text_value, x0, y0):
             """Place compact-layout text directly on the native 16px grid."""
             for offset, ch in enumerate(text_value):
                 if 0 <= x0 + offset < 45 and 0 <= y0 < 45:
-                    text_init[page * page_cells + y0 * 45 + x0 + offset] = self.code(ch)
+                    text_init[page * page_cells +
+                              y0 * text_row_stride + x0 + offset] = self.code(ch)
 
         def text_address_for(page, x0, y0, offset=0):
-            return (page * page_cells + text_cell_y(y0) * 45 +
+            return (page * page_cells +
+                    text_cell_y(y0) * text_row_stride +
                     text_cell_x(x0) + offset)
 
         def native_text_address(page, x0, y0, offset=0):
-            return page * page_cells + y0 * 45 + x0 + offset
+            return (page * page_cells + y0 * text_row_stride +
+                    x0 + offset)
 
         page_titles = COMMON_PAGE_TITLES + ("FILTER", "MATRIX")
         compact_input_text_rows = NATIVE_INPUT_TEXT_ROWS
@@ -2976,14 +2986,15 @@ class RezoTileDisplay(wiring.Component):
             shape=unsigned(6), depth=len(text_init), init=text_init)
         text_rport = text_mem.read_port(domain="dvi")
         text_wport = text_mem.write_port(domain="sync")
-        page_offsets = Array(Const(page * page_cells, unsigned(15)) for page in range(9))
-        text_address = Signal(unsigned(15))
+        page_offsets = Array(
+            Const(page * page_cells, unsigned(16)) for page in range(9))
+        text_address = Signal(unsigned(16))
         text_page_q = Signal(unsigned(4))
         m.d.dvi += text_page_q.eq(
             Mux((self.page == 0) & self.filter_mode, 7,
                 Mux((self.page == 7) & self.filter_mode, 8, self.page)))
         m.d.comb += [
-            text_address.eq(page_offsets[text_page_q] + cell_y * 45 + cell_x),
+            text_address.eq(Cat(cell_x, cell_y, text_page_q)),
             text_rport.addr.eq(text_address),
         ]
 
@@ -3069,7 +3080,7 @@ class RezoTileDisplay(wiring.Component):
         update_index = Signal(range(104))
         update_active = Signal(init=1)
         refresh_counter = Signal(range(4_000_000))
-        writer_address = Signal(unsigned(15))
+        writer_address = Signal(unsigned(16))
         writer_char = Signal(unsigned(6))
         writer_index_q = Signal.like(update_index)
         writer_page_q = Signal(unsigned(4))
@@ -3273,7 +3284,7 @@ class RezoTileDisplay(wiring.Component):
                 writer_address_init[71 + pos] = text_address_for(
                     1, 12, 32, pos)
         m.submodules.writer_address_mem = writer_address_mem = Memory(
-            shape=unsigned(15), depth=len(writer_address_init),
+            shape=unsigned(16), depth=len(writer_address_init),
             init=writer_address_init, attrs={"ram_style": "block"})
         writer_address_rport = writer_address_mem.read_port()
         m.d.comb += [
@@ -3281,7 +3292,8 @@ class RezoTileDisplay(wiring.Component):
             writer_address.eq(Mux(
                 writer_index_q < 4,
                 page_offsets[writer_page_q] +
-                (8 if self.compact_layout else text_cell_y(3)) * 45 +
+                (8 if self.compact_layout else text_cell_y(3)) *
+                text_row_stride +
                 (33 if self.compact_layout else text_cell_x(39)) +
                 writer_index_q,
                 writer_address_rport.data)),
@@ -5099,14 +5111,24 @@ class RezoBeamTop(Elaboratable):
     )
     nextpnr_opts = f"--timing-allow-fail --seed {os.getenv('TILIQUA_REZO_SEED', '8')}"
 
-    def __init__(self, clock_settings):
+    def __init__(self, clock_settings, *, firmware_bin_path=None):
         assert clock_settings.modeline is not None
         self.clock_settings = clock_settings
+        self.firmware_bin_path = firmware_bin_path
         self.pmod0 = eurorack_pmod.EurorackPmod(
             self.clock_settings.audio_clock, with_boot_slot=True)
 
     def elaborate(self, platform):
         m = Module()
+        hybrid_firmware_path = (
+            self.firmware_bin_path or
+            os.getenv("TILIQUA_REZO_HYBRID_FIRMWARE"))
+        hybrid_control_probe = (
+            hybrid_firmware_path is not None or
+            os.getenv("TILIQUA_REZO_HYBRID_CONTROL_PROBE") == "1")
+        static_ui_probe = (
+            os.getenv("TILIQUA_REZO_STATIC_UI_PROBE") == "1" or
+            hybrid_control_probe)
 
         if sim.is_hw(platform):
             m.submodules.car = platform.clock_domain_generator(self.clock_settings)
@@ -5120,55 +5142,80 @@ class RezoBeamTop(Elaboratable):
             m.submodules.car = sim.FakeTiliquaDomainGenerator()
             enc_pins = None
 
+        if hybrid_control_probe:
+            try:
+                from .hybrid_control import RezoHybridControlPlane
+            except ImportError:  # top_level_cli executes this file directly.
+                from hybrid_control import RezoHybridControlPlane
+            if not hybrid_firmware_path:
+                raise ValueError(
+                    "TILIQUA_REZO_HYBRID_FIRMWARE is required for the "
+                    "hybrid control probe")
+            m.submodules.hybrid_control = hybrid_control = \
+                RezoHybridControlPlane(
+                    self.clock_settings,
+                    firmware_bin_path=hybrid_firmware_path)
+            if sim.is_hw(platform):
+                m.d.comb += [
+                    hybrid_control.encoder0.pins.i.eq(enc_pins.i.i),
+                    hybrid_control.encoder0.pins.q.eq(enc_pins.q.i),
+                    hybrid_control.encoder0.pins.s.eq(enc_pins.s.i),
+                ]
+
         m.submodules.pmod0 = pmod0 = self.pmod0
         m.submodules.rezo = rezo = RezoCore(fs=self.clock_settings.audio_clock.fs())
-        m.submodules.ui = ui = RezoHardwareUI()
-        m.submodules.state_journal = state_journal = RezoStateJournal(
-            RezoHardwareUI.STATE_WORDS_V2,
-            legacy_state_words=RezoHardwareUI.STATE_WORDS_V1,
-            legacy_tail_words=RezoHardwareUI.legacy_band_config_words())
-        m.submodules.spi_transfer = spi_transfer = SPIFlashTransfer()
-        m.submodules.spi_phy = spi_phy = spiflash.SPIPHYController(
-            domain="sync", divisor=1)
-        wiring.connect(m, spi_transfer.spi, spi_phy.ctrl)
-        if sim.is_hw(platform):
-            m.submodules.spi_provider = spi_provider = \
-                spiflash.ECP5ConfigurationFlashProvider()
-            wiring.connect(m, spi_phy.pins, spi_provider.pins)
+        ui = hybrid_control.ui if hybrid_control_probe else RezoHardwareUI()
+        if not static_ui_probe:
+            m.submodules.ui = ui
+            m.submodules.state_journal = state_journal = RezoStateJournal(
+                RezoHardwareUI.STATE_WORDS_V2,
+                legacy_state_words=RezoHardwareUI.STATE_WORDS_V1,
+                legacy_tail_words=RezoHardwareUI.legacy_band_config_words())
+            m.submodules.spi_transfer = spi_transfer = SPIFlashTransfer()
+            m.submodules.spi_phy = spi_phy = spiflash.SPIPHYController(
+                domain="sync", divisor=1)
+            wiring.connect(m, spi_transfer.spi, spi_phy.ctrl)
+            if sim.is_hw(platform):
+                m.submodules.spi_provider = spi_provider = \
+                    spiflash.ECP5ConfigurationFlashProvider()
+                wiring.connect(m, spi_phy.pins, spi_provider.pins)
         m.submodules.audio_out_fifo = audio_out_fifo = dsp.SyncFIFOBuffered(
             shape=data.ArrayLayout(ASQ, 4), depth=4)
 
         # Persistent defaults live in the running slot's option window.
         # Palette is part of that explicit state record rather than an
         # independently auto-saved EEPROM preference.
-        m.d.comb += [
-            state_journal.boot_slot.eq(pmod0.boot_slot),
-            state_journal.boot_slot_valid.eq(pmod0.boot_slot_valid),
-            state_journal.boot_slot_checked.eq(pmod0.boot_slot_checked),
-            state_journal.state_read_data.eq(ui.state_read_data),
-            state_journal.save_request.eq(ui.save_default_request),
-            ui.state_write_data.eq(state_journal.state_write_data),
-            ui.state_shift_enable.eq(state_journal.state_shift_enable),
-            ui.state_shift_load.eq(state_journal.state_shift_load),
-            ui.save_default_available.eq(state_journal.available),
-            ui.save_default_busy.eq(state_journal.busy),
-            ui.save_default_done.eq(state_journal.save_done),
-            ui.save_default_error.eq(state_journal.save_error),
+        if not static_ui_probe:
+            m.d.comb += [
+                state_journal.boot_slot.eq(pmod0.boot_slot),
+                state_journal.boot_slot_valid.eq(pmod0.boot_slot_valid),
+                state_journal.boot_slot_checked.eq(pmod0.boot_slot_checked),
+                state_journal.state_read_data.eq(ui.state_read_data),
+                state_journal.save_request.eq(ui.save_default_request),
+                ui.state_write_data.eq(state_journal.state_write_data),
+                ui.state_shift_enable.eq(state_journal.state_shift_enable),
+                ui.state_shift_load.eq(state_journal.state_shift_load),
+                ui.save_default_available.eq(state_journal.available),
+                ui.save_default_busy.eq(state_journal.busy),
+                ui.save_default_done.eq(state_journal.save_done),
+                ui.save_default_error.eq(state_journal.save_error),
 
-            spi_transfer.start.eq(state_journal.xfer_start),
-            spi_transfer.chip_select.eq(state_journal.xfer_cs),
-            spi_transfer.tx_data.eq(state_journal.xfer_tx),
-            spi_transfer.length.eq(state_journal.xfer_length),
-            spi_transfer.output_mask.eq(state_journal.xfer_mask),
-            state_journal.xfer_rx.eq(spi_transfer.rx_data),
-            state_journal.xfer_done.eq(spi_transfer.done),
-        ]
+                spi_transfer.start.eq(state_journal.xfer_start),
+                spi_transfer.chip_select.eq(state_journal.xfer_cs),
+                spi_transfer.tx_data.eq(state_journal.xfer_tx),
+                spi_transfer.length.eq(state_journal.xfer_length),
+                spi_transfer.output_mask.eq(state_journal.xfer_mask),
+                state_journal.xfer_rx.eq(spi_transfer.rx_data),
+                state_journal.xfer_done.eq(spi_transfer.done),
+            ]
 
-        if sim.is_hw(platform):
+        if sim.is_hw(platform) and not static_ui_probe:
             # Do not expose factory defaults or a partially restored state as
             # an audible startup transient.
             m.d.comb += pmod0.codec_mute.eq(
                 reboot.mute | ~state_journal.startup_done)
+        elif sim.is_hw(platform):
+            m.d.comb += pmod0.codec_mute.eq(reboot.mute)
 
         if sim.is_hw(platform):
             m.d.comb += [
@@ -5414,14 +5461,20 @@ class RezoBeamTop(Elaboratable):
         return m
 
 
-def run_cli(*, name="REZO", artifact_name=None, modeline=None):
+def run_cli(*, name="REZO", artifact_name=None, modeline=None,
+            fragment=RezoBeamTop, argparse_fragment=None):
     """Build the non-clocked REZO variant for one explicit display target."""
     this_path = os.path.dirname(os.path.realpath(__file__))
+
+    def configure_archiver(archiver):
+        return archiver.with_option_storage()
+
     top_level_cli(
-        RezoBeamTop, path=this_path,
+        fragment, path=this_path,
         argparse_callback=lambda parser: parser.set_defaults(
             name=name, artifact_name=artifact_name, modeline=modeline),
-        archiver_callback=lambda archiver: archiver.with_option_storage())
+        argparse_fragment=argparse_fragment,
+        archiver_callback=configure_archiver)
 
 
 if __name__ == "__main__":

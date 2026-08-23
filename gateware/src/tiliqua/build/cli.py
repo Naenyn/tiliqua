@@ -21,6 +21,7 @@ from ..video import modeline
 from ..platform import *
 from ..tiliqua_soc import TiliquaSoc
 from .archive import ArchiveBuilder
+from .timing import insufficient_clocks, parse_timing_report
 from vendor.ila                  import AsyncSerialILAFrontend
 
 class CliAction(str, enum.Enum):
@@ -343,6 +344,26 @@ def top_level_cli(
             # stale top.bit left by an earlier route.
             build_result.extract(build_path)
             return fragment
+
+        minimum_headroom = getattr(
+            fragment, "minimum_timing_headroom_percent", None)
+        if minimum_headroom is not None:
+            timing_path = os.path.join(build_path, "top.tim")
+            with open(timing_path) as timing_file:
+                timings = parse_timing_report(timing_file.read())
+            if not timings:
+                raise RuntimeError(
+                    f"no clock summaries found in timing report {timing_path}")
+            failures = insufficient_clocks(timings, minimum_headroom)
+            if failures:
+                details = ", ".join(
+                    f"{timing.clock}: {timing.actual_mhz:.2f}/"
+                    f"{timing.required_mhz:.2f} MHz "
+                    f"({timing.headroom_percent:.2f}% headroom)"
+                    for timing in failures)
+                raise RuntimeError(
+                    "post-route timing gate failed; "
+                    f"{minimum_headroom:.2f}% required: {details}")
 
         archiver.with_bitstream().create()
 
