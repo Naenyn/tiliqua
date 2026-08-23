@@ -51,6 +51,14 @@ const STARTUP_STATE: u32 = 31;
 const FLASH_READ: u32 = 1;
 const FLASH_PROGRAM: u32 = 2;
 const FLASH_ERASE: u32 = 3;
+// Persistence is optional at runtime: a missing slot identity or a wedged SPI
+// transaction must never hold the UI and codec mute in their reset state.
+// Read commands normally complete in microseconds; this bound leaves ample
+// margin while keeping a failed boot scan short. Sector erase needs a much
+// larger allowance for the flash chip's internal erase cycle.
+const BOOT_SLOT_TIMEOUT_POLLS: u32 = 1_000_000;
+const FLASH_READ_TIMEOUT_POLLS: u32 = 1_000_000;
+const FLASH_WRITE_TIMEOUT_POLLS: u32 = 12_000_000;
 const STATE_WORDS: usize = 46;
 const LEGACY_STATE_WORDS: usize = 42;
 const HEADER_BYTES: usize = 16;
@@ -137,7 +145,12 @@ unsafe fn flash_operation(operation: u32, sector: u8, offset: u16, data: u8) -> 
         | (((offset as u32) & 0x0fff) << 3)
         | ((data as u32) << 15);
     write32(FLASH_COMMAND, command);
-    loop {
+    let timeout = if operation == FLASH_READ {
+        FLASH_READ_TIMEOUT_POLLS
+    } else {
+        FLASH_WRITE_TIMEOUT_POLLS
+    };
+    for _ in 0..timeout {
         let status = read32(FLASH_STATUS);
         if status & 1 == 0 && status & 2 != 0 {
             return if status & 4 == 0 {
@@ -147,6 +160,7 @@ unsafe fn flash_operation(operation: u32, sector: u8, offset: u16, data: u8) -> 
             };
         }
     }
+    None
 }
 
 unsafe fn flash_read(sector: u8, offset: u16) -> Option<u8> {
@@ -958,12 +972,14 @@ fn main() -> ! {
         // Wait until the bootloader's slot detector has either supplied a
         // validated slot or explicitly reported that no safe slot exists.
         // The flash peripheral itself independently enforces this decision.
-        flash_available = loop {
+        flash_available = (0..BOOT_SLOT_TIMEOUT_POLLS).find_map(|_| {
             let slot = read32(FLASH_SLOT);
             if slot & 1 != 0 {
-                break slot & 2 != 0;
+                Some(slot & 2 != 0)
+            } else {
+                None
             }
-        };
+        }).unwrap_or(false);
         if flash_available {
             if let Some(generation) = scan_sector(0, &mut record, &mut words) {
                 state.load_words(&words);
