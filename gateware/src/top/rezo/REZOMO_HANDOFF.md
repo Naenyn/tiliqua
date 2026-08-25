@@ -120,13 +120,20 @@ passes (`61 passed`).
 
 Pack-only comparison against the corrected CPU build drops utilization from
 22,659 to 22,014 TRELLIS_COMB cells, recovering 645 cells, while FF usage drops
-from 8,212 to 8,206 and DP16KD usage rises from 31 to 32. Seed 6 is the retained
-standard-display route: 422.12 MHz DVI5X, 72.50 MHz AUDIO, 62.05 MHz SYNC, and
-79.69 MHz DVI. Every clock clears the 3% release gate; SYNC is limiting at
-3.42%. Seeds 4 and 5 passed nominal timing but missed the release margin.
+from 8,212 to 8,206 and DP16KD usage rises from 31 to 32. Seed 7 is the retained
+standard-display route: 425.71 MHz DVI5X, 74.62 MHz AUDIO, 64.20 MHz SYNC, and
+79.30 MHz DVI. Every clock clears the 3% release gate; DVI is limiting at
+6.80%. Seeds 4 and 5 passed nominal timing but missed the release margin. Seed
+6 cleared the gate before the implementation commit, but the clean committed
+build reached only 2.58% SYNC margin, so it was rejected.
 
 Only the standard `1280x720p60` target was considered. The rack was powered
 down, so this checkpoint must not be described as hardware-tested or flashed.
+Implementation commit `5ea78921` supplies the exact qualified archive
+`rezomo-cpu-5ea78921-r5.tar.gz`. Its SHA-256 is
+`ca18a8b1ad17caf23ed72a773aaa879ed6f983965a70984bccedc9f115b17296`;
+the packaged `top.bit` SHA-256 is
+`9a044daef97305efd3d9b22b44c65af12b19583bedaf2b01c10462423253b9e3`.
 
 ## Current objective
 

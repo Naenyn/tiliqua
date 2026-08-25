@@ -66,10 +66,10 @@ The target enforces at least 3 percent post-route headroom on every clock. A
 release is qualified only after the archive boots from slot 3 and the hardware
 checklist below passes.
 
-The congestion-optimized 2026-08-25 standard route uses seed 6, 22,014 of
+The congestion-optimized 2026-08-25 standard route uses seed 7, 22,014 of
 24,288 TRELLIS_COMB cells (90%), 8,206 TRELLIS_FF cells (33%), and 32 of 56
-DP16KD blocks (57%). It closes DVI5X at 422.12 MHz, AUDIO at 72.50 MHz, SYNC
-at 62.05 MHz, and DVI at 79.69 MHz. SYNC is the limiting 3.42% margin, so
+DP16KD blocks (57%). It closes DVI5X at 425.71 MHz, AUDIO at 74.62 MHz, SYNC
+at 64.20 MHz, and DVI at 79.30 MHz. DVI is the limiting 6.80% margin, so
 future changes must continue to pass the release gate. Relative to the prior
 corrected route, the operation ROM recovers 645 packed logic cells at the cost
 of one block RAM.

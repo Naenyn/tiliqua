@@ -632,8 +632,14 @@ from 8,212 to 8,206 and DP16KD usage increases from 31 to 32.
 |---:|---|---|
 | 4 | 477.78 / 72.21 / 61.32 / 78.12 | Nominal pass; rejected below 3% SYNC margin |
 | 5 | 439.37 / 74.02 / 61.67 / 76.01 | Nominal pass; rejected below 3% SYNC and DVI margins |
-| 6 | 422.12 / 72.50 / 62.05 / 79.69 | PASS; retained default, 3.42% limiting SYNC margin |
+| 6 | 446.03 / 71.90 / 61.55 / 82.80 | Clean build rejected at 2.58% SYNC margin |
+| 7 | 425.71 / 74.62 / 64.20 / 79.30 | PASS; retained default, 6.80% limiting DVI margin |
 
-Seed 6 was qualified directly from the final synthesized JSON. Only the
-standard `1280x720p60` target was used, and nothing was flashed because the
-rack was powered down.
+Seed 7 was qualified directly from implementation commit `5ea78921`'s exact
+synthesized JSON and packaged without resynthesis. Archive
+`rezomo-cpu-5ea78921-r5.tar.gz` has SHA-256
+`ca18a8b1ad17caf23ed72a773aaa879ed6f983965a70984bccedc9f115b17296`;
+its packaged `top.bit` has SHA-256
+`9a044daef97305efd3d9b22b44c65af12b19583bedaf2b01c10462423253b9e3`.
+Only the standard `1280x720p60` target was used, and nothing was flashed because
+the rack was powered down.
