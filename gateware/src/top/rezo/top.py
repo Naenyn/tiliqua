@@ -544,14 +544,11 @@ class RezoCore(wiring.Component):
         svf_storage = svf_shape.as_shape()
         alp = Array([Signal(svf_storage, name=f"alp{n}") for n in range(self.N_BANDS)])
         abp = Array([Signal(svf_storage, name=f"abp{n}") for n in range(self.N_BANDS)])
-        ahp = Array([Signal(svf_storage, name=f"ahp{n}") for n in range(self.N_BANDS)])
         alp_cur_raw = Signal(svf_storage)
         abp_cur_raw = Signal(svf_storage)
-        ahp_cur_raw = Signal(svf_storage)
         cutoff_cur_raw = Signal(dsp.mac.SQNative.as_shape())
         alp_cur = svf_shape(alp_cur_raw)
         abp_cur = svf_shape(abp_cur_raw)
-        ahp_cur = svf_shape(ahp_cur_raw)
         cutoff_cur = dsp.mac.SQNative(cutoff_cur_raw)
 
         mac_a_q = Signal(dsp.mac.SQNative)
@@ -562,22 +559,34 @@ class RezoCore(wiring.Component):
         svf_product = svf_shape(svf_product_raw)
         svf_product_q = svf_shape(svf_product_q_raw)
         hp_offset_q = Signal(svf_shape)
-        alp_next = Signal(svf_shape)
-        ahp_next = Signal(svf_shape)
-        abp_next = Signal(svf_shape)
+        svf_update_base = Signal(svf_shape)
+        svf_next = Signal(svf_shape)
+        # LP, HP, and BP updates occupy distinct FSM states. One widened
+        # adder and one overflow clamp therefore serve all three equations.
+        alp_next = ahp_next = abp_next = svf_next
+
+        def saturate_svf_update(value):
+            """Clamp a widened signed SVF add before narrowing can wrap it."""
+            raw = value.as_value()
+            width = svf_storage.width
+            return svf_shape(Mux(
+                raw[-1] == raw[width - 1], raw[:width],
+                Mux(raw[-1],
+                    Const(1 << (width - 1), width),
+                    Const((1 << (width - 1)) - 1, width))))
+
+        svf_next_safe = saturate_svf_update(
+            svf_product_q + svf_update_base)
 
         m.d.comb += [
             alp_cur_raw.eq(alp[band]),
             abp_cur_raw.eq(abp[band]),
-            ahp_cur_raw.eq(ahp[band]),
             cutoff_rport.addr.eq(frequency_array[cutoff_band]),
             cutoff_cur_raw.eq(cutoff_rport.data),
             mac_z.eq(mac_a_q * mac_b_q),
             svf_product_raw.eq(
                 mac_z.as_value().as_signed() >> dsp.mac.SQNative.f_bits),
-            alp_next.eq(svf_product_q + alp_cur),
-            ahp_next.eq(svf_product_q + hp_offset_q),
-            abp_next.eq(svf_product_q + abp_cur),
+            svf_next.eq(svf_next_safe),
         ]
 
         mix_shape = signed(ASQ.as_shape().width + 5)
@@ -1885,27 +1894,28 @@ class RezoCore(wiring.Component):
             with m.Case(state_mac0_commit):
                 m.d.sync += [
                     svf_product_q_raw.eq(svf_product_raw),
+                    svf_update_base.eq(alp_cur),
                     state.eq(state_mac1_setup),
                 ]
 
             with m.Case(state_mac1_setup):
                 m.d.sync += [
-                    alp[band].eq(alp_next.saturate(svf_shape).as_value()),
+                    alp[band].eq(alp_next.as_value()),
                     mac_a_q.eq(abp_cur),
                     mac_b_q.eq(-resonance),
-                    hp_offset_q.eq(x - alp_next),
+                    hp_offset_q.eq(saturate_svf_update(x - alp_next)),
                     state.eq(state_mac1_commit),
                 ]
 
             with m.Case(state_mac1_commit):
                 m.d.sync += [
                     svf_product_q_raw.eq(svf_product_raw),
+                    svf_update_base.eq(hp_offset_q),
                     state.eq(state_mac2_setup),
                 ]
 
             with m.Case(state_mac2_setup):
                 m.d.sync += [
-                    ahp[band].eq(ahp_next.saturate(svf_shape).as_value()),
                     mac_a_q.eq(ahp_next),
                     mac_b_q.eq(cutoff_cur),
                     state.eq(state_mac2_commit),
@@ -1914,11 +1924,12 @@ class RezoCore(wiring.Component):
             with m.Case(state_mac2_commit):
                 m.d.sync += [
                     svf_product_q_raw.eq(svf_product_raw),
+                    svf_update_base.eq(abp_cur),
                     state.eq(state_mac2_apply),
                 ]
 
             with m.Case(state_mac2_apply):
-                m.d.sync += abp[band].eq(abp_next.saturate(svf_shape).as_value())
+                m.d.sync += abp[band].eq(abp_next.as_value())
                 with m.If(~oversample):
                     m.d.sync += [
                         oversample.eq(1),
@@ -6049,14 +6060,19 @@ class RezoBeamTop(Elaboratable):
     )
     nextpnr_opts = f"--timing-allow-fail --seed {os.getenv('TILIQUA_REZO_SEED', '9')}"
 
-    def __init__(self, clock_settings):
+    def __init__(self, clock_settings, *, firmware_bin_path=None):
         assert clock_settings.modeline is not None
         self.clock_settings = clock_settings
+        self.firmware_bin_path = firmware_bin_path
         self.pmod0 = eurorack_pmod.EurorackPmod(
             self.clock_settings.audio_clock, with_boot_slot=True)
 
     def elaborate(self, platform):
         m = Module()
+        cpu_firmware_path = (
+            self.firmware_bin_path or
+            os.getenv("TILIQUA_REZOMO_CPU_FIRMWARE"))
+        cpu_control_enabled = cpu_firmware_path is not None
 
         if sim.is_hw(platform):
             m.submodules.car = platform.clock_domain_generator(self.clock_settings)
@@ -6070,64 +6086,114 @@ class RezoBeamTop(Elaboratable):
             m.submodules.car = sim.FakeTiliquaDomainGenerator()
             enc_pins = None
 
+        if cpu_control_enabled:
+            try:
+                from .cpu_control import RezomoCpuControlPlane
+            except ImportError:  # top_level_cli executes this file directly.
+                from cpu_control import RezomoCpuControlPlane
+            m.submodules.cpu_control = cpu_control = RezomoCpuControlPlane(
+                self.clock_settings, firmware_bin_path=cpu_firmware_path)
+            if sim.is_hw(platform):
+                m.d.comb += [
+                    cpu_control.encoder0.pins.i.eq(enc_pins.i.i),
+                    cpu_control.encoder0.pins.q.eq(enc_pins.q.i),
+                    cpu_control.encoder0.pins.s.eq(enc_pins.s.i),
+                ]
+
         m.submodules.pmod0 = pmod0 = self.pmod0
         m.submodules.rezo = rezo = RezoCore(fs=self.clock_settings.audio_clock.fs())
-        m.submodules.ui = ui = RezoHardwareUI()
-        m.submodules.state_journal = state_journal = RezoStateJournal(
-            RezoHardwareUI.STATE_WORDS_V3,
-            legacy_records=(
-                (RezoStateJournal.PREVIOUS_VERSION,
-                 RezoHardwareUI.STATE_WORDS_V2),
-                (RezoStateJournal.LEGACY_VERSION,
-                 RezoHardwareUI.STATE_WORDS_V1),
-            ),
-            legacy_tail_words=RezoHardwareUI.legacy_band_config_words(),
-            legacy_word_defaults=tuple(
-                (RezoHardwareUI.STATE_CLOCK_CONFIG_BASE + n, word)
-                for n, word in enumerate(
-                    RezoHardwareUI.legacy_clock_config_words())))
-        m.submodules.spi_transfer = spi_transfer = SPIFlashTransfer()
-        m.submodules.spi_phy = spi_phy = spiflash.SPIPHYController(
-            domain="sync", divisor=1)
-        wiring.connect(m, spi_transfer.spi, spi_phy.ctrl)
-        if sim.is_hw(platform):
-            m.submodules.spi_provider = spi_provider = \
+        ui = cpu_control.ui if cpu_control_enabled else RezoHardwareUI()
+        if cpu_control_enabled and sim.is_hw(platform):
+            m.submodules.cpu_spi_transfer = cpu_spi_transfer = SPIFlashTransfer()
+            m.submodules.cpu_spi_phy = cpu_spi_phy = spiflash.SPIPHYController(
+                domain="sync", divisor=1)
+            m.submodules.cpu_spi_provider = cpu_spi_provider = \
                 spiflash.ECP5ConfigurationFlashProvider()
-            wiring.connect(m, spi_phy.pins, spi_provider.pins)
+            wiring.connect(m, cpu_spi_transfer.spi, cpu_spi_phy.ctrl)
+            wiring.connect(m, cpu_spi_phy.pins, cpu_spi_provider.pins)
+            m.d.comb += [
+                cpu_control.flash_window.boot_slot.eq(pmod0.boot_slot),
+                cpu_control.flash_window.boot_slot_valid.eq(
+                    pmod0.boot_slot_valid),
+                cpu_control.flash_window.boot_slot_checked.eq(
+                    pmod0.boot_slot_checked),
+                cpu_spi_transfer.start.eq(cpu_control.flash_window.xfer_start),
+                cpu_spi_transfer.chip_select.eq(
+                    cpu_control.flash_window.xfer_cs),
+                cpu_spi_transfer.tx_data.eq(cpu_control.flash_window.xfer_tx),
+                cpu_spi_transfer.length.eq(cpu_control.flash_window.xfer_length),
+                cpu_spi_transfer.output_mask.eq(
+                    cpu_control.flash_window.xfer_mask),
+                cpu_control.flash_window.xfer_rx.eq(cpu_spi_transfer.rx_data),
+                cpu_control.flash_window.xfer_done.eq(cpu_spi_transfer.done),
+            ]
+        elif cpu_control_enabled:
+            m.d.comb += [
+                cpu_control.flash_window.boot_slot.eq(0),
+                cpu_control.flash_window.boot_slot_valid.eq(0),
+                cpu_control.flash_window.boot_slot_checked.eq(1),
+                cpu_control.flash_window.xfer_rx.eq(0),
+                cpu_control.flash_window.xfer_done.eq(0),
+            ]
+        else:
+            m.submodules.ui = ui
+            m.submodules.state_journal = state_journal = RezoStateJournal(
+                RezoHardwareUI.STATE_WORDS_V3,
+                legacy_records=(
+                    (RezoStateJournal.PREVIOUS_VERSION,
+                     RezoHardwareUI.STATE_WORDS_V2),
+                    (RezoStateJournal.LEGACY_VERSION,
+                     RezoHardwareUI.STATE_WORDS_V1),
+                ),
+                legacy_tail_words=RezoHardwareUI.legacy_band_config_words(),
+                legacy_word_defaults=tuple(
+                    (RezoHardwareUI.STATE_CLOCK_CONFIG_BASE + n, word)
+                    for n, word in enumerate(
+                        RezoHardwareUI.legacy_clock_config_words())))
+            m.submodules.spi_transfer = spi_transfer = SPIFlashTransfer()
+            m.submodules.spi_phy = spi_phy = spiflash.SPIPHYController(
+                domain="sync", divisor=1)
+            wiring.connect(m, spi_transfer.spi, spi_phy.ctrl)
+            if sim.is_hw(platform):
+                m.submodules.spi_provider = spi_provider = \
+                    spiflash.ECP5ConfigurationFlashProvider()
+                wiring.connect(m, spi_phy.pins, spi_provider.pins)
         m.submodules.audio_out_fifo = audio_out_fifo = dsp.SyncFIFOBuffered(
             shape=data.ArrayLayout(ASQ, 4), depth=4)
 
         # Persistent defaults live in the running slot's option window.
         # Palette is part of that explicit state record rather than an
         # independently auto-saved EEPROM preference.
-        m.d.comb += [
-            state_journal.boot_slot.eq(pmod0.boot_slot),
-            state_journal.boot_slot_valid.eq(pmod0.boot_slot_valid),
-            state_journal.boot_slot_checked.eq(pmod0.boot_slot_checked),
-            state_journal.state_read_data.eq(ui.state_read_data),
-            state_journal.save_request.eq(ui.save_default_request),
-            ui.state_write_data.eq(state_journal.state_write_data),
-            ui.state_shift_enable.eq(state_journal.state_shift_enable),
-            ui.state_shift_load.eq(state_journal.state_shift_load),
-            ui.save_default_available.eq(state_journal.available),
-            ui.save_default_busy.eq(state_journal.busy),
-            ui.save_default_done.eq(state_journal.save_done),
-            ui.save_default_error.eq(state_journal.save_error),
+        if not cpu_control_enabled:
+            m.d.comb += [
+                state_journal.boot_slot.eq(pmod0.boot_slot),
+                state_journal.boot_slot_valid.eq(pmod0.boot_slot_valid),
+                state_journal.boot_slot_checked.eq(pmod0.boot_slot_checked),
+                state_journal.state_read_data.eq(ui.state_read_data),
+                state_journal.save_request.eq(ui.save_default_request),
+                ui.state_write_data.eq(state_journal.state_write_data),
+                ui.state_shift_enable.eq(state_journal.state_shift_enable),
+                ui.state_shift_load.eq(state_journal.state_shift_load),
+                ui.save_default_available.eq(state_journal.available),
+                ui.save_default_busy.eq(state_journal.busy),
+                ui.save_default_done.eq(state_journal.save_done),
+                ui.save_default_error.eq(state_journal.save_error),
+                spi_transfer.start.eq(state_journal.xfer_start),
+                spi_transfer.chip_select.eq(state_journal.xfer_cs),
+                spi_transfer.tx_data.eq(state_journal.xfer_tx),
+                spi_transfer.length.eq(state_journal.xfer_length),
+                spi_transfer.output_mask.eq(state_journal.xfer_mask),
+                state_journal.xfer_rx.eq(spi_transfer.rx_data),
+                state_journal.xfer_done.eq(spi_transfer.done),
+            ]
 
-            spi_transfer.start.eq(state_journal.xfer_start),
-            spi_transfer.chip_select.eq(state_journal.xfer_cs),
-            spi_transfer.tx_data.eq(state_journal.xfer_tx),
-            spi_transfer.length.eq(state_journal.xfer_length),
-            spi_transfer.output_mask.eq(state_journal.xfer_mask),
-            state_journal.xfer_rx.eq(spi_transfer.rx_data),
-            state_journal.xfer_done.eq(spi_transfer.done),
-        ]
-
-        if sim.is_hw(platform):
+        if sim.is_hw(platform) and not cpu_control_enabled:
             # Do not expose factory defaults or a partially restored state as
             # an audible startup transient.
             m.d.comb += pmod0.codec_mute.eq(
                 reboot.mute | ~state_journal.startup_done)
+        elif sim.is_hw(platform):
+            m.d.comb += pmod0.codec_mute.eq(reboot.mute | ~ui.startup_done)
 
         if sim.is_hw(platform):
             m.d.comb += [
@@ -6376,13 +6442,15 @@ class RezoBeamTop(Elaboratable):
         return m
 
 
-def run_cli(*, name="REZOMO", artifact_name=None, modeline=None):
+def run_cli(*, name="REZOMO", artifact_name=None, modeline=None,
+            fragment=RezoBeamTop, argparse_fragment=None):
     """Build REZOMO with an explicitly selected display target."""
     this_path = os.path.dirname(os.path.realpath(__file__))
     top_level_cli(
-        RezoBeamTop, path=this_path,
+        fragment, path=this_path,
         argparse_callback=lambda parser: parser.set_defaults(
             name=name, artifact_name=artifact_name, modeline=modeline),
+        argparse_fragment=argparse_fragment,
         archiver_callback=lambda archiver: archiver.with_option_storage())
 
 

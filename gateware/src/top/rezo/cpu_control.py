@@ -7,10 +7,10 @@ interface. Persistence uses a separate interface whose hardware address range
 is limited to the active slot's option sectors.
 """
 
-from amaranth import Array, Module, Signal, signed, unsigned
+from amaranth import Array, Cat, Const, Module, Signal, signed, unsigned
 from amaranth.lib import memory, wiring
 from amaranth.lib.wiring import Component
-from amaranth.utils import exact_log2
+from amaranth.utils import ceil_log2
 from amaranth_soc import csr, wishbone
 from amaranth_soc.csr.wishbone import WishboneCSRBridge
 from amaranth_soc.memory import MemoryMap
@@ -39,11 +39,11 @@ class RezoProgramMemory(wiring.Component):
     """
 
     def __init__(self, *, size, init=()):
-        if not isinstance(size, int) or size <= 0 or size & (size - 1):
-            raise ValueError("size must be a positive power of two")
+        if not isinstance(size, int) or size <= 0 or size % 4:
+            raise ValueError("size must be a positive multiple of four bytes")
         depth = size // 4
         self._mem = memory.Memory(shape=unsigned(32), depth=depth, init=init)
-        local_addr_width = exact_log2(depth)
+        local_addr_width = ceil_log2(depth)
         features = {"cti", "bte", "err"}
         super().__init__({
             "ibus": wiring.In(wishbone.Signature(
@@ -58,7 +58,7 @@ class RezoProgramMemory(wiring.Component):
         ibus_map.add_resource(
             self, name=("memory", "code_ibus"), size=size)
         self.ibus.memory_map = ibus_map
-        dbus_map = MemoryMap(addr_width=exact_log2(size), data_width=8)
+        dbus_map = MemoryMap(addr_width=ceil_log2(size), data_width=8)
         dbus_map.add_resource(
             self, name=("memory", "code_dbus"), size=size)
         self.dbus.memory_map = dbus_map
@@ -311,6 +311,187 @@ class RezoUIControlPeripheral(Component):
         return m
 
 
+class RezomoFirmwareUIState:
+    """Signals shared by REZOMO firmware, DSP, and scanline renderer."""
+
+    def __init__(self):
+        self.enc_i = Signal()
+        self.enc_q = Signal()
+        self.button = Signal()
+
+        self.levels = [Signal(signed(16), name=f"fw_level{n}")
+                       for n in range(10)]
+        self.band_enables = [Signal(init=1, name=f"fw_band_enable{n}")
+                             for n in range(10)]
+        self.band_frequencies = [Signal(7, name=f"fw_band_frequency{n}")
+                                 for n in range(10)]
+        self.frequency_layout = Signal(2, init=1)
+        self.frequency_layout_preview = Signal(2, init=1)
+        self.frequency_preview = Signal(7)
+
+        self.drive = Signal(16, init=8192)
+        self.resonance = Signal(16, init=8192)
+        self.feedback = Signal(16)
+        self.limit_knee = Signal(16, init=8192)
+        self.limit_cap = Signal(16, init=28672)
+        self.damp_mode = Signal(3, init=3)
+
+        self.input_gains = [Signal(16, init=0xCCCC if n == 0 else 0,
+                                   name=f"fw_input_gain{n}")
+                            for n in range(4)]
+        self.input_modes = [Signal(init=0 if n == 0 else 1,
+                                   name=f"fw_input_mode{n}")
+                            for n in range(4)]
+        self.cv_targets = [Signal(4, init=(1, 8, 9, 7)[n],
+                                  name=f"fw_cv_target{n}")
+                           for n in range(4)]
+        self.cv_depths = [Signal(signed(16), name=f"fw_cv_depth{n}")
+                          for n in range(4)]
+
+        self.clock_mode = Signal()
+        self.clock_algorithm = Signal(2)
+        self.shift_direction = Signal(2)
+        self.turing_length = Signal(4, init=10)
+        self.turing_change = Signal(8, init=32)
+        self.turing_change_index = Signal(3, init=3)
+        self.clock_source = Signal(2)
+        self.data_source = Signal(2)
+        self.internal_clock_rate = Signal(range(15, 301), init=120)
+        self.clock_depth = Signal(8, init=128)
+        self.walk_step_index = Signal(3, init=2)
+        self.walk_style = Signal()
+        self.walk_drunk = Signal(2)
+        self.walk_chance_index = Signal(3, init=2)
+        self.turing_target = Signal()
+        self.turing_start = Signal(range(10))
+
+        self.bank_groups = [Signal(4, init=1 << min(n // 3, 3),
+                                   name=f"fw_bank_group{n}")
+                            for n in range(10)]
+        self.feedback_sends = [Signal(init=1, name=f"fw_feedback_send{n}")
+                               for n in range(10)]
+        self.output_sends = [Signal(5, name=f"fw_output_send{n}")
+                             for n in range(20)]
+        self.output_routes = [Signal(5, name=f"fw_output_route{n}")
+                              for n in range(4)]
+
+        self.selected = Signal(7)
+        self.page = Signal(3)
+        self.preset = Signal(3)
+        self.palette = Signal(3)
+        self.editing = Signal()
+        self.save_default_available = Signal()
+        self.save_default_busy = Signal()
+        self.save_default_status = Signal(2)
+        self.startup_done = Signal()
+
+
+class RezomoUIControlPeripheral(Component):
+    """Write-only REZOMO command port, including CLOCK state."""
+
+    class CommandReg(csr.Register, access="w"):
+        kind: csr.Field(csr.action.W, unsigned(6))
+        index: csr.Field(csr.action.W, unsigned(5))
+        value: csr.Field(csr.action.W, unsigned(16))
+
+    def __init__(self, ui):
+        self.ui = ui
+        regs = csr.Builder(addr_width=8, data_width=8)
+        self._command = regs.add("command", self.CommandReg(), offset=0x00)
+        self._bridge = csr.Bridge(regs.as_memory_map())
+        super().__init__({
+            "bus": wiring.In(csr.Signature(
+                addr_width=regs.addr_width, data_width=regs.data_width)),
+        })
+        self.bus.memory_map = self._bridge.bus.memory_map
+
+    def elaborate(self, platform):
+        m = Module()
+        m.submodules.bridge = self._bridge
+        wiring.connect(m, wiring.flipped(self.bus), self._bridge.bus)
+        command = self._command
+        kind = command.f.kind.w_data
+        index = command.f.index.w_data
+        value = command.f.value.w_data
+        strobe = command.element.w_stb
+
+        indexed = {
+            0: (self.ui.band_enables, 10, 1),
+            1: (self.ui.band_frequencies, 10, 7),
+            2: (self.ui.input_gains, 4, 16),
+            3: (self.ui.input_modes, 4, 1),
+            4: (self.ui.cv_targets, 4, 4),
+            5: (self.ui.cv_depths, 4, 16),
+            6: (self.ui.bank_groups, 10, 4),
+            7: (self.ui.feedback_sends, 10, 1),
+            9: (self.ui.output_sends, 20, 5),
+            29: (self.ui.levels, 10, 16),
+        }
+        with m.Switch(kind):
+            for command_kind, (signals, count, width) in indexed.items():
+                with m.Case(command_kind):
+                    with m.If((index < count) & strobe):
+                        m.d.sync += Array(signals)[index].eq(value[:width])
+
+            scalar = {
+                10: (self.ui.page, 3),
+                11: (self.ui.selected, 7),
+                12: (self.ui.preset, 3),
+                13: (self.ui.palette, 3),
+                14: (self.ui.editing, 1),
+                15: (self.ui.drive, 16),
+                16: (self.ui.resonance, 16),
+                17: (self.ui.feedback, 16),
+                18: (self.ui.clock_mode, 1),
+                19: (self.ui.clock_algorithm, 2),
+                20: (self.ui.damp_mode, 3),
+                21: (self.ui.limit_knee, 16),
+                22: (self.ui.limit_cap, 16),
+                23: (self.ui.shift_direction, 2),
+                24: (self.ui.turing_length, 4),
+                26: (self.ui.frequency_layout, 2),
+                27: (self.ui.frequency_layout_preview, 2),
+                28: (self.ui.frequency_preview, 7),
+                31: (self.ui.startup_done, 1),
+                32: (self.ui.clock_source, 2),
+                33: (self.ui.data_source, 2),
+                34: (self.ui.internal_clock_rate, 9),
+                35: (self.ui.clock_depth, 8),
+                36: (self.ui.walk_step_index, 3),
+                37: (self.ui.walk_style, 1),
+                38: (self.ui.walk_drunk, 2),
+                39: (self.ui.walk_chance_index, 3),
+                40: (self.ui.turing_target, 1),
+                41: (self.ui.turing_start, 4),
+            }
+            for command_kind, (signal, width) in scalar.items():
+                with m.Case(command_kind):
+                    with m.If(strobe):
+                        m.d.sync += signal.eq(value[:width])
+            with m.Case(25):
+                with m.If(strobe):
+                    m.d.sync += [
+                        self.ui.turing_change_index.eq(value[:3]),
+                        self.ui.turing_change.eq(Array(
+                            Const(v, 8) for v in (3, 8, 16, 32, 64, 128, 255)
+                        )[value[:3]]),
+                    ]
+            with m.Case(30):
+                with m.If(strobe):
+                    m.d.sync += [
+                        self.ui.save_default_available.eq(value[0]),
+                        self.ui.save_default_busy.eq(value[1]),
+                        self.ui.save_default_status.eq(value[2:4]),
+                    ]
+
+        for output in range(4):
+            base = output * 5
+            m.d.comb += self.ui.output_routes[output].eq(Cat(*(
+                self.ui.output_sends[base + source] != 0
+                for source in range(5))))
+        return m
+
+
 class RezoCpuControlPlane(Component):
     """Minimal firmware control plane, without video or audio ownership."""
 
@@ -398,4 +579,86 @@ class RezoCpuControlPlane(Component):
         m.submodules.rezo_ui = self.rezo_ui
         m.submodules.flash_window = self.flash_window
 
+        return m
+
+
+class RezomoCpuControlPlane(Component):
+    """REZO's minimal CPU fabric with REZOMO's CLOCK command contract."""
+
+    MAINRAM_BASE = RezoCpuControlPlane.MAINRAM_BASE
+    MAINRAM_SIZE = 0x10000
+    # CLOCK algorithms and their V3 migration need slightly more than REZO's
+    # 16 KiB image. A 20 KiB ROM consumes two additional DP16KD blocks while
+    # avoiding a wasteful jump to 32 KiB.
+    CODE_SIZE = 0x5000
+    # The 20 KiB memory's bus window rounds to 32 KiB; place mutable RAM after
+    # that decode window while retaining only 20 KiB of physical ROM storage.
+    DATA_BASE = 0x8000
+    DATA_SIZE = RezoCpuControlPlane.DATA_SIZE
+    CSR_BASE = RezoCpuControlPlane.CSR_BASE
+    ENCODER_BASE = RezoCpuControlPlane.ENCODER_BASE
+    REZO_UI_BASE = RezoCpuControlPlane.REZO_UI_BASE
+    FLASH_WINDOW_BASE = RezoCpuControlPlane.FLASH_WINDOW_BASE
+
+    def __init__(self, clock_settings, *, firmware_bin_path):
+        super().__init__({})
+        self.clock_settings = clock_settings
+        self.firmware_bin_path = firmware_bin_path
+        self.cpu = VexiiRiscv(
+            regions=[
+                VexiiRiscv.MemoryRegion(
+                    base=self.MAINRAM_BASE, size=self.MAINRAM_SIZE,
+                    cacheable=True, executable=True),
+                VexiiRiscv.MemoryRegion(
+                    base=self.CSR_BASE, size=0x10000,
+                    cacheable=False, executable=False),
+            ],
+            variant="rezo_control",
+            reset_addr=self.MAINRAM_BASE,
+        )
+        self.dbus_decoder = wishbone.Decoder(
+            addr_width=30, data_width=32, granularity=8,
+            alignment=0, features={"cti", "bte", "err"})
+        self.mainram = RezoProgramMemory(size=self.CODE_SIZE)
+        self.dbus_decoder.add(
+            self.mainram.dbus, addr=self.MAINRAM_BASE, name="code")
+        self.dataram = blockram.Peripheral(size=self.DATA_SIZE, name="data")
+        self.dbus_decoder.add(
+            self.dataram.bus, addr=self.DATA_BASE, name="data")
+
+        self.csr_decoder = csr.Decoder(addr_width=28, data_width=8)
+        self.encoder0 = encoder.Peripheral()
+        self.csr_decoder.add(
+            self.encoder0.bus, addr=self.ENCODER_BASE, name="encoder0")
+        self.ui = RezomoFirmwareUIState()
+        self.rezo_ui = RezomoUIControlPeripheral(self.ui)
+        self.csr_decoder.add(
+            self.rezo_ui.bus, addr=self.REZO_UI_BASE, name="rezo_ui")
+        self.flash_window = RezoFlashWindowPeripheral()
+        self.csr_decoder.add(
+            self.flash_window.bus, addr=self.FLASH_WINDOW_BASE,
+            name="flash_window")
+        self.wb_to_csr = WishboneCSRBridge(
+            self.csr_decoder.bus, data_width=32)
+        self.dbus_decoder.add(
+            self.wb_to_csr.wb_bus, addr=self.CSR_BASE,
+            sparse=False, name="wb_to_csr")
+
+    def elaborate(self, platform):
+        m = Module()
+        self.mainram.init = readbin.get_mem_data(
+            self.firmware_bin_path, data_width=32, endianness="little")
+        assert self.mainram.init
+        m.submodules.dbus_decoder = self.dbus_decoder
+        m.submodules.cpu = self.cpu
+        wiring.connect(m, self.cpu.ibus, self.mainram.ibus)
+        wiring.connect(m, self.cpu.dbus, self.dbus_decoder.bus)
+        m.d.comb += self.cpu.irq_external.eq(0)
+        m.submodules.mainram = self.mainram
+        m.submodules.dataram = self.dataram
+        m.submodules.csr_decoder = self.csr_decoder
+        m.submodules.wb_to_csr = self.wb_to_csr
+        m.submodules.encoder0 = self.encoder0
+        m.submodules.rezo_ui = self.rezo_ui
+        m.submodules.flash_window = self.flash_window
         return m

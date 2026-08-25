@@ -65,6 +65,28 @@ route leaves 1,336 cells free and passes at 437.45 MHz DVI5X, 73.23 MHz AUDIO,
 flashed to slot 4 (`Refresh: DONE`), SHA-256
 `b60e2eb20ec8ab376a238d5577f1aa65677fa7aac61e877470cdc726754bbca7`.
 
+## 2026-08-24 CPU control-plane checkpoint
+
+The active branch is converting REZOMO to the same lean CPU control-plane
+architecture already hardware-accepted in REZO. See
+[`REZOMO_CPU_ARCHITECTURE.md`](REZOMO_CPU_ARCHITECTURE.md) for the ownership
+boundary and verification checklist.
+
+The new `rezomo_cpu` target builds only the standard `1280x720p60` display. A
+20 KiB VexiiRiscv program ROM runs encoder navigation, BANK/CLOCK state,
+conditional SHIFT/ROTATE/TURING/WALK editing, and V1/V2/V3 persistence. The
+audio DSP, CV paths, video renderer, LEDs, and bounded flash transaction engine
+remain in gateware. The state-variable-filter update now also carries REZO's
+pre-narrowing saturation fix so extreme resonance/feedback/drive can recover
+after controls are reduced.
+
+Focused CPU, DSP, display, and family-parity tests pass. Seed 1 was rejected at
+59.45 MHz SYNC. Seed 2 passes the 3% release gate at 451.06 MHz DVI5X,
+74.43 MHz AUDIO, 62.57 MHz SYNC, and 76.55 MHz DVI. It uses 22,334 TRELLIS_COMB
+cells (91%), 8,131 TRELLIS_FF cells (33%), and 31 DP16KD blocks (55%). Record
+the final clean archive, SHA-256, and slot-3 flash result here after packaging;
+do not use either dirty archive.
+
 ## Current objective
 
 REZOMO is being caught up to the native-display architecture and UI conventions
