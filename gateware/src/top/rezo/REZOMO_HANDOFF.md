@@ -87,6 +87,14 @@ cells (91%), 8,131 TRELLIS_FF cells (33%), and 31 DP16KD blocks (55%). Record
 the final clean archive, SHA-256, and slot-3 flash result here after packaging;
 do not use either dirty archive.
 
+Implementation commit `fef63fa8` supplies the qualified standard archive
+`rezomo-cpu-fef63fa8-r5.tar.gz`. Its SHA-256 is
+`93c8dfa15090f78ec3eccb36c731403dada97f313430d8742129036c92ba5067`;
+the packaged `top.bit` SHA-256 is
+`11813b91e199f178f67e96ae86e30fc49a5d5b0cf5cff1333986af0d265932c2`.
+It was flashed successfully to slot 3 on 2026-08-24 (`Refresh: DONE`) and now
+awaits the hardware verification checklist in `REZOMO_CPU_ARCHITECTURE.md`.
+
 ## Current objective
 
 REZOMO is being caught up to the native-display architecture and UI conventions
