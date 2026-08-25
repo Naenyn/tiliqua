@@ -11,7 +11,7 @@ remain silent in this first proof of concept.
 import os
 import sys
 
-from amaranth import Module
+from amaranth import Module, Mux
 from amaranth.lib import wiring
 
 from tiliqua.build.cli import top_level_cli
@@ -30,7 +30,7 @@ class TunerSoc(TiliquaSoc):
     bitstream_help = BitstreamHelp(
         brief="Monophonic tuner proof of concept.",
         io_left=["audio input 1", "audio input 2", "audio input 3",
-                 "audio input 4", "silent", "silent", "silent", "silent"],
+                 "audio input 4", "reference sine", "silent", "silent", "silent"],
         io_right=["navigate / select", "", "video out", "", "", ""],
     )
 
@@ -66,10 +66,18 @@ class TunerSoc(TiliquaSoc):
         # create trails and also waste PSRAM bandwidth.
         m.d.comb += self.persist_periph.en.eq(0)
 
-        # Keep all physical outputs at calibrated zero. Driving a continuous
-        # valid stream also prevents the codec-side DAC FIFO from starving.
+        # Output 1 optionally carries the calibrated 1 Vpp reference sine.
+        # The remaining outputs stay at calibrated zero. Advancing the NCO only
+        # when the DAC stream accepts a sample preserves its exact frequency
+        # through any FIFO backpressure.
         m.d.comb += pmod.i_cal.valid.eq(1)
-        for channel in range(4):
+        m.d.comb += [
+            self.tuner_periph.reference_advance.eq(pmod.i_cal.ready),
+            pmod.i_cal.payload[0].as_value().eq(Mux(
+                self.tuner_periph.reference_enabled,
+                self.tuner_periph.reference.as_value(), 0)),
+        ]
+        for channel in range(1, 4):
             m.d.comb += pmod.i_cal.payload[channel].as_value().eq(0)
 
         return m

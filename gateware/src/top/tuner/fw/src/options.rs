@@ -21,6 +21,16 @@ pub enum DisplayMode {
     Visualizer,
 }
 
+#[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default,
+         Serialize, Deserialize)]
+#[strum(serialize_all = "SCREAMING-KEBAB-CASE")]
+pub enum ReferenceTone {
+    #[default]
+    Off,
+    A4,
+    Nearest,
+}
+
 int_params!(InputParams<u8> { step: 1, min: 0, max: 3 });
 int_params!(ReferenceParams<u16> {
     step: 1, min: 400, max: 480,
@@ -36,6 +46,8 @@ pub struct TunerOpts {
     pub input: IntOption<InputParams>,
     #[option]
     pub display: EnumOption<DisplayMode>,
+    #[option]
+    pub reference_tone: EnumOption<ReferenceTone>,
 }
 
 #[derive(OptionPage, Clone)]

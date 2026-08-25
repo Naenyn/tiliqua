@@ -8,8 +8,13 @@ This bitstream measures a selected monophonic audio input and displays:
 - calibrated input Vrms and peak-to-peak voltage; and
 - the pitch on octave-radius rings (low octaves inside, high octaves outside).
 
-All four outputs are held at calibrated zero. The bitstream does not yet emit a
-reference tone or CV and contains no oscillator calibration or quantization.
+Output 1 can optionally emit a calibrated 1 Vpp sine reference. It can remain
+off, follow the configured A4 reference, or follow the nearest equal-tempered
+note to the detected input. Its 32-bit phase accumulator is clocked by accepted
+DAC samples, so FIFO backpressure does not detune it.
+
+Outputs 2-4 are held at calibrated zero. The bitstream does not yet emit a
+reference CV and contains no oscillator calibration or quantization.
 
 ## Detector
 

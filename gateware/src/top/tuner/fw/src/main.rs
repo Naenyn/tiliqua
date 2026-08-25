@@ -16,7 +16,7 @@ use tiliqua_hal::pmod::EurorackPmod;
 use tiliqua_lib::*;
 
 use opts::persistence::*;
-use options::{DisplayMode, Opts};
+use options::{DisplayMode, Opts, ReferenceTone};
 use tiliqua_fw::*;
 use tiliqua_pac as pac;
 use pac::constants::*;
@@ -93,6 +93,31 @@ fn read_measurement(tuner: &pac::TUNER_PERIPH, counts_per_v: f32) -> Measurement
     }
 }
 
+fn reference_frequency(measurement: Measurement, reference_hz: f32,
+                       mode: ReferenceTone) -> Option<f32> {
+    match mode {
+        ReferenceTone::Off => None,
+        ReferenceTone::A4 => Some(reference_hz),
+        ReferenceTone::Nearest if measurement.valid => {
+            let midi = (69.0 + 12.0 *
+                (measurement.frequency_hz / reference_hz).log2()).round();
+            Some(reference_hz * (2.0_f32).powf((midi - 69.0) / 12.0))
+        }
+        ReferenceTone::Nearest => None,
+    }
+}
+
+fn configure_reference(tuner: &pac::TUNER_PERIPH, frequency: Option<f32>,
+                       sample_rate: u32) {
+    let increment = frequency.map_or(0, |hz| {
+        (hz * 4_294_967_296.0_f32 / sample_rate as f32).round() as u32
+    });
+    tuner.reference_increment().write(|w| unsafe { w.value().bits(increment) });
+    tuner.reference_control().write(|w| {
+        w.enable().bit(frequency.is_some())
+    });
+}
+
 #[derive(Clone, Copy)]
 struct Marker {
     x: u16,
@@ -159,6 +184,7 @@ fn write_static_text(display: &pac::TUNER_DISPLAY) {
 
 fn publish_tuner(display: &pac::TUNER_DISPLAY, measurement: Measurement,
                  reference_hz: f32, input: u8, display_mode: DisplayMode,
+                 reference_mode: ReferenceTone, reference_output_hz: Option<f32>,
                  smoothed_midi: &mut Option<f32>) {
     let cx = 360;
     let cy = 360;
@@ -170,6 +196,7 @@ fn publish_tuner(display: &pac::TUNER_DISPLAY, measurement: Measurement,
     let mut cents_line: String<32> = String::new();
     let mut frequency_line: String<48> = String::new();
     let mut voltage_line: String<48> = String::new();
+    let mut reference_line: String<48> = String::new();
 
     let mut marker = None;
     if measurement.valid {
@@ -220,10 +247,19 @@ fn publish_tuner(display: &pac::TUNER_DISPLAY, measurement: Measurement,
                format_args!("{:5.3} VRMS  {:5.3} VPP", measurement.vrms, measurement.vpp)).ok();
     }
 
+    match reference_output_hz {
+        Some(hz) => {
+            let label = if reference_mode == ReferenceTone::A4 { "A4" } else { "NOTE" };
+            write!(reference_line, "REF1 {:7.2} HZ {}", hz, label).ok();
+        }
+        None => { write!(reference_line, "REF1 OFF").ok(); }
+    };
+
     write_centered(display, 20, &note_line, 8);
     write_centered(display, 22, &cents_line, 20);
     write_centered(display, 37, &frequency_line, 24);
     write_centered(display, 39, &voltage_line, 28);
+    write_centered(display, 41, &reference_line, 24);
     display.marker().write(|w| unsafe {
         if let Some(marker) = marker {
             w.x().bits(marker.x);
@@ -298,6 +334,7 @@ fn main() -> ! {
         scope.register(handlers::Interrupt::TIMER0, timer0);
         timer.enable_tick_isr(TIMER0_ISR_PERIOD_MS, pac::Interrupt::TIMER0);
         let tuner = peripherals.TUNER_PERIPH;
+        let sample_rate = tuner.info().read().sample_rate().bits();
         let mut frame_ticks = FRAME_PERIOD_TICKS;
         let mut smoothed_midi = None;
         loop {
@@ -321,10 +358,16 @@ fn main() -> ! {
             if frame_ticks >= FRAME_PERIOD_TICKS {
                 frame_ticks = 0;
                 let measurement = read_measurement(&tuner, counts_per_v);
+                let reference_hz = opts.settings.reference.value as f32;
+                let reference_output_hz = reference_frequency(
+                    measurement, reference_hz, opts.tuner.reference_tone.value);
+                configure_reference(&tuner, reference_output_hz, sample_rate);
                 publish_tuner(&tuner_display, measurement,
-                              opts.settings.reference.value as f32,
+                              reference_hz,
                               opts.tuner.input.value,
                               opts.tuner.display.value,
+                              opts.tuner.reference_tone.value,
+                              reference_output_hz,
                               &mut smoothed_midi);
             }
         }

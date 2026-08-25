@@ -8,11 +8,48 @@ from amaranth import Module
 from amaranth.sim import Simulator
 
 from tiliqua.dsp import ASQ
-from tiliqua.dsp.tuner import TunerPeripheral
+from tiliqua.dsp.tuner import ReferenceOscillator, TunerPeripheral
 
 
 def _asq_raw(value):
     return int(round(value * (1 << ASQ.f_bits)))
+
+
+def test_reference_oscillator_frequency_and_level():
+    sample_rate = 48_000
+    frequency = 440.0
+    increment = round(frequency * (1 << 32) / sample_rate)
+
+    dut = ReferenceOscillator()
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+
+    async def bench(ctx):
+        ctx.set(dut.enable, 1)
+        ctx.set(dut.advance, 1)
+        ctx.set(dut.increment, increment)
+        previous = 0
+        crossings = 0
+        minimum = 0
+        maximum = 0
+        sample_count = 4_800
+        for _ in range(sample_count):
+            await ctx.tick()
+            sample = ctx.get(dut.o.as_value())
+            if previous < 0 <= sample:
+                crossings += 1
+            previous = sample
+            minimum = min(minimum, sample)
+            maximum = max(maximum, sample)
+
+        measured_hz = crossings * sample_rate / sample_count
+        assert abs(measured_hz - frequency) <= 10.0
+        # 2000 calibrated counts peak is 0.5 V, hence 1 Vpp.
+        assert 1990 <= maximum <= 2000
+        assert -2000 <= minimum <= -1990
+
+    sim.add_testbench(bench)
+    sim.run()
 
 
 def test_tuner_sine_pitch_and_level():

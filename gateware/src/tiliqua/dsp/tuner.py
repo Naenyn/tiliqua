@@ -2,14 +2,56 @@
 #
 # SPDX-License-Identifier: CERN-OHL-S-2.0
 
-"""Low-cost streaming measurements for the tuner proof of concept."""
+"""Low-cost streaming measurements and reference tone for the tuner."""
+
+import math
 
 from amaranth import *
 from amaranth.lib import data, stream, wiring
-from amaranth.lib.wiring import In
+from amaranth.lib.memory import Memory
+from amaranth.lib.wiring import In, Out
 from amaranth_soc import csr
 
 from . import ASQ
+
+
+class ReferenceOscillator(wiring.Component):
+    """Backpressure-aware, fixed-amplitude sine reference oscillator."""
+
+    def __init__(self, *, table_depth=1024, peak_counts=2000):
+        if table_depth & (table_depth - 1):
+            raise ValueError("table_depth must be a power of two")
+        self.table_depth = table_depth
+        self.peak_counts = peak_counts
+        super().__init__({
+            "advance": In(1),
+            "enable": In(1),
+            "increment": In(32),
+            "o": Out(ASQ),
+        })
+
+    def elaborate(self, platform):
+        m = Module()
+        address_bits = (self.table_depth - 1).bit_length()
+        sine_init = [round(self.peak_counts * math.sin(
+            2 * math.pi * n / self.table_depth))
+            for n in range(self.table_depth)]
+        sine_mem = Memory(
+            shape=signed(ASQ.as_shape().width), depth=self.table_depth,
+            init=sine_init, attrs={"ram_style": "block"})
+        sine_r = sine_mem.read_port(domain="sync")
+        m.submodules.sine = sine_mem
+        phase = Signal(32)
+        m.d.comb += [
+            sine_r.addr.eq(phase[-address_bits:]),
+            sine_r.en.eq(1),
+            self.o.as_value().eq(sine_r.data),
+        ]
+        with m.If(~self.enable):
+            m.d.sync += phase.eq(0)
+        with m.Elif(self.advance):
+            m.d.sync += phase.eq(phase + self.increment)
+        return m
 
 
 class TunerPeripheral(wiring.Component):
@@ -42,6 +84,12 @@ class TunerPeripheral(wiring.Component):
 
     class PitchAge(csr.Register, access="r"):
         samples: csr.Field(csr.action.R, unsigned(32))
+
+    class ReferenceControl(csr.Register, access="rw"):
+        enable: csr.Field(csr.action.RW, unsigned(1))
+
+    class ReferenceIncrement(csr.Register, access="rw"):
+        value: csr.Field(csr.action.RW, unsigned(32))
 
     class LevelSequence(csr.Register, access="r"):
         sequence: csr.Field(csr.action.R, unsigned(16))
@@ -84,10 +132,20 @@ class TunerPeripheral(wiring.Component):
         self._dc = regs.add("dc", self.SignedLevel(), offset=0x28)
         self._pitch_age = regs.add(
             "pitch_age", self.PitchAge(), offset=0x2c)
+        self._reference_control = regs.add(
+            "reference_control", self.ReferenceControl(), offset=0x30)
+        self._reference_increment = regs.add(
+            "reference_increment", self.ReferenceIncrement(), offset=0x34)
         self._bridge = csr.Bridge(regs.as_memory_map())
 
         super().__init__({
             "i": In(stream.Signature(data.ArrayLayout(ASQ, 4))),
+            # Advance once for every sample accepted by the calibrated DAC
+            # stream. This keeps tone frequency independent of sync clock rate
+            # and of temporary FIFO backpressure.
+            "reference_advance": In(1),
+            "reference": Out(ASQ),
+            "reference_enabled": Out(1),
             "bus": In(csr.Signature(
                 addr_width=regs.addr_width, data_width=regs.data_width)),
         })
@@ -110,6 +168,17 @@ class TunerPeripheral(wiring.Component):
             sample.eq(samples[self._control.f.channel.data]),
             ac_sample.eq(sample - dc_estimate),
             self._info.f.sample_rate.r_data.eq(self.sample_rate),
+            self.reference_enabled.eq(self._reference_control.f.enable.data),
+        ]
+
+        # A full-cycle sine table gives a clean, deterministic 1 Vpp reference
+        # tone. The 32-bit phase accumulator's tuning error is far below a cent.
+        m.submodules.reference_oscillator = reference = ReferenceOscillator()
+        m.d.comb += [
+            reference.advance.eq(self.reference_advance),
+            reference.enable.eq(self._reference_control.f.enable.data),
+            reference.increment.eq(self._reference_increment.f.value.data),
+            self.reference.as_value().eq(reference.o.as_value()),
         ]
 
         # Pitch measurement state. A crossing is accepted only after the
