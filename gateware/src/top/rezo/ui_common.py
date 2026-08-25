@@ -150,8 +150,8 @@ def native_viewport_circle_outline(m, x, lookup_y, *, pipeline_bounds=False):
             (dx2 <= circle_bounds[10:20]))
 
 
-def native_viewport_annulus(m, x, lookup_y, *, inner_radius=250):
-    """Return the usable circular band between the panel edge and a radius.
+def native_viewport_regions(m, x, lookup_y, *, inner_radius=250):
+    """Return the circular panel interior and an outer annular band.
 
     The fixed row lookup gives circular chrome a genuinely curved inner and
     outer edge without putting a square-root or multiplier on the pixel path.
@@ -177,8 +177,9 @@ def native_viewport_annulus(m, x, lookup_y, *, inner_radius=250):
     m.d.comb += annulus_rport.addr.eq(lookup_y)
 
     dx2 = Mux(x < 360, 719 - (x << 1), (x << 1) - 719)
-    return ((dx2 >= annulus_rport.data[:10]) &
-            (dx2 <= annulus_rport.data[10:20]))
+    circle_inside = dx2 <= annulus_rport.data[10:20]
+    annulus = (dx2 >= annulus_rport.data[:10]) & circle_inside
+    return circle_inside, annulus
 
 
 def native_feedback_track_rows(rect, x, y, x0, x1):

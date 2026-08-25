@@ -187,7 +187,7 @@ def test_main_preset_selection_uses_the_shared_header_outline():
     sim.add_testbench(bench)
     sim.run()
     palette = RezoTileDisplay.PALETTE
-    assert samples == [palette["blank"], palette["selected"]]
+    assert samples == [palette["background"], palette["selected"]]
 
 
 def test_compact_round_layout_uses_all_four_arcs():
@@ -289,16 +289,18 @@ def test_compact_pager_tracks_firmware_navigation_order_and_mode_count():
         samples.append(ctx.get(dut.r))
 
     async def bench(ctx):
-        # BANK order is 0,6,2,3,4,1,5. Page 6 therefore selects box 1.
+        # BANK order is 0,6,2,3,4,1,5. Page 6 therefore selects box 1;
+        # surrounding boxes move outward to make room for its larger box.
         ctx.set(dut.page, 6)
-        await sample(ctx, 257 + 1 * 32 + 14, 86)
-        await sample(ctx, 257 + 2 * 32 + 14, 86)
-        await sample(ctx, 257 + 2 * 32 + 8, 86)
+        await sample(ctx, 320, 86)
+        await sample(ctx, 344, 86)
+        await sample(ctx, 338, 86)
+        await sample(ctx, 320, 96)  # enlarged box's added bottom row
 
         # FILTER adds page 7 as position 3 and moves page 5 to position 7.
         ctx.set(dut.filter_mode, 1)
         ctx.set(dut.page, 5)
-        await sample(ctx, 241 + 7 * 32 + 14, 86)
+        await sample(ctx, 430, 86)
 
     sim.add_testbench(bench)
     sim.run()
@@ -306,7 +308,7 @@ def test_compact_pager_tracks_firmware_navigation_order_and_mode_count():
     palette = RezoTileDisplay.PALETTE
     assert samples == [
         palette["selected"], palette["background"],
-        palette["line"], palette["selected"],
+        palette["line"], palette["selected"], palette["selected"],
     ]
 
 
@@ -330,6 +332,7 @@ def test_compact_output_meters_are_persistent_and_independent():
     async def bench(ctx):
         for lane, value in enumerate((0, 20, 40, 63)):
             ctx.set(dut.output_meters[lane], value)
+        ctx.set(dut.output_clips[0], 1)
         # Empty lane interior, then increasing fills in lanes 2 through 4.
         await sample(ctx, 36, 400)
         await sample(ctx, 76, 400)
@@ -337,6 +340,8 @@ def test_compact_output_meters_are_persistent_and_independent():
         await sample(ctx, 676, 280)
         # An outline remains visible around an empty lane.
         await sample(ctx, 28, 360)
+        # A held clipping lamp sits above the corresponding lane.
+        await sample(ctx, 36, 250)
 
     sim.add_testbench(bench)
     sim.run()
@@ -344,8 +349,8 @@ def test_compact_output_meters_are_persistent_and_independent():
     palette = RezoTileDisplay.PALETTE
     assert samples == [
         palette["background"],
-        palette["control"], palette["control"], palette["control"],
-        palette["panel"],
+        palette["control"], palette["control"], palette["selected"],
+        palette["panel"], palette["selected"],
     ]
 
 
@@ -368,7 +373,8 @@ def test_compact_curved_header_and_footer_include_version_text():
 
     async def bench(ctx):
         await sample(ctx, 360, 105)  # inside curved top band
-        await sample(ctx, 360, 112)  # inside its curved inner edge
+        await sample(ctx, 360, 112)  # solid top cap has no dark crescent
+        await sample(ctx, 360, 200)  # black gap below the header cap
         await sample(ctx, 17 * 16, 656)  # first pixel of footer V glyph
         await sample(ctx, 360, 640)  # footer background, clear of text
 
@@ -377,7 +383,7 @@ def test_compact_curved_header_and_footer_include_version_text():
 
     palette = RezoTileDisplay.PALETTE
     assert samples == [
-        palette["background"], palette["blank"],
+        palette["background"], palette["background"], palette["blank"],
         palette["text"], palette["background"],
     ]
 

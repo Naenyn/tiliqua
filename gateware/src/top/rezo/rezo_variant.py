@@ -86,7 +86,7 @@ try:
         native_input_depth_endpoint, native_input_gain_endpoint,
         native_input_meter_endpoint, native_input_unity_x,
         native_value_chip_x0,
-        native_feedback_track_rows, native_viewport_annulus,
+        native_feedback_track_rows, native_viewport_regions,
         native_viewport_circle_outline,
         output_header_selection,
         put_legacy_support_page_labels, put_native_page_heading,
@@ -127,7 +127,7 @@ except ImportError:  # top_level_cli executes this file directly.
         native_input_depth_endpoint, native_input_gain_endpoint,
         native_input_meter_endpoint, native_input_unity_x,
         native_value_chip_x0,
-        native_feedback_track_rows, native_viewport_annulus,
+        native_feedback_track_rows, native_viewport_regions,
         native_viewport_circle_outline,
         output_header_selection,
         put_legacy_support_page_labels, put_native_page_heading,
@@ -2637,6 +2637,7 @@ class RezoTileDisplay(wiring.Component):
             "input_meters": In(data.ArrayLayout(signed(6), 4)),
             "input_clips": In(data.ArrayLayout(unsigned(1), 4)),
             "output_meters": In(data.ArrayLayout(unsigned(6), 4)),
+            "output_clips": In(data.ArrayLayout(unsigned(1), 4)),
             "filter_cv_write_addr": In(unsigned(4)),
             "filter_cv_write_data": In(signed(6)),
             "filter_cv_write_en": In(1),
@@ -3471,12 +3472,18 @@ class RezoTileDisplay(wiring.Component):
         output_meter_fill = Const(0)
         output_meter_panel_q0 = Const(0)
         output_meter_fill_q0 = Const(0)
+        output_meter_hot_q0 = Const(0)
+        output_meter_clip_q0 = Const(0)
         if self.compact_layout:
-            # A fixed annulus turns the unused circular wings into persistent
-            # chrome. Its cap and tail are the curved header/footer, while the
-            # side portions carry the four final-output meters.
-            arc_background = active & native_viewport_annulus(
+            # Use solid circular caps above the PAGE/NAV row and below the
+            # version, but retain only the curved outer band through the
+            # middle. This leaves a black moat around the central content so
+            # it reads as a panel floating between four pieces of chrome.
+            circle_inside, side_annulus = native_viewport_regions(
                 m, x, text_y_pre, inner_radius=250)
+            arc_background = active & (
+                (circle_inside & ((y < 176) | (y >= 608))) |
+                (side_annulus & (y >= 224) & (y < 512)))
 
             # Firmware navigates pages in a deliberately non-numeric order.
             # Translate the raw page ID so the indicator advances one box for
@@ -3503,32 +3510,48 @@ class RezoTileDisplay(wiring.Component):
                     m.d.comb += pager_position.eq(Mux(
                         self.filter_mode, 7, 6))
 
-            pager_x0 = Signal(unsigned(10))
-            pager_rel_x = Signal(unsigned(9))
-            pager_index = Signal(unsigned(3))
-            pager_local_x = Signal(unsigned(5))
-            pager_valid = Signal()
-            m.d.comb += [
-                pager_x0.eq(Mux(self.filter_mode, 241, 257)),
-                pager_rel_x.eq(x - pager_x0),
-                pager_index.eq(pager_rel_x[5:8]),
-                pager_local_x.eq(pager_rel_x[:5]),
-                pager_valid.eq((x >= pager_x0) &
-                               (x < pager_x0 + Mux(
-                                   self.filter_mode, 8 << 5, 7 << 5))),
-            ]
-            pager_slot = pager_valid & (pager_local_x >= 8) & \
-                (pager_local_x < 20)
-            pager_selected_slot = pager_valid & \
-                (pager_index == pager_position) & \
-                (pager_local_x >= 5) & (pager_local_x < 23)
-            pager_line = active & pager_slot & (
-                (y < 80) | (y >= 92) |
-                (pager_local_x < 10) | (pager_local_x >= 18)) & \
-                (y >= 78) & (y < 94) & \
-                (pager_index != pager_position)
-            pager_current = active & pager_selected_slot & \
-                (y >= 76) & (y < 96)
+            # Pre-render horizontal pager geometry for every page/mode state.
+            # The boxes sit on a tight 20px pitch. Neighbours before the
+            # selected page move four pixels left and neighbours after it move
+            # four pixels right, creating Dock-like space for the 19x21px
+            # current-page box without a runtime divider or wide mux tree.
+            # All boxes live inside x=256..511, so the RAM needs only the low
+            # eight x bits plus four state bits. Keeping the unused upper
+            # canvas coordinates out of this table is important: a sparse
+            # 16K-entry table makes nextpnr spend an extreme amount of time
+            # placing otherwise redundant memory/address infrastructure.
+            pager_init = [0] * (16 * 256)
+            for filter_state, page_count in ((0, 7), (1, 8)):
+                first_center = 360 - (page_count - 1) * 10
+                for selected_position in range(page_count):
+                    state = (filter_state << 3) | selected_position
+                    for box_index in range(page_count):
+                        shift = (-4 if box_index < selected_position else
+                                 4 if box_index > selected_position else 0)
+                        center = first_center + box_index * 20 + shift
+                        if box_index == selected_position:
+                            for pixel_x in range(center - 9, center + 10):
+                                pager_init[(state << 8) |
+                                           (pixel_x & 0xff)] |= 0b100
+                        else:
+                            for pixel_x in range(center - 6, center + 6):
+                                address = ((state << 8) |
+                                           (pixel_x & 0xff))
+                                pager_init[address] |= 0b001
+                                if pixel_x < center - 4 or pixel_x >= center + 4:
+                                    pager_init[address] |= 0b010
+            m.submodules.pager_mem = pager_mem = Memory(
+                shape=unsigned(3), depth=len(pager_init), init=pager_init,
+                attrs={"ram_style": "block"})
+            pager_rport = pager_mem.read_port(domain="dvi")
+            m.d.comb += pager_rport.addr.eq(Cat(
+                text_x_pre[:8], pager_position, self.filter_mode))
+            pager_window = (x >= 256) & (x < 512)
+            pager_line = active & pager_window & pager_rport.data[0] & (
+                pager_rport.data[1] | (y < 80) | (y >= 92)) & \
+                (y >= 78) & (y < 94)
+            pager_current = active & pager_window & pager_rport.data[2] & \
+                (y >= 76) & (y < 97)
 
             # Two persistent output lanes per side. Meters grow upward from
             # y=460, using a 0..63 display value and three pixels per step.
@@ -3536,22 +3559,27 @@ class RezoTileDisplay(wiring.Component):
             meter_lane_valid = Signal()
             meter_x0 = Signal(unsigned(10))
             meter_value = Signal(unsigned(6))
+            meter_clip = Signal()
             with m.If((x >= 28) & (x < 52)):
-                m.d.comb += [meter_lane.eq(0), meter_lane_valid.eq(1),
-                             meter_x0.eq(28),
-                             meter_value.eq(self.output_meters[0])]
+                m.d.comb += [
+                    meter_lane.eq(0), meter_lane_valid.eq(1),
+                    meter_x0.eq(28), meter_value.eq(self.output_meters[0]),
+                    meter_clip.eq(self.output_clips[0])]
             with m.Elif((x >= 68) & (x < 92)):
-                m.d.comb += [meter_lane.eq(1), meter_lane_valid.eq(1),
-                             meter_x0.eq(68),
-                             meter_value.eq(self.output_meters[1])]
+                m.d.comb += [
+                    meter_lane.eq(1), meter_lane_valid.eq(1),
+                    meter_x0.eq(68), meter_value.eq(self.output_meters[1]),
+                    meter_clip.eq(self.output_clips[1])]
             with m.Elif((x >= 628) & (x < 652)):
-                m.d.comb += [meter_lane.eq(2), meter_lane_valid.eq(1),
-                             meter_x0.eq(628),
-                             meter_value.eq(self.output_meters[2])]
+                m.d.comb += [
+                    meter_lane.eq(2), meter_lane_valid.eq(1),
+                    meter_x0.eq(628), meter_value.eq(self.output_meters[2]),
+                    meter_clip.eq(self.output_clips[2])]
             with m.Elif((x >= 668) & (x < 692)):
-                m.d.comb += [meter_lane.eq(3), meter_lane_valid.eq(1),
-                             meter_x0.eq(668),
-                             meter_value.eq(self.output_meters[3])]
+                m.d.comb += [
+                    meter_lane.eq(3), meter_lane_valid.eq(1),
+                    meter_x0.eq(668), meter_value.eq(self.output_meters[3]),
+                    meter_clip.eq(self.output_clips[3])]
 
             # Register lane selection before its magnitude scaling and y
             # comparison. Without this boundary, synthesis can merge the
@@ -3561,12 +3589,14 @@ class RezoTileDisplay(wiring.Component):
             meter_y_q = Signal.like(y)
             meter_x0_q = Signal.like(meter_x0)
             meter_value_q = Signal.like(meter_value)
+            meter_clip_q = Signal()
             meter_lane_valid_q = Signal()
             m.d.dvi += [
                 meter_x_q.eq(x),
                 meter_y_q.eq(y),
                 meter_x0_q.eq(meter_x0),
                 meter_value_q.eq(meter_value),
+                meter_clip_q.eq(meter_clip),
                 meter_lane_valid_q.eq(meter_lane_valid),
             ]
             meter_top = Signal(unsigned(10))
@@ -3577,12 +3607,20 @@ class RezoTileDisplay(wiring.Component):
                 meter_x0_q + 24, 462, t=2)
             output_meter_fill = meter_lane_valid_q & self.rect(
                 meter_x_q, meter_y_q, meter_x0_q + 4, meter_top,
-                meter_x0_q + 20, 458)
+                          meter_x0_q + 20, 458)
+            output_meter_hot = output_meter_fill & (meter_y_q < 300)
+            output_meter_clip = meter_lane_valid_q & meter_clip_q & self.rect(
+                meter_x_q, meter_y_q, meter_x0_q + 4, 248,
+                meter_x0_q + 20, 254)
             output_meter_panel_q0 = Signal()
             output_meter_fill_q0 = Signal()
+            output_meter_hot_q0 = Signal()
+            output_meter_clip_q0 = Signal()
             m.d.dvi += [
                 output_meter_panel_q0.eq(output_meter_panel),
                 output_meter_fill_q0.eq(output_meter_fill),
+                output_meter_hot_q0.eq(output_meter_hot),
+                output_meter_clip_q0.eq(output_meter_clip),
             ]
         title_panel = active & self.rect(
             x, y,
@@ -5184,7 +5222,8 @@ class RezoTileDisplay(wiring.Component):
                                  meter_panel | filter_meter_panel),
         ]
         m.d.dvi += [
-            selected_q.eq(selected | pager_current),
+            selected_q.eq(selected | pager_current |
+                          output_meter_hot_q0 | output_meter_clip_q0),
             text_q.eq(text | input_clip_q0),
             fill_q.eq(geometry_fill_q0 |
                       input_fill_q0 | group_fill_q0 | output_fill_q0 |
@@ -5458,24 +5497,53 @@ class RezoBeamTop(Elaboratable):
         wiring.connect(m, rezo.o, audio_out_fifo.i)
         wiring.connect(m, audio_out_fifo.o, pmod0.i_cal)
 
-        # Display-only final-output peak envelopes. Take only the upper sample
-        # bits, approximate absolute magnitude with one's complement for
-        # negative values, and decay roughly once per 2048 audio frames. This
-        # tap is fully registered and never feeds the DSP or output handshake.
+        # Display-only final-output peak envelopes. The raw six-bit magnitude
+        # is converted to a compact dB-like scale: every amplitude doubling
+        # advances about eight display steps, with interpolation inside each
+        # octave. Decay occurs roughly once per 2048 audio frames. This tap is
+        # fully registered and never feeds the DSP or output handshake.
         output_meter_values = [
             Signal(unsigned(6), name=f"output_meter_value{n}")
+            for n in range(4)]
+        output_clip_holds = [
+            Signal(unsigned(6), name=f"output_clip_hold{n}")
             for n in range(4)]
         output_meter_decay = Signal(unsigned(11))
         output_frame_accepted = rezo.o.valid & rezo.o.ready
         with m.If(output_frame_accepted):
             m.d.sync += output_meter_decay.eq(output_meter_decay + 1)
             for n in range(4):
+                output_meter_raw = Signal(
+                    unsigned(6), name=f"output_meter_raw{n}")
                 output_meter_sample = Signal(
-                    unsigned(6), name=f"output_meter_sample{n}")
-                m.d.comb += output_meter_sample.eq(Mux(
+                    unsigned(6), name=f"output_meter_db{n}")
+                output_clip = Signal(name=f"output_clip{n}")
+                m.d.comb += [
+                    output_meter_raw.eq(Mux(
                     rezo.o.payload[n].as_value()[-1],
                     ~rezo.o.payload[n].as_value()[9:15],
-                    rezo.o.payload[n].as_value()[9:15]))
+                    rezo.o.payload[n].as_value()[9:15])),
+                    output_clip.eq(
+                        (rezo.o.payload[n].as_value() == 32767) |
+                        (rezo.o.payload[n].as_value() == -32768)),
+                ]
+                with m.If(output_meter_raw[5]):
+                    m.d.comb += output_meter_sample.eq(
+                        48 + output_meter_raw[1:5])
+                with m.Elif(output_meter_raw[4]):
+                    m.d.comb += output_meter_sample.eq(
+                        40 + output_meter_raw[1:4])
+                with m.Elif(output_meter_raw[3]):
+                    m.d.comb += output_meter_sample.eq(
+                        32 + output_meter_raw[:3])
+                with m.Elif(output_meter_raw[2]):
+                    m.d.comb += output_meter_sample.eq(
+                        24 + (output_meter_raw[:2] << 1))
+                with m.Elif(output_meter_raw[1]):
+                    m.d.comb += output_meter_sample.eq(
+                        16 + (output_meter_raw[0] << 2))
+                with m.Elif(output_meter_raw[0]):
+                    m.d.comb += output_meter_sample.eq(8)
                 with m.If(output_meter_sample > output_meter_values[n]):
                     m.d.sync += output_meter_values[n].eq(
                         output_meter_sample)
@@ -5483,6 +5551,13 @@ class RezoBeamTop(Elaboratable):
                             (output_meter_values[n] != 0)):
                     m.d.sync += output_meter_values[n].eq(
                         output_meter_values[n] - 1)
+                with m.If(output_clip):
+                    # About half a second at the 192 kHz production rate.
+                    m.d.sync += output_clip_holds[n].eq(45)
+                with m.Elif((output_meter_decay == 0x7ff) &
+                            (output_clip_holds[n] != 0)):
+                    m.d.sync += output_clip_holds[n].eq(
+                        output_clip_holds[n] - 1)
 
         m.submodules.dvi_tgen = dvi_tgen = dvi.DVITimingGen()
         for member in dvi_tgen.timings.signature.members:
@@ -5652,6 +5727,9 @@ class RezoBeamTop(Elaboratable):
                 i=display_input_gains[n], o=display.input_gains[n], o_domain="dvi")
             m.submodules += FFSynchronizer(
                 i=output_meter_values[n], o=display.output_meters[n],
+                o_domain="dvi")
+            m.submodules += FFSynchronizer(
+                i=output_clip_holds[n] != 0, o=display.output_clips[n],
                 o_domain="dvi")
         for n in range(4):
             m.submodules += FFSynchronizer(
