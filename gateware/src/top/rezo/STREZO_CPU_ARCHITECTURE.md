@@ -51,6 +51,29 @@ The standard target enforces at least 3 percent post-route headroom on every
 clock. A release is qualified only after the exact archive boots from slot 4
 and the checklist below passes.
 
+## 2026-08-25 build-qualification checkpoint
+
+The standard CPU target is implemented and routed from clean source commit
+`b89fc0da` with seed 8. The final route uses 21,189 TRELLIS_COMB, 8,257
+TRELLIS_FF, and 30 DP16KD cells. Final DVI5X / AUDIO / SYNC / DVI timing is
+444.64 / 71.26 / 65.62 / 82.88 MHz against 371.33 / 49.15 / 60.00 / 74.25
+MHz requirements; the limiting SYNC clock retains 9.37 percent headroom.
+
+The qualified archive is `strezo-cpu-b89fc0da-r5.tar.gz` (SHA-256
+`8fccf1851528dd9bd8da66d2b7c6e794345d0739590be76b97feb16302a6edc5`).
+Its packaged `top.bit` exactly matches the routed image at SHA-256
+`406284c73c2f894abc455841f4d8cb91d661ecdaeffc4e0b290fb4a837d2770f`.
+It was flashed to slot 4 on 2026-08-25 and completed with `Refresh: DONE`.
+
+Firmware formatting and offline release checking pass. The final affected
+CPU/display/native-display/family-contract suite passes 62 tests; the focused
+DSP comparison and family-target suite passes another 19 tests. Hardware
+functional acceptance remains the checklist below.
+
+Only the standard `1280x720p60` artifact was built and flashed. The native
+`720x720` canvas and final official-panel rotation remain in the architecture;
+no circular artifact was produced during this checkpoint.
+
 ## Hardware verification checklist
 
 1. Boot with responsive video, stereo audio, LEDs, and encoder.

@@ -448,3 +448,30 @@ build attempt.
 7. Build only standard `1280x720p60` at 192 kHz. Route only after deliberate
    packed headroom exists, log every meaningful attempt, and flash only the
    exact accepted archive to slot 4 when explicitly requested.
+
+## 2026-08-25 STREZO CPU completion checkpoint
+
+The STREZO conversion described above is complete on branch
+`codex/strezo-cpu-control-plane`. Implementation commits `ac36e0ee` and
+`b89fc0da` move stateful UI/navigation/persistence into firmware while keeping
+linked-stereo DSP, CV, rendering, telemetry, LEDs, and bounded flash hardware
+in gateware. STREZO-specific CROSS factory-to-USER editing, same/cross
+feedback, MOTION, output-side selection, and V4-to-V5 restore semantics are
+preserved.
+
+The clean seed-8 standard route passes the 3 percent release gate at 444.64 /
+71.26 / 65.62 / 82.88 MHz for DVI5X / AUDIO / SYNC / DVI. Archive
+`build/strezo-cpu-r5/strezo-cpu-b89fc0da-r5.tar.gz` has SHA-256
+`8fccf1851528dd9bd8da66d2b7c6e794345d0739590be76b97feb16302a6edc5`;
+its embedded `top.bit` matches the qualified route at SHA-256
+`406284c73c2f894abc455841f4d8cb91d661ecdaeffc4e0b290fb4a837d2770f`.
+It was flashed to slot 4 on 2026-08-25 with `Refresh: DONE`.
+
+Software verification is green (62 final affected display/control tests, 19
+focused DSP/family-target tests, and firmware format/offline release checks).
+The remaining work is user hardware acceptance using the checklist in
+`STREZO_CPU_ARCHITECTURE.md`, followed by any requested polishing.
+
+This checkpoint built only standard `1280x720p60` for the development monitor.
+It did not remove or replace the native `720x720` canvas or the official
+panel's final rotation path, and no circular archive was built or flashed.

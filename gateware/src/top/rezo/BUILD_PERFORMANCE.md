@@ -644,3 +644,29 @@ its packaged `top.bit` has SHA-256
 Only the standard `1280x720p60` target was used. The archive was flashed to
 slot 3 on 2026-08-25 (`Refresh: DONE`), and the user accepted video,
 interaction, and audio as good. No circular target was built or flashed.
+
+## 2026-08-25 STREZO CPU control-plane checkpoint
+
+STREZO now uses the same lean CPU control-plane boundary as REZO and REZOMO,
+with STREZO-specific CROSS, MOTION, linked-output-side, OPTIONS, and V4/V5
+persistence behavior retained in firmware. The standard target raises the
+release gate to 3 percent on every routed clock.
+
+Initial implementation commit `ac36e0ee` seed 8 reached 395.57 / 69.39 /
+68.18 / 76.28 MHz for DVI5X / AUDIO / SYNC / DVI, but was rejected at 2.73
+percent DVI margin. Controlled exact-netlist routes at seeds 9 and 16 also
+failed the 3 percent gate. The retained timing change registers the selected
+OUTPUT index and, for STREZO only, pipelines the native circular-guide BRAM
+bounds with its aligned x-coordinate. Two more decode-heavy variants were
+discarded after worsening routing congestion.
+
+| Source / seed | COMB | FF | BRAM | DVI5X / AUDIO / SYNC / DVI MHz | Result |
+|---|---:|---:|---:|---|---|
+| `b89fc0da` / 8 | 21,189 | 8,257 | 30 | 444.64 / 71.26 / 65.62 / 82.88 | PASS; flashed slot 4 |
+
+The exact archive `strezo-cpu-b89fc0da-r5.tar.gz` has SHA-256
+`8fccf1851528dd9bd8da66d2b7c6e794345d0739590be76b97feb16302a6edc5`.
+Its embedded bitstream matches the routed `top.bit` at SHA-256
+`406284c73c2f894abc455841f4d8cb91d661ecdaeffc4e0b290fb4a837d2770f`.
+The flash completed with `Refresh: DONE`. Only standard `1280x720p60` was
+built and flashed; no circular artifact was invoked.
