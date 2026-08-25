@@ -620,3 +620,20 @@ and shared-family regression sets (`81 passed`). Standard STREZO seed 4 uses
 1.25% gate at 473.04 / 69.09 / 63.04 / 80.48 MHz for DVI5X / AUDIO / SYNC /
 DVI. The verified archive `strezo-a7f4a56e-r5.tar.gz` was flashed to slot 4.
 No circular target was invoked.
+
+## 2026-08-25 REZOMO CPU dynamic-text congestion reduction
+
+The renderer's 205 dynamic character updates now come from a compact operation
+ROM instead of a wide generated address/data mux. Pack-only utilization falls
+from 22,659 to 22,014 TRELLIS_COMB cells (645 cells recovered); FF usage falls
+from 8,212 to 8,206 and DP16KD usage increases from 31 to 32.
+
+| Seed | DVI5X / AUDIO / SYNC / DVI MHz | Result |
+|---:|---|---|
+| 4 | 477.78 / 72.21 / 61.32 / 78.12 | Nominal pass; rejected below 3% SYNC margin |
+| 5 | 439.37 / 74.02 / 61.67 / 76.01 | Nominal pass; rejected below 3% SYNC and DVI margins |
+| 6 | 422.12 / 72.50 / 62.05 / 79.69 | PASS; retained default, 3.42% limiting SYNC margin |
+
+Seed 6 was qualified directly from the final synthesized JSON. Only the
+standard `1280x720p60` target was used, and nothing was flashed because the
+rack was powered down.

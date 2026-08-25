@@ -110,6 +110,24 @@ The packaged bitstream exactly matches the qualified seed-3 route. It was
 flashed successfully to slot 3 on 2026-08-25 (`Refresh: DONE`) and awaits
 hardware verification of all CV target, DAMPING, PALETTE, and CLOCK names.
 
+## 2026-08-25 CPU renderer congestion checkpoint
+
+The dynamic character refresh writer is now ROM-driven instead of synthesizing
+a 205-way address/data mux. All live text sources and the established
+three-DVI-clock write cadence remain unchanged. The focused CPU/native-display
+suite passes (`20 passed`), and the broader CPU/display/family contract suite
+passes (`61 passed`).
+
+Pack-only comparison against the corrected CPU build drops utilization from
+22,659 to 22,014 TRELLIS_COMB cells, recovering 645 cells, while FF usage drops
+from 8,212 to 8,206 and DP16KD usage rises from 31 to 32. Seed 6 is the retained
+standard-display route: 422.12 MHz DVI5X, 72.50 MHz AUDIO, 62.05 MHz SYNC, and
+79.69 MHz DVI. Every clock clears the 3% release gate; SYNC is limiting at
+3.42%. Seeds 4 and 5 passed nominal timing but missed the release margin.
+
+Only the standard `1280x720p60` target was considered. The rack was powered
+down, so this checkpoint must not be described as hardware-tested or flashed.
+
 ## Current objective
 
 REZOMO is being caught up to the native-display architecture and UI conventions

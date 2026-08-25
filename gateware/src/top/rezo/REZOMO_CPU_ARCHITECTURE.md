@@ -16,6 +16,12 @@ Firmware sends compact write commands to a write-only hardware UI peripheral.
 The renderer and DSP consume that hardware state directly, preserving the
 deterministic CPU-less data plane used by the accepted REZOMO implementation.
 
+Dynamic character updates in the renderer use a compact operation ROM rather
+than a 205-way address/data mux. Each operation selects one live hardware value
+and one character position; the existing three-DVI-clock refresh cadence is
+unchanged. This moves static update topology into one DP16KD block while
+keeping all character rendering and refresh timing in hardware.
+
 ## CPU and memory
 
 The target uses the same lean VexiiRiscv `rezo_control` integration as REZO,
@@ -60,11 +66,13 @@ The target enforces at least 3 percent post-route headroom on every clock. A
 release is qualified only after the archive boots from slot 3 and the hardware
 checklist below passes.
 
-The corrected 2026-08-25 standard route uses seed 3, 22,659 of 24,288
-TRELLIS_COMB cells (93%), 8,212 TRELLIS_FF cells (33%), and 31 of 56 DP16KD
-blocks (55%). It closes DVI5X at 459.14 MHz, AUDIO at 75.52 MHz, SYNC at
-63.06 MHz, and DVI at 79.08 MHz. SYNC is the limiting 5.10% margin, so future
-changes must continue to pass the release gate.
+The congestion-optimized 2026-08-25 standard route uses seed 6, 22,014 of
+24,288 TRELLIS_COMB cells (90%), 8,206 TRELLIS_FF cells (33%), and 32 of 56
+DP16KD blocks (57%). It closes DVI5X at 422.12 MHz, AUDIO at 72.50 MHz, SYNC
+at 62.05 MHz, and DVI at 79.69 MHz. SYNC is the limiting 3.42% margin, so
+future changes must continue to pass the release gate. Relative to the prior
+corrected route, the operation ROM recovers 645 packed logic cells at the cost
+of one block RAM.
 
 ## Hardware verification checklist
 

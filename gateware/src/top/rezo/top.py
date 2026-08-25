@@ -3974,7 +3974,6 @@ class RezoTileDisplay(wiring.Component):
         m.submodules.text_mem = text_mem = Memory(
             shape=unsigned(6), depth=len(text_init), init=text_init)
         text_rport = text_mem.read_port(domain="dvi")
-        text_wport = text_mem.write_port(domain="sync")
         page_offsets = Array(Const(page * page_cells, unsigned(14))
                              for page in range(8))
         text_address = Signal(unsigned(15))
@@ -4093,25 +4092,13 @@ class RezoTileDisplay(wiring.Component):
             m.d.comb += bands_selected_band.eq(
                 selected_sync - RezoHardwareUI.TARGET_BAND_ENABLE_BASE)
 
-        update_index = Signal(range(205))
-        update_active = Signal(init=1)
-        refresh_counter = Signal(range(4_000_000))
-        writer_address = Signal(unsigned(15))
-        writer_char = Signal(unsigned(6))
-        writer_char_q = Signal.like(writer_char)
-        writer_phase = Signal(unsigned(2))
         selected_band = Signal(range(RezoCore.N_BANDS))
         selected_band_valid = Signal()
         m.d.comb += [
-            writer_address.eq(0),
-            writer_char.eq(0),
             selected_band.eq(0),
             selected_band_valid.eq((selected_sync >= RezoHardwareUI.TARGET_BAND_BASE) &
                                    (selected_sync < RezoHardwareUI.TARGET_BAND_BASE +
                                     RezoCore.N_BANDS)),
-            text_wport.addr.eq(writer_address),
-            text_wport.data.eq(writer_char_q),
-            text_wport.en.eq(update_active & (writer_phase == 2)),
         ]
         with m.If(selected_band_valid):
             m.d.comb += selected_band.eq(
@@ -4215,12 +4202,6 @@ class RezoTileDisplay(wiring.Component):
         m.submodules.clock_value_mem = clock_value_mem = Memory(
             shape=unsigned(6), depth=len(clock_value_init),
             init=clock_value_init, attrs={"ram_style": "block"})
-        clock_value_rport = clock_value_mem.read_port()
-        clock_value_address = Signal(unsigned(11))
-        m.d.comb += [
-            clock_value_address.eq(clock_value_blank_address),
-            clock_value_rport.addr.eq(clock_value_address),
-        ]
         clock_source_display = Signal(unsigned(2))
         data_source_display = Signal(unsigned(2))
         m.d.comb += clock_source_display.eq(Mux(
@@ -4251,33 +4232,6 @@ class RezoTileDisplay(wiring.Component):
         m.submodules.frequency_label_mem = frequency_label_mem = Memory(
             shape=unsigned(18), depth=len(frequency_label_init),
             init=frequency_label_init, attrs={"ram_style": "block"})
-        frequency_label_rport = frequency_label_mem.read_port()
-        m.d.comb += frequency_label_rport.addr.eq(0)
-        with m.Switch(update_index):
-            with m.Case(7, 8, 9, 10):
-                with m.If(selected_band_valid):
-                    m.d.comb += frequency_label_rport.addr.eq(
-                        Array(band_frequencies_sync)[selected_band])
-            with m.Case(42, 43, 44, 45):
-                with m.If(feedback_selected_valid):
-                    m.d.comb += frequency_label_rport.addr.eq(
-                        Array(band_frequencies_sync)[feedback_selected_band])
-            with m.Case(65, 66, 67, 68):
-                with m.If(bands_selected_valid):
-                    bands_frequency_index = Mux(
-                        editing_sync & bands_frequency_selected,
-                        frequency_preview_sync,
-                        Array(band_frequencies_sync)[bands_selected_band])
-                    m.d.comb += frequency_label_rport.addr.eq(
-                        bands_frequency_index | frequency_head_offset)
-            with m.Case(69, 70):
-                with m.If(bands_selected_valid):
-                    bands_frequency_index = Mux(
-                        editing_sync & bands_frequency_selected,
-                        frequency_preview_sync,
-                        Array(band_frequencies_sync)[bands_selected_band])
-                    m.d.comb += frequency_label_rport.addr.eq(
-                        bands_frequency_index | frequency_tail_offset)
         bpm_label_init = []
         for bpm in range(RezoCore.INTERNAL_CLOCK_MIN_BPM,
                          RezoCore.INTERNAL_CLOCK_MAX_BPM + 1):
@@ -4287,9 +4241,6 @@ class RezoTileDisplay(wiring.Component):
         m.submodules.bpm_label_mem = bpm_label_mem = Memory(
             shape=unsigned(18), depth=len(bpm_label_init),
             init=bpm_label_init, attrs={"ram_style": "block"})
-        bpm_label_rport = bpm_label_mem.read_port()
-        m.d.comb += bpm_label_rport.addr.eq(
-            internal_clock_rate_sync - RezoCore.INTERNAL_CLOCK_MIN_BPM)
         damp_name_index = Signal(range(5))
         m.d.comb += damp_name_index.eq(Mux(
             damp_mode_sync > 4, 4, damp_mode_sync))
@@ -4299,7 +4250,6 @@ class RezoTileDisplay(wiring.Component):
                 Mux(save_busy_sync | (save_status_sync == 1), 1,
                     Mux(save_status_sync == 2, 2,
                         Mux(save_status_sync == 3, 3, 0)))))
-        clock_text_page_offset_sync = Const(7 * page_cells, unsigned(15))
         def writer_cell(page, row, col, legacy_row=None, legacy_col=None):
             if self.compact_layout:
                 return page * page_cells + row * 45 + col
@@ -4307,361 +4257,449 @@ class RezoTileDisplay(wiring.Component):
                     (legacy_row if legacy_row is not None else row) * 45 +
                     (legacy_col if legacy_col is not None else col))
 
-        with m.Switch(update_index):
-            for pos in range(4):
-                with m.Case(pos):
-                    m.d.comb += [
-                        writer_address.eq(
-                            page_offsets[page_sync] +
-                            (8 if self.compact_layout else 3) * 45 +
-                            (33 if self.compact_layout else 39) + pos),
-                        clock_value_address.eq(
-                            clock_value_bases["nav"] |
-                            (editing_sync << 4) | pos),
-                        writer_char.eq(clock_value_rport.data),
-                    ]
-            for pos in range(4):
-                with m.Case(4 + pos):
-                    m.d.comb += [
-                        writer_address.eq(writer_cell(
-                            # Preset names are fixed-width and use one native
-                            # cell of left padding in the selector chip.
-                            0, NATIVE_PAGE_HEADING_ROW, 16 + pos,
-                            7, 11 + pos)),
-                        clock_value_address.eq(
-                            clock_value_bases["preset"] |
-                            (preset_sync << 4) | pos),
-                        writer_char.eq(clock_value_rport.data),
-                    ]
+
+        # Describing every dynamic character as a separate update-index case
+        # creates a 205-way address/data mux in a renderer already constrained
+        # by REZOMO's CLOCK page. Store the invariant destination and a compact
+        # source descriptor in one DP16KD instead. A small source switch then
+        # chooses the live value. This keeps the established refresh order and
+        # three-clock cadence while trading abundant block RAM for scarce LUTs
+        # and routing tracks.
+        (
+            SRC_NONE,
+            SRC_NAV,
+            SRC_PRESET,
+            SRC_MAIN_FREQUENCY,
+            SRC_MODE,
+            SRC_INPUT_MODE,
+            SRC_INPUT_TARGET,
+            SRC_FEEDBACK_FREQUENCY,
+            SRC_PALETTE,
+            SRC_SAVE,
+            SRC_DAMP,
+            SRC_LAYOUT,
+            SRC_BANDS_FREQUENCY,
+            SRC_INPUT_MODE_TAIL,
+            SRC_DEPTH_LABEL,
+            SRC_ALGORITHM,
+            SRC_DIRECTION,
+            SRC_CLOCK_SOURCE,
+            SRC_BPM,
+            SRC_CLOCK_LABEL,
+            SRC_CLOCK_VALUE,
+        ) = range(21)
+
+        # [14:0] destination, [19:15] source, [23:20] argument,
+        # [27:24] character position.
+        text_operation_init = [0] * 205
+
+        def set_text_operation(index, address, source, *, argument=0, pos=0):
+            assert 0 <= address < len(text_init)
+            text_operation_init[index] = (
+                address | (source << 15) | (argument << 20) | (pos << 24))
+
+        nav_row = 8 if self.compact_layout else 3
+        nav_col = 33 if self.compact_layout else 39
+        for pos in range(4):
+            # NAV is present on every page, so its stored destination is
+            # relative to the selected page rather than absolute.
+            set_text_operation(
+                pos, nav_row * 45 + nav_col + pos, SRC_NAV, pos=pos)
+            set_text_operation(
+                4 + pos,
+                writer_cell(0, NATIVE_PAGE_HEADING_ROW, 16 + pos,
+                            7, 11 + pos),
+                SRC_PRESET, pos=pos)
+        for pos in range(3):
+            set_text_operation(
+                8 + pos, writer_cell(0, 14, 29 + pos, 11, 28 + pos),
+                SRC_MAIN_FREQUENCY, pos=pos)
+        for n in range(4):
+            row = 13 + n * 6
             for pos in range(3):
-                with m.Case(8 + pos):
-                    m.d.comb += [
-                        writer_address.eq(writer_cell(
-                            0, 14, 29 + pos, 11, 28 + pos)),
-                        writer_char.eq(Mux(
-                            selected_band_valid,
-                            frequency_label_rport.data.word_select(pos, 6),
-                            0)),
-                    ]
-            for pos in range(3):
-                with m.Case(39 + pos):
-                    m.d.comb += [
-                        writer_address.eq(writer_cell(
-                            0, NATIVE_PAGE_HEADING_ROW, 30 + pos,
-                            3, 29 + pos)),
-                        clock_value_address.eq(
-                            clock_value_bases["mode"] |
-                            (clock_mode_sync << 4) | pos),
-                        writer_char.eq(clock_value_rport.data),
-                    ]
-            for n in range(4):
-                row = 13 + n * 6
-                for pos in range(3):
-                    with m.Case(11 + n * 3 + pos):
-                        audio_char = self.code("AUD"[pos])
-                        # Both mode names begin at the chip's fixed text
-                        # origin; the shorter spelling clears its last cell.
-                        cv_char = self.code("CV "[pos])
-                        m.d.comb += [
-                            writer_address.eq(writer_cell(
-                                2, compact_input_text_rows[n][0], 20 + pos,
-                                row, 14 + pos)),
-                            writer_char.eq(Mux(input_modes_sync[n], cv_char, audio_char)),
-                        ]
-                    with m.Case(23 + n * 3 + pos):
-                        m.d.comb += [
-                            writer_address.eq(writer_cell(
-                                2, compact_input_text_rows[n][1], 20 + pos,
-                                row + 2, 16 + pos)),
-                            clock_value_address.eq(
-                                clock_value_bases["target"] |
-                                (cv_targets_sync[n] << 4) | pos),
-                            writer_char.eq(Mux(
-                                input_modes_sync[n],
-                                clock_value_rport.data, 0)),
-                        ]
-            for pos in range(3):
-                with m.Case(43 + pos):
-                    m.d.comb += [
-                        writer_address.eq(writer_cell(
-                            1, 16, 29 + pos, 11, 28 + pos)),
-                        writer_char.eq(Mux(
-                            feedback_selected_valid,
-                            frequency_label_rport.data.word_select(pos, 6), 0)),
-                    ]
+                set_text_operation(
+                    11 + n * 3 + pos,
+                    writer_cell(2, compact_input_text_rows[n][0], 20 + pos,
+                                row, 14 + pos),
+                    SRC_INPUT_MODE, argument=n, pos=pos)
+                set_text_operation(
+                    23 + n * 3 + pos,
+                    writer_cell(2, compact_input_text_rows[n][1], 20 + pos,
+                                row + 2, 16 + pos),
+                    SRC_INPUT_TARGET, argument=n, pos=pos)
+        for pos in range(8):
+            set_text_operation(
+                39 + pos if pos < 3 else 68 + pos,
+                writer_cell(0, NATIVE_PAGE_HEADING_ROW, 30 + pos,
+                            3, 29 + pos),
+                SRC_MODE, pos=pos)
+        for pos in range(3):
+            set_text_operation(
+                43 + pos, writer_cell(1, 16, 29 + pos, 11, 28 + pos),
+                SRC_FEEDBACK_FREQUENCY, pos=pos)
+        for pos in range(6):
+            set_text_operation(
+                46 + pos, writer_cell(5, 17, 22 + pos, 15, 18 + pos),
+                SRC_PALETTE, pos=pos)
+        for pos in range(7):
+            set_text_operation(
+                52 + pos, writer_cell(5, 21, 22 + pos, 19, 18 + pos),
+                SRC_SAVE, pos=pos)
+            set_text_operation(
+                59 + pos,
+                writer_cell(6, NATIVE_PAGE_HEADING_ROW, 16 + pos,
+                            7, 9 + pos),
+                SRC_LAYOUT, pos=pos)
+        for pos in range(5):
+            set_text_operation(
+                66 + pos, writer_cell(6, 22, 20 + pos, 22, 14 + pos),
+                SRC_BANDS_FREQUENCY, pos=pos)
+            set_text_operation(
+                172 + pos,
+                writer_cell(1, NATIVE_FEEDBACK_DAMPING_TEXT_ROW,
+                            NATIVE_FEEDBACK_DAMPING_TEXT_COL + pos,
+                            32, 12 + pos),
+                SRC_DAMP, pos=pos)
+        for pos in range(8):
+            set_text_operation(
+                77 + pos, writer_cell(7, 16, 20 + pos, 7, 9 + pos),
+                SRC_ALGORITHM, pos=pos)
+        for pos in range(10):
+            set_text_operation(
+                85 + pos, writer_cell(7, 18, 20 + pos, 15, 12 + pos),
+                SRC_DIRECTION, pos=pos)
+            set_text_operation(
+                95 + pos, writer_cell(7, 20, 20 + pos, 20, 12 + pos),
+                SRC_CLOCK_SOURCE, pos=pos)
+        for pos in range(3):
+            set_text_operation(
+                105 + pos, writer_cell(7, 22, 20 + pos, 25, 15 + pos),
+                SRC_BPM, pos=pos)
+        for row in range(4):
             for pos in range(6):
-                with m.Case(46 + pos):
-                    m.d.comb += [
-                        writer_address.eq(writer_cell(
-                            5, 17, 22 + pos, 15, 18 + pos)),
-                        clock_value_address.eq(
-                            clock_value_bases["palette"] |
-                            (palette_sync << 4) | pos),
-                        writer_char.eq(clock_value_rport.data),
-                    ]
-            for pos in range(7):
-                with m.Case(52 + pos):
-                    m.d.comb += [
-                        writer_address.eq(writer_cell(
-                            5, 21, 22 + pos, 19, 18 + pos)),
-                        clock_value_address.eq(
-                            clock_value_bases["save"] |
-                            (save_name_index << 4) | pos),
-                        writer_char.eq(clock_value_rport.data),
-                    ]
-            for pos in range(5):
-                with m.Case(172 + pos):
-                    m.d.comb += [
-                        writer_address.eq(
-                            writer_cell(
-                                1, NATIVE_FEEDBACK_DAMPING_TEXT_ROW,
-                                NATIVE_FEEDBACK_DAMPING_TEXT_COL + pos,
-                                32, 12 + pos)),
-                        clock_value_address.eq(
-                            clock_value_bases["damp"] |
-                            (damp_name_index << 4) | pos),
-                        writer_char.eq(clock_value_rport.data),
-                    ]
-            for pos in range(7):
-                with m.Case(59 + pos):
-                    m.d.comb += [
-                        writer_address.eq(writer_cell(
-                            6, NATIVE_PAGE_HEADING_ROW, 16 + pos,
-                            7, 9 + pos)),
-                        clock_value_address.eq(
-                            clock_value_bases["layout"] |
-                            (displayed_layout << 4) | pos),
-                        writer_char.eq(clock_value_rport.data),
-                    ]
-            for pos in range(5):
-                with m.Case(66 + pos):
-                    m.d.comb += [
-                        writer_address.eq(writer_cell(
-                            6, 22, 20 + pos, 22, 14 + pos)),
-                        writer_char.eq(Mux(
-                            bands_selected_valid,
-                            frequency_label_rport.data.word_select(
-                                pos if pos < 3 else pos - 3, 6),
-                            0)),
-                    ]
-            for pos in range(3, 8):
-                with m.Case(68 + pos):
-                    m.d.comb += [
-                        writer_address.eq(writer_cell(
-                            0, NATIVE_PAGE_HEADING_ROW, 30 + pos,
-                            3, 29 + pos)),
-                        clock_value_address.eq(
-                            clock_value_bases["mode"] |
-                            (clock_mode_sync << 4) | pos),
-                        writer_char.eq(clock_value_rport.data),
-                    ]
-            # Compact INPUT mode chips spell AUDIO in full. The legacy path
-            # receives trailing blanks, so these extra refresh entries are
-            # harmless there and keep one writer state machine for both.
-            for n in range(4):
-                for tail_pos, audio_ch in enumerate("IO"):
-                    with m.Case(177 + n * 2 + tail_pos):
-                        m.d.comb += [
-                            writer_address.eq(writer_cell(
-                                2, compact_input_text_rows[n][0],
-                                23 + tail_pos,
-                                13 + n * 6, 17 + tail_pos)),
-                            writer_char.eq(Mux(
-                                input_modes_sync[n], 0,
-                                self.code(audio_ch))),
-                        ]
-            # DEPTH is a CV-only control. Refresh its label dynamically so an
-            # AUDIO lane cannot retain the static label from another product.
-            for n in range(4):
-                for pos in range(5):
-                    with m.Case(185 + n * 5 + pos):
-                        m.d.comb += [
-                            writer_address.eq(writer_cell(
-                                2, compact_input_text_rows[n][2], 13 + pos,
-                                13 + n * 6 + 4, 8 + pos)),
-                            writer_char.eq(Mux(
-                                input_modes_sync[n],
-                                Const(self.code("DEPTH"[pos]), 6), 0)),
-                        ]
-            for pos in range(8):
-                with m.Case(77 + pos):
-                    m.d.comb += [
-                        writer_address.eq(writer_cell(
-                            7, 16, 20 + pos, 7, 9 + pos)),
-                        clock_value_address.eq(
-                            clock_value_bases["algorithm"] |
-                            (clock_algorithm_sync << 4) | pos),
-                        writer_char.eq(clock_value_rport.data),
-                    ]
+                set_text_operation(
+                    108 + row * 6 + pos,
+                    writer_cell(7, 26 + row * 2, 12 + pos,
+                                15 + row * 5, 24 + pos),
+                    SRC_CLOCK_LABEL, argument=row, pos=pos)
             for pos in range(10):
-                with m.Case(85 + pos):
-                    direction_display = Mux(
-                        clock_algorithm_sync ==
-                        RezoCore.CLOCK_ALGORITHM_WALK,
-                        RezoCore.SHIFT_RANDOM, shift_direction_sync)
-                    m.d.comb += [
-                        writer_address.eq(writer_cell(
-                            7, 18, 20 + pos, 15, 12 + pos)),
-                        clock_value_address.eq(
-                            clock_value_bases["direction"] |
-                            (direction_display << 4) | pos),
-                        writer_char.eq(clock_value_rport.data),
-                    ]
-            for pos in range(10):
-                with m.Case(95 + pos):
-                    m.d.comb += [
-                        writer_address.eq(writer_cell(
-                            7, 20, 20 + pos, 20, 12 + pos)),
-                        clock_value_address.eq(
-                            clock_value_bases["clock_source"] |
-                            (clock_source_display << 4) | pos),
-                        writer_char.eq(clock_value_rport.data),
-                    ]
-            for pos in range(3):
-                with m.Case(105 + pos):
-                    m.d.comb += [
-                        writer_address.eq(writer_cell(
-                            7, 22, 20 + pos, 25, 15 + pos)),
-                        writer_char.eq(
-                            bpm_label_rport.data.word_select(pos, 6)),
-                    ]
-            for row in range(4):
-                for pos in range(6):
-                    with m.Case(108 + row * 6 + pos):
-                        if row == 0:
-                            label_char = Mux(
-                                clock_algorithm_sync ==
-                                RezoCore.CLOCK_ALGORITHM_TURING,
-                                self.code("CHANGE"[pos]),
-                                Mux(clock_algorithm_sync ==
-                                    RezoCore.CLOCK_ALGORITHM_WALK,
-                                    self.code(" STYLE"[pos]),
-                                    Mux(clock_algorithm_sync ==
-                                        RezoCore.CLOCK_ALGORITHM_SHIFT,
-                                        self.code("  DATA"[pos]), 0)))
-                        elif row == 1:
-                            label_char = Mux(
-                                clock_algorithm_sync ==
-                                RezoCore.CLOCK_ALGORITHM_TURING,
-                                self.code(" BANDS"[pos]),
-                                Mux(clock_algorithm_sync ==
-                                    RezoCore.CLOCK_ALGORITHM_WALK,
-                                    self.code(" DRUNK"[pos]), 0))
-                        elif row == 2:
-                            label_char = Mux(
-                                clock_algorithm_sync ==
-                                RezoCore.CLOCK_ALGORITHM_TURING,
-                                Mux(turing_target_sync ==
-                                    RezoCore.TURING_TARGET_RANGE,
-                                    self.code(" START"[pos]),
-                                    self.code("LENGTH"[pos])),
-                                Mux(clock_algorithm_sync ==
-                                    RezoCore.CLOCK_ALGORITHM_WALK,
-                                    self.code("CHANCE"[pos]), 0))
-                        else:
-                            label_char = Mux(
-                                (clock_algorithm_sync ==
-                                 RezoCore.CLOCK_ALGORITHM_TURING) &
-                                (turing_target_sync ==
-                                 RezoCore.TURING_TARGET_RANGE),
-                                self.code("LENGTH"[pos]), 0)
-                        m.d.comb += [
-                            writer_address.eq(writer_cell(
-                                7, 26 + row * 2, 12 + pos,
-                                15 + row * 5, 24 + pos)),
-                            writer_char.eq(label_char),
-                        ]
-            for row in range(4):
-                for pos in range(10):
-                    with m.Case(132 + row * 10 + pos):
-                        value_address = Const(
-                            clock_value_blank_address, unsigned(11))
-                        if row == 0:
-                            value_address = Mux(
-                                clock_algorithm_sync ==
-                                RezoCore.CLOCK_ALGORITHM_TURING,
-                                clock_value_bases["turing_change"] |
-                                (turing_change_index_sync << 4) | pos,
-                                Mux(clock_algorithm_sync ==
-                                    RezoCore.CLOCK_ALGORITHM_WALK,
-                                    clock_value_bases["walk_style"] |
-                                    (walk_style_sync << 4) | pos,
-                                    Mux(clock_algorithm_sync ==
-                                        RezoCore.CLOCK_ALGORITHM_SHIFT,
-                                        clock_value_bases["data_source"] |
-                                        (data_source_display << 4) | pos,
-                                        clock_value_blank_address)))
-                        elif row == 1:
-                            value_address = Mux(
-                                clock_algorithm_sync ==
-                                RezoCore.CLOCK_ALGORITHM_TURING,
-                                clock_value_bases["turing_target"] |
-                                (turing_target_sync << 4) | pos,
-                                Mux(clock_algorithm_sync ==
-                                    RezoCore.CLOCK_ALGORITHM_WALK,
-                                    clock_value_bases["walk_drunk"] |
-                                    (walk_drunk_sync << 4) | pos,
-                                    clock_value_blank_address))
-                        elif row == 2:
-                            value_address = Mux(
-                                clock_algorithm_sync ==
-                                RezoCore.CLOCK_ALGORITHM_TURING,
-                                Mux(turing_target_sync ==
-                                    RezoCore.TURING_TARGET_RANGE,
-                                    clock_value_bases["turing_start"] |
-                                    (turing_start_sync << 4) | pos,
-                                    clock_value_bases["turing_length"] |
-                                    ((turing_length_sync - 2) << 4) | pos),
-                                Mux(clock_algorithm_sync ==
-                                    RezoCore.CLOCK_ALGORITHM_WALK,
-                                    clock_value_bases["walk_chance"] |
-                                    (walk_chance_index_sync << 4) | pos,
-                                    clock_value_blank_address))
-                        else:
-                            value_address = Mux(
-                                (clock_algorithm_sync ==
-                                 RezoCore.CLOCK_ALGORITHM_TURING) &
-                                (turing_target_sync ==
-                                 RezoCore.TURING_TARGET_RANGE),
-                                clock_value_bases["turing_length"] |
-                                ((turing_length_sync - 2) << 4) | pos,
-                                clock_value_blank_address)
-                        m.d.comb += [
-                            writer_address.eq(writer_cell(
-                                7, 26 + row * 2, 20 + pos,
-                                15 + row * 5, 32 + pos)),
-                            clock_value_address.eq(value_address),
-                            writer_char.eq(clock_value_rport.data),
-                        ]
-        with m.If(update_active):
-            # Hold each label index for three clocks: allow synchronous label
-            # ROMs to settle, capture the selected character, then write it.
-            # This pipelines the former ROM->selector->tile-RAM critical path
-            # with only eight flip-flops instead of a full address/data stage.
-            with m.If(writer_phase == 0):
-                m.d.sync += writer_phase.eq(1)
-            with m.Elif(writer_phase == 1):
-                m.d.sync += [
-                    writer_char_q.eq(writer_char),
-                    writer_phase.eq(2),
+                set_text_operation(
+                    132 + row * 10 + pos,
+                    writer_cell(7, 26 + row * 2, 20 + pos,
+                                15 + row * 5, 32 + pos),
+                    SRC_CLOCK_VALUE, argument=row, pos=pos)
+        for n in range(4):
+            for pos in range(2):
+                set_text_operation(
+                    177 + n * 2 + pos,
+                    writer_cell(2, compact_input_text_rows[n][0], 23 + pos,
+                                13 + n * 6, 17 + pos),
+                    SRC_INPUT_MODE_TAIL, argument=n, pos=pos)
+            for pos in range(5):
+                set_text_operation(
+                    185 + n * 5 + pos,
+                    writer_cell(2, compact_input_text_rows[n][2], 13 + pos,
+                                13 + n * 6 + 4, 8 + pos),
+                    SRC_DEPTH_LABEL, argument=n, pos=pos)
+
+        m.submodules.text_operation_mem = text_operation_mem = Memory(
+            shape=unsigned(28), depth=len(text_operation_init),
+            init=text_operation_init, attrs={"ram_style": "block"})
+        text_operation_rport = text_operation_mem.read_port()
+        micro_text_wport = text_mem.write_port(domain="sync")
+        micro_clock_value_rport = clock_value_mem.read_port()
+        micro_frequency_label_rport = frequency_label_mem.read_port()
+        micro_bpm_label_rport = bpm_label_mem.read_port()
+
+        micro_update_index = Signal(range(len(text_operation_init)))
+        micro_update_active = Signal(init=1)
+        micro_refresh_counter = Signal(range(4_000_000))
+        micro_writer_phase = Signal(unsigned(2))
+        micro_operation = text_operation_rport.data
+        micro_writer_address = Signal(unsigned(15))
+        micro_writer_char = Signal(unsigned(6))
+        micro_source = micro_operation[15:20]
+        micro_argument = micro_operation[20:24]
+        micro_pos = micro_operation[24:28]
+        micro_bands_frequency_index = Signal(
+            unsigned(RezoCore.FREQ_INDEX_WIDTH))
+        micro_frequency_word = Signal(unsigned(2))
+        m.d.comb += [
+            text_operation_rport.addr.eq(micro_update_index),
+            micro_writer_address.eq(micro_operation[:15]),
+            micro_writer_char.eq(0),
+            micro_clock_value_rport.addr.eq(clock_value_blank_address),
+            micro_frequency_label_rport.addr.eq(0),
+            micro_bpm_label_rport.addr.eq(
+                internal_clock_rate_sync - RezoCore.INTERNAL_CLOCK_MIN_BPM),
+            micro_bands_frequency_index.eq(Mux(
+                editing_sync & bands_frequency_selected,
+                frequency_preview_sync,
+                Array(band_frequencies_sync)[bands_selected_band])),
+            micro_frequency_word.eq(Mux(
+                micro_pos < 3, micro_pos[:2], (micro_pos - 3)[:2])),
+            micro_text_wport.addr.eq(micro_writer_address),
+            micro_text_wport.data.eq(micro_writer_char),
+            micro_text_wport.en.eq(
+                micro_update_active & (micro_writer_phase == 2)),
+        ]
+
+        def dynamic_characters(value):
+            return Array(Const(self.code(ch), 6) for ch in value)
+
+        with m.Switch(micro_source):
+            with m.Case(SRC_NAV):
+                m.d.comb += [
+                    micro_writer_address.eq(
+                        page_offsets[page_sync] + micro_operation[:15]),
+                    micro_clock_value_rport.addr.eq(
+                        clock_value_bases["nav"] |
+                        (editing_sync << 4) | micro_pos),
+                    micro_writer_char.eq(micro_clock_value_rport.data),
                 ]
-            with m.Else():
-                m.d.sync += writer_phase.eq(0)
-                with m.If(update_index == 204):
+            with m.Case(SRC_PRESET):
+                m.d.comb += [
+                    micro_clock_value_rport.addr.eq(
+                        clock_value_bases["preset"] |
+                        (preset_sync << 4) | micro_pos),
+                    micro_writer_char.eq(micro_clock_value_rport.data),
+                ]
+            with m.Case(SRC_MAIN_FREQUENCY):
+                m.d.comb += [
+                    micro_frequency_label_rport.addr.eq(
+                        Array(band_frequencies_sync)[selected_band]),
+                    micro_writer_char.eq(Mux(
+                        selected_band_valid,
+                        micro_frequency_label_rport.data.word_select(
+                            micro_pos, 6),
+                        0)),
+                ]
+            with m.Case(SRC_MODE):
+                m.d.comb += [
+                    micro_clock_value_rport.addr.eq(
+                        clock_value_bases["mode"] |
+                        (clock_mode_sync << 4) | micro_pos),
+                    micro_writer_char.eq(micro_clock_value_rport.data),
+                ]
+            with m.Case(SRC_INPUT_MODE):
+                m.d.comb += micro_writer_char.eq(Mux(
+                    Array(input_modes_sync)[micro_argument],
+                    dynamic_characters("CV ")[micro_pos],
+                    dynamic_characters("AUD")[micro_pos]))
+            with m.Case(SRC_INPUT_TARGET):
+                m.d.comb += [
+                    micro_clock_value_rport.addr.eq(
+                        clock_value_bases["target"] |
+                        (Array(cv_targets_sync)[micro_argument] << 4) |
+                        micro_pos),
+                    micro_writer_char.eq(Mux(
+                        Array(input_modes_sync)[micro_argument],
+                        micro_clock_value_rport.data, 0)),
+                ]
+            with m.Case(SRC_FEEDBACK_FREQUENCY):
+                m.d.comb += [
+                    micro_frequency_label_rport.addr.eq(
+                        Array(band_frequencies_sync)[feedback_selected_band]),
+                    micro_writer_char.eq(Mux(
+                        feedback_selected_valid,
+                        micro_frequency_label_rport.data.word_select(
+                            micro_pos, 6),
+                        0)),
+                ]
+            with m.Case(SRC_PALETTE):
+                m.d.comb += [
+                    micro_clock_value_rport.addr.eq(
+                        clock_value_bases["palette"] |
+                        (palette_sync << 4) | micro_pos),
+                    micro_writer_char.eq(micro_clock_value_rport.data),
+                ]
+            with m.Case(SRC_SAVE):
+                m.d.comb += [
+                    micro_clock_value_rport.addr.eq(
+                        clock_value_bases["save"] |
+                        (save_name_index << 4) | micro_pos),
+                    micro_writer_char.eq(micro_clock_value_rport.data),
+                ]
+            with m.Case(SRC_DAMP):
+                m.d.comb += [
+                    micro_clock_value_rport.addr.eq(
+                        clock_value_bases["damp"] |
+                        (damp_name_index << 4) | micro_pos),
+                    micro_writer_char.eq(micro_clock_value_rport.data),
+                ]
+            with m.Case(SRC_LAYOUT):
+                m.d.comb += [
+                    micro_clock_value_rport.addr.eq(
+                        clock_value_bases["layout"] |
+                        (displayed_layout << 4) | micro_pos),
+                    micro_writer_char.eq(micro_clock_value_rport.data),
+                ]
+            with m.Case(SRC_BANDS_FREQUENCY):
+                m.d.comb += [
+                    micro_frequency_label_rport.addr.eq(
+                        micro_bands_frequency_index |
+                        Mux(micro_pos < 3, frequency_head_offset,
+                            frequency_tail_offset)),
+                    micro_writer_char.eq(Mux(
+                        bands_selected_valid,
+                        micro_frequency_label_rport.data.word_select(
+                            micro_frequency_word, 6),
+                        0)),
+                ]
+            with m.Case(SRC_INPUT_MODE_TAIL):
+                m.d.comb += micro_writer_char.eq(Mux(
+                    Array(input_modes_sync)[micro_argument], 0,
+                    dynamic_characters("IO")[micro_pos]))
+            with m.Case(SRC_DEPTH_LABEL):
+                m.d.comb += micro_writer_char.eq(Mux(
+                    Array(input_modes_sync)[micro_argument],
+                    dynamic_characters("DEPTH")[micro_pos], 0))
+            with m.Case(SRC_ALGORITHM):
+                m.d.comb += [
+                    micro_clock_value_rport.addr.eq(
+                        clock_value_bases["algorithm"] |
+                        (clock_algorithm_sync << 4) | micro_pos),
+                    micro_writer_char.eq(micro_clock_value_rport.data),
+                ]
+            with m.Case(SRC_DIRECTION):
+                direction_display = Mux(
+                    clock_algorithm_sync == RezoCore.CLOCK_ALGORITHM_WALK,
+                    RezoCore.SHIFT_RANDOM, shift_direction_sync)
+                m.d.comb += [
+                    micro_clock_value_rport.addr.eq(
+                        clock_value_bases["direction"] |
+                        (direction_display << 4) | micro_pos),
+                    micro_writer_char.eq(micro_clock_value_rport.data),
+                ]
+            with m.Case(SRC_CLOCK_SOURCE):
+                m.d.comb += [
+                    micro_clock_value_rport.addr.eq(
+                        clock_value_bases["clock_source"] |
+                        (clock_source_display << 4) | micro_pos),
+                    micro_writer_char.eq(micro_clock_value_rport.data),
+                ]
+            with m.Case(SRC_BPM):
+                m.d.comb += micro_writer_char.eq(
+                    micro_bpm_label_rport.data.word_select(micro_pos, 6))
+            with m.Case(SRC_CLOCK_LABEL):
+                with m.Switch(micro_argument):
+                    with m.Case(0):
+                        m.d.comb += micro_writer_char.eq(Mux(
+                            clock_algorithm_sync ==
+                            RezoCore.CLOCK_ALGORITHM_TURING,
+                            dynamic_characters("CHANGE")[micro_pos],
+                            Mux(clock_algorithm_sync ==
+                                RezoCore.CLOCK_ALGORITHM_WALK,
+                                dynamic_characters(" STYLE")[micro_pos],
+                                Mux(clock_algorithm_sync ==
+                                    RezoCore.CLOCK_ALGORITHM_SHIFT,
+                                    dynamic_characters("  DATA")[micro_pos],
+                                    0))))
+                    with m.Case(1):
+                        m.d.comb += micro_writer_char.eq(Mux(
+                            clock_algorithm_sync ==
+                            RezoCore.CLOCK_ALGORITHM_TURING,
+                            dynamic_characters(" BANDS")[micro_pos],
+                            Mux(clock_algorithm_sync ==
+                                RezoCore.CLOCK_ALGORITHM_WALK,
+                                dynamic_characters(" DRUNK")[micro_pos], 0)))
+                    with m.Case(2):
+                        m.d.comb += micro_writer_char.eq(Mux(
+                            clock_algorithm_sync ==
+                            RezoCore.CLOCK_ALGORITHM_TURING,
+                            Mux(turing_target_sync ==
+                                RezoCore.TURING_TARGET_RANGE,
+                                dynamic_characters(" START")[micro_pos],
+                                dynamic_characters("LENGTH")[micro_pos]),
+                            Mux(clock_algorithm_sync ==
+                                RezoCore.CLOCK_ALGORITHM_WALK,
+                                dynamic_characters("CHANCE")[micro_pos], 0)))
+                    with m.Case(3):
+                        m.d.comb += micro_writer_char.eq(Mux(
+                            (clock_algorithm_sync ==
+                             RezoCore.CLOCK_ALGORITHM_TURING) &
+                            (turing_target_sync ==
+                             RezoCore.TURING_TARGET_RANGE),
+                            dynamic_characters("LENGTH")[micro_pos], 0))
+            with m.Case(SRC_CLOCK_VALUE):
+                value_address = Signal(unsigned(11))
+                m.d.comb += value_address.eq(clock_value_blank_address)
+                with m.Switch(micro_argument):
+                    with m.Case(0):
+                        m.d.comb += value_address.eq(Mux(
+                            clock_algorithm_sync ==
+                            RezoCore.CLOCK_ALGORITHM_TURING,
+                            clock_value_bases["turing_change"] |
+                            (turing_change_index_sync << 4) | micro_pos,
+                            Mux(clock_algorithm_sync ==
+                                RezoCore.CLOCK_ALGORITHM_WALK,
+                                clock_value_bases["walk_style"] |
+                                (walk_style_sync << 4) | micro_pos,
+                                Mux(clock_algorithm_sync ==
+                                    RezoCore.CLOCK_ALGORITHM_SHIFT,
+                                    clock_value_bases["data_source"] |
+                                    (data_source_display << 4) | micro_pos,
+                                    clock_value_blank_address))))
+                    with m.Case(1):
+                        m.d.comb += value_address.eq(Mux(
+                            clock_algorithm_sync ==
+                            RezoCore.CLOCK_ALGORITHM_TURING,
+                            clock_value_bases["turing_target"] |
+                            (turing_target_sync << 4) | micro_pos,
+                            Mux(clock_algorithm_sync ==
+                                RezoCore.CLOCK_ALGORITHM_WALK,
+                                clock_value_bases["walk_drunk"] |
+                                (walk_drunk_sync << 4) | micro_pos,
+                                clock_value_blank_address)))
+                    with m.Case(2):
+                        m.d.comb += value_address.eq(Mux(
+                            clock_algorithm_sync ==
+                            RezoCore.CLOCK_ALGORITHM_TURING,
+                            Mux(turing_target_sync ==
+                                RezoCore.TURING_TARGET_RANGE,
+                                clock_value_bases["turing_start"] |
+                                (turing_start_sync << 4) | micro_pos,
+                                clock_value_bases["turing_length"] |
+                                ((turing_length_sync - 2) << 4) | micro_pos),
+                            Mux(clock_algorithm_sync ==
+                                RezoCore.CLOCK_ALGORITHM_WALK,
+                                clock_value_bases["walk_chance"] |
+                                (walk_chance_index_sync << 4) | micro_pos,
+                                clock_value_blank_address)))
+                    with m.Case(3):
+                        m.d.comb += value_address.eq(Mux(
+                            (clock_algorithm_sync ==
+                             RezoCore.CLOCK_ALGORITHM_TURING) &
+                            (turing_target_sync ==
+                             RezoCore.TURING_TARGET_RANGE),
+                            clock_value_bases["turing_length"] |
+                            ((turing_length_sync - 2) << 4) | micro_pos,
+                            clock_value_blank_address))
+                m.d.comb += [
+                    micro_clock_value_rport.addr.eq(value_address),
+                    micro_writer_char.eq(micro_clock_value_rport.data),
+                ]
+
+        with m.If(micro_update_active):
+            with m.If(micro_writer_phase == 2):
+                m.d.sync += micro_writer_phase.eq(0)
+                with m.If(micro_update_index == len(text_operation_init) - 1):
                     m.d.sync += [
-                        update_active.eq(0),
-                        refresh_counter.eq(0),
+                        micro_update_active.eq(0),
+                        micro_refresh_counter.eq(0),
                     ]
                 with m.Else():
-                    m.d.sync += update_index.eq(update_index + 1)
-        with m.Elif(refresh_counter == 3_999_999):
+                    m.d.sync += micro_update_index.eq(micro_update_index + 1)
+            with m.Else():
+                m.d.sync += micro_writer_phase.eq(micro_writer_phase + 1)
+        with m.Elif(micro_refresh_counter == 3_999_999):
             m.d.sync += [
-                update_active.eq(1),
-                update_index.eq(0),
-                writer_phase.eq(0),
+                micro_update_active.eq(1),
+                micro_update_index.eq(0),
+                micro_writer_phase.eq(0),
             ]
         with m.Else():
-            m.d.sync += refresh_counter.eq(refresh_counter + 1)
+            m.d.sync += micro_refresh_counter.eq(micro_refresh_counter + 1)
 
         cell_x_pre_q = Signal.like(cell_x)
         cell_y_pre_q = Signal.like(cell_y)
