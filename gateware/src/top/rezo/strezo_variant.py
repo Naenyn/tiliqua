@@ -5675,14 +5675,19 @@ class RezoBeamTop(Elaboratable):
         f"{os.getenv('TILIQUA_STREZO_SEED', os.getenv('TILIQUA_REZO_SEED', '8'))}"
     )
 
-    def __init__(self, clock_settings):
+    def __init__(self, clock_settings, *, firmware_bin_path=None):
         assert clock_settings.modeline is not None
         self.clock_settings = clock_settings
+        self.firmware_bin_path = firmware_bin_path
         self.pmod0 = eurorack_pmod.EurorackPmod(
             self.clock_settings.audio_clock, with_boot_slot=True)
 
     def elaborate(self, platform):
         m = Module()
+        cpu_firmware_path = (
+            self.firmware_bin_path or
+            os.getenv("TILIQUA_STREZO_CPU_FIRMWARE"))
+        cpu_control_enabled = cpu_firmware_path is not None
 
         if sim.is_hw(platform):
             m.submodules.car = platform.clock_domain_generator(self.clock_settings)
@@ -5696,56 +5701,112 @@ class RezoBeamTop(Elaboratable):
             m.submodules.car = sim.FakeTiliquaDomainGenerator()
             enc_pins = None
 
+        if cpu_control_enabled:
+            try:
+                from .cpu_control import StrezoCpuControlPlane
+            except ImportError:  # top_level_cli executes this file directly.
+                from cpu_control import StrezoCpuControlPlane
+            m.submodules.cpu_control = cpu_control = StrezoCpuControlPlane(
+                self.clock_settings, firmware_bin_path=cpu_firmware_path)
+            if sim.is_hw(platform):
+                m.d.comb += [
+                    cpu_control.encoder0.pins.i.eq(enc_pins.i.i),
+                    cpu_control.encoder0.pins.q.eq(enc_pins.q.i),
+                    cpu_control.encoder0.pins.s.eq(enc_pins.s.i),
+                ]
+
         m.submodules.pmod0 = pmod0 = self.pmod0
         m.submodules.rezo = rezo = RezoCore(fs=self.clock_settings.audio_clock.fs())
-        m.submodules.ui = ui = RezoHardwareUI()
-        m.submodules.state_journal = state_journal = RezoStateJournal(
-            RezoHardwareUI.STATE_WORDS_V5,
-            legacy_state_words=RezoHardwareUI.STATE_WORDS_V4,
-            # OFF, 1.2 Hz, 39-degree phase spread, 25% depth.
-            legacy_tail_words=(0x7030, 0x0080))
-        m.submodules.spi_transfer = spi_transfer = SPIFlashTransfer()
-        m.submodules.spi_phy = spi_phy = spiflash.SPIPHYController(
-            domain="sync", divisor=1)
-        wiring.connect(m, spi_transfer.spi, spi_phy.ctrl)
-        if sim.is_hw(platform):
-            m.submodules.spi_provider = spi_provider = \
+        ui = cpu_control.ui if cpu_control_enabled else RezoHardwareUI()
+        if cpu_control_enabled and sim.is_hw(platform):
+            m.submodules.cpu_spi_transfer = cpu_spi_transfer = \
+                SPIFlashTransfer()
+            m.submodules.cpu_spi_phy = cpu_spi_phy = \
+                spiflash.SPIPHYController(domain="sync", divisor=1)
+            m.submodules.cpu_spi_provider = cpu_spi_provider = \
                 spiflash.ECP5ConfigurationFlashProvider()
-            wiring.connect(m, spi_phy.pins, spi_provider.pins)
+            wiring.connect(m, cpu_spi_transfer.spi, cpu_spi_phy.ctrl)
+            wiring.connect(m, cpu_spi_phy.pins, cpu_spi_provider.pins)
+            m.d.comb += [
+                cpu_control.flash_window.boot_slot.eq(pmod0.boot_slot),
+                cpu_control.flash_window.boot_slot_valid.eq(
+                    pmod0.boot_slot_valid),
+                cpu_control.flash_window.boot_slot_checked.eq(
+                    pmod0.boot_slot_checked),
+                cpu_spi_transfer.start.eq(
+                    cpu_control.flash_window.xfer_start),
+                cpu_spi_transfer.chip_select.eq(
+                    cpu_control.flash_window.xfer_cs),
+                cpu_spi_transfer.tx_data.eq(
+                    cpu_control.flash_window.xfer_tx),
+                cpu_spi_transfer.length.eq(
+                    cpu_control.flash_window.xfer_length),
+                cpu_spi_transfer.output_mask.eq(
+                    cpu_control.flash_window.xfer_mask),
+                cpu_control.flash_window.xfer_rx.eq(
+                    cpu_spi_transfer.rx_data),
+                cpu_control.flash_window.xfer_done.eq(
+                    cpu_spi_transfer.done),
+            ]
+        elif cpu_control_enabled:
+            m.d.comb += [
+                cpu_control.flash_window.boot_slot.eq(0),
+                cpu_control.flash_window.boot_slot_valid.eq(0),
+                cpu_control.flash_window.boot_slot_checked.eq(1),
+                cpu_control.flash_window.xfer_rx.eq(0),
+                cpu_control.flash_window.xfer_done.eq(0),
+            ]
+        else:
+            m.submodules.ui = ui
+            m.submodules.state_journal = state_journal = RezoStateJournal(
+                RezoHardwareUI.STATE_WORDS_V5,
+                legacy_state_words=RezoHardwareUI.STATE_WORDS_V4,
+                # OFF, 1.2 Hz, 39-degree phase spread, 25% depth.
+                legacy_tail_words=(0x7030, 0x0080))
+            m.submodules.spi_transfer = spi_transfer = SPIFlashTransfer()
+            m.submodules.spi_phy = spi_phy = spiflash.SPIPHYController(
+                domain="sync", divisor=1)
+            wiring.connect(m, spi_transfer.spi, spi_phy.ctrl)
+            if sim.is_hw(platform):
+                m.submodules.spi_provider = spi_provider = \
+                    spiflash.ECP5ConfigurationFlashProvider()
+                wiring.connect(m, spi_phy.pins, spi_provider.pins)
         m.submodules.audio_out_fifo = audio_out_fifo = dsp.SyncFIFOBuffered(
             shape=data.ArrayLayout(ASQ, 4), depth=4)
 
         # Persistent defaults live in the running slot's option window.
         # Palette is part of that explicit state record rather than an
         # independently auto-saved EEPROM preference.
-        m.d.comb += [
-            state_journal.boot_slot.eq(pmod0.boot_slot),
-            state_journal.boot_slot_valid.eq(pmod0.boot_slot_valid),
-            state_journal.boot_slot_checked.eq(pmod0.boot_slot_checked),
-            state_journal.state_read_data.eq(ui.state_read_data),
-            state_journal.save_request.eq(ui.save_default_request),
-            ui.state_write_data.eq(state_journal.state_write_data),
-            ui.state_shift_enable.eq(state_journal.state_shift_enable),
-            ui.state_shift_load.eq(state_journal.state_shift_load),
-            ui.save_default_available.eq(state_journal.available),
-            ui.save_default_busy.eq(state_journal.busy),
-            ui.save_default_done.eq(state_journal.save_done),
-            ui.save_default_error.eq(state_journal.save_error),
+        if not cpu_control_enabled:
+            m.d.comb += [
+                state_journal.boot_slot.eq(pmod0.boot_slot),
+                state_journal.boot_slot_valid.eq(pmod0.boot_slot_valid),
+                state_journal.boot_slot_checked.eq(pmod0.boot_slot_checked),
+                state_journal.state_read_data.eq(ui.state_read_data),
+                state_journal.save_request.eq(ui.save_default_request),
+                ui.state_write_data.eq(state_journal.state_write_data),
+                ui.state_shift_enable.eq(state_journal.state_shift_enable),
+                ui.state_shift_load.eq(state_journal.state_shift_load),
+                ui.save_default_available.eq(state_journal.available),
+                ui.save_default_busy.eq(state_journal.busy),
+                ui.save_default_done.eq(state_journal.save_done),
+                ui.save_default_error.eq(state_journal.save_error),
+                spi_transfer.start.eq(state_journal.xfer_start),
+                spi_transfer.chip_select.eq(state_journal.xfer_cs),
+                spi_transfer.tx_data.eq(state_journal.xfer_tx),
+                spi_transfer.length.eq(state_journal.xfer_length),
+                spi_transfer.output_mask.eq(state_journal.xfer_mask),
+                state_journal.xfer_rx.eq(spi_transfer.rx_data),
+                state_journal.xfer_done.eq(spi_transfer.done),
+            ]
 
-            spi_transfer.start.eq(state_journal.xfer_start),
-            spi_transfer.chip_select.eq(state_journal.xfer_cs),
-            spi_transfer.tx_data.eq(state_journal.xfer_tx),
-            spi_transfer.length.eq(state_journal.xfer_length),
-            spi_transfer.output_mask.eq(state_journal.xfer_mask),
-            state_journal.xfer_rx.eq(spi_transfer.rx_data),
-            state_journal.xfer_done.eq(spi_transfer.done),
-        ]
-
-        if sim.is_hw(platform):
+        if sim.is_hw(platform) and not cpu_control_enabled:
             # Do not expose factory defaults or a partially restored state as
             # an audible startup transient.
             m.d.comb += pmod0.codec_mute.eq(
                 reboot.mute | ~state_journal.startup_done)
+        elif sim.is_hw(platform):
+            m.d.comb += pmod0.codec_mute.eq(reboot.mute | ~ui.startup_done)
 
         if sim.is_hw(platform):
             m.d.comb += [
@@ -6003,7 +6064,8 @@ class RezoBeamTop(Elaboratable):
         return m
 
 
-def run_cli(*, name="STREZO", artifact_name=None, modeline=None):
+def run_cli(*, name="STREZO", artifact_name=None, modeline=None,
+            fragment=RezoBeamTop, argparse_fragment=None):
     this_path = os.path.dirname(os.path.realpath(__file__))
 
     def configure_parser(parser):
@@ -6013,8 +6075,9 @@ def run_cli(*, name="STREZO", artifact_name=None, modeline=None):
         parser.set_defaults(**defaults)
 
     top_level_cli(
-        RezoBeamTop, path=this_path,
+        fragment, path=this_path,
         argparse_callback=configure_parser,
+        argparse_fragment=argparse_fragment,
         archiver_callback=lambda archiver: archiver.with_option_storage())
 
 
