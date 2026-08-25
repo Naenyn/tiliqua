@@ -127,29 +127,35 @@ standard-display route: 425.71 MHz DVI5X, 74.62 MHz AUDIO, 64.20 MHz SYNC, and
 6 cleared the gate before the implementation commit, but the clean committed
 build reached only 2.58% SYNC margin, so it was rejected.
 
-Only the standard `1280x720p60` target was considered. The rack was powered
-down, so this checkpoint must not be described as hardware-tested or flashed.
+Only the standard `1280x720p60` target was considered.
 Implementation commit `5ea78921` supplies the exact qualified archive
 `rezomo-cpu-5ea78921-r5.tar.gz`. Its SHA-256 is
 `ca18a8b1ad17caf23ed72a773aaa879ed6f983965a70984bccedc9f115b17296`;
 the packaged `top.bit` SHA-256 is
 `9a044daef97305efd3d9b22b44c65af12b19583bedaf2b01c10462423253b9e3`.
+The archive was flashed to slot 3 on 2026-08-25 (`Refresh: DONE`). The user
+confirmed that the resulting video, interaction, and audio look good and
+accepted REZOMO as complete. No circular build was made or flashed.
 
-## Current objective
+## Current status and next objective
 
-REZOMO is being caught up to the native-display architecture and UI conventions
-already completed and hardware-validated in REZO. The work is primarily a UI
-geometry and consistency migration. Do not change DSP behavior, navigation,
-persistence, control meaning, or clock algorithms unless a separate request
-explicitly calls for it.
+REZO and REZOMO now have hardware-accepted CPU control-plane implementations.
+There are no known remaining REZOMO implementation gaps outside the deferred
+circular-viewport redesign. Further REZOMO changes should be driven by new
+hardware findings rather than speculative cleanup.
 
-REZO is the authoritative visual reference for shared pages and controls. REZOMO
-also has its unique CLOCK page, whose layout must follow the same geometry,
-alignment, and value-chip rules.
+The next objective is to convert STREZO to the same lean CPU architecture while
+preserving its accepted DSP, renderer, navigation, persistence semantics, and
+linked-stereo features. Start from the current
+`codex/rezo-cpu-framebuffer-prototype` branch, whose accepted checkpoint is the
+documentation commit following implementation commit `5ea78921`. A new session
+may create `codex/strezo-cpu-control-plane` from that clean checkpoint if a
+separate experimental branch is desired.
 
-Do not borrow UI code or conventions from SPECTO/SONORO, OSCIO, or unrelated
-bitstreams. The applicable references are REZO and, where explicitly useful,
-the established REZOMO behavior.
+Use REZO and REZOMO as the CPU architecture references. STREZO's own accepted
+CPU-less implementation remains authoritative for product behavior and visual
+geometry; do not replace its unique CROSS, MOTION, linked-stereo routing, or
+OPTIONS behavior with REZO/REZOMO semantics.
 
 ## Display and coordinate-space contract
 
@@ -320,7 +326,16 @@ value sets. Values within the same field must share one stable width.
 
 - `gateware/src/top/rezo/top.py` — REZO/REZOMO gateware target and display-mode
   mapping
-- `gateware/src/top/rezo/fw/src/main.rs` — firmware UI renderer and behavior
+- `gateware/src/top/rezo/cpu_control.py` — proven REZO/REZOMO minimal CPU and
+  write-only hardware-control peripherals
+- `gateware/src/top/rezo/cpu_fw/` — accepted REZO control firmware
+- `gateware/src/top/rezo/rezomo_cpu_fw/` — accepted REZOMO control firmware
+- `gateware/src/top/rezo/strezo_variant.py` — authoritative STREZO CPU-less DSP,
+  UI, navigation, renderer, and top-level integration
+- `gateware/src/top/rezo/strezo_persistence.py` — authoritative STREZO journal
+- `gateware/src/top/rezo/REZO_CPU_ARCHITECTURE.md` and
+  `REZOMO_CPU_ARCHITECTURE.md` — ownership boundary and lessons from both CPU
+  conversions
 - `gateware/tests/test_rezomo_native_display.py` — focused native-display and
   geometry tests
 - `gateware/src/top/rezo/BUILD_PERFORMANCE.md` — build timing, utilization, and
@@ -358,7 +373,7 @@ configuration:
 cd gateware
 source ~/.zshrc
 unset TILIQUA_ASQ_I_BITS TILIQUA_ASQ_WIDTH
-pdm run rezomo build --fs-192khz
+pdm run rezomo_cpu build --fs-192khz
 ```
 
 Do not assume that a successful firmware-only build proves FPGA fit. For a
@@ -370,24 +385,15 @@ Flash only the standard build, only when requested and the rack is available:
 ```sh
 cd gateware
 source ~/.zshrc
-pdm flash archive build/rezomo-r5/<exact-new-archive>.tar.gz \
-  --slot 4 --noconfirm
+pdm flash archive build/rezomo-cpu-r5/<exact-new-archive>.tar.gz \
+  --slot 3 --noconfirm
 ```
 
 Never flash a circular-display build to the standard development display.
 
-Once the standard layout is accepted, build the official circular artifact:
-
-```sh
-cd gateware
-source ~/.zshrc
-unset TILIQUA_ASQ_I_BITS TILIQUA_ASQ_WIDTH
-pdm run rezomo_round build --fs-192khz
-```
-
-Keep artifacts distinguishable by target in their filenames or release names.
-The circular artifact must be identifiable as the `720x720` rotated-panel build;
-the standard artifact must be identifiable as the upright `1280x720` build.
+The CPU checkpoint currently has no circular target. Keep CPU conversion builds
+on the standard upright `1280x720` development display until the user explicitly
+resumes circular-display work.
 
 ## Build-performance logging
 
@@ -424,11 +430,21 @@ build attempt.
 
 ## Suggested next-session sequence
 
-1. Read this file and `BUILD_PERFORMANCE.md`.
-2. Inspect branch, HEAD, and worktree before changing anything.
-3. Treat the accepted standard UI and focused pixel tests as the shared-page
-   reference unless new hardware feedback supersedes them.
-4. Build and clearly name an updated official circular artifact from the
-   accepted source when requested; do not flash it to the standard rack display.
-5. Begin consolidating shared REZO/REZOMO page rendering and navigation behind
-   common helpers rather than continuing to port equivalent edits by hand.
+1. Read this file, `REZO_CPU_ARCHITECTURE.md`,
+   `REZOMO_CPU_ARCHITECTURE.md`, and `BUILD_PERFORMANCE.md`.
+2. Confirm branch, HEAD, and a clean worktree. Preserve the accepted REZO and
+   REZOMO implementations; create a STREZO child branch if desired.
+3. Audit `strezo_variant.py` and `strezo_persistence.py`: enumerate the complete
+   state record, navigation graph, save/restore behavior, renderer inputs, and
+   STREZO-only controls before writing firmware.
+4. Reuse the lean VexiiRiscv core, bounded SPI-flash window, startup fail-open
+   behavior, and write-only UI command pattern. Keep audio DSP, CV, video,
+   LEDs, and lightweight rendering in hardware.
+5. Add a STREZO-specific control plane and firmware rather than forcing its
+   CROSS, MOTION, output-source, and OPTIONS controls into REZO semantics.
+6. Run firmware/focused behavior tests first. Then synthesize and pack without
+   routing to measure fit. Apply REZOMO's ROM-driven dynamic-text technique
+   early if STREZO's writer creates a wide mux.
+7. Build only standard `1280x720p60` at 192 kHz. Route only after deliberate
+   packed headroom exists, log every meaningful attempt, and flash only the
+   exact accepted archive to slot 4 when explicitly requested.

@@ -641,5 +641,6 @@ synthesized JSON and packaged without resynthesis. Archive
 `ca18a8b1ad17caf23ed72a773aaa879ed6f983965a70984bccedc9f115b17296`;
 its packaged `top.bit` has SHA-256
 `9a044daef97305efd3d9b22b44c65af12b19583bedaf2b01c10462423253b9e3`.
-Only the standard `1280x720p60` target was used, and nothing was flashed because
-the rack was powered down.
+Only the standard `1280x720p60` target was used. The archive was flashed to
+slot 3 on 2026-08-25 (`Refresh: DONE`), and the user accepted video,
+interaction, and audio as good. No circular target was built or flashed.
