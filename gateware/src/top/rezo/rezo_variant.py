@@ -86,7 +86,8 @@ try:
         native_input_depth_endpoint, native_input_gain_endpoint,
         native_input_meter_endpoint, native_input_unity_x,
         native_value_chip_x0,
-        native_feedback_track_rows, native_viewport_circle_outline,
+        native_feedback_track_rows, native_viewport_annulus,
+        native_viewport_circle_outline,
         output_header_selection,
         put_legacy_support_page_labels, put_native_page_heading,
         put_native_page_headers,
@@ -126,7 +127,8 @@ except ImportError:  # top_level_cli executes this file directly.
         native_input_depth_endpoint, native_input_gain_endpoint,
         native_input_meter_endpoint, native_input_unity_x,
         native_value_chip_x0,
-        native_feedback_track_rows, native_viewport_circle_outline,
+        native_feedback_track_rows, native_viewport_annulus,
+        native_viewport_circle_outline,
         output_header_selection,
         put_legacy_support_page_labels, put_native_page_heading,
         put_native_page_headers,
@@ -2600,10 +2602,11 @@ class RezoTileDisplay(wiring.Component):
     CHAR_CODES = {ch: i for i, ch in enumerate(CHARS)}
 
     def __init__(self, h_active=1280, rotate_left=False,
-                 compact_layout=False):
+                 compact_layout=False, version_text="DEV"):
         self.x_offset = max(0, (h_active - self.PANEL_W) // 2)
         self.rotate_left = rotate_left
         self.compact_layout = compact_layout
+        self.version_text = version_text.upper()[:12]
         super().__init__({
             "x": In(signed(12)),
             "y": In(signed(12)),
@@ -2633,6 +2636,7 @@ class RezoTileDisplay(wiring.Component):
             "cv_depths": In(data.ArrayLayout(signed(8), 4)),
             "input_meters": In(data.ArrayLayout(signed(6), 4)),
             "input_clips": In(data.ArrayLayout(unsigned(1), 4)),
+            "output_meters": In(data.ArrayLayout(unsigned(6), 4)),
             "filter_cv_write_addr": In(unsigned(4)),
             "filter_cv_write_data": In(signed(6)),
             "filter_cv_write_en": In(1),
@@ -2929,6 +2933,14 @@ class RezoTileDisplay(wiring.Component):
             compact_titles = (("MAIN",) + COMMON_PAGE_TITLES[1:] +
                               ("MAIN", "MATRIX"))
             put_native_page_headers(put_native, "REZO", compact_titles)
+            footer = f"V {self.version_text}"
+            for text_page in range(9):
+                put_native(text_page, footer,
+                           (45 - len(footer)) // 2, 41)
+                put_native(text_page, "1", 3, 30)
+                put_native(text_page, "2", 5, 30)
+                put_native(text_page, "3", 39, 30)
+                put_native(text_page, "4", 41, 30)
 
             # BANK main page.
             put_native_page_heading(put_native, 0, "PRESET")
@@ -3452,6 +3464,126 @@ class RezoTileDisplay(wiring.Component):
             native_viewport_circle_outline(m, x, text_y_pre)
             if self.compact_layout else
             self.outline(x, y, 12, 12, 708, 708, t=2))
+        arc_background = Const(0)
+        pager_line = Const(0)
+        pager_current = Const(0)
+        output_meter_panel = Const(0)
+        output_meter_fill = Const(0)
+        output_meter_panel_q0 = Const(0)
+        output_meter_fill_q0 = Const(0)
+        if self.compact_layout:
+            # A fixed annulus turns the unused circular wings into persistent
+            # chrome. Its cap and tail are the curved header/footer, while the
+            # side portions carry the four final-output meters.
+            arc_background = active & native_viewport_annulus(
+                m, x, text_y_pre, inner_radius=250)
+
+            # Firmware navigates pages in a deliberately non-numeric order.
+            # Translate the raw page ID so the indicator advances one box for
+            # each encoder step. BANK exposes seven positions; FILTER adds its
+            # modulation-matrix page for an eighth.
+            pager_position = Signal(unsigned(3))
+            with m.Switch(self.page):
+                with m.Case(6):
+                    m.d.comb += pager_position.eq(1)
+                with m.Case(2):
+                    m.d.comb += pager_position.eq(2)
+                with m.Case(7):
+                    m.d.comb += pager_position.eq(3)
+                with m.Case(3):
+                    m.d.comb += pager_position.eq(Mux(
+                        self.filter_mode, 4, 3))
+                with m.Case(4):
+                    m.d.comb += pager_position.eq(Mux(
+                        self.filter_mode, 5, 4))
+                with m.Case(1):
+                    m.d.comb += pager_position.eq(Mux(
+                        self.filter_mode, 6, 5))
+                with m.Case(5):
+                    m.d.comb += pager_position.eq(Mux(
+                        self.filter_mode, 7, 6))
+
+            pager_x0 = Signal(unsigned(10))
+            pager_rel_x = Signal(unsigned(9))
+            pager_index = Signal(unsigned(3))
+            pager_local_x = Signal(unsigned(5))
+            pager_valid = Signal()
+            m.d.comb += [
+                pager_x0.eq(Mux(self.filter_mode, 241, 257)),
+                pager_rel_x.eq(x - pager_x0),
+                pager_index.eq(pager_rel_x[5:8]),
+                pager_local_x.eq(pager_rel_x[:5]),
+                pager_valid.eq((x >= pager_x0) &
+                               (x < pager_x0 + Mux(
+                                   self.filter_mode, 8 << 5, 7 << 5))),
+            ]
+            pager_slot = pager_valid & (pager_local_x >= 8) & \
+                (pager_local_x < 20)
+            pager_selected_slot = pager_valid & \
+                (pager_index == pager_position) & \
+                (pager_local_x >= 5) & (pager_local_x < 23)
+            pager_line = active & pager_slot & (
+                (y < 80) | (y >= 92) |
+                (pager_local_x < 10) | (pager_local_x >= 18)) & \
+                (y >= 78) & (y < 94) & \
+                (pager_index != pager_position)
+            pager_current = active & pager_selected_slot & \
+                (y >= 76) & (y < 96)
+
+            # Two persistent output lanes per side. Meters grow upward from
+            # y=460, using a 0..63 display value and three pixels per step.
+            meter_lane = Signal(unsigned(2))
+            meter_lane_valid = Signal()
+            meter_x0 = Signal(unsigned(10))
+            meter_value = Signal(unsigned(6))
+            with m.If((x >= 28) & (x < 52)):
+                m.d.comb += [meter_lane.eq(0), meter_lane_valid.eq(1),
+                             meter_x0.eq(28),
+                             meter_value.eq(self.output_meters[0])]
+            with m.Elif((x >= 68) & (x < 92)):
+                m.d.comb += [meter_lane.eq(1), meter_lane_valid.eq(1),
+                             meter_x0.eq(68),
+                             meter_value.eq(self.output_meters[1])]
+            with m.Elif((x >= 628) & (x < 652)):
+                m.d.comb += [meter_lane.eq(2), meter_lane_valid.eq(1),
+                             meter_x0.eq(628),
+                             meter_value.eq(self.output_meters[2])]
+            with m.Elif((x >= 668) & (x < 692)):
+                m.d.comb += [meter_lane.eq(3), meter_lane_valid.eq(1),
+                             meter_x0.eq(668),
+                             meter_value.eq(self.output_meters[3])]
+
+            # Register lane selection before its magnitude scaling and y
+            # comparison. Without this boundary, synthesis can merge the
+            # x-to-lane mux, dynamic meter value, subtractor, and the existing
+            # page geometry into one unrouteable pixel-clock cone.
+            meter_x_q = Signal.like(x)
+            meter_y_q = Signal.like(y)
+            meter_x0_q = Signal.like(meter_x0)
+            meter_value_q = Signal.like(meter_value)
+            meter_lane_valid_q = Signal()
+            m.d.dvi += [
+                meter_x_q.eq(x),
+                meter_y_q.eq(y),
+                meter_x0_q.eq(meter_x0),
+                meter_value_q.eq(meter_value),
+                meter_lane_valid_q.eq(meter_lane_valid),
+            ]
+            meter_top = Signal(unsigned(10))
+            m.d.comb += meter_top.eq(
+                460 - ((meter_value_q << 1) + meter_value_q))
+            output_meter_panel = meter_lane_valid_q & self.outline(
+                meter_x_q, meter_y_q, meter_x0_q, 260,
+                meter_x0_q + 24, 462, t=2)
+            output_meter_fill = meter_lane_valid_q & self.rect(
+                meter_x_q, meter_y_q, meter_x0_q + 4, meter_top,
+                meter_x0_q + 20, 458)
+            output_meter_panel_q0 = Signal()
+            output_meter_fill_q0 = Signal()
+            m.d.dvi += [
+                output_meter_panel_q0.eq(output_meter_panel),
+                output_meter_fill_q0.eq(output_meter_fill),
+            ]
         title_panel = active & self.rect(
             x, y,
             112 if self.compact_layout else 20,
@@ -5042,7 +5174,7 @@ class RezoTileDisplay(wiring.Component):
                                 filter_control_fill),
             geometry_line_q0.eq(
                 band_zero_q0 | bank_control_mod_marker |
-                filter_control_mod_marker | border),
+                filter_control_mod_marker | border | pager_line),
             geometry_mod_q0.eq(band_mod_fill | bank_control_mod_fill |
                                filter_control_mod_fill | input_meter_q0),
             geometry_panel_q0.eq(preset_chip | filter_type_chip | mode_chip |
@@ -5052,17 +5184,18 @@ class RezoTileDisplay(wiring.Component):
                                  meter_panel | filter_meter_panel),
         ]
         m.d.dvi += [
-            selected_q.eq(selected),
+            selected_q.eq(selected | pager_current),
             text_q.eq(text | input_clip_q0),
             fill_q.eq(geometry_fill_q0 |
                       input_fill_q0 | group_fill_q0 | output_fill_q0 |
-                      filter_cv_fill_q0),
+                      filter_cv_fill_q0 | output_meter_fill_q0),
             line_q.eq(geometry_line_q0 | input_line_q0 |
                       group_ghost | filter_cv_line_q0),
             mod_q.eq(geometry_mod_q0),
             panel_q.eq(geometry_panel_q0 | input_panel_q0 | group_cell_q0 |
-                       output_cell_q0 | filter_cv_panel_q0),
-            background_q.eq(title_panel | content_panel),
+                       output_cell_q0 | filter_cv_panel_q0 |
+                       output_meter_panel_q0),
+            background_q.eq(title_panel | content_panel | arc_background),
             active_q.eq(active),
         ]
 
@@ -5133,10 +5266,12 @@ class RezoBeamTop(Elaboratable):
     )
     nextpnr_opts = f"--timing-allow-fail --seed {os.getenv('TILIQUA_REZO_SEED', '8')}"
 
-    def __init__(self, clock_settings, *, firmware_bin_path=None):
+    def __init__(self, clock_settings, *, firmware_bin_path=None,
+                 version_text="DEV"):
         assert clock_settings.modeline is not None
         self.clock_settings = clock_settings
         self.firmware_bin_path = firmware_bin_path
+        self.version_text = version_text
         self.pmod0 = eurorack_pmod.EurorackPmod(
             self.clock_settings.audio_clock, with_boot_slot=True)
 
@@ -5323,6 +5458,32 @@ class RezoBeamTop(Elaboratable):
         wiring.connect(m, rezo.o, audio_out_fifo.i)
         wiring.connect(m, audio_out_fifo.o, pmod0.i_cal)
 
+        # Display-only final-output peak envelopes. Take only the upper sample
+        # bits, approximate absolute magnitude with one's complement for
+        # negative values, and decay roughly once per 2048 audio frames. This
+        # tap is fully registered and never feeds the DSP or output handshake.
+        output_meter_values = [
+            Signal(unsigned(6), name=f"output_meter_value{n}")
+            for n in range(4)]
+        output_meter_decay = Signal(unsigned(11))
+        output_frame_accepted = rezo.o.valid & rezo.o.ready
+        with m.If(output_frame_accepted):
+            m.d.sync += output_meter_decay.eq(output_meter_decay + 1)
+            for n in range(4):
+                output_meter_sample = Signal(
+                    unsigned(6), name=f"output_meter_sample{n}")
+                m.d.comb += output_meter_sample.eq(Mux(
+                    rezo.o.payload[n].as_value()[-1],
+                    ~rezo.o.payload[n].as_value()[9:15],
+                    rezo.o.payload[n].as_value()[9:15]))
+                with m.If(output_meter_sample > output_meter_values[n]):
+                    m.d.sync += output_meter_values[n].eq(
+                        output_meter_sample)
+                with m.Elif((output_meter_decay == 0x7ff) &
+                            (output_meter_values[n] != 0)):
+                    m.d.sync += output_meter_values[n].eq(
+                        output_meter_values[n] - 1)
+
         m.submodules.dvi_tgen = dvi_tgen = dvi.DVITimingGen()
         for member in dvi_tgen.timings.signature.members:
             m.d.comb += getattr(dvi_tgen.timings, member).eq(
@@ -5345,7 +5506,8 @@ class RezoBeamTop(Elaboratable):
         m.submodules.display = display = RezoTileDisplay(
             h_active=self.clock_settings.modeline.h_active,
             rotate_left=round_display,
-            compact_layout=True)
+            compact_layout=True,
+            version_text=self.version_text)
         m.d.comb += [
             display.x.eq(dvi_tgen.x),
             display.y.eq(dvi_tgen.y),
@@ -5488,6 +5650,9 @@ class RezoBeamTop(Elaboratable):
         for n in range(4):
             m.submodules += FFSynchronizer(
                 i=display_input_gains[n], o=display.input_gains[n], o_domain="dvi")
+            m.submodules += FFSynchronizer(
+                i=output_meter_values[n], o=display.output_meters[n],
+                o_domain="dvi")
         for n in range(4):
             m.submodules += FFSynchronizer(
                 i=ui.input_modes[n], o=display.input_modes[n], o_domain="dvi")

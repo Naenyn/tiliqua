@@ -150,6 +150,37 @@ def native_viewport_circle_outline(m, x, lookup_y, *, pipeline_bounds=False):
             (dx2 <= circle_bounds[10:20]))
 
 
+def native_viewport_annulus(m, x, lookup_y, *, inner_radius=250):
+    """Return the usable circular band between the panel edge and a radius.
+
+    The fixed row lookup gives circular chrome a genuinely curved inner and
+    outer edge without putting a square-root or multiplier on the pixel path.
+    Coordinates are doubled for exact symmetry around the half-pixel centre.
+    """
+    outer_radius2 = 716
+    inner_radius2 = inner_radius * 2
+    bounds_init = []
+    for pixel_y in range(720):
+        dy2 = abs((pixel_y << 1) - 719)
+        outer_remainder = max(0, outer_radius2 * outer_radius2 - dy2 * dy2)
+        inner_remainder = inner_radius2 * inner_radius2 - dy2 * dy2
+        outer_dx2 = isqrt(outer_remainder)
+        inner_dx2 = isqrt(inner_remainder) if inner_remainder > 0 else 0
+        if inner_dx2 * inner_dx2 < max(0, inner_remainder):
+            inner_dx2 += 1
+        bounds_init.append(inner_dx2 | (outer_dx2 << 10))
+
+    m.submodules.native_viewport_annulus_mem = annulus_mem = Memory(
+        shape=unsigned(20), depth=720, init=bounds_init,
+        attrs={"ram_style": "block"})
+    annulus_rport = annulus_mem.read_port(domain="dvi")
+    m.d.comb += annulus_rport.addr.eq(lookup_y)
+
+    dx2 = Mux(x < 360, 719 - (x << 1), (x << 1) - 719)
+    return ((dx2 >= annulus_rport.data[:10]) &
+            (dx2 <= annulus_rport.data[10:20]))
+
+
 def native_feedback_track_rows(rect, x, y, x0, x1):
     """Return the three shared FEEDBACK-page shaded control tracks."""
     return (

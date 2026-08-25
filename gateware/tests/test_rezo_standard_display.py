@@ -91,7 +91,7 @@ def test_standard_hdmi_compact_preview_is_native_size_and_unrotated():
     async def bench(ctx):
         await sample(ctx, 320, 32)   # REZO top-arc identity
         await sample(ctx, 128, 208)  # content heading
-        await sample(ctx, 48, 360)   # blank circular side wing
+        await sample(ctx, 48, 360)   # persistent circular side chrome
 
     sim.add_testbench(bench)
     sim.run()
@@ -100,7 +100,7 @@ def test_standard_hdmi_compact_preview_is_native_size_and_unrotated():
     assert not preview.rotate_left
     assert round_panel.rotate_left
     assert samples[0][0] == RezoTileDisplay.PALETTE["text"]
-    assert samples[2][0] == RezoTileDisplay.PALETTE["blank"]
+    assert samples[2][0] == RezoTileDisplay.PALETTE["background"]
     assert all(standard == circular for standard, circular in samples)
 
 
@@ -190,8 +190,8 @@ def test_main_preset_selection_uses_the_shared_header_outline():
     assert samples == [palette["blank"], palette["selected"]]
 
 
-def test_compact_round_layout_keeps_native_text_and_uses_top_arc():
-    """The compact layout keeps side wings blank and PAGE in the header."""
+def test_compact_round_layout_uses_all_four_arcs():
+    """Native identity, PAGE, and persistent side chrome share one canvas."""
     dut = RezoTileDisplay(
         h_active=720, rotate_left=True, compact_layout=True)
     sim = Simulator(dut)
@@ -217,7 +217,7 @@ def test_compact_round_layout_keeps_native_text_and_uses_top_arc():
         await sample(ctx, 212, 140)
         # MAIN is authored natively in the safe central header.
         await sample(ctx, 256, 128)
-        # The side wing remains deliberately blank.
+        # The side wing now carries persistent circular chrome.
         await sample(ctx, 48, 360)
         # The extreme square corner is deliberately blank outside the circle.
         await sample(ctx, 0, 0)
@@ -231,13 +231,13 @@ def test_compact_round_layout_keeps_native_text_and_uses_top_arc():
         palette["panel"],
         palette["selected"],
         palette["text"],
-        palette["blank"],
+        palette["background"],
         palette["blank"],
     ]
 
 
-def test_compact_safe_square_outline_is_removed():
-    """Interactive layout bounds remain, but their old frame is absent."""
+def test_compact_safe_square_gives_way_to_curved_chrome():
+    """The former square boundary is covered by the circular annulus."""
     dut = RezoTileDisplay(
         h_active=720, rotate_left=False, compact_layout=True)
     sim = Simulator(dut)
@@ -268,7 +268,118 @@ def test_compact_safe_square_outline_is_removed():
 
     palette = RezoTileDisplay.PALETTE
     assert 614 - 106 == 508
-    assert samples == [palette["blank"]] * len(samples)
+    assert samples == [palette["background"]] * len(samples)
+
+
+def test_compact_pager_tracks_firmware_navigation_order_and_mode_count():
+    """The selected pager box follows encoder order, not raw page number."""
+    dut = RezoTileDisplay(
+        h_active=720, rotate_left=False, compact_layout=True)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6, domain="sync")
+    sim.add_clock(1e-6, domain="dvi")
+    samples = []
+
+    async def sample(ctx, native_x, native_y):
+        ctx.set(dut.x, native_x)
+        ctx.set(dut.y, native_y)
+        ctx.set(dut.de, 1)
+        for _ in range(12):
+            await ctx.tick("dvi")
+        samples.append(ctx.get(dut.r))
+
+    async def bench(ctx):
+        # BANK order is 0,6,2,3,4,1,5. Page 6 therefore selects box 1.
+        ctx.set(dut.page, 6)
+        await sample(ctx, 257 + 1 * 32 + 14, 86)
+        await sample(ctx, 257 + 2 * 32 + 14, 86)
+        await sample(ctx, 257 + 2 * 32 + 8, 86)
+
+        # FILTER adds page 7 as position 3 and moves page 5 to position 7.
+        ctx.set(dut.filter_mode, 1)
+        ctx.set(dut.page, 5)
+        await sample(ctx, 241 + 7 * 32 + 14, 86)
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    palette = RezoTileDisplay.PALETTE
+    assert samples == [
+        palette["selected"], palette["background"],
+        palette["line"], palette["selected"],
+    ]
+
+
+def test_compact_output_meters_are_persistent_and_independent():
+    """All four output meters render in their fixed left/right arc lanes."""
+    dut = RezoTileDisplay(
+        h_active=720, rotate_left=False, compact_layout=True)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6, domain="sync")
+    sim.add_clock(1e-6, domain="dvi")
+    samples = []
+
+    async def sample(ctx, native_x, native_y):
+        ctx.set(dut.x, native_x)
+        ctx.set(dut.y, native_y)
+        ctx.set(dut.de, 1)
+        for _ in range(12):
+            await ctx.tick("dvi")
+        samples.append(ctx.get(dut.r))
+
+    async def bench(ctx):
+        for lane, value in enumerate((0, 20, 40, 63)):
+            ctx.set(dut.output_meters[lane], value)
+        # Empty lane interior, then increasing fills in lanes 2 through 4.
+        await sample(ctx, 36, 400)
+        await sample(ctx, 76, 400)
+        await sample(ctx, 636, 350)
+        await sample(ctx, 676, 280)
+        # An outline remains visible around an empty lane.
+        await sample(ctx, 28, 360)
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    palette = RezoTileDisplay.PALETTE
+    assert samples == [
+        palette["background"],
+        palette["control"], palette["control"], palette["control"],
+        palette["panel"],
+    ]
+
+
+def test_compact_curved_header_and_footer_include_version_text():
+    dut = RezoTileDisplay(
+        h_active=720, rotate_left=False, compact_layout=True,
+        version_text="TEST1234")
+    sim = Simulator(dut)
+    sim.add_clock(1e-6, domain="sync")
+    sim.add_clock(1e-6, domain="dvi")
+    samples = []
+
+    async def sample(ctx, native_x, native_y):
+        ctx.set(dut.x, native_x)
+        ctx.set(dut.y, native_y)
+        ctx.set(dut.de, 1)
+        for _ in range(12):
+            await ctx.tick("dvi")
+        samples.append(ctx.get(dut.r))
+
+    async def bench(ctx):
+        await sample(ctx, 360, 105)  # inside curved top band
+        await sample(ctx, 360, 112)  # inside its curved inner edge
+        await sample(ctx, 17 * 16, 656)  # first pixel of footer V glyph
+        await sample(ctx, 360, 640)  # footer background, clear of text
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    palette = RezoTileDisplay.PALETTE
+    assert samples == [
+        palette["background"], palette["blank"],
+        palette["text"], palette["background"],
+    ]
 
 
 def test_compact_labels_use_native_control_rows():

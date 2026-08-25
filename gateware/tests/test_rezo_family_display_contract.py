@@ -66,12 +66,14 @@ def test_native_preview_draws_round_panel_edge_not_safe_square(display_type):
 
     line = display_type.PALETTE["line"]
     blank = display_type.PALETTE["blank"]
+    expected_blank = (display_type.PALETTE["background"]
+                      if display_type is RezoTileDisplay else blank)
     assert samples == [
-        line, line, blank,
-        line, line, blank,
-        line, line, blank,
-        line, line, blank,
-        blank, blank, blank, blank,
+        line, line, expected_blank,
+        line, line, expected_blank,
+        line, line, expected_blank,
+        line, line, expected_blank,
+        expected_blank, expected_blank, expected_blank, expected_blank,
     ]
 
 
