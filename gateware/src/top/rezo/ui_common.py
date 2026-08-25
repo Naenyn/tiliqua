@@ -5,7 +5,7 @@
 
 from math import isqrt
 
-from amaranth import Mux, unsigned
+from amaranth import Mux, Signal, unsigned
 from amaranth.lib.memory import Memory
 
 
@@ -102,7 +102,7 @@ def native_value_chip_x0(text_col):
     return text_col * 16 - NATIVE_VALUE_CHIP_TEXT_INSET
 
 
-def native_viewport_circle_outline(m, x, lookup_y):
+def native_viewport_circle_outline(m, x, lookup_y, *, pipeline_bounds=False):
     """Return a thin guide for the edge of the native 720px round panel.
 
     Native pixels are centred between coordinates 359 and 360, so doubled
@@ -131,9 +131,23 @@ def native_viewport_circle_outline(m, x, lookup_y):
     circle_rport = circle_mem.read_port(domain="dvi")
     m.d.comb += circle_rport.addr.eq(lookup_y)
 
-    dx2 = Mux(x < 360, 719 - (x << 1), (x << 1) - 719)
-    return ((dx2 >= circle_rport.data[:10]) &
-            (dx2 <= circle_rport.data[10:20]))
+    circle_bounds = circle_rport.data
+    circle_x = x
+    if pipeline_bounds:
+        circle_bounds_q = Signal.like(circle_rport.data)
+        circle_x_q = Signal.like(x)
+        m.d.dvi += [
+            circle_bounds_q.eq(circle_rport.data),
+            circle_x_q.eq(x),
+        ]
+        circle_bounds = circle_bounds_q
+        circle_x = circle_x_q
+
+    dx2 = Mux(circle_x < 360,
+              719 - (circle_x << 1),
+              (circle_x << 1) - 719)
+    return ((dx2 >= circle_bounds[:10]) &
+            (dx2 <= circle_bounds[10:20]))
 
 
 def native_feedback_track_rows(rect, x, y, x0, x1):

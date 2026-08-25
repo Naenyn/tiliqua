@@ -4126,7 +4126,8 @@ class RezoTileDisplay(wiring.Component):
             glyph_rport.data.bit_select(glyph_bit, 1))
 
         border = active & (
-            native_viewport_circle_outline(m, x, text_y_pre)
+            native_viewport_circle_outline(
+                m, x, text_y_pre, pipeline_bounds=True)
             if self.compact_layout else
             self.outline(x, y, 12, 12, 708, 708, t=2))
         title_panel = active & self.rect(
@@ -5217,9 +5218,27 @@ class RezoTileDisplay(wiring.Component):
         ]
         cross_cell_selected = Signal()
         output_cell_selected = Signal()
+        output_selected_index = Signal(unsigned(5))
+        output_selected_valid = Signal()
+        output_selected_index_q = Signal.like(output_selected_index)
+        output_selected_valid_q = Signal()
         output_header_group = Signal(unsigned(2))
         output_header_row_target = Signal()
         output_header_col_target = Signal()
+        m.d.comb += [
+            output_selected_index.eq(
+                self.selected - RezoHardwareUI.TARGET_OUTPUT_BASE),
+            output_selected_valid.eq(
+                (self.selected >= RezoHardwareUI.TARGET_OUTPUT_BASE) &
+                (self.selected < RezoHardwareUI.TARGET_OUTPUT_BASE + 20)),
+        ]
+        # Selection changes only on UI events. Register its zero-based index
+        # so the per-pixel OUTPUT outline compares two five-bit values without
+        # also carrying TARGET_OUTPUT_BASE through the DVI critical path.
+        m.d.dvi += [
+            output_selected_index_q.eq(output_selected_index),
+            output_selected_valid_q.eq(output_selected_valid),
+        ]
         m.d.comb += [
             # Both shared target bases are 2 modulo 4. This wiring maps their
             # low bits back to a zero-based group without subtraction.
@@ -5244,8 +5263,8 @@ class RezoTileDisplay(wiring.Component):
                 (self.selected[:4] == Cat(output_source[:2], output_row))),
             output_cell_selected.eq(
                 output_page &
-                (self.selected == RezoHardwareUI.TARGET_OUTPUT_BASE +
-                 output_send_index)),
+                output_selected_valid_q &
+                (output_send_index == output_selected_index_q)),
             output_select.eq(
                 routing_matrix_page & output_row_active & output_col_active &
                 (cross_cell_selected | output_cell_selected) &
