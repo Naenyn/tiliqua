@@ -16,7 +16,7 @@ class RezomoCpuTop(RezoBeamTop):
 
     nextpnr_opts = (
         "--timing-allow-fail "
-        f"--seed {os.getenv('TILIQUA_REZOMO_CPU_SEED', '2')}")
+        f"--seed {os.getenv('TILIQUA_REZOMO_CPU_SEED', '3')}")
     minimum_timing_headroom_percent = 3.0
 
 

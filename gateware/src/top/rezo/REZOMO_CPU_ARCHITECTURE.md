@@ -60,11 +60,11 @@ The target enforces at least 3 percent post-route headroom on every clock. A
 release is qualified only after the archive boots from slot 3 and the hardware
 checklist below passes.
 
-The 2026-08-24 standard route uses seed 2, 22,334 of 24,288 TRELLIS_COMB cells
-(91%), 8,131 TRELLIS_FF cells (33%), and 31 of 56 DP16KD blocks (55%). It closes
-DVI5X at 451.06 MHz, AUDIO at 74.43 MHz, SYNC at 62.57 MHz, and DVI at
-76.55 MHz. DVI is the limiting 3.10% margin, so future changes must continue to
-pass the release gate.
+The corrected 2026-08-25 standard route uses seed 3, 22,659 of 24,288
+TRELLIS_COMB cells (93%), 8,212 TRELLIS_FF cells (33%), and 31 of 56 DP16KD
+blocks (55%). It closes DVI5X at 459.14 MHz, AUDIO at 75.52 MHz, SYNC at
+63.06 MHz, and DVI at 79.08 MHz. SYNC is the limiting 5.10% margin, so future
+changes must continue to pass the release gate.
 
 ## Hardware verification checklist
 

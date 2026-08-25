@@ -95,6 +95,15 @@ the packaged `top.bit` SHA-256 is
 It was flashed successfully to slot 3 on 2026-08-24 (`Refresh: DONE`) and now
 awaits the hardware verification checklist in `REZOMO_CPU_ARCHITECTURE.md`.
 
+The first hardware pass exposed aliased names in the shared character ROM:
+CV targets, DAMPING, PALETTE, and potentially CLOCK tables used bitwise-OR
+addressing with unaligned table bases. The 2026-08-25 fix gives every table a
+power-of-two-aligned span within the same 2K ROM and tests all 1,552 populated
+character addresses for uniqueness. Seed 2 then missed the DVI release margin;
+seed 3 passes every clock with the utilization and timing recorded in
+`REZOMO_CPU_ARCHITECTURE.md`. Record the clean replacement archive and slot-3
+flash result below after packaging.
+
 ## Current objective
 
 REZOMO is being caught up to the native-display architecture and UI conventions

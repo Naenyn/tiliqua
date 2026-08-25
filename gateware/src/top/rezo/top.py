@@ -129,6 +129,19 @@ except ImportError:  # top_level_cli executes this file directly.
     )
 
 
+def _aligned_string_table_layout(tables):
+    """Order fixed-string tables and return OR-safe character-ROM bases."""
+    ordered = tuple(sorted(
+        tables, key=lambda table: -(len(table[1]) - 1).bit_length()))
+    bases = {}
+    next_base = 0
+    for table_name, names in ordered:
+        bases[table_name] = next_base
+        reserved_values = 1 << (len(names) - 1).bit_length()
+        next_base += reserved_values * 16
+    return ordered, bases, next_base
+
+
 class RezoCore(wiring.Component):
     """Ten-band mono resonant filterbank."""
 
@@ -4183,17 +4196,22 @@ class RezoTileDisplay(wiring.Component):
             ("save", save_names),
             ("layout", layout_names),
         )
-        clock_value_bases = {}
+        # Address selection below combines a table base, a 16-character value
+        # slot, and a character position with bitwise OR. Give every table a
+        # power-of-two number of slots and place larger tables first so each
+        # base is naturally aligned to its reserved span. The rounded spans
+        # exactly fill this 2K-character ROM without an adder or another BRAM.
+        clock_value_tables, clock_value_bases, clock_value_reserved = \
+            _aligned_string_table_layout(clock_value_tables)
         clock_value_init = [self.code(" ")] * 2048
-        clock_value_next_base = 0
         for table_name, names in clock_value_tables:
-            clock_value_bases[table_name] = clock_value_next_base
             for value_index, name in enumerate(names):
-                value_base = clock_value_next_base + value_index * 16
+                value_base = clock_value_bases[table_name] + value_index * 16
                 for pos, char in enumerate(name):
                     clock_value_init[value_base + pos] = self.code(char)
-            clock_value_next_base += len(names) * 16
-        clock_value_blank_address = clock_value_next_base
+        assert clock_value_reserved == len(clock_value_init)
+        # The unused tail of every 16-character slot is initialized to spaces.
+        clock_value_blank_address = clock_value_bases["direction"] + 15
         m.submodules.clock_value_mem = clock_value_mem = Memory(
             shape=unsigned(6), depth=len(clock_value_init),
             init=clock_value_init, attrs={"ram_style": "block"})
