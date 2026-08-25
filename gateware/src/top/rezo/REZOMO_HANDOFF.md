@@ -101,8 +101,14 @@ addressing with unaligned table bases. The 2026-08-25 fix gives every table a
 power-of-two-aligned span within the same 2K ROM and tests all 1,552 populated
 character addresses for uniqueness. Seed 2 then missed the DVI release margin;
 seed 3 passes every clock with the utilization and timing recorded in
-`REZOMO_CPU_ARCHITECTURE.md`. Record the clean replacement archive and slot-3
-flash result below after packaging.
+`REZOMO_CPU_ARCHITECTURE.md`. Commit `646f6c6a` supplies the clean replacement
+archive `rezomo-cpu-646f6c6a-r5.tar.gz`. Its SHA-256 is
+`ffaeabe196eeb5767342d13d9bf96c4d1a3cb892762e8197a0d60543b231a300`;
+the packaged `top.bit` SHA-256 is
+`4c7aeec0b259b0e1b4663ef1719905b136a1bc2364e73c014cfb078fea738d50`.
+The packaged bitstream exactly matches the qualified seed-3 route. It was
+flashed successfully to slot 3 on 2026-08-25 (`Refresh: DONE`) and awaits
+hardware verification of all CV target, DAMPING, PALETTE, and CLOCK names.
 
 ## Current objective
 
