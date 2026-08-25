@@ -38,7 +38,8 @@ def top_level_cli(
     sim_harness=None,       # project has a .cpp simulation harness at this path
     argparse_callback=None, # project needs extra CLI flags before argparse.parse()
     argparse_fragment=None, # project needs to check args.<custom_flag> after argparse.parse()
-    archiver_callback=None  # project can customize the archiver (called with archiver instance)
+    archiver_callback=None, # project can customize the archiver (called with archiver instance)
+    nextpnr_opts="--timing-allow-fail", # project-specific place-and-route options
     ):
 
     # Get some repository properties
@@ -300,7 +301,7 @@ def top_level_cli(
             "build_dir": build_path,
             "verbose": args.verbose,
             "debug_verilog": args.debug_verilog,
-            "nextpnr_opts": "--timing-allow-fail",
+            "nextpnr_opts": nextpnr_opts,
             "ecppack_opts": f"--freq 38.8 --compress --bootaddr {args.bootaddr}"
         }
 

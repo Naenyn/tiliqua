@@ -211,7 +211,10 @@ class Peripheral(wiring.Component):
         skip: csr.Field(csr.action.W, unsigned(8))
 
     def __init__(self, bus_dma):
-        self.en = Signal()
+        # Most existing raster designs rely on persistence being active by
+        # default. Designs with ordinary retained-mode UIs can deassert this
+        # without leaving the DMA engine contending for PSRAM bandwidth.
+        self.en = Signal(init=1)
         self.persist = Persistance(bus_signature=bus_dma.bus.signature.flip())
         bus_dma.add_master(self.persist.bus)
 
@@ -232,7 +235,7 @@ class Peripheral(wiring.Component):
     def elaborate(self, platform):
         m = Module()
         m.submodules.bridge = self._bridge
-        m.submodules.persist = self.persist
+        m.submodules.persist = ResetInserter({'sync': ~self.en})(self.persist)
 
         wiring.connect(m, wiring.flipped(self.bus), self._bridge.bus)
         wiring.connect(m, wiring.flipped(self.fbp), self.persist.fbp)

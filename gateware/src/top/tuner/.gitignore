@@ -1,0 +1,4 @@
+*.bin
+pac/
+fw/memory.x
+

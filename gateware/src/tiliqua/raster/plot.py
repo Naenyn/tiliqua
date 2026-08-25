@@ -182,6 +182,7 @@ class _FramebufferBackend(wiring.Component):
 
         # Current request being processed
         current_req = Signal(PlotRequest)
+        current_base = Signal.like(self.fbp.draw_base)
 
         # Pixel position calculations
         abs_x = Signal(signed(16))
@@ -253,7 +254,7 @@ class _FramebufferBackend(wiring.Component):
         fb_hwords = ((self.fbp.timings.h_active * self.pixel_bytes)
                      // self.pixels_per_word)
         m.d.comb += pixel_addr.eq(
-                self.fbp.base + y_offs*fb_hwords + x_offs)
+                current_base + y_offs*fb_hwords + x_offs)
 
         # Pixel data latched during read-modify-write / blending
         pixel_read = Signal(Pixel)
@@ -266,7 +267,12 @@ class _FramebufferBackend(wiring.Component):
                 # all incoming points and don't draw them anywhere.
                 m.d.comb += self.i.ready.eq(1)
                 with m.If(self.i.valid):
-                    m.d.sync += current_req.eq(self.i.payload)
+                    # Keep an accepted pixel tied to its original target even
+                    # if firmware retargets later drawing to another buffer.
+                    m.d.sync += [
+                        current_req.eq(self.i.payload),
+                        current_base.eq(self.fbp.draw_base),
+                    ]
                     m.next = 'TRANSFORM'
 
             with m.State('TRANSFORM'):
@@ -373,5 +379,3 @@ class FramebufferPlotter(wiring.Component):
         wiring.connect(m, cache.slave, wiring.flipped(self.bus))
 
         return m
-
-

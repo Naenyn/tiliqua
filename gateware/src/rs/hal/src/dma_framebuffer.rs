@@ -83,6 +83,10 @@ impl Default for DVIModeline {
 
 pub trait DMAFramebuffer {
     fn update_fb_base(&mut self, fb_base: u32);
+    /// Select the raster-engine target using a PSRAM Wishbone word offset.
+    fn update_draw_base_words(&mut self, draw_base_words: u32);
+    /// Select the next scanout buffer using a PSRAM Wishbone word offset.
+    fn present_base_words(&mut self, scan_base_words: u32);
     fn set_palette_rgb(&mut self, intensity: u8, hue: u8, r: u8, g: u8, b: u8);
     fn get_hpd(&mut self) -> bool;
 }
@@ -121,6 +125,10 @@ macro_rules! impl_dma_framebuffer {
                     });
                     registers_fb.fb_base().write(|w| unsafe {
                         w.fb_base().bits(fb_base as u32)
+                    });
+                    // Existing applications draw and scan the same buffer.
+                    registers_fb.draw_base().write(|w| unsafe {
+                        w.draw_base().bits(fb_base as u32)
                     });
                     registers_fb.h_timing().write(|w| unsafe {
                         w.h_active().bits(mode.h_active);
@@ -169,6 +177,19 @@ macro_rules! impl_dma_framebuffer {
                     self.mode.rotate = rotation.clone();
                 }
 
+                /// Drain raster frontend commands before changing their target.
+                /// The settling margin covers the last primitive already accepted
+                /// by the shared backend.
+                pub fn wait_drawing_idle(&mut self) {
+                    while self.registers_pixel_plot.status().read().fifo_level().bits() != 0
+                        || !self.registers_blitter.status().read().empty().bit()
+                        || !self.registers_line.status().read().empty().bit()
+                    {
+                        riscv::asm::nop();
+                    }
+                    unsafe { riscv::asm::delay(120_000); }
+                }
+
             }
 
 
@@ -178,6 +199,18 @@ macro_rules! impl_dma_framebuffer {
                         w.fb_base().bits(fb_base)
                     });
                     self.framebuffer_base = fb_base as *mut u32
+                }
+
+                fn update_draw_base_words(&mut self, draw_base_words: u32) {
+                    self.registers_fb.draw_base().write(|w| unsafe {
+                        w.draw_base().bits(draw_base_words)
+                    });
+                }
+
+                fn present_base_words(&mut self, scan_base_words: u32) {
+                    self.registers_fb.fb_base().write(|w| unsafe {
+                        w.fb_base().bits(scan_base_words)
+                    });
                 }
 
                 fn set_palette_rgb(&mut self, intensity: u8, hue: u8, r: u8, g: u8, b: u8)  {

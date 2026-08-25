@@ -15,7 +15,7 @@ from amaranth_soc import csr, wishbone
 
 from ..build import sim
 from . import dvi
-from .types import Pixel, Rotation, ScanPixel
+from .types import DVIPixel, Pixel, Rotation, ScanPixel
 
 
 class DMAFramebuffer(wiring.Component):
@@ -37,6 +37,9 @@ class DMAFramebuffer(wiring.Component):
             super().__init__({
                 # Base address of framebuffer in PSRAM
                 "base": Out(22),
+                # Independent target for raster engines. Existing users set
+                # this to `base`; double-buffered users draw elsewhere.
+                "draw_base": Out(22),
                 # Must be updated on timing changes
                 "timings": Out(dvi.DVITimingGen.TimingProperties()),
                 # Not directly used by this core but shared between every core that uses DMAFramebuffer.
@@ -59,7 +62,8 @@ class DMAFramebuffer(wiring.Component):
             })
 
     def __init__(self, *, palette, addr_width=22, fifo_depth=512,
-                 burst_threshold_words=128, fixed_modeline=None, overlay=None):
+                 burst_threshold_words=128, fixed_modeline=None, overlay=None,
+                 pipeline_palette_output=False):
 
         self.fifo_depth = fifo_depth
         assert (Pixel.as_shape().size % 8) == 0
@@ -68,6 +72,7 @@ class DMAFramebuffer(wiring.Component):
         self.fixed_modeline = fixed_modeline
         self.palette = palette
         self._overlay = overlay
+        self.pipeline_palette_output = pipeline_palette_output
 
         super().__init__({
             # Backing store
@@ -104,7 +109,13 @@ class DMAFramebuffer(wiring.Component):
 
         # Current offset into the framebuffer
         dma_addr = Signal(32)
+        scan_base = Signal.like(self.fbp.base)
         burst_cnt = Signal(16, init=0)
+
+        # Present framebuffer base changes only at vertical sync so a scan can
+        # never contain rows from two different buffers.
+        with m.If(phy_vsync_sync):
+            m.d.sync += scan_base.eq(self.fbp.base)
 
         # DMA bus master -> FIFO state machine
         # Burst until FIFO is full, then wait until half empty.
@@ -123,7 +134,7 @@ class DMAFramebuffer(wiring.Component):
                     bus.cyc.eq(1),
                     bus.we.eq(0),
                     bus.sel.eq(2**(bus.data_width//8)-1),
-                    bus.adr.eq(self.fbp.base + dma_addr),
+                    bus.adr.eq(scan_base + dma_addr),
                     fifo.w_en.eq(bus.ack),
                     fifo.w_data.eq(bus.dat_r),
                     bus.cti.eq(
@@ -193,7 +204,14 @@ class DMAFramebuffer(wiring.Component):
         # Stage 2/3: Palette and DVI PHY / simulation output
         if sim.is_hw(platform):
             m.submodules.dvi_gen = dvi_gen = dvi.DVIPHY()
-            m.d.comb += dvi_gen.i.eq(self.palette.o)
+            if self.pipeline_palette_output:
+                # Opt-in timing stage for dense designs: keep RGB and control
+                # aligned while breaking the palette RAM -> TMDS critical path.
+                phy_pixel = Signal(DVIPixel)
+                m.d.dvi += phy_pixel.eq(self.palette.o)
+                m.d.comb += dvi_gen.i.eq(phy_pixel)
+            else:
+                m.d.comb += dvi_gen.i.eq(self.palette.o)
         else:
             m.d.comb += [
                 self.simif.de.eq(self.palette.o.de),
@@ -242,6 +260,9 @@ class Peripheral(wiring.Component):
     class FBBaseReg(csr.Register, access="w"):
         fb_base: csr.Field(csr.action.W, unsigned(32))
 
+    class DrawBaseReg(csr.Register, access="w"):
+        draw_base: csr.Field(csr.action.W, unsigned(32))
+
     class HpdReg(csr.Register, access="r"):
         # DVI hot plug detect
         hpd: csr.Field(csr.action.R, unsigned(1))
@@ -257,6 +278,7 @@ class Peripheral(wiring.Component):
         self._flags        = regs.add("flags",        self.FlagsReg(),       offset=0x14)
         self._fb_base      = regs.add("fb_base",      self.FBBaseReg(),      offset=0x18)
         self._hpd          = regs.add("hpd",          self.HpdReg(),         offset=0x1C)
+        self._draw_base    = regs.add("draw_base",    self.DrawBaseReg(),    offset=0x20)
 
         self._bridge = csr.Bridge(regs.as_memory_map())
 
@@ -296,6 +318,8 @@ class Peripheral(wiring.Component):
             m.d.sync += self.fbp.rotation.eq(self._flags.f.rotation.w_data)
         with m.If(self._fb_base.f.fb_base.w_stb):
             m.d.sync += self.fbp.base.eq(self._fb_base.f.fb_base.w_data)
+        with m.If(self._draw_base.f.draw_base.w_stb):
+            m.d.sync += self.fbp.draw_base.eq(self._draw_base.f.draw_base.w_data)
 
         if sim.is_hw(platform):
             m.d.comb += self._hpd.f.hpd.r_data.eq(platform.request("dvi_hpd").i)
@@ -304,4 +328,3 @@ class Peripheral(wiring.Component):
             m.d.comb += self._hpd.f.hpd.r_data.eq(1)
 
         return m
-

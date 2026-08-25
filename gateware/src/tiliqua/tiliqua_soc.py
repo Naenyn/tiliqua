@@ -64,7 +64,8 @@ class TiliquaSoc(Component):
     def __init__(self, *, firmware_bin_path, ui_name, ui_tag, platform_class, clock_settings,
                  touch=False, finalize_csr_bridge=True, poke_outputs=False, mainram_size=0x4000,
                  fw_location=None, fw_offset=None, cpu_variant="tiliqua_rv32im",
-                 extra_cpu_regions=[], fb_overlay=None):
+                 extra_cpu_regions=[], fb_overlay=None,
+                 pipeline_palette_output=False):
 
         super().__init__({})
 
@@ -224,7 +225,8 @@ class TiliquaSoc(Component):
         self.fb = framebuffer.DMAFramebuffer(
                 palette=self.palette_periph.palette,
                 fixed_modeline=self.clock_settings.modeline,
-                overlay=fb_overlay)
+                overlay=fb_overlay,
+                pipeline_palette_output=pipeline_palette_output)
         self.psram_periph.add_master(self.fb.bus)
 
         # Timing CSRs for video PHY
@@ -371,6 +373,7 @@ class TiliquaSoc(Component):
                 self.fb.fbp.enable.eq(self.framebuffer_periph.fbp.enable),
                 self.fb.fbp.rotation.eq(self.framebuffer_periph.fbp.rotation),
                 self.fb.fbp.base.eq(self.framebuffer_periph.fbp.base),
+                self.fb.fbp.draw_base.eq(self.framebuffer_periph.fbp.draw_base),
             ]
             wiring.connect(m, wiring.flipped(self.fb.fbp), self.framebuffer_plotter.fbp)
             wiring.connect(m, wiring.flipped(self.fb.fbp), self.persist_periph.fbp)

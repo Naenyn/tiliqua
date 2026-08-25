@@ -1,0 +1,88 @@
+# Copyright (c) 2026
+#
+# SPDX-License-Identifier: CERN-OHL-S-2.0
+"""Monophonic audio tuner proof of concept.
+
+One selected audio input is measured in gateware. Firmware displays its
+fundamental pitch, chromatic note/cents offset, octave, Vrms and Vpp. Outputs
+remain silent in this first proof of concept.
+"""
+
+import os
+import sys
+
+from amaranth import Module
+from amaranth.lib import wiring
+
+from tiliqua.build.cli import top_level_cli
+from tiliqua.build.types import BitstreamHelp
+from tiliqua.dsp.tuner import TunerPeripheral
+from tiliqua.tiliqua_soc import TiliquaSoc
+
+try:
+    from .display import Peripheral as TunerDisplayPeripheral
+except ImportError:
+    from display import Peripheral as TunerDisplayPeripheral
+
+
+class TunerSoc(TiliquaSoc):
+    module_docstring = sys.modules[__name__].__doc__
+    bitstream_help = BitstreamHelp(
+        brief="Monophonic tuner proof of concept.",
+        io_left=["audio input 1", "audio input 2", "audio input 3",
+                 "audio input 4", "silent", "silent", "silent", "silent"],
+        io_right=["navigate / select", "", "video out", "", "", ""],
+    )
+
+    def __init__(self, **kwargs):
+        self.tuner_display = TunerDisplayPeripheral()
+        super().__init__(finalize_csr_bridge=False, mainram_size=0x4000,
+                         fb_overlay=self.tuner_display.overlay,
+                         pipeline_palette_output=True,
+                         **kwargs)
+        self.tuner_periph = TunerPeripheral(
+            sample_rate=self.clock_settings.audio_clock.fs(),
+            # A 50ms observation window limited new pitch estimates to 20Hz.
+            # 20ms still gives sub-cent resolution at the normal 192kHz audio
+            # rate while responding much more promptly to oscillator changes.
+            min_pitch_window_s=0.02)
+        self.csr_decoder.add(
+            self.tuner_periph.bus, addr=0x1000, name="tuner_periph")
+        self.csr_decoder.add(
+            self.tuner_display.bus, addr=0x1100, name="tuner_display")
+        self.finalize_csr_bridge()
+
+    def elaborate(self, platform):
+        m = Module()
+        m.submodules.tuner_periph = self.tuner_periph
+        m.submodules.tuner_display = self.tuner_display
+        m.submodules += super().elaborate(platform)
+
+        pmod = self.pmod0_periph.pmod
+        wiring.connect(m, pmod.o_cal, self.tuner_periph.i)
+
+        # Unlike XBEAM, the tuner is an ordinary retained-mode interface. Its
+        # renderer explicitly replaces moving elements, so phosphor decay would
+        # create trails and also waste PSRAM bandwidth.
+        m.d.comb += self.persist_periph.en.eq(0)
+
+        # Keep all physical outputs at calibrated zero. Driving a continuous
+        # valid stream also prevents the codec-side DAC FIFO from starving.
+        m.d.comb += pmod.i_cal.valid.eq(1)
+        for channel in range(4):
+            m.d.comb += pmod.i_cal.payload[channel].as_value().eq(0)
+
+        return m
+
+
+if __name__ == "__main__":
+    this_path = os.path.dirname(os.path.realpath(__file__))
+    seed = int(os.getenv("TILIQUA_TUNER_SEED", "2"))
+    top_level_cli(
+        TunerSoc,
+        path=this_path,
+        archiver_callback=lambda archiver: archiver.with_option_storage(),
+        # The framebuffer-heavy design is placement-sensitive at 60 MHz. Keep
+        # builds reproducible with a seed that closes timing on ECP5-25F R5.
+        nextpnr_opts=f"--timing-allow-fail --seed {seed}",
+    )
