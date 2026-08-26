@@ -2,6 +2,7 @@ from amaranth import Module
 from amaranth.sim import Simulator
 
 from top.rezo.rezo_variant import (
+    NATIVE_OUTPUT_METER_LABEL_COLS, NATIVE_OUTPUT_METER_X0S,
     RezoCore, RezoHardwareUI, RezoTileDisplay, output_meter_db_value,
 )
 
@@ -12,6 +13,16 @@ def test_output_meter_uses_calibrated_daw_scale():
             (0, 1, 4, 16, 65, 129, 257, 513, 1023)] == [
         0, 0, 12, 25, 38, 44, 50, 57, 63,
     ]
+
+
+def test_output_meter_pairs_and_labels_are_centered_in_side_arcs():
+    meter_centers = tuple(x0 + 12 for x0 in NATIVE_OUTPUT_METER_X0S)
+    assert ((meter_centers[0] + meter_centers[1]) // 2,
+            (meter_centers[2] + meter_centers[3]) // 2) == (53, 667)
+    label_centers = tuple(
+        col * 16 + 8 for col in NATIVE_OUTPUT_METER_LABEL_COLS)
+    assert tuple(label - meter for label, meter in zip(
+        label_centers, meter_centers)) == (3, 3, -3, -3)
 
 
 def _render_text_bounds(*regions, page=0, palette=0, input_modes=(),
@@ -228,7 +239,7 @@ def test_compact_round_layout_uses_all_four_arcs():
         # MAIN is authored natively in the safe central header.
         await sample(ctx, 256, 128)
         # The side wing now carries persistent circular chrome.
-        await sample(ctx, 48, 360)
+        await sample(ctx, 95, 360)
         # The extreme square corner is deliberately blank outside the circle.
         await sample(ctx, 0, 0)
 
@@ -246,8 +257,8 @@ def test_compact_round_layout_uses_all_four_arcs():
     ]
 
 
-def test_compact_safe_square_gives_way_to_curved_chrome():
-    """The former square boundary is covered by the circular annulus."""
+def test_compact_safe_square_cuts_black_field_out_of_curved_chrome():
+    """The centered 508px square masks an otherwise shaded circle."""
     dut = RezoTileDisplay(
         h_active=720, rotate_left=False, compact_layout=True)
     sim = Simulator(dut)
@@ -278,7 +289,12 @@ def test_compact_safe_square_gives_way_to_curved_chrome():
 
     palette = RezoTileDisplay.PALETTE
     assert 614 - 106 == 508
-    assert samples == [palette["background"]] * len(samples)
+    assert samples == [
+        palette["background"], palette["blank"],
+        palette["blank"], palette["background"],
+        palette["background"], palette["blank"],
+        palette["blank"], palette["background"],
+    ]
 
 
 def test_compact_pager_tracks_firmware_navigation_order_and_mode_count():
@@ -344,14 +360,14 @@ def test_compact_output_meters_are_persistent_and_independent():
             ctx.set(dut.output_meters[lane], value)
         ctx.set(dut.output_clips[0], 1)
         # Empty lane interior, then increasing fills in lanes 2 through 4.
-        await sample(ctx, 36, 400)
-        await sample(ctx, 76, 400)
-        await sample(ctx, 636, 350)
-        await sample(ctx, 676, 280)
+        await sample(ctx, 33, 400)
+        await sample(ctx, 65, 400)
+        await sample(ctx, 647, 350)
+        await sample(ctx, 679, 280)
         # An outline remains visible around an empty lane.
-        await sample(ctx, 28, 360)
+        await sample(ctx, 25, 360)
         # A held clipping lamp sits above the corresponding lane.
-        await sample(ctx, 36, 250)
+        await sample(ctx, 33, 250)
 
     sim.add_testbench(bench)
     sim.run()
@@ -449,7 +465,7 @@ def test_compact_labels_use_native_control_rows():
     palette = RezoTileDisplay.PALETTE
     assert samples == [
         palette["text"], palette["blank"],
-        palette["text"], palette["background"],
+        palette["text"], palette["blank"],
         palette["text"],
         palette["blank"], palette["text"],
     ]

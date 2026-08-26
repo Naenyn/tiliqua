@@ -145,6 +145,10 @@ def output_meter_db_value(magnitude):
     return max(0, min(63, round((dbfs + 60) * 63 / 60)))
 
 
+NATIVE_OUTPUT_METER_X0S = (25, 57, 639, 671)
+NATIVE_OUTPUT_METER_LABEL_COLS = (2, 4, 40, 42)
+
+
 class RezoCore(RezoCoreConstants, wiring.Component):
     """Ten-band mono resonant filterbank."""
 
@@ -2950,10 +2954,9 @@ class RezoTileDisplay(wiring.Component):
                 put_native(text_page, "CURSOR", 25, 8)
                 put_native(text_page, "OUT", 2, 14)
                 put_native(text_page, "OUT", 40, 14)
-                put_native(text_page, "1", 3, 30)
-                put_native(text_page, "2", 5, 30)
-                put_native(text_page, "3", 39, 30)
-                put_native(text_page, "4", 41, 30)
+                for label, col in zip(
+                        "1234", NATIVE_OUTPUT_METER_LABEL_COLS):
+                    put_native(text_page, label, col, 30)
 
             # BANK main page.
             put_native_page_heading(put_native, 0, "PRESET")
@@ -3487,15 +3490,14 @@ class RezoTileDisplay(wiring.Component):
         output_meter_hot_q0 = Const(0)
         output_meter_clip_q0 = Const(0)
         if self.compact_layout:
-            # Keep only REZO and the pager in the compact top cap. Between
-            # that cap and the version footer, one uninterrupted annulus joins
-            # both side-meter wings to both caps while leaving the entire
-            # central control field black.
-            circle_inside, side_annulus = native_viewport_regions(
+            # Shade the circular canvas, then cut the centered 508x508 native
+            # authoring square out of it. This leaves four unmistakable outer
+            # arcs and a completely black navigation/control field.
+            circle_inside, _ = native_viewport_regions(
                 m, x, text_y_pre, inner_radius=250)
-            arc_background = active & (
-                (circle_inside & ((y < 108) | (y >= 608))) |
-                (side_annulus & (y >= 108) & (y < 608)))
+            native_safe_square = (
+                (x >= 106) & (x < 614) & (y >= 106) & (y < 614))
+            arc_background = active & circle_inside & ~native_safe_square
 
             # Firmware navigates pages in a deliberately non-numeric order.
             # Translate the raw page ID so the indicator advances one box for
@@ -3572,25 +3574,33 @@ class RezoTileDisplay(wiring.Component):
             meter_x0 = Signal(unsigned(10))
             meter_value = Signal(unsigned(6))
             meter_clip = Signal()
-            with m.If((x >= 28) & (x < 52)):
+            with m.If((x >= NATIVE_OUTPUT_METER_X0S[0]) &
+                      (x < NATIVE_OUTPUT_METER_X0S[0] + 24)):
                 m.d.comb += [
                     meter_lane.eq(0), meter_lane_valid.eq(1),
-                    meter_x0.eq(28), meter_value.eq(self.output_meters[0]),
+                    meter_x0.eq(NATIVE_OUTPUT_METER_X0S[0]),
+                    meter_value.eq(self.output_meters[0]),
                     meter_clip.eq(self.output_clips[0])]
-            with m.Elif((x >= 68) & (x < 92)):
+            with m.Elif((x >= NATIVE_OUTPUT_METER_X0S[1]) &
+                        (x < NATIVE_OUTPUT_METER_X0S[1] + 24)):
                 m.d.comb += [
                     meter_lane.eq(1), meter_lane_valid.eq(1),
-                    meter_x0.eq(68), meter_value.eq(self.output_meters[1]),
+                    meter_x0.eq(NATIVE_OUTPUT_METER_X0S[1]),
+                    meter_value.eq(self.output_meters[1]),
                     meter_clip.eq(self.output_clips[1])]
-            with m.Elif((x >= 628) & (x < 652)):
+            with m.Elif((x >= NATIVE_OUTPUT_METER_X0S[2]) &
+                        (x < NATIVE_OUTPUT_METER_X0S[2] + 24)):
                 m.d.comb += [
                     meter_lane.eq(2), meter_lane_valid.eq(1),
-                    meter_x0.eq(628), meter_value.eq(self.output_meters[2]),
+                    meter_x0.eq(NATIVE_OUTPUT_METER_X0S[2]),
+                    meter_value.eq(self.output_meters[2]),
                     meter_clip.eq(self.output_clips[2])]
-            with m.Elif((x >= 668) & (x < 692)):
+            with m.Elif((x >= NATIVE_OUTPUT_METER_X0S[3]) &
+                        (x < NATIVE_OUTPUT_METER_X0S[3] + 24)):
                 m.d.comb += [
                     meter_lane.eq(3), meter_lane_valid.eq(1),
-                    meter_x0.eq(668), meter_value.eq(self.output_meters[3]),
+                    meter_x0.eq(NATIVE_OUTPUT_METER_X0S[3]),
+                    meter_value.eq(self.output_meters[3]),
                     meter_clip.eq(self.output_clips[3])]
 
             # Register lane selection before its magnitude scaling and y
