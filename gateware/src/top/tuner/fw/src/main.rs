@@ -7,7 +7,7 @@ use core::fmt::Write;
 use critical_section::Mutex;
 use heapless::String;
 use irq::handler;
-use log::{info, warn};
+use log::warn;
 use micromath::F32Ext;
 use riscv_rt::entry;
 
@@ -601,11 +601,15 @@ fn publish_tuner(
 fn main() -> ! {
     let peripherals = pac::Peripherals::take().unwrap();
     let sysclk = pac::clock::sysclk();
-    let serial = Serial0::new(peripherals.UART0);
     let mut timer = Timer0::new(peripherals.TIMER0, sysclk);
     let spiflash = SPIFlash0::new(peripherals.SPIFLASH_CTRL, SPIFLASH_BASE, SPIFLASH_SZ_BYTES);
-    tiliqua_fw::handlers::logger_init(serial);
-    info!("Hello from Tiliqua TUNER POC");
+
+    // Do not install the synchronous UART logger in the real-time tuner.
+    // Calibration and option loading both log from inside peripheral access
+    // paths; if the USB/UART consumer is absent or backpressured, Serial0's
+    // blocking fmt::Write implementation can wedge startup before the timer
+    // interrupt (and therefore the encoder, LEDs and measurements) is enabled.
+    // Runtime diagnostics here must use a bounded/non-blocking transport.
 
     let bootinfo = unsafe { bootinfo::BootInfo::from_addr(BOOTINFO_BASE) }.unwrap();
     let modeline = bootinfo
