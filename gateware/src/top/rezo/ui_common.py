@@ -182,31 +182,32 @@ def native_viewport_regions(m, x, lookup_y, *, inner_radius=250):
     return circle_inside, annulus
 
 
-def native_feedback_track_rows(rect, x, y, x0, x1):
+def native_feedback_track_rows(rect, x, y, x0, x1, *, y_shift=0):
     """Return the three shared FEEDBACK-page shaded control tracks."""
     return (
-        rect(x, y, x0, NATIVE_FEEDBACK_AMOUNT_Y0 - 2,
-             x1, NATIVE_FEEDBACK_AMOUNT_Y0 + 18) |
-        rect(x, y, x0, NATIVE_FEEDBACK_KNEE_Y0 - 2,
-             x1, NATIVE_FEEDBACK_KNEE_Y0 + 18) |
-        rect(x, y, x0, NATIVE_FEEDBACK_CEILING_Y0 - 2,
-             x1, NATIVE_FEEDBACK_CEILING_Y0 + 18))
+        rect(x, y, x0, NATIVE_FEEDBACK_AMOUNT_Y0 + y_shift - 2,
+             x1, NATIVE_FEEDBACK_AMOUNT_Y0 + y_shift + 18) |
+        rect(x, y, x0, NATIVE_FEEDBACK_KNEE_Y0 + y_shift - 2,
+             x1, NATIVE_FEEDBACK_KNEE_Y0 + y_shift + 18) |
+        rect(x, y, x0, NATIVE_FEEDBACK_CEILING_Y0 + y_shift - 2,
+             x1, NATIVE_FEEDBACK_CEILING_Y0 + y_shift + 18))
 
 
-def put_native_feedback_labels(put):
+def put_native_feedback_labels(put, *, content_row_offset=0):
     """Place the labels shared by every native REZO FEEDBACK page."""
     put_native_page_heading(put, 1, "FEEDBACK SOURCES")
-    put(1, "BANDS", 8, 16)
-    put(1, "FREQ:", 23, 16)
+    put(1, "BANDS", 8, 16 + content_row_offset)
+    put(1, "FREQ:", 23, 16 + content_row_offset)
     put(1, "FEEDBACK", NATIVE_FEEDBACK_LABEL_RIGHT - len("FEEDBACK"),
-        NATIVE_FEEDBACK_AMOUNT_ROW)
-    put(1, "FEEDBACK SAFETY", 8, NATIVE_FEEDBACK_SAFETY_TITLE_ROW)
+        NATIVE_FEEDBACK_AMOUNT_ROW + content_row_offset)
+    put(1, "FEEDBACK SAFETY", 8,
+        NATIVE_FEEDBACK_SAFETY_TITLE_ROW + content_row_offset)
     put(1, "KNEE", NATIVE_FEEDBACK_LABEL_RIGHT - len("KNEE"),
-        NATIVE_FEEDBACK_KNEE_ROW)
+        NATIVE_FEEDBACK_KNEE_ROW + content_row_offset)
     put(1, "CEILING", NATIVE_FEEDBACK_LABEL_RIGHT - len("CEILING"),
-        NATIVE_FEEDBACK_CEILING_ROW)
+        NATIVE_FEEDBACK_CEILING_ROW + content_row_offset)
     put(1, "DAMPING", NATIVE_FEEDBACK_LABEL_RIGHT - len("DAMPING"),
-        NATIVE_FEEDBACK_DAMPING_ROW)
+        NATIVE_FEEDBACK_DAMPING_ROW + content_row_offset)
 
 
 def put_native_page_headers(put, identity, titles):
@@ -222,44 +223,54 @@ def put_native_page_heading(put, page, text, x0=8):
     put(page, text, x0, NATIVE_PAGE_HEADING_ROW)
 
 
-def put_native_support_page_labels(put, *, output_label_col=9):
+def put_native_support_page_labels(put, *, output_label_col=9,
+                                   content_row_offsets=None):
     """Place the common FEEDBACK through BANDS native static labels.
 
     Product-specific additions such as STREZO's OPTIONS ADVANCED section and
     BANDS MOTION controls are intentionally layered on by the caller.
     """
-    put_native_feedback_labels(put)
+    offsets = content_row_offsets or {}
+    feedback_offset = offsets.get(1, 0)
+    input_offset = offsets.get(2, 0)
+    group_offset = offsets.get(3, 0)
+    output_offset = offsets.get(4, 0)
+    options_offset = offsets.get(5, 0)
+    bands_offset = offsets.get(6, 0)
+
+    put_native_feedback_labels(
+        put, content_row_offset=feedback_offset)
 
     put_native_page_heading(put, 2, "INPUT ROUTING")
     for input_index, (mode_row, value_row, depth_row) in enumerate(
             NATIVE_INPUT_TEXT_ROWS):
-        put(2, f"IN{input_index}", 8, mode_row)
-        put(2, "MODE", 14, mode_row)
-        put(2, "VALUE", 13, value_row)
+        put(2, f"IN{input_index}", 8, mode_row + input_offset)
+        put(2, "MODE", 14, mode_row + input_offset)
+        put(2, "VALUE", 13, value_row + input_offset)
         # DEPTH is mode-dependent and is written dynamically by each display
         # renderer. Keeping it out of the static template prevents AUDIO lanes
         # from inheriting a stale CV-only label.
 
     put_native_page_heading(put, 3, "BANK GROUPS")
-    put(3, "BANKS", 20, 16)
+    put(3, "BANKS", 20, 16 + group_offset)
     for group, row in enumerate(NATIVE_GROUP_TEXT_ROWS):
-        put(3, f"GRP{group + 1}", 8, row)
+        put(3, f"GRP{group + 1}", 8, row + group_offset)
 
     put_native_page_heading(put, 4, "OUTPUT ROUTING")
     for x0, label in zip((16, 20, 24, 28, 32),
                          ("G1", "G2", "G3", "G4", "DRY")):
-        put(4, label, x0, 18)
+        put(4, label, x0, 18 + output_offset)
     for output, row in enumerate(NATIVE_OUTPUT_TEXT_ROWS):
-        put(4, f"OUT{output}", output_label_col, row)
+        put(4, f"OUT{output}", output_label_col, row + output_offset)
 
     put_native_page_heading(put, 5, "STATE AND DISPLAY")
-    put(5, "PALETTE", 13, 17)
-    put(5, "SAVE DEFAULT", 8, 21)
+    put(5, "PALETTE", 13, 17 + options_offset)
+    put(5, "SAVE DEFAULT", 8, 21 + options_offset)
 
     put_native_page_heading(put, 6, "PRESET")
-    put(6, "ENABLE", 8, 16)
-    put(6, "SET FREQ", 8, 22)
-    put(6, "HZ", 26, 22)
+    put(6, "ENABLE", 8, 16 + bands_offset)
+    put(6, "SET FREQ", 8, 22 + bands_offset)
+    put(6, "HZ", 26, 22 + bands_offset)
 
 
 def put_legacy_support_page_labels(put, *, frequency_col,
@@ -484,15 +495,15 @@ def output_header_selection(*, page, row_active, col_active,
                             row_target, col_target,
                             selected_row, selected_col,
                             matrix_row, matrix_col, dry_selected,
-                            x, y, compact):
+                            x, y, compact, compact_y_shift=0):
     """Shared solid-bar selector for the common OUTPUT routing matrix."""
     row_x0 = (NATIVE_OUTPUT_ROW_SELECT_X0 if compact
               else LEGACY_OUTPUT_ROW_SELECT_X0)
     row_x1 = (NATIVE_OUTPUT_ROW_SELECT_X1 if compact
               else LEGACY_OUTPUT_ROW_SELECT_X1)
-    col_y0 = (NATIVE_OUTPUT_COL_SELECT_Y0 if compact
+    col_y0 = ((NATIVE_OUTPUT_COL_SELECT_Y0 + compact_y_shift) if compact
               else LEGACY_OUTPUT_COL_SELECT_Y0)
-    col_y1 = (NATIVE_OUTPUT_COL_SELECT_Y1 if compact
+    col_y1 = ((NATIVE_OUTPUT_COL_SELECT_Y1 + compact_y_shift) if compact
               else LEGACY_OUTPUT_COL_SELECT_Y1)
     return page & (
         (row_active & row_target & (selected_row == matrix_row) &

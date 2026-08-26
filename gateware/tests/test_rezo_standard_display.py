@@ -157,7 +157,7 @@ def test_compact_input_and_options_values_use_fixed_left_origins():
         assert 320 <= bounds[0] <= 322
         assert bounds[2] <= chip[2]
 
-    options_chips = ((336, 260, 456, 300), (336, 324, 472, 364))
+    options_chips = ((336, 276, 456, 316), (336, 340, 472, 380))
     options_bounds = _render_text_bounds(
         *options_chips, page=5, palette=3, save_default_available=1)
     for bounds, chip in zip(options_bounds, options_chips):
@@ -167,7 +167,7 @@ def test_compact_input_and_options_values_use_fixed_left_origins():
 
 
 def test_output_dry_label_is_centered_and_hidden_with_its_filter_column():
-    dry_bounds, = _render_text_bounds((500, 280, 568, 308), page=4)
+    dry_bounds, = _render_text_bounds((500, 296, 568, 324), page=4)
     assert dry_bounds[0] + dry_bounds[2] in range(1066, 1074)
 
     dut = RezoTileDisplay(
@@ -180,7 +180,7 @@ def test_output_dry_label_is_centered_and_hidden_with_its_filter_column():
     async def sample(ctx, filter_mode):
         ctx.set(dut.filter_mode, filter_mode)
         ctx.set(dut.x, dut.x_offset + 534)
-        ctx.set(dut.y, 329)
+        ctx.set(dut.y, 345)
         for _ in range(16):
             await ctx.tick("dvi")
         samples.append(ctx.get(dut.r))
@@ -194,7 +194,7 @@ def test_output_dry_label_is_centered_and_hidden_with_its_filter_column():
     sim.add_testbench(bench)
     sim.run()
     palette = RezoTileDisplay.PALETTE
-    assert samples == [palette["panel"], palette["blank"]]
+    assert samples == [palette["panel"], palette["surface"]]
 
 
 def test_main_preset_selection_uses_the_shared_header_outline():
@@ -439,8 +439,8 @@ def test_compact_pager_keeps_one_pixel_gaps_during_raster_scan():
     assert selected_runs[1][0] - selected_runs[0][0] == 12
 
 
-def test_bank_surface_uses_eighth_palette_role_while_blank_stays_black():
-    """BANK's work area is shaded without tinting semantic blank pixels."""
+def test_page_surfaces_use_eighth_palette_role_while_header_stays_black():
+    """Page work areas are shaded without tinting the header gap."""
     dut = RezoTileDisplay(
         h_active=720, rotate_left=False, compact_layout=True)
     sim = Simulator(dut)
@@ -462,8 +462,8 @@ def test_bank_surface_uses_eighth_palette_role_while_blank_stays_black():
         for palette in range(len(dut.RGB_PALETTES)):
             await sample(ctx, palette, 0, 350, 240)  # BANK surface
             await sample(ctx, palette, 0, 400, 180)  # header/content gap
-            await sample(ctx, palette, 0, 400, 540)  # below BANK surface
-            await sample(ctx, palette, 1, 400, 240)  # another page
+            await sample(ctx, palette, 0, 400, 560)  # below BANK surface
+            await sample(ctx, palette, 1, 350, 280)  # FEEDBACK surface
 
     sim.add_testbench(bench)
     sim.run()
@@ -477,9 +477,10 @@ def test_bank_surface_uses_eighth_palette_role_while_blank_stays_black():
             packed_surface & 0xff,
         )
         assert samples[palette * 4] == surface_rgb
-        assert samples[palette * 4 + 1:palette * 4 + 4] == [
-            (0, 0, 0), (0, 0, 0), (0, 0, 0),
+        assert samples[palette * 4 + 1:palette * 4 + 3] == [
+            (0, 0, 0), (0, 0, 0),
         ]
+        assert samples[palette * 4 + 3] == surface_rgb
 
 
 def test_compact_output_meters_are_persistent_and_independent():
@@ -583,18 +584,18 @@ def test_compact_labels_use_native_control_rows():
             await ctx.tick("sync")
 
         # BANK labels share the native x=272 right edge of the fader gutter.
-        await sample(ctx, 12 * 16, 448)       # DRIVE
-        await sample(ctx, 10 * 16, 448)       # old, too-far-left start
+        await sample(ctx, 12 * 16, 464)       # DRIVE
+        await sample(ctx, 10 * 16, 464)       # left of label
 
         # FILTER's deepest row remains inside the content field, and its
         # first label begins on the same inner gutter as MATRIX.
         ctx.set(dut.filter_mode, 1)
-        await sample(ctx, 8 * 16, 448)        # FREQUENCY
-        await sample(ctx, 160, 592)          # below RESONANCE, inside field
+        await sample(ctx, 8 * 16, 464)        # FREQUENCY
+        await sample(ctx, 160, 608)           # below RESONANCE, inside field
 
         # MATRIX uses the same native 64px row cadence for text and controls.
         ctx.set(dut.page, 7)
-        await sample(ctx, 8 * 16, 18 * 16)   # FREQUENCY
+        await sample(ctx, 8 * 16, 19 * 16)   # FREQUENCY
 
         # Dynamic INPUT targets align with the value-only CV chip. Labels to
         # its left remain on the unshaded field.
@@ -609,9 +610,9 @@ def test_compact_labels_use_native_control_rows():
     palette = RezoTileDisplay.PALETTE
     assert samples == [
         palette["text"], palette["surface"],
-        palette["text"], palette["blank"],
+        palette["text"], palette["surface"],
         palette["text"],
-        palette["blank"], palette["text"],
+        palette["surface"], palette["text"],
     ]
 
 
@@ -671,20 +672,20 @@ def test_compact_input_groups_and_enable_buttons_share_requested_geometry():
         ctx.set(dut.page, 1)
         ctx.set(dut.band_enables[0], 1)
         ctx.set(dut.feedback_sends[0], 1)
-        await sample(ctx, 145, 290)  # FEEDBACK full-height button fill
+        await sample(ctx, 145, 306)  # FEEDBACK full-height button fill
         ctx.set(dut.page, 6)
         ctx.set(dut.band_enables[0], 1)
-        await sample(ctx, 145, 290)  # BANDS now matches FEEDBACK
+        await sample(ctx, 145, 306)  # BANDS now matches FEEDBACK
 
     sim.add_testbench(bench)
     sim.run()
 
     palette = RezoTileDisplay.PALETTE
     assert samples == [
-        palette["blank"], palette["panel"], palette["panel"],
-        palette["modulation"], palette["blank"], palette["panel"],
+        palette["surface"], palette["panel"], palette["panel"],
+        palette["modulation"], palette["surface"], palette["panel"],
         palette["panel"], palette["modulation"],
-        palette["blank"], palette["text"],
+        palette["surface"], palette["text"],
         palette["control"], palette["control"],
     ], samples
 
@@ -708,9 +709,9 @@ def test_compact_group_rails_share_native_label_centers():
 
     async def bench(ctx):
         ctx.set(dut.page, 3)
-        # Text rows 20/23/26/29 have visible-glyph centers at +6.5px.
+        # Shifted text rows 21/24/27/30 retain their native centres.
         # Each rail occupies the two pixels straddling that same center.
-        for center_y in (326, 374, 422, 470):
+        for center_y in (342, 390, 438, 486):
             await sample(ctx, 560, center_y)
             await sample(ctx, 560, center_y - 2)
 
@@ -719,10 +720,10 @@ def test_compact_group_rails_share_native_label_centers():
 
     palette = RezoTileDisplay.PALETTE
     assert samples == [
-        palette["panel"], palette["blank"],
-        palette["panel"], palette["blank"],
-        palette["panel"], palette["blank"],
-        palette["panel"], palette["blank"],
+        palette["panel"], palette["surface"],
+        palette["panel"], palette["surface"],
+        palette["panel"], palette["surface"],
+        palette["panel"], palette["surface"],
     ], samples
 
 
@@ -751,14 +752,14 @@ def test_compact_feedback_sources_and_safety_share_centered_geometry():
 
         # KNEE and CEILING use the shared x=[268,579) track. Their maximum
         # fill retains two visible panel pixels at the right edge.
-        await sample(ctx, 268, 421)
-        await sample(ctx, 260, 421)
-        await sample(ctx, 578, 421)
-        await sample(ctx, 579, 421)
+        await sample(ctx, 268, 437)
+        await sample(ctx, 260, 437)
+        await sample(ctx, 578, 437)
+        await sample(ctx, 579, 437)
 
         # DAMPING leaves one label-to-chip cell, then one chip-to-text cell.
-        await sample(ctx, 272, 474)
-        await sample(ctx, 271, 474)
+        await sample(ctx, 272, 490)
+        await sample(ctx, 271, 490)
 
     sim.add_testbench(bench)
     sim.run()
@@ -770,9 +771,9 @@ def test_compact_feedback_sources_and_safety_share_centered_geometry():
     # On an even-width canvas this odd-width row is centred between pixels.
     assert rendered_x0 + rendered_x1 == 719
     assert samples == [
-        palette["panel"], palette["blank"],
-        palette["panel"], palette["blank"],
-        palette["panel"], palette["blank"],
+        palette["panel"], palette["surface"],
+        palette["panel"], palette["surface"],
+        palette["panel"], palette["surface"],
     ], samples
 
 
@@ -932,7 +933,7 @@ def test_compact_audio_gain_fader_stays_inside_value_lane():
     palette = RezoTileDisplay.PALETTE
     assert samples == [
         palette["control"], palette["panel"], palette["panel"],
-        palette["blank"],
+        palette["surface"],
     ]
 
 
@@ -967,8 +968,8 @@ def test_compact_input_meter_clamps_and_marks_clipping_inside_value_lane():
 
     palette = RezoTileDisplay.PALETTE
     assert samples == [
-        palette["modulation"], palette["blank"],
-        palette["text"], palette["blank"],
+        palette["modulation"], palette["surface"],
+        palette["text"], palette["surface"],
     ]
 
 
@@ -992,7 +993,7 @@ def test_compact_output_cells_share_native_label_centers():
     async def bench(ctx):
         ctx.set(dut.page, 4)
         # Top edges at each row centre verify the native vertical centres.
-        row_centers = (342, 406, 470, 534)
+        row_centers = (358, 422, 486, 550)
         assert tuple(b - a for a, b in zip(
             row_centers, row_centers[1:])) == (64, 64, 64)
         for center_y in row_centers:
@@ -1001,25 +1002,25 @@ def test_compact_output_cells_share_native_label_centers():
         # First-row top edges at each heading centre include the wider DRY
         # label; a pixel beyond each cell verifies the symmetric 56px bounds.
         for center_x in (270, 334, 398, 462, 534):
-            await sample(ctx, center_x, 329)
-            await sample(ctx, center_x + 29, 329)
+            await sample(ctx, center_x, 345)
+            await sample(ctx, center_x + 29, 345)
 
     sim.add_testbench(bench)
     sim.run()
 
     palette = RezoTileDisplay.PALETTE
     assert samples[:8] == [
-        palette["panel"], palette["blank"],
-        palette["panel"], palette["blank"],
-        palette["panel"], palette["blank"],
-        palette["panel"], palette["blank"],
+        palette["panel"], palette["surface"],
+        palette["panel"], palette["surface"],
+        palette["panel"], palette["surface"],
+        palette["panel"], palette["surface"],
     ]
     assert samples[8:] == [
-        palette["panel"], palette["blank"],
-        palette["panel"], palette["blank"],
-        palette["panel"], palette["blank"],
-        palette["panel"], palette["blank"],
-        palette["panel"], palette["blank"],
+        palette["panel"], palette["surface"],
+        palette["panel"], palette["surface"],
+        palette["panel"], palette["surface"],
+        palette["panel"], palette["surface"],
+        palette["panel"], palette["surface"],
     ]
 
 
@@ -1034,7 +1035,7 @@ def test_compact_output_send_scaling_preserves_exact_fill_endpoint():
 
     async def sample(ctx, panel_x):
         ctx.set(dut.x, dut.x_offset + panel_x)
-        ctx.set(dut.y, 342)
+        ctx.set(dut.y, 358)
         ctx.set(dut.de, 1)
         for _ in range(12):
             await ctx.tick("dvi")
@@ -1056,7 +1057,7 @@ def test_compact_output_send_scaling_preserves_exact_fill_endpoint():
     sim.run()
 
     palette = RezoTileDisplay.PALETTE
-    assert samples == [palette["control"], palette["blank"]]
+    assert samples == [palette["control"], palette["surface"]]
 
 
 def test_compact_matrix_labels_share_control_row_centers():
