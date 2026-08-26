@@ -3495,6 +3495,7 @@ class RezoTileDisplay(wiring.Component):
         arc_background = Const(0)
         pager_line = Const(0)
         pager_current = Const(0)
+        pager_current_q0 = Const(0)
         output_meter_panel = Const(0)
         output_meter_fill = Const(0)
         output_meter_panel_q0 = Const(0)
@@ -3579,6 +3580,11 @@ class RezoTileDisplay(wiring.Component):
                 (y >= 78) & (y < 94)
             pager_current = active & pager_window & pager_rport.data[2] & \
                 (y >= 76) & (y < 97)
+            # The outlined boxes pass through geometry_line_q0 below. Match
+            # that stage here so the filled box does not consume the one-pixel
+            # gap during a continuously advancing raster scan.
+            pager_current_q0 = Signal()
+            m.d.dvi += pager_current_q0.eq(pager_current)
 
             # Two persistent output lanes per side. Four precomputed circle
             # intersections form two annular strips on either side, concentric
@@ -5293,7 +5299,7 @@ class RezoTileDisplay(wiring.Component):
                                  meter_panel | filter_meter_panel),
         ]
         m.d.dvi += [
-            selected_q.eq(selected | pager_current |
+            selected_q.eq(selected | pager_current_q0 |
                           output_meter_hot_q0 | output_meter_clip_q0),
             text_q.eq(text | input_clip_q0),
             fill_q.eq(geometry_fill_q0 |

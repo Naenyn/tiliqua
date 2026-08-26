@@ -349,6 +349,53 @@ def test_compact_pager_tracks_firmware_navigation_order_and_mode_count():
     ]
 
 
+def test_compact_pager_keeps_one_pixel_gaps_during_raster_scan():
+    """Filled and outlined pager roles remain aligned at one pixel per tick."""
+    dut = RezoTileDisplay(
+        h_active=720, rotate_left=False, compact_layout=True)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6, domain="sync")
+    sim.add_clock(1e-6, domain="dvi")
+    scans = []
+
+    async def scan(ctx, page):
+        ctx.set(dut.page, page)
+        ctx.set(dut.y, 86)
+        ctx.set(dut.de, 1)
+        pixels = []
+        for native_x in range(290, 430):
+            ctx.set(dut.x, native_x)
+            await ctx.tick("dvi")
+            pixels.append(ctx.get(dut.r))
+        scans.append(pixels)
+
+    async def bench(ctx):
+        await scan(ctx, 0)
+        await scan(ctx, 6)
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    selected = RezoTileDisplay.PALETTE["selected"]
+    line = RezoTileDisplay.PALETTE["line"]
+    selected_runs = []
+    for scan_index, pixels in enumerate(scans):
+        selected_pixels = [index for index, color in enumerate(pixels)
+                           if color == selected]
+        start, end = min(selected_pixels), max(selected_pixels)
+        assert end - start + 1 == 19
+        line_pixels = [index for index, color in enumerate(pixels)
+                       if color == line]
+        if scan_index:
+            assert start - max(
+                index for index in line_pixels if index < start) == 2
+        assert min(index for index in line_pixels if index > end) - end == 2
+        selected_runs.append((start, end))
+
+    # Page 6 is the second firmware-navigation position.
+    assert selected_runs[1][0] - selected_runs[0][0] == 12
+
+
 def test_compact_output_meters_are_persistent_and_independent():
     """All four output meters render in their fixed left/right arc lanes."""
     dut = RezoTileDisplay(
