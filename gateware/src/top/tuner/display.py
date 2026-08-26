@@ -29,6 +29,7 @@ FONT = {
     ".": [0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x06],
     "/": [0x01, 0x02, 0x04, 0x08, 0x10, 0x00, 0x00],
     ":": [0x00, 0x06, 0x06, 0x00, 0x06, 0x06, 0x00],
+    "<": [0x02, 0x04, 0x08, 0x10, 0x08, 0x04, 0x02],
     "0": [0x0e, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0e],
     "1": [0x04, 0x0c, 0x14, 0x04, 0x04, 0x04, 0x1f],
     "2": [0x0e, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1f],
@@ -67,7 +68,7 @@ FONT = {
     "Z": [0x1f, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1f],
 }
 
-FONT_CHARS = " #+-./:0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+FONT_CHARS = " #+-./:0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ<"
 FONT_INDEX = {char: index for index, char in enumerate(FONT_CHARS)}
 FONT_INIT = [row for char in FONT_CHARS for row in (*FONT[char], 0)]
 
@@ -356,6 +357,20 @@ class TunerOverlay(wiring.Component):
         dx2_1 = Signal.like(dx2_0)
         x_rel1 = Signal(9)
         x_rel_valid1 = Signal()
+        menu_inside1 = Signal()
+        menu_border1 = Signal()
+        menu_rule1 = Signal()
+
+        # OSCIO/SONORO-style modal menu bounds. The box remains comfortably
+        # inside the official circular display while leaving the outer pitch
+        # labels and enough of the live spiral visible to retain context.
+        menu_inside0 = active0 & (x0 >= 128) & (x0 < 592) & \
+            (y0 >= 176) & (y0 < 480)
+        menu_border0 = menu_inside0 & (
+            (x0 < 131) | (x0 >= 589) | (y0 < 179) | (y0 >= 477))
+        menu_rule0 = menu_inside0 & (
+            ((y0 >= 216) & (y0 < 218)) |
+            ((y0 >= 424) & (y0 < 426)))
 
         # Cheap polar approximation. It is deliberately generated every scan,
         # so guide pixels never need to be stored, erased, or repaired. The
@@ -398,6 +413,9 @@ class TunerOverlay(wiring.Component):
             dx2_1.eq(dx2_0),
             x_rel1.eq(x0 - 128),
             x_rel_valid1.eq((x0 >= 128) & (x0 < 640)),
+            menu_inside1.eq(menu_inside0),
+            menu_border1.eq(menu_border0),
+            menu_rule1.eq(menu_rule0),
             ax1.eq(ax0), ay1.eq(ay0),
             amdx1.eq(Mux(mdx0 < 0, -mdx0, mdx0)),
             amdy1.eq(Mux(mdy0 < 0, -mdy0, mdy0)),
@@ -454,6 +472,9 @@ class TunerOverlay(wiring.Component):
         x_rel2 = Signal.like(x_rel1)
         x_rel_valid2 = Signal()
         spoke_hits2 = Signal(len(spoke_ports))
+        menu_inside2 = Signal()
+        menu_border2 = Signal()
+        menu_rule2 = Signal()
         m.d.dvi += [
             scan2.eq(scan1),
             glyph_col2.eq(glyph_col1),
@@ -473,6 +494,9 @@ class TunerOverlay(wiring.Component):
                 Mux(marker_valid & marker_visualizer &
                     (marker_distance1 <= 22), 1, 0))),
             spoke_hits2.eq(Cat(*exact_spoke_hits)),
+            menu_inside2.eq(menu_inside1),
+            menu_border2.eq(menu_border1),
+            menu_rule2.eq(menu_rule1),
         ]
         for bounds, spiral_port in zip(spiral_bounds2, spiral_ports):
             m.d.dvi += bounds.eq(spiral_port.data)
@@ -513,6 +537,9 @@ class TunerOverlay(wiring.Component):
         spiral3 = Signal()
         arc3 = Signal()
         spoke3 = Signal()
+        menu_inside3 = Signal()
+        menu_border3 = Signal()
+        menu_rule3 = Signal()
         m.d.dvi += [
             scan3.eq(scan2),
             circle_edge3.eq(circle_edge2),
@@ -527,6 +554,9 @@ class TunerOverlay(wiring.Component):
             arc3.eq(Cat(*exact_spiral_hits2).any() & marker_valid &
                     ~marker_visualizer & (marker_distance2 <= 14)),
             spoke3.eq(spoke_hits2.any()),
+            menu_inside3.eq(menu_inside2),
+            menu_border3.eq(menu_border2),
+            menu_rule3.eq(menu_rule2),
         ]
 
         guide3 = Signal()
@@ -538,6 +568,9 @@ class TunerOverlay(wiring.Component):
         # 4 radial guide, 5 analytical arc, 6/7 visualizer halo.
         geometry4 = Signal(3)
         text_hit4 = Signal()
+        menu_inside4 = Signal()
+        menu_border4 = Signal()
+        menu_rule4 = Signal()
         analytical_lens3 = Signal()
         selected_lens_data3 = Signal()
         m.d.comb += selected_lens_data3.eq(
@@ -547,14 +580,16 @@ class TunerOverlay(wiring.Component):
             (lens_bank3 < len(lens_ports)) & selected_lens_data3)
         m.d.dvi += [
             scan4.eq(scan3),
-            geometry4.eq(Mux(menu_active, 0,
-                         Mux(marker3 | analytical_lens3, 2,
+            geometry4.eq(Mux(marker3 | analytical_lens3, 2,
                          Mux(arc3, 5,
                          Mux(marker_halo3 == 2, 6,
                          Mux(marker_halo3 == 1, 7,
                          Mux(guide3, 1,
-                         Mux(spoke3, 4, Mux(circle_edge3, 3, 0))))))))),
+                         Mux(spoke3, 4, Mux(circle_edge3, 3, 0)))))))),
             text_hit4.eq(text_hit3),
+            menu_inside4.eq(menu_inside3),
+            menu_border4.eq(menu_border3),
+            menu_rule4.eq(menu_rule3),
         ]
 
         pixel = Signal(Pixel)
@@ -573,6 +608,15 @@ class TunerOverlay(wiring.Component):
             m.d.comb += [pixel.color.eq(marker_hue), pixel.intensity.eq(8)]
         with m.If(geometry4 == 7):
             m.d.comb += [pixel.color.eq(marker_hue), pixel.intensity.eq(3)]
+        # The menu is an opaque modal panel over the continuously rendered
+        # tuner, rather than a separate full-screen page. Its procedural fill
+        # guarantees that old pixels cannot show through between text updates.
+        with m.If(menu_active & menu_inside4):
+            m.d.comb += pixel.eq(0)
+            with m.If(menu_border4):
+                m.d.comb += [pixel.color.eq(9), pixel.intensity.eq(10)]
+            with m.Elif(menu_rule4):
+                m.d.comb += [pixel.color.eq(9), pixel.intensity.eq(3)]
         with m.If(text_hit4):
             m.d.comb += [pixel.color.eq(9), pixel.intensity.eq(13)]
 

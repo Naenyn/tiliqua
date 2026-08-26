@@ -18,11 +18,11 @@ reference CV and contains no oscillator calibration or quantization.
 
 ## Controls
 
-Touching the encoder opens an on-screen menu for three seconds; it remains open
-while a value is being edited. Rotate to navigate, press to begin editing,
-rotate to change the selected value, and press again to finish. Select the page
-heading to switch between TUNER, SETTINGS, and HELP. The menu exposes input,
-display mode, reference-tone mode, A4 reference, and option persistence.
+Press the encoder to open an OSCIO/SONORO-style boxed menu over the live tuner.
+Rotate to navigate, press to begin editing, rotate to change the selected value,
+and press again to finish. Select the page heading to switch between TUNER,
+SETTINGS, and HELP. The menu hides after five seconds of inactivity and exposes
+input, display mode, reference-tone mode, A4 reference, and option persistence.
 
 ## Detector
 

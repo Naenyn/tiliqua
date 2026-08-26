@@ -24,6 +24,12 @@ use tiliqua_pac as pac;
 
 const TIMER0_ISR_PERIOD_MS: u32 = 5;
 const FRAME_PERIOD_TICKS: u8 = 4; // Publish measurements at up to 50Hz.
+const MENU_COLUMN: u8 = 8;
+const MENU_ROW: u8 = 11;
+const MENU_WIDTH: u8 = 29;
+const MENU_HEIGHT: u8 = 19;
+const MENU_TEXT_COLUMN: u8 = MENU_COLUMN + 2;
+const MENU_TEXT_WIDTH: u8 = MENU_WIDTH - 4;
 const NOTE_NAMES: [&str; 12] = [
     "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
 ];
@@ -39,7 +45,14 @@ impl App {
         let pca9635 = Pca9635Driver::new(I2c0::new(peripherals.I2C0));
         let pmod = EurorackPmod0::new(peripherals.PMOD0_PERIPH);
         Self {
-            ui: ui::UI::new(opts, TIMER0_ISR_PERIOD_MS, encoder, pca9635, pmod),
+            ui: ui::UI::new_with_fade(
+                opts,
+                TIMER0_ISR_PERIOD_MS,
+                5_000,
+                encoder,
+                pca9635,
+                pmod,
+            ),
         }
     }
 }
@@ -160,6 +173,7 @@ fn glyph_index(byte: u8) -> u8 {
         b'0'..=b'9' => 7 + byte - b'0',
         b'A'..=b'Z' => 17 + byte - b'A',
         b'a'..=b'z' => 17 + byte - b'a',
+        b'<' => 43,
         _ => 0,
     }
 }
@@ -216,14 +230,33 @@ fn write_static_text(display: &pac::TUNER_DISPLAY) {
         write_text(display, column, row, label);
     }
     write_text(display, 20, 1, "TUNER");
-    write_text(display, 12, 42, "TURN ENCODER FOR MENU");
+    write_text(display, 11, 42, "PRESS ENCODER FOR MENU");
 }
 
-fn clear_text(display: &pac::TUNER_DISPLAY) {
-    for address in 0..(45 * 45) {
+fn clear_menu_text(display: &pac::TUNER_DISPLAY) {
+    for row in MENU_ROW..MENU_ROW + MENU_HEIGHT {
+        for column in MENU_COLUMN..MENU_COLUMN + MENU_WIDTH {
+            display.tile_write().write(|w| unsafe {
+                w.address().bits(row as u16 * 45 + column as u16);
+                w.glyph().bits(glyph_index(b' '))
+            });
+        }
+    }
+}
+
+fn write_menu_line(display: &pac::TUNER_DISPLAY, row: u8, text: &str) {
+    for offset in 0..MENU_TEXT_WIDTH {
         display.tile_write().write(|w| unsafe {
-            w.address().bits(address);
+            w.address()
+                .bits(row as u16 * 45 + MENU_TEXT_COLUMN as u16 + offset as u16);
             w.glyph().bits(glyph_index(b' '))
+        });
+    }
+    for (offset, byte) in text.bytes().take(MENU_TEXT_WIDTH as usize).enumerate() {
+        display.tile_write().write(|w| unsafe {
+            w.address()
+                .bits(row as u16 * 45 + MENU_TEXT_COLUMN as u16 + offset as u16);
+            w.glyph().bits(glyph_index(byte))
         });
     }
 }
@@ -241,10 +274,18 @@ fn publish_menu(display: &pac::TUNER_DISPLAY, opts: &Opts) {
         " "
     };
     write!(page_line, "{} PAGE  {}", page_prefix, page).ok();
-    write_centered(display, 8, &page_line, 32);
+    write_menu_line(display, 12, &page_line);
+    if opts.selected().is_none() && opts.modify() {
+        write_text(
+            display,
+            MENU_TEXT_COLUMN + MENU_TEXT_WIDTH - 1,
+            12,
+            "<",
+        );
+    }
 
     let options = opts.view().options();
-    for index in 0..5 {
+    for index in 0..4 {
         let mut line: String<48> = String::new();
         if let Some(option) = options.get(index) {
             let prefix = if opts.selected() == Some(index) {
@@ -256,9 +297,17 @@ fn publish_menu(display: &pac::TUNER_DISPLAY, opts: &Opts) {
             } else {
                 " "
             };
-            write!(line, "{} {:<15} {}", prefix, option.name(), option.value()).ok();
+            write!(line, "{} {:<12} {}", prefix, option.name(), option.value()).ok();
         }
-        write_centered(display, 13 + index as u8 * 3, &line, 32);
+        write_menu_line(display, 15 + index as u8 * 3, &line);
+        if opts.selected() == Some(index) && opts.modify() {
+            write_text(
+                display,
+                MENU_TEXT_COLUMN + MENU_TEXT_WIDTH - 1,
+                15 + index as u8 * 3,
+                "<",
+            );
+        }
     }
 
     let mut help: String<48> = String::new();
@@ -267,16 +316,7 @@ fn publish_menu(display: &pac::TUNER_DISPLAY, opts: &Opts) {
     } else {
         write!(help, "TURN NAV  PRESS EDIT").ok();
     }
-    write_centered(display, 31, &help, 32);
-
-    display.marker().write(|w| unsafe {
-        w.x().bits(0);
-        w.y().bits(0);
-        w.hue().bits(0);
-        w.valid().bit(false);
-        w.visualizer().bit(false);
-        w.menu_active().bit(true)
-    });
+    write_menu_line(display, 27, &help);
 }
 
 fn publish_tuner(
@@ -288,6 +328,7 @@ fn publish_tuner(
     reference_mode: ReferenceTone,
     reference_output_hz: Option<f32>,
     smoothed_midi: &mut Option<f32>,
+    menu_active: bool,
 ) {
     let cx = 360;
     let cy = 360;
@@ -375,8 +416,10 @@ fn publish_tuner(
         }
     };
 
-    write_centered(display, 20, &note_line, 8);
-    write_centered(display, 22, &cents_line, 20);
+    if !menu_active {
+        write_centered(display, 20, &note_line, 8);
+        write_centered(display, 22, &cents_line, 20);
+    }
     write_centered(display, 37, &frequency_line, 24);
     write_centered(display, 39, &voltage_line, 28);
     write_centered(display, 41, &reference_line, 24);
@@ -387,14 +430,14 @@ fn publish_tuner(
             w.hue().bits(marker.hue);
             w.valid().bit(true);
             w.visualizer().bit(display_mode == DisplayMode::Visualizer);
-            w.menu_active().bit(false)
+            w.menu_active().bit(menu_active)
         } else {
             w.x().bits(0);
             w.y().bits(0);
             w.hue().bits(0);
             w.valid().bit(false);
             w.visualizer().bit(display_mode == DisplayMode::Visualizer);
-            w.menu_active().bit(false)
+            w.menu_active().bit(menu_active)
         }
     });
     display.marker_shape().write(|w| unsafe {
@@ -458,6 +501,11 @@ fn main() -> ! {
         None
     };
     let app = Mutex::new(RefCell::new(App::new(opts)));
+    critical_section::with(|cs| {
+        let mut app = app.borrow_ref_mut(cs);
+        app.ui.clear_draw();
+        app.ui.set_menu_visible(false);
+    });
     handler!(timer0 = || timer0_handler(&app));
 
     irq::scope(|scope| {
@@ -468,22 +516,30 @@ fn main() -> ! {
         let mut frame_ticks = FRAME_PERIOD_TICKS;
         let mut smoothed_midi = None;
         let mut menu_was_active = false;
+        let mut menu_dirty_pending = false;
         loop {
             riscv::asm::wfi();
-            let (opts, save, wipe, menu_active) = critical_section::with(|cs| {
+            let (opts, save, wipe, menu_active, menu_dirty) = critical_section::with(|cs| {
                 let mut app = app.borrow_ref_mut(cs);
                 let save = app.ui.opts.settings.save_opts.poll();
                 let wipe = app.ui.opts.settings.wipe_opts.poll();
-                let menu_active = app.ui.encoder_recently_touched(3_000) || app.ui.opts.modify();
-                (app.ui.opts.clone(), save, wipe, menu_active)
+                let menu_active = app.ui.draw();
+                app.ui.set_menu_visible(menu_active);
+                let menu_dirty = app.ui.take_menu_dirty();
+                (app.ui.opts.clone(), save, wipe, menu_active, menu_dirty)
             });
+            menu_dirty_pending |= menu_dirty;
             if save {
                 if let Some(storage) = flash_persist.as_mut() {
                     storage.save_options(&opts).ok();
                 }
             }
             if wipe {
-                critical_section::with(|cs| app.borrow_ref_mut(cs).ui.opts = Opts::default());
+                critical_section::with(|cs| {
+                    let mut app = app.borrow_ref_mut(cs);
+                    app.ui.opts = Opts::default();
+                    app.ui.external_modify();
+                });
                 if let Some(storage) = flash_persist.as_mut() {
                     storage.erase_all().ok();
                 }
@@ -492,11 +548,9 @@ fn main() -> ! {
             frame_ticks = frame_ticks.saturating_add(1);
             if frame_ticks >= FRAME_PERIOD_TICKS {
                 frame_ticks = 0;
-                if menu_active != menu_was_active {
-                    clear_text(&tuner_display);
-                    if !menu_active {
-                        write_static_text(&tuner_display);
-                    }
+                let menu_transition = menu_active != menu_was_active;
+                if menu_transition {
+                    clear_menu_text(&tuner_display);
                     menu_was_active = menu_active;
                 }
                 let measurement = read_measurement(&tuner, counts_per_v);
@@ -504,20 +558,21 @@ fn main() -> ! {
                 let reference_output_hz =
                     reference_frequency(measurement, reference_hz, opts.tuner.reference_tone.value);
                 configure_reference(&tuner, reference_output_hz, sample_rate);
-                if menu_active {
+                publish_tuner(
+                    &tuner_display,
+                    measurement,
+                    reference_hz,
+                    opts.tuner.input.value,
+                    opts.tuner.display.value,
+                    opts.tuner.reference_tone.value,
+                    reference_output_hz,
+                    &mut smoothed_midi,
+                    menu_active,
+                );
+                if menu_active && (menu_dirty_pending || menu_transition) {
                     publish_menu(&tuner_display, &opts);
-                } else {
-                    publish_tuner(
-                        &tuner_display,
-                        measurement,
-                        reference_hz,
-                        opts.tuner.input.value,
-                        opts.tuner.display.value,
-                        opts.tuner.reference_tone.value,
-                        reference_output_hz,
-                        &mut smoothed_midi,
-                    );
                 }
+                menu_dirty_pending = false;
             }
         }
     })

@@ -63,8 +63,8 @@ def test_tuner_display_regenerates_guide_and_clips_corners():
         await ctx.tick("dvi").repeat(5)
         assert ctx.get(dut.o.pixel.intensity) == 0
 
-        # The on-screen options menu owns the canvas while active, so the
-        # underlying spiral cannot compete visually with its text.
+        # The modal menu masks only its central panel while leaving the live
+        # tuner visible around it.
         ctx.set(dut.menu_active, 1)
         ctx.set(dut.i.vsync, 1)
         await ctx.tick("dvi").repeat(4)
@@ -73,6 +73,18 @@ def test_tuner_display_regenerates_guide_and_clips_corners():
         ctx.set(dut.i.y, 360 - 52)
         await ctx.tick("dvi").repeat(5)
         assert ctx.get(dut.o.pixel.intensity) == 0
+
+        # An exact C# radial tick outside the box remains live.
+        ctx.set(dut.i.x, 477)
+        ctx.set(dut.i.y, 157)
+        await ctx.tick("dvi").repeat(5)
+        assert ctx.get(dut.o.pixel.intensity) == 2
+
+        # The panel border is procedural and does not depend on stale tiles.
+        ctx.set(dut.i.x, 128)
+        ctx.set(dut.i.y, 240)
+        await ctx.tick("dvi").repeat(5)
+        assert ctx.get(dut.o.pixel.intensity) == 10
         ctx.set(dut.menu_active, 0)
         ctx.set(dut.i.vsync, 1)
         await ctx.tick("dvi").repeat(4)
