@@ -39,6 +39,8 @@ class TunerSoc(TiliquaSoc):
         super().__init__(finalize_csr_bridge=False, mainram_size=0x4000,
                          fb_overlay=self.tuner_display.overlay,
                          pipeline_palette_output=True,
+                         with_persistence=False,
+                         with_raster_engines=False,
                          **kwargs)
         self.tuner_periph = TunerPeripheral(
             sample_rate=self.clock_settings.audio_clock.fs(),
@@ -60,11 +62,6 @@ class TunerSoc(TiliquaSoc):
 
         pmod = self.pmod0_periph.pmod
         wiring.connect(m, pmod.o_cal, self.tuner_periph.i)
-
-        # Unlike XBEAM, the tuner is an ordinary retained-mode interface. Its
-        # renderer explicitly replaces moving elements, so phosphor decay would
-        # create trails and also waste PSRAM bandwidth.
-        m.d.comb += self.persist_periph.en.eq(0)
 
         # Output 1 optionally carries the calibrated 1 Vpp reference sine.
         # The remaining outputs stay at calibrated zero. Advancing the NCO only

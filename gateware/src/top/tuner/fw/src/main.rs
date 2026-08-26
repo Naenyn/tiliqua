@@ -491,12 +491,8 @@ fn main() -> ! {
     let mut video = DMAFramebuffer0::new(
         peripherals.FRAMEBUFFER_PERIPH,
         peripherals.PALETTE_PERIPH,
-        peripherals.BLIT,
-        peripherals.PIXEL_PLOT,
-        peripherals.LINE,
         PSRAM_FB_BASE,
         modeline.clone(),
-        BLIT_MEM_BASE,
     );
     // Scanout timing still comes from the standard video peripheral, but the
     // tuner overlay replaces every active pixel. There is no framebuffer draw
