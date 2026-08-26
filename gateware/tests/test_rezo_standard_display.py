@@ -244,7 +244,7 @@ def test_compact_round_layout_uses_all_four_arcs():
         # Native REZO identity lives in the top circular arc.
         await sample(ctx, 320, 32)
         # Blank portion of the PAGE value chip remains visibly framed.
-        await sample(ctx, 352, 152)
+        await sample(ctx, 352, 135)
         ctx.set(dut.selected, RezoHardwareUI.TARGET_PAGE)
         await sample(ctx, 212, 140)
         # MAIN is authored natively in the safe central header.
@@ -265,6 +265,51 @@ def test_compact_round_layout_uses_all_four_arcs():
         palette["text"],
         palette["background"],
         palette["blank"],
+    ]
+
+
+def test_compact_header_controls_are_tight_and_right_anchored():
+    """Header status boxes hug their text and MODE moves to the right."""
+    dut = RezoTileDisplay(
+        h_active=720, rotate_left=False, compact_layout=True)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6, domain="sync")
+    sim.add_clock(1e-6, domain="dvi")
+    samples = []
+
+    async def sample(ctx, native_x, native_y):
+        ctx.set(dut.x, native_x)
+        ctx.set(dut.y, native_y)
+        ctx.set(dut.de, 1)
+        for _ in range(12):
+            await ctx.tick("dvi")
+        samples.append(ctx.get(dut.r))
+
+    async def bench(ctx):
+        for _ in range(240):
+            await ctx.tick("sync")
+        await sample(ctx, 350, 123)  # immediately above PAGE chip
+        await sample(ctx, 350, 124)  # PAGE chip top
+        await sample(ctx, 350, 145)  # PAGE chip bottom
+        await sample(ctx, 350, 146)  # immediately below PAGE chip
+        await sample(ctx, 520, 121)  # immediately above MOVE outline
+        await sample(ctx, 520, 122)  # MOVE outline top/left
+        await sample(ctx, 520, 147)  # MOVE outline bottom/left
+        await sample(ctx, 520, 148)  # immediately below MOVE outline
+        await sample(ctx, 528, 128)  # first pixel of MOVE
+        await sample(ctx, 470, 190)  # former MODE chip position
+        await sample(ctx, 590, 190)  # shifted MODE chip
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    palette = RezoTileDisplay.PALETTE
+    assert samples == [
+        palette["blank"], palette["panel"],
+        palette["panel"], palette["blank"],
+        palette["blank"], palette["line"],
+        palette["line"], palette["blank"],
+        palette["text"], palette["blank"], palette["panel"],
     ]
 
 
@@ -417,7 +462,7 @@ def test_bank_surface_uses_eighth_palette_role_while_blank_stays_black():
 
     async def bench(ctx):
         for palette in range(len(dut.RGB_PALETTES)):
-            await sample(ctx, palette, 0, 400, 240)  # BANK surface
+            await sample(ctx, palette, 0, 350, 240)  # BANK surface
             await sample(ctx, palette, 0, 400, 180)  # header/content gap
             await sample(ctx, palette, 0, 400, 540)  # below FEEDBACK
             await sample(ctx, palette, 1, 400, 240)  # another page
@@ -540,8 +585,8 @@ def test_compact_labels_use_native_control_rows():
             await ctx.tick("sync")
 
         # BANK labels share the native x=272 right edge of the fader gutter.
-        await sample(ctx, 12 * 16, 448)       # DRIVE
-        await sample(ctx, 10 * 16, 448)       # old, too-far-left start
+        await sample(ctx, 12 * 16, 456)       # DRIVE
+        await sample(ctx, 10 * 16, 456)       # old, too-far-left start
 
         # FILTER's deepest row remains inside the content field, and its
         # first label begins on the same inner gutter as MATRIX.

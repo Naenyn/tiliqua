@@ -2804,17 +2804,26 @@ class RezoTileDisplay(wiring.Component):
                           (ui_y >= 0) & (ui_y < self.PANEL_H)),
             ]
 
-        zero_y = 350 if self.compact_layout else 366
+        if self.compact_layout:
+            # BANK's shaded work area gets an 8px top inset. FILTER retains
+            # the family geometry authored for the unshaded main page.
+            zero_y = Mux(self.filter_mode, 350, 358)
+            zero_y_init = 358
+            main_band_y0 = Mux(self.filter_mode, 259, 267)
+            main_band_y1 = Mux(self.filter_mode, 440, 448)
+        else:
+            zero_y = 366
+            zero_y_init = zero_y
+            main_band_y0 = 202
+            main_band_y1 = 532
         # Retain the compact field's lower edge while reclaiming the unused
         # space above it.  This leaves modest padding below the BANDS label
         # and a clear gutter before the first horizontal control.
-        main_band_y0 = 259 if self.compact_layout else 202
-        main_band_y1 = 440 if self.compact_layout else 532
-        band_top_values = [Signal(signed(12), init=zero_y, name=f"tile_band_top_value{n}")
+        band_top_values = [Signal(signed(12), init=zero_y_init, name=f"tile_band_top_value{n}")
                            for n in range(RezoCore.N_BANDS)]
-        band_bottom_values = [Signal(signed(12), init=zero_y, name=f"tile_band_bottom_value{n}")
+        band_bottom_values = [Signal(signed(12), init=zero_y_init, name=f"tile_band_bottom_value{n}")
                               for n in range(RezoCore.N_BANDS)]
-        band_base_marker_values = [Signal(signed(12), init=zero_y,
+        band_base_marker_values = [Signal(signed(12), init=zero_y_init,
                                           name=f"tile_band_base_marker{n}")
                                    for n in range(RezoCore.N_BANDS)]
         band_positive_values = [Signal(name=f"tile_band_positive{n}")
@@ -2871,11 +2880,15 @@ class RezoTileDisplay(wiring.Component):
         cell_y = Signal(unsigned(6))
         glyph_col = Signal(unsigned(3))
         glyph_row = Signal(unsigned(3))
+        text_sample_y = Signal.like(text_y)
+        m.d.comb += text_sample_y.eq(Mux(
+            self.compact_layout & (self.page == 0) & ~self.filter_mode &
+            (text_y >= 232) & (text_y < 538), text_y - 8, text_y))
         m.d.comb += [
             cell_x.eq(text_x[self.CELL_SHIFT:]),
-            cell_y.eq(text_y[self.CELL_SHIFT:]),
+            cell_y.eq(text_sample_y[self.CELL_SHIFT:]),
             glyph_col.eq(text_x[1:4]),
-            glyph_row.eq(text_y[1:4]),
+            glyph_row.eq(text_sample_y[1:4]),
         ]
 
         home_page = Signal()
@@ -2999,8 +3012,8 @@ class RezoTileDisplay(wiring.Component):
 
             # BANK main page.
             put_native_page_heading(put_native, 0, "PRESET")
-            put_native_page_heading(put_native, 0, "MODE", 24)
-            put_native_page_heading(put_native, 0, "BANK", 30)
+            put_native_page_heading(put_native, 0, "MODE", 25)
+            put_native_page_heading(put_native, 0, "BANK", 31)
             put_native(0, "BANDS", 8, 14)
             put_native(0, "FREQ:", 23, 14)
             # BANK occupies the first three slots of the same five-slot grid
@@ -3015,8 +3028,8 @@ class RezoTileDisplay(wiring.Component):
 
             # FILTER main page.
             put_native_page_heading(put_native, 7, "TYPE")
-            put_native_page_heading(put_native, 7, "MODE", 24)
-            put_native_page_heading(put_native, 7, "FILTER", 30)
+            put_native_page_heading(put_native, 7, "MODE", 25)
+            put_native_page_heading(put_native, 7, "FILTER", 31)
             put_native(7, "BANDS", 8, 14)
             # FILTER uses all five shared slots. Right-align every label at
             # x=272, immediately before the common native fader gutter.
@@ -3201,7 +3214,7 @@ class RezoTileDisplay(wiring.Component):
             editing_sync & (selected_sync == RezoHardwareUI.TARGET_BAND_LAYOUT),
             frequency_layout_preview_sync, frequency_layout_sync))
         target_names = BASE_TARGET_NAMES
-        nav_names = NAV_NAMES
+        nav_names = ("MOVE", "EDIT") if self.compact_layout else NAV_NAMES
         nav_chars = [Array(Const(self.code(name[pos]), 6) for name in nav_names)
                      for pos in range(4)]
         preset_chars = [Array(Const(self.code(name[pos]), 6) for name in preset_names)
@@ -3727,11 +3740,11 @@ class RezoTileDisplay(wiring.Component):
             # Reuse the former side chip's renderer slot for the PAGE value
             # in the central header.  The circular side wings remain blank.
             side_page_chip = active & self.rect(
-                text_x, text_y, 216, 120, 360, 160)
-            # NAV/EDIT is status rather than a navigable value. Its outline
+                text_x, text_y, 216, 124, 360, 146)
+            # MOVE/EDIT is status rather than a navigable value. Its outline
             # remains identical in both modes; only the dynamic text changes.
             cursor_chip = active & self.outline(
-                text_x, text_y, 520, 120, 600, 160, t=2)
+                text_x, text_y, 520, 122, 600, 148, t=2)
         # One shared rectangle keeps the pixel path shallow. FILTER needs the
         # deepest field because its fifth fader ends at y=690; ending its
         # background at y=666 left RESONANCE floating in the black margin.
@@ -3761,7 +3774,7 @@ class RezoTileDisplay(wiring.Component):
             active & bank_page & self.compact_layout & self.rect(
                 x, y, NATIVE_CONTENT_PANEL_X0, NATIVE_CONTENT_PANEL_Y0,
                 NATIVE_CONTENT_PANEL_X1,
-                compact_main_control_y0s[2] + 18))
+                compact_main_control_y0s[2] + 26))
         control_panel_x0 = 283 if self.compact_layout else 118
         control_panel_x1 = 594 if self.compact_layout else 650
         control_fill_x0 = 289 if self.compact_layout else 124
@@ -3774,7 +3787,7 @@ class RezoTileDisplay(wiring.Component):
         if self.compact_layout:
             bank_meter_rows = Const(0)
             filter_meter_rows = Const(0)
-            for row_y0 in compact_main_control_y0s[:3]:
+            for row_y0 in tuple(y0 + 8 for y0 in compact_main_control_y0s[:3]):
                 bank_meter_rows = bank_meter_rows | self.rect(
                     x, y, control_panel_x0, row_y0 - 2,
                     control_panel_x1, row_y0 + 18)
@@ -3880,12 +3893,12 @@ class RezoTileDisplay(wiring.Component):
         if self.compact_layout:
             # BANK/FILTER is a main-page control; PAGE owns the header.
             mode_chip = home_page & self.rect(
-                text_x, text_y, 464, NATIVE_PAGE_HEADER_CHIP_Y0,
-                584, NATIVE_PAGE_HEADER_CHIP_Y1)
+                text_x, text_y, 480, NATIVE_PAGE_HEADER_CHIP_Y0,
+                600, NATIVE_PAGE_HEADER_CHIP_Y1)
             mode_select = home_page & (
                 self.selected == RezoHardwareUI.TARGET_MODE) & self.outline(
-                    text_x, text_y, 460, NATIVE_PAGE_HEADER_SELECT_Y0,
-                    588, NATIVE_PAGE_HEADER_SELECT_Y1, t=3)
+                    text_x, text_y, 476, NATIVE_PAGE_HEADER_SELECT_Y0,
+                    604, NATIVE_PAGE_HEADER_SELECT_Y1, t=3)
             filter_type_chip = filter_page & self.rect(
                 text_x, text_y, native_value_chip_x0(14),
                 NATIVE_PAGE_HEADER_CHIP_Y0,
@@ -4951,7 +4964,8 @@ class RezoTileDisplay(wiring.Component):
                 ~self.editing & self.outline(
                     x, y, 131, 95, 269, 143, t=3))
         bank_control_y0s = (
-            compact_main_control_y0s[:3] if self.compact_layout
+            tuple(y0 + 8 for y0 in compact_main_control_y0s[:3])
+            if self.compact_layout
             else (556, 588, 620))
         bank_panel_bounds = (
             tuple((row_y0 - 2, row_y0 + 18)
@@ -5265,7 +5279,7 @@ class RezoTileDisplay(wiring.Component):
         if self.compact_layout:
             page_select = (
                 (self.selected == RezoHardwareUI.TARGET_PAGE) &
-                self.outline(text_x, text_y, 212, 116, 364, 164, t=3))
+                self.outline(text_x, text_y, 212, 120, 364, 150, t=3))
         else:
             page_select = (
                 (self.selected == RezoHardwareUI.TARGET_PAGE) &
