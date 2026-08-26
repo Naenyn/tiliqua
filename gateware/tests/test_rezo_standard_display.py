@@ -1,7 +1,17 @@
 from amaranth import Module
 from amaranth.sim import Simulator
 
-from top.rezo.rezo_variant import RezoCore, RezoHardwareUI, RezoTileDisplay
+from top.rezo.rezo_variant import (
+    RezoCore, RezoHardwareUI, RezoTileDisplay, output_meter_db_value,
+)
+
+
+def test_output_meter_uses_calibrated_daw_scale():
+    """The telemetry LUT follows a linear -60..0 dBFS display axis."""
+    assert [output_meter_db_value(magnitude) for magnitude in
+            (0, 1, 4, 16, 65, 129, 257, 513, 1023)] == [
+        0, 0, 12, 25, 38, 44, 50, 57, 63,
+    ]
 
 
 def _render_text_bounds(*regions, page=0, palette=0, input_modes=(),
@@ -162,7 +172,7 @@ def test_output_dry_label_is_centered_and_hidden_with_its_filter_column():
     sim.add_testbench(bench)
     sim.run()
     palette = RezoTileDisplay.PALETTE
-    assert samples == [palette["panel"], palette["background"]]
+    assert samples == [palette["panel"], palette["blank"]]
 
 
 def test_main_preset_selection_uses_the_shared_header_outline():
@@ -187,7 +197,7 @@ def test_main_preset_selection_uses_the_shared_header_outline():
     sim.add_testbench(bench)
     sim.run()
     palette = RezoTileDisplay.PALETTE
-    assert samples == [palette["background"], palette["selected"]]
+    assert samples == [palette["blank"], palette["selected"]]
 
 
 def test_compact_round_layout_uses_all_four_arcs():
@@ -373,7 +383,7 @@ def test_compact_curved_header_and_footer_include_version_text():
 
     async def bench(ctx):
         await sample(ctx, 360, 105)  # inside curved top band
-        await sample(ctx, 360, 112)  # solid top cap has no dark crescent
+        await sample(ctx, 360, 112)  # black centre begins below compact cap
         await sample(ctx, 360, 200)  # black gap below the header cap
         await sample(ctx, 17 * 16, 656)  # first pixel of footer V glyph
         await sample(ctx, 360, 640)  # footer background, clear of text
@@ -383,7 +393,7 @@ def test_compact_curved_header_and_footer_include_version_text():
 
     palette = RezoTileDisplay.PALETTE
     assert samples == [
-        palette["background"], palette["background"], palette["blank"],
+        palette["background"], palette["blank"], palette["blank"],
         palette["text"], palette["background"],
     ]
 
@@ -416,7 +426,7 @@ def test_compact_labels_use_native_control_rows():
         await sample(ctx, 12 * 16, 448)       # DRIVE
         await sample(ctx, 10 * 16, 448)       # old, too-far-left start
 
-        # FILTER's deepest row remains on the content background, and its
+        # FILTER's deepest row remains inside the content field, and its
         # first label begins on the same inner gutter as MATRIX.
         ctx.set(dut.filter_mode, 1)
         await sample(ctx, 8 * 16, 448)        # FREQUENCY
@@ -438,10 +448,10 @@ def test_compact_labels_use_native_control_rows():
 
     palette = RezoTileDisplay.PALETTE
     assert samples == [
-        palette["text"], palette["background"],
+        palette["text"], palette["blank"],
         palette["text"], palette["background"],
         palette["text"],
-        palette["background"], palette["text"],
+        palette["blank"], palette["text"],
     ]
 
 
@@ -511,10 +521,10 @@ def test_compact_input_groups_and_enable_buttons_share_requested_geometry():
 
     palette = RezoTileDisplay.PALETTE
     assert samples == [
-        palette["background"], palette["panel"], palette["panel"],
-        palette["modulation"], palette["background"], palette["panel"],
+        palette["blank"], palette["panel"], palette["panel"],
+        palette["modulation"], palette["blank"], palette["panel"],
         palette["panel"], palette["modulation"],
-        palette["background"], palette["text"],
+        palette["blank"], palette["text"],
         palette["control"], palette["control"],
     ], samples
 
@@ -549,10 +559,10 @@ def test_compact_group_rails_share_native_label_centers():
 
     palette = RezoTileDisplay.PALETTE
     assert samples == [
-        palette["panel"], palette["background"],
-        palette["panel"], palette["background"],
-        palette["panel"], palette["background"],
-        palette["panel"], palette["background"],
+        palette["panel"], palette["blank"],
+        palette["panel"], palette["blank"],
+        palette["panel"], palette["blank"],
+        palette["panel"], palette["blank"],
     ], samples
 
 
@@ -600,9 +610,9 @@ def test_compact_feedback_sources_and_safety_share_centered_geometry():
     # On an even-width canvas this odd-width row is centred between pixels.
     assert rendered_x0 + rendered_x1 == 719
     assert samples == [
-        palette["panel"], palette["background"],
-        palette["panel"], palette["background"],
-        palette["panel"], palette["background"],
+        palette["panel"], palette["blank"],
+        palette["panel"], palette["blank"],
+        palette["panel"], palette["blank"],
     ], samples
 
 
@@ -762,7 +772,7 @@ def test_compact_audio_gain_fader_stays_inside_value_lane():
     palette = RezoTileDisplay.PALETTE
     assert samples == [
         palette["control"], palette["panel"], palette["panel"],
-        palette["background"],
+        palette["blank"],
     ]
 
 
@@ -797,8 +807,8 @@ def test_compact_input_meter_clamps_and_marks_clipping_inside_value_lane():
 
     palette = RezoTileDisplay.PALETTE
     assert samples == [
-        palette["modulation"], palette["background"],
-        palette["text"], palette["background"],
+        palette["modulation"], palette["blank"],
+        palette["text"], palette["blank"],
     ]
 
 
@@ -839,17 +849,17 @@ def test_compact_output_cells_share_native_label_centers():
 
     palette = RezoTileDisplay.PALETTE
     assert samples[:8] == [
-        palette["panel"], palette["background"],
-        palette["panel"], palette["background"],
-        palette["panel"], palette["background"],
-        palette["panel"], palette["background"],
+        palette["panel"], palette["blank"],
+        palette["panel"], palette["blank"],
+        palette["panel"], palette["blank"],
+        palette["panel"], palette["blank"],
     ]
     assert samples[8:] == [
-        palette["panel"], palette["background"],
-        palette["panel"], palette["background"],
-        palette["panel"], palette["background"],
-        palette["panel"], palette["background"],
-        palette["panel"], palette["background"],
+        palette["panel"], palette["blank"],
+        palette["panel"], palette["blank"],
+        palette["panel"], palette["blank"],
+        palette["panel"], palette["blank"],
+        palette["panel"], palette["blank"],
     ]
 
 
@@ -886,7 +896,7 @@ def test_compact_output_send_scaling_preserves_exact_fill_endpoint():
     sim.run()
 
     palette = RezoTileDisplay.PALETTE
-    assert samples == [palette["control"], palette["background"]]
+    assert samples == [palette["control"], palette["blank"]]
 
 
 def test_compact_matrix_labels_share_control_row_centers():

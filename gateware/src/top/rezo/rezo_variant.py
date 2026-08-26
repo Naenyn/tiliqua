@@ -34,6 +34,7 @@ some listening time on real hardware.
 
 import os
 import sys
+from math import log10
 
 from amaranth import *
 from amaranth.lib import data, stream, wiring
@@ -134,6 +135,14 @@ except ImportError:  # top_level_cli executes this file directly.
         put_native_page_headers,
         put_native_support_page_labels,
     )
+
+
+def output_meter_db_value(magnitude):
+    """Map a ten-bit absolute sample magnitude onto -60..0 dBFS."""
+    if magnitude == 0:
+        return 0
+    dbfs = 20 * log10(magnitude / 1023)
+    return max(0, min(63, round((dbfs + 60) * 63 / 60)))
 
 
 class RezoCore(RezoCoreConstants, wiring.Component):
@@ -2938,6 +2947,9 @@ class RezoTileDisplay(wiring.Component):
             for text_page in range(9):
                 put_native(text_page, footer,
                            (45 - len(footer)) // 2, 41)
+                put_native(text_page, "CURSOR", 25, 8)
+                put_native(text_page, "OUT", 2, 14)
+                put_native(text_page, "OUT", 40, 14)
                 put_native(text_page, "1", 3, 30)
                 put_native(text_page, "2", 5, 30)
                 put_native(text_page, "3", 39, 30)
@@ -3475,15 +3487,15 @@ class RezoTileDisplay(wiring.Component):
         output_meter_hot_q0 = Const(0)
         output_meter_clip_q0 = Const(0)
         if self.compact_layout:
-            # Use solid circular caps above the PAGE/NAV row and below the
-            # version, but retain only the curved outer band through the
-            # middle. This leaves a black moat around the central content so
-            # it reads as a panel floating between four pieces of chrome.
+            # Keep only REZO and the pager in the compact top cap. Between
+            # that cap and the version footer, one uninterrupted annulus joins
+            # both side-meter wings to both caps while leaving the entire
+            # central control field black.
             circle_inside, side_annulus = native_viewport_regions(
                 m, x, text_y_pre, inner_radius=250)
             arc_background = active & (
-                (circle_inside & ((y < 176) | (y >= 608))) |
-                (side_annulus & (y >= 224) & (y < 512)))
+                (circle_inside & ((y < 108) | (y >= 608))) |
+                (side_annulus & (y >= 108) & (y < 608)))
 
             # Firmware navigates pages in a deliberately non-numeric order.
             # Translate the raw page ID so the indicator advances one box for
@@ -3608,7 +3620,9 @@ class RezoTileDisplay(wiring.Component):
             output_meter_fill = meter_lane_valid_q & self.rect(
                 meter_x_q, meter_y_q, meter_x0_q + 4, meter_top,
                           meter_x0_q + 20, 458)
-            output_meter_hot = output_meter_fill & (meter_y_q < 300)
+            # On the calibrated -60..0 dBFS scale the upper six decibels are
+            # the top tenth of the lane, matching conventional DAW meters.
+            output_meter_hot = output_meter_fill & (meter_y_q < 290)
             output_meter_clip = meter_lane_valid_q & meter_clip_q & self.rect(
                 meter_x_q, meter_y_q, meter_x0_q + 4, 248,
                 meter_x0_q + 20, 254)
@@ -3629,11 +3643,16 @@ class RezoTileDisplay(wiring.Component):
             608 if self.compact_layout else 700,
             164 if self.compact_layout else 82)
         side_page_chip = Const(0)
+        cursor_chip = Const(0)
+        cursor_edit = Const(0)
         if self.compact_layout:
             # Reuse the former side chip's renderer slot for the PAGE value
             # in the central header.  The circular side wings remain blank.
             side_page_chip = active & self.rect(
                 text_x, text_y, 216, 120, 360, 160)
+            cursor_chip = active & self.rect(
+                text_x, text_y, 520, 120, 600, 160)
+            cursor_edit = active & self.editing & cursor_chip
         # One shared rectangle keeps the pixel path shallow. FILTER needs the
         # deepest field because its fifth fader ends at y=690; ending its
         # background at y=666 left RESONANCE floating in the black margin.
@@ -5218,11 +5237,12 @@ class RezoTileDisplay(wiring.Component):
             geometry_panel_q0.eq(preset_chip | filter_type_chip | mode_chip |
                                  palette_chip | save_default_chip | layout_chip |
                                  damp_chip | side_page_chip |
+                                 cursor_chip |
                                  band_slot_q0 |
                                  meter_panel | filter_meter_panel),
         ]
         m.d.dvi += [
-            selected_q.eq(selected | pager_current |
+            selected_q.eq(selected | pager_current | cursor_edit |
                           output_meter_hot_q0 | output_meter_clip_q0),
             text_q.eq(text | input_clip_q0),
             fill_q.eq(geometry_fill_q0 |
@@ -5234,7 +5254,9 @@ class RezoTileDisplay(wiring.Component):
             panel_q.eq(geometry_panel_q0 | input_panel_q0 | group_cell_q0 |
                        output_cell_q0 | filter_cv_panel_q0 |
                        output_meter_panel_q0),
-            background_q.eq(title_panel | content_panel | arc_background),
+            background_q.eq(
+                Mux(self.compact_layout, arc_background,
+                    title_panel | content_panel | arc_background)),
             active_q.eq(active),
         ]
 
@@ -5497,11 +5519,11 @@ class RezoBeamTop(Elaboratable):
         wiring.connect(m, rezo.o, audio_out_fifo.i)
         wiring.connect(m, audio_out_fifo.o, pmod0.i_cal)
 
-        # Display-only final-output peak envelopes. The raw six-bit magnitude
-        # is converted to a compact dB-like scale: every amplitude doubling
-        # advances about eight display steps, with interpolation inside each
-        # octave. Decay occurs roughly once per 2048 audio frames. This tap is
-        # fully registered and never feeds the DSP or output handshake.
+        # Display-only final-output peak envelopes. Ten magnitude bits retain
+        # useful detail down to -60 dBFS; one time-multiplexed BRAM converts
+        # all four final outputs to a calibrated, linear-in-decibels 0..63
+        # display scale. This tap is registered and never feeds the DSP or its
+        # output handshake.
         output_meter_values = [
             Signal(unsigned(6), name=f"output_meter_value{n}")
             for n in range(4)]
@@ -5510,45 +5532,45 @@ class RezoBeamTop(Elaboratable):
             for n in range(4)]
         output_meter_decay = Signal(unsigned(11))
         output_frame_accepted = rezo.o.valid & rezo.o.ready
+
+        output_db_init = [
+            output_meter_db_value(magnitude) for magnitude in range(1024)]
+        m.submodules.output_db_mem = output_db_mem = Memory(
+            shape=unsigned(6), depth=len(output_db_init),
+            init=output_db_init, attrs={"ram_style": "block"})
+        output_db_rport = output_db_mem.read_port()
+        output_magnitudes = [
+            Signal(unsigned(10), name=f"output_magnitude{n}")
+            for n in range(4)]
+        output_meter_scan = Signal(unsigned(2))
+        output_meter_scan_q = Signal(unsigned(2))
+        m.d.comb += output_db_rport.addr.eq(
+            Array(output_magnitudes)[output_meter_scan])
+        m.d.sync += [
+            output_meter_scan.eq(output_meter_scan + 1),
+            output_meter_scan_q.eq(output_meter_scan),
+        ]
+
         with m.If(output_frame_accepted):
             m.d.sync += output_meter_decay.eq(output_meter_decay + 1)
             for n in range(4):
-                output_meter_raw = Signal(
-                    unsigned(6), name=f"output_meter_raw{n}")
-                output_meter_sample = Signal(
-                    unsigned(6), name=f"output_meter_db{n}")
+                output_magnitude_full = Signal(
+                    unsigned(16), name=f"output_magnitude_full{n}")
                 output_clip = Signal(name=f"output_clip{n}")
                 m.d.comb += [
-                    output_meter_raw.eq(Mux(
-                    rezo.o.payload[n].as_value()[-1],
-                    ~rezo.o.payload[n].as_value()[9:15],
-                    rezo.o.payload[n].as_value()[9:15])),
+                    output_magnitude_full.eq(Mux(
+                        rezo.o.payload[n].as_value()[-1],
+                        (~rezo.o.payload[n].as_value().as_unsigned()) + 1,
+                        rezo.o.payload[n].as_value().as_unsigned())),
                     output_clip.eq(
                         (rezo.o.payload[n].as_value() == 32767) |
                         (rezo.o.payload[n].as_value() == -32768)),
                 ]
-                with m.If(output_meter_raw[5]):
-                    m.d.comb += output_meter_sample.eq(
-                        48 + output_meter_raw[1:5])
-                with m.Elif(output_meter_raw[4]):
-                    m.d.comb += output_meter_sample.eq(
-                        40 + output_meter_raw[1:4])
-                with m.Elif(output_meter_raw[3]):
-                    m.d.comb += output_meter_sample.eq(
-                        32 + output_meter_raw[:3])
-                with m.Elif(output_meter_raw[2]):
-                    m.d.comb += output_meter_sample.eq(
-                        24 + (output_meter_raw[:2] << 1))
-                with m.Elif(output_meter_raw[1]):
-                    m.d.comb += output_meter_sample.eq(
-                        16 + (output_meter_raw[0] << 2))
-                with m.Elif(output_meter_raw[0]):
-                    m.d.comb += output_meter_sample.eq(8)
-                with m.If(output_meter_sample > output_meter_values[n]):
-                    m.d.sync += output_meter_values[n].eq(
-                        output_meter_sample)
-                with m.Elif((output_meter_decay == 0x7ff) &
-                            (output_meter_values[n] != 0)):
+                m.d.sync += output_magnitudes[n].eq(Mux(
+                    output_magnitude_full[15], 1023,
+                    output_magnitude_full[5:15]))
+                with m.If((output_meter_decay == 0x7ff) &
+                          (output_meter_values[n] != 0)):
                     m.d.sync += output_meter_values[n].eq(
                         output_meter_values[n] - 1)
                 with m.If(output_clip):
@@ -5558,6 +5580,16 @@ class RezoBeamTop(Elaboratable):
                             (output_clip_holds[n] != 0)):
                     m.d.sync += output_clip_holds[n].eq(
                         output_clip_holds[n] - 1)
+
+        # The BRAM result and delayed scan index identify the same lane. Fast
+        # attack follows the slower release assignment above, so a newly
+        # arriving peak wins on their rare coincident cycle.
+        with m.Switch(output_meter_scan_q):
+            for n in range(4):
+                with m.Case(n):
+                    with m.If(output_db_rport.data > output_meter_values[n]):
+                        m.d.sync += output_meter_values[n].eq(
+                            output_db_rport.data)
 
         m.submodules.dvi_tgen = dvi_tgen = dvi.DVITimingGen()
         for member in dvi_tgen.timings.signature.members:
