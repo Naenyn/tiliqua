@@ -17,18 +17,23 @@ def test_output_meter_uses_calibrated_daw_scale():
 
 
 def test_output_meter_pairs_and_labels_are_centered_in_side_arcs():
-    bounds = native_output_meter_bounds(360)
+    middle_bounds = native_output_meter_bounds(360)
+    assert middle_bounds[0] == 106 - middle_bounds[3] == 25
+
+    bounds = native_output_meter_bounds(461)
     left_meter_centers = (
-        (bounds[0] + bounds[1]) // 2,
-        (bounds[2] + bounds[3]) // 2,
+        (bounds[0] + bounds[1] - 1) // 2,
+        (bounds[2] + bounds[3] - 1) // 2,
     )
-    meter_centers = left_meter_centers + tuple(
-        719 - center for center in reversed(left_meter_centers))
-    assert left_meter_centers == (40, 72)
+    meter_centers = left_meter_centers + (
+        (1439 - bounds[2] - bounds[3]) // 2,
+        (1439 - bounds[0] - bounds[1]) // 2,
+    )
+    assert meter_centers == (53, 87, 632, 666)
     label_centers = tuple(
         col * 16 + 8 for col in NATIVE_OUTPUT_METER_LABEL_COLS)
-    assert tuple(abs(label - meter) for label, meter in zip(
-        label_centers, meter_centers)) == (0, 0, 1, 1)
+    assert all(abs(label - meter) <= 3 for label, meter in zip(
+        label_centers, meter_centers))
 
 
 def _render_text_bounds(*regions, page=0, palette=0, input_modes=(),
@@ -118,7 +123,7 @@ def test_standard_hdmi_compact_preview_is_native_size_and_unrotated():
     async def bench(ctx):
         await sample(ctx, 320, 32)   # REZO top-arc identity
         await sample(ctx, 128, 208)  # content heading
-        await sample(ctx, 48, 360)   # persistent circular side chrome
+        await sample(ctx, 90, 360)   # persistent circular side chrome
 
     sim.add_testbench(bench)
     sim.run()
@@ -324,15 +329,15 @@ def test_compact_pager_tracks_firmware_navigation_order_and_mode_count():
         # BANK order is 0,6,2,3,4,1,5. Page 6 therefore selects box 1;
         # surrounding boxes move outward to make room for its larger box.
         ctx.set(dut.page, 6)
-        await sample(ctx, 320, 86)
-        await sample(ctx, 344, 86)
-        await sample(ctx, 338, 86)
-        await sample(ctx, 320, 96)  # enlarged box's added bottom row
+        await sample(ctx, 336, 86)
+        await sample(ctx, 346, 86)
+        await sample(ctx, 347, 86)
+        await sample(ctx, 336, 96)  # enlarged box's added bottom row
 
         # FILTER adds page 7 as position 3 and moves page 5 to position 7.
         ctx.set(dut.filter_mode, 1)
         ctx.set(dut.page, 5)
-        await sample(ctx, 430, 86)
+        await sample(ctx, 402, 86)
 
     sim.add_testbench(bench)
     sim.run()
@@ -371,7 +376,7 @@ def test_compact_output_meters_are_persistent_and_independent():
         await sample(ctx, 647, 350)
         await sample(ctx, 669, 280)
         # An outline remains visible around an empty lane.
-        await sample(ctx, 28, 360)
+        await sample(ctx, 25, 360)
         # A held clipping lamp sits above the corresponding lane.
         await sample(ctx, 60, 250)
 

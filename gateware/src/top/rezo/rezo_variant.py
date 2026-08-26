@@ -145,8 +145,8 @@ def output_meter_db_value(magnitude):
     return max(0, min(63, round((dbfs + 60) * 63 / 60)))
 
 
-NATIVE_OUTPUT_METER_RADII = (332, 308, 300, 276)
-NATIVE_OUTPUT_METER_LABEL_COLS = (2, 4, 40, 42)
+NATIVE_OUTPUT_METER_RADII = (335, 311, 303, 279)
+NATIVE_OUTPUT_METER_LABEL_COLS = (3, 5, 39, 41)
 
 
 def native_output_meter_bounds(y):
@@ -2963,12 +2963,11 @@ class RezoTileDisplay(wiring.Component):
             for text_page in range(9):
                 put_native(text_page, footer,
                            (45 - len(footer)) // 2, 41)
-                put_native(text_page, "CURSOR", 25, 8)
-                put_native(text_page, "OUT", 2, 14)
-                put_native(text_page, "OUT", 40, 14)
+                put_native(text_page, "OUT", 3, 15)
+                put_native(text_page, "OUT", 39, 15)
                 for label, col in zip(
                         "1234", NATIVE_OUTPUT_METER_LABEL_COLS):
-                    put_native(text_page, label, col, 30)
+                    put_native(text_page, label, col, 29)
 
             # BANK main page.
             put_native_page_heading(put_native, 0, "PRESET")
@@ -3537,7 +3536,8 @@ class RezoTileDisplay(wiring.Component):
                         self.filter_mode, 7, 6))
 
             # Pre-render horizontal pager geometry for every page/mode state.
-            # The boxes sit on a tight 20px pitch. Neighbours before the
+            # The boxes sit on a tight 12px pitch, leaving exactly one blank
+            # pixel column between adjacent 11px boxes. Neighbours before the
             # selected page move four pixels left and neighbours after it move
             # four pixels right, creating Dock-like space for the 19x21px
             # current-page box without a runtime divider or wide mux tree.
@@ -3548,23 +3548,23 @@ class RezoTileDisplay(wiring.Component):
             # placing otherwise redundant memory/address infrastructure.
             pager_init = [0] * (16 * 256)
             for filter_state, page_count in ((0, 7), (1, 8)):
-                first_center = 360 - (page_count - 1) * 10
+                first_center = 360 - (page_count - 1) * 6
                 for selected_position in range(page_count):
                     state = (filter_state << 3) | selected_position
                     for box_index in range(page_count):
                         shift = (-4 if box_index < selected_position else
                                  4 if box_index > selected_position else 0)
-                        center = first_center + box_index * 20 + shift
+                        center = first_center + box_index * 12 + shift
                         if box_index == selected_position:
                             for pixel_x in range(center - 9, center + 10):
                                 pager_init[(state << 8) |
                                            (pixel_x & 0xff)] |= 0b100
                         else:
-                            for pixel_x in range(center - 6, center + 6):
+                            for pixel_x in range(center - 5, center + 6):
                                 address = ((state << 8) |
                                            (pixel_x & 0xff))
                                 pager_init[address] |= 0b001
-                                if pixel_x < center - 4 or pixel_x >= center + 4:
+                                if pixel_x < center - 3 or pixel_x >= center + 4:
                                     pager_init[address] |= 0b010
             m.submodules.pager_mem = pager_mem = Memory(
                 shape=unsigned(3), depth=len(pager_init), init=pager_init,
@@ -3694,15 +3694,15 @@ class RezoTileDisplay(wiring.Component):
             164 if self.compact_layout else 82)
         side_page_chip = Const(0)
         cursor_chip = Const(0)
-        cursor_edit = Const(0)
         if self.compact_layout:
             # Reuse the former side chip's renderer slot for the PAGE value
             # in the central header.  The circular side wings remain blank.
             side_page_chip = active & self.rect(
                 text_x, text_y, 216, 120, 360, 160)
-            cursor_chip = active & self.rect(
-                text_x, text_y, 520, 120, 600, 160)
-            cursor_edit = active & self.editing & cursor_chip
+            # NAV/EDIT is status rather than a navigable value. Its outline
+            # remains identical in both modes; only the dynamic text changes.
+            cursor_chip = active & self.outline(
+                text_x, text_y, 520, 120, 600, 160, t=2)
         # One shared rectangle keeps the pixel path shallow. FILTER needs the
         # deepest field because its fifth fader ends at y=690; ending its
         # background at y=666 left RESONANCE floating in the black margin.
@@ -5281,18 +5281,18 @@ class RezoTileDisplay(wiring.Component):
                                 filter_control_fill),
             geometry_line_q0.eq(
                 band_zero_q0 | bank_control_mod_marker |
-                filter_control_mod_marker | border | pager_line),
+                filter_control_mod_marker | border | pager_line |
+                cursor_chip),
             geometry_mod_q0.eq(band_mod_fill | bank_control_mod_fill |
                                filter_control_mod_fill | input_meter_q0),
             geometry_panel_q0.eq(preset_chip | filter_type_chip | mode_chip |
                                  palette_chip | save_default_chip | layout_chip |
                                  damp_chip | side_page_chip |
-                                 cursor_chip |
                                  band_slot_q0 |
                                  meter_panel | filter_meter_panel),
         ]
         m.d.dvi += [
-            selected_q.eq(selected | pager_current | cursor_edit |
+            selected_q.eq(selected | pager_current |
                           output_meter_hot_q0 | output_meter_clip_q0),
             text_q.eq(text | input_clip_q0),
             fill_q.eq(geometry_fill_q0 |
