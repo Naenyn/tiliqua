@@ -146,21 +146,30 @@ def output_meter_db_value(magnitude):
 
 
 # REZO's circular UI reserves black for pixels with no semantic geometry.  The
-# eighth palette entry can therefore provide a second, darker surface between
-# BACKGROUND and PANEL without changing the shared REZOMO/STREZO palette
-# contract while this treatment is being evaluated.
-REZO_SEMANTIC_PALETTE = dict(SEMANTIC_PALETTE, surface=0x23)
+# eighth palette entry can therefore retain the former BACKGROUND shade as a
+# work surface while BACKGROUND moves halfway toward black. This leaves PANEL
+# distinctly brighter without changing the shared REZOMO/STREZO contract.
+REZO_SEMANTIC_PALETTE = dict(
+    SEMANTIC_PALETTE, background=0x0A, surface=0x14)
 REZO_PALETTE_ROLES = PALETTE_ROLES[:-1] + ("surface",)
+REZO_BACKGROUND_COLORS = (
+    0x0A0A0A,  # LCD
+    0x0C0803,  # amber
+    0x040C0C,  # cyan
+    0x040E0B,  # green
+    0x08050C,  # violet
+)
 REZO_SURFACE_COLORS = (
-    0x232323,  # LCD
-    0x261C0B,  # amber
-    0x0F2829,  # cyan
-    0x123024,  # green
-    0x1E1429,  # violet
+    0x141414,  # LCD
+    0x171006,  # amber
+    0x071718,  # cyan
+    0x081C15,  # green
+    0x100A18,  # violet
 )
 REZO_RGB_PALETTES = tuple(
-    theme[:-1] + (surface,)
-    for theme, surface in zip(RGB_PALETTES, REZO_SURFACE_COLORS)
+    theme[:6] + (background, surface)
+    for theme, background, surface in zip(
+        RGB_PALETTES, REZO_BACKGROUND_COLORS, REZO_SURFACE_COLORS)
 )
 
 
