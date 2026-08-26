@@ -3495,7 +3495,6 @@ class RezoTileDisplay(wiring.Component):
         arc_background = Const(0)
         pager_line = Const(0)
         pager_current = Const(0)
-        pager_current_q0 = Const(0)
         output_meter_panel = Const(0)
         output_meter_fill = Const(0)
         output_meter_panel_q0 = Const(0)
@@ -3580,11 +3579,6 @@ class RezoTileDisplay(wiring.Component):
                 (y >= 78) & (y < 94)
             pager_current = active & pager_window & pager_rport.data[2] & \
                 (y >= 76) & (y < 97)
-            # The outlined boxes pass through geometry_line_q0 below. Match
-            # that stage here so the filled box does not consume the one-pixel
-            # gap during a continuously advancing raster scan.
-            pager_current_q0 = Signal()
-            m.d.dvi += pager_current_q0.eq(pager_current)
 
             # Two persistent output lanes per side. Four precomputed circle
             # intersections form two annular strips on either side, concentric
@@ -5288,7 +5282,7 @@ class RezoTileDisplay(wiring.Component):
                                 filter_control_fill),
             geometry_line_q0.eq(
                 band_zero_q0 | bank_control_mod_marker |
-                filter_control_mod_marker | border | pager_line |
+                filter_control_mod_marker | border |
                 cursor_chip),
             geometry_mod_q0.eq(band_mod_fill | bank_control_mod_fill |
                                filter_control_mod_fill | input_meter_q0),
@@ -5299,13 +5293,13 @@ class RezoTileDisplay(wiring.Component):
                                  meter_panel | filter_meter_panel),
         ]
         m.d.dvi += [
-            selected_q.eq(selected | pager_current_q0 |
+            selected_q.eq(selected | pager_current |
                           output_meter_hot_q0 | output_meter_clip_q0),
             text_q.eq(text | input_clip_q0),
             fill_q.eq(geometry_fill_q0 |
                       input_fill_q0 | group_fill_q0 | output_fill_q0 |
                       filter_cv_fill_q0 | output_meter_fill_q0),
-            line_q.eq(geometry_line_q0 | input_line_q0 |
+            line_q.eq(geometry_line_q0 | pager_line | input_line_q0 |
                       group_ghost | filter_cv_line_q0),
             mod_q.eq(geometry_mod_q0),
             panel_q.eq(geometry_panel_q0 | input_panel_q0 | group_cell_q0 |
