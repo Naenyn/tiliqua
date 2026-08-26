@@ -3594,7 +3594,13 @@ class RezoTileDisplay(wiring.Component):
                 shape=unsigned(40), depth=len(meter_curve_init),
                 init=meter_curve_init, attrs={"ram_style": "block"})
             meter_curve_rport = output_meter_curve_mem.read_port(domain="dvi")
-            m.d.comb += meter_curve_rport.addr.eq(text_y_pre)
+            # Prefetch from the raw upright coordinate, one stage ahead of x.
+            # Registering the wide BRAM result here aligns it with x while
+            # keeping the memory's long clock-to-output delay out of the lane
+            # comparisons and telemetry mux.
+            meter_curve_data = Signal(unsigned(40))
+            m.d.comb += meter_curve_rport.addr.eq(ui_y[:10])
+            m.d.dvi += meter_curve_data.eq(meter_curve_rport.data)
 
             meter_lane_valid = Signal()
             meter_curve_x = Signal(unsigned(10))
@@ -3603,12 +3609,12 @@ class RezoTileDisplay(wiring.Component):
             meter_value = Signal(unsigned(6))
             meter_clip = Signal()
             m.d.comb += meter_curve_x.eq(Mux(x < 360, x, 719 - x))
-            with m.If((meter_curve_x >= meter_curve_rport.data[0:10]) &
-                      (meter_curve_x < meter_curve_rport.data[10:20])):
+            with m.If((meter_curve_x >= meter_curve_data[0:10]) &
+                      (meter_curve_x < meter_curve_data[10:20])):
                 m.d.comb += [
                     meter_lane_valid.eq(1),
-                    meter_bound_lo.eq(meter_curve_rport.data[0:10]),
-                    meter_bound_hi.eq(meter_curve_rport.data[10:20]),
+                    meter_bound_lo.eq(meter_curve_data[0:10]),
+                    meter_bound_hi.eq(meter_curve_data[10:20]),
                     meter_value.eq(Mux(
                         x < 360, self.output_meters[0],
                         self.output_meters[3])),
@@ -3616,12 +3622,12 @@ class RezoTileDisplay(wiring.Component):
                         x < 360, self.output_clips[0],
                         self.output_clips[3]))]
             with m.Elif(
-                    (meter_curve_x >= meter_curve_rport.data[20:30]) &
-                    (meter_curve_x < meter_curve_rport.data[30:40])):
+                    (meter_curve_x >= meter_curve_data[20:30]) &
+                    (meter_curve_x < meter_curve_data[30:40])):
                 m.d.comb += [
                     meter_lane_valid.eq(1),
-                    meter_bound_lo.eq(meter_curve_rport.data[20:30]),
-                    meter_bound_hi.eq(meter_curve_rport.data[30:40]),
+                    meter_bound_lo.eq(meter_curve_data[20:30]),
+                    meter_bound_hi.eq(meter_curve_data[30:40]),
                     meter_value.eq(Mux(
                         x < 360, self.output_meters[1],
                         self.output_meters[2])),
