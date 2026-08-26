@@ -2999,8 +2999,8 @@ class RezoTileDisplay(wiring.Component):
 
             # BANK main page.
             put_native_page_heading(put_native, 0, "PRESET")
-            put_native_page_heading(put_native, 0, "MODE", 25)
-            put_native_page_heading(put_native, 0, "BANK", 31)
+            put_native_page_heading(put_native, 0, "MODE", 24)
+            put_native_page_heading(put_native, 0, "BANK", 30)
             put_native(0, "BANDS", 8, 14)
             put_native(0, "FREQ:", 23, 14)
             # BANK occupies the first three slots of the same five-slot grid
@@ -3015,8 +3015,8 @@ class RezoTileDisplay(wiring.Component):
 
             # FILTER main page.
             put_native_page_heading(put_native, 7, "TYPE")
-            put_native_page_heading(put_native, 7, "MODE", 25)
-            put_native_page_heading(put_native, 7, "FILTER", 31)
+            put_native_page_heading(put_native, 7, "MODE", 24)
+            put_native_page_heading(put_native, 7, "FILTER", 30)
             put_native(7, "BANDS", 8, 14)
             # FILTER uses all five shared slots. Right-align every label at
             # x=272, immediately before the common native fader gutter.
@@ -3880,12 +3880,12 @@ class RezoTileDisplay(wiring.Component):
         if self.compact_layout:
             # BANK/FILTER is a main-page control; PAGE owns the header.
             mode_chip = home_page & self.rect(
-                text_x, text_y, 480, NATIVE_PAGE_HEADER_CHIP_Y0,
-                600, NATIVE_PAGE_HEADER_CHIP_Y1)
+                text_x, text_y, 464, NATIVE_PAGE_HEADER_CHIP_Y0,
+                584, NATIVE_PAGE_HEADER_CHIP_Y1)
             mode_select = home_page & (
                 self.selected == RezoHardwareUI.TARGET_MODE) & self.outline(
-                    text_x, text_y, 476, NATIVE_PAGE_HEADER_SELECT_Y0,
-                    604, NATIVE_PAGE_HEADER_SELECT_Y1, t=3)
+                    text_x, text_y, 460, NATIVE_PAGE_HEADER_SELECT_Y0,
+                    588, NATIVE_PAGE_HEADER_SELECT_Y1, t=3)
             filter_type_chip = filter_page & self.rect(
                 text_x, text_y, native_value_chip_x0(14),
                 NATIVE_PAGE_HEADER_CHIP_Y0,

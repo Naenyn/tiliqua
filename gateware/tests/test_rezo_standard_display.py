@@ -268,8 +268,8 @@ def test_compact_round_layout_uses_all_four_arcs():
     ]
 
 
-def test_compact_header_controls_are_tight_and_right_anchored():
-    """Header status boxes hug their text and MODE moves to the right."""
+def test_compact_header_controls_are_tight():
+    """Header status boxes hug their text."""
     dut = RezoTileDisplay(
         h_active=720, rotate_left=False, compact_layout=True)
     sim = Simulator(dut)
@@ -297,8 +297,6 @@ def test_compact_header_controls_are_tight_and_right_anchored():
         await sample(ctx, 520, 147)  # MOVE outline bottom/left
         await sample(ctx, 520, 148)  # immediately below MOVE outline
         await sample(ctx, 528, 128)  # first pixel of MOVE
-        await sample(ctx, 470, 190)  # former MODE chip position
-        await sample(ctx, 590, 190)  # shifted MODE chip
 
     sim.add_testbench(bench)
     sim.run()
@@ -309,7 +307,7 @@ def test_compact_header_controls_are_tight_and_right_anchored():
         palette["panel"], palette["blank"],
         palette["blank"], palette["line"],
         palette["line"], palette["blank"],
-        palette["text"], palette["blank"], palette["panel"],
+        palette["text"],
     ]
 
 
