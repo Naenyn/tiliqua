@@ -3488,7 +3488,8 @@ class RezoTileDisplay(wiring.Component):
             glyph_rport.data.bit_select(glyph_bit, 1))
 
         border = active & (
-            native_viewport_circle_outline(m, x, text_y_pre)
+            native_viewport_circle_outline(
+                m, x, text_y_pre, pipeline_bounds=True)
             if self.compact_layout else
             self.outline(x, y, 12, 12, 708, 708, t=2))
         arc_background = Const(0)
