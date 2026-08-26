@@ -43,7 +43,14 @@ From `gateware/`:
 ```sh
 PYTHONPATH=src pdm run pytest tests/test_tuner.py -q
 PYTHONPATH=src pdm tuner build --hw r5
+PYTHONPATH=src pdm tuner_round build --hw r5
 ```
+
+`tuner` is the fixed, unrotated 1280x720 HDMI development target.
+`tuner_round` produces a separate `TUNER-ROUND` artifact for the fixed 720x720
+production-panel target and compensates for the display's physical 90-degree
+mounting. Keeping these as explicit artifacts prevents mutable bootloader video
+state from selecting the wrong UI transform.
 
 Add `--fs-192khz` to evaluate the higher codec sample rate. Building does not
 flash the archive; flashing is a separate, explicit operation.

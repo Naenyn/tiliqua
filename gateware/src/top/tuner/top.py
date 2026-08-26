@@ -82,12 +82,20 @@ class TunerSoc(TiliquaSoc):
 
 if __name__ == "__main__":
     this_path = os.path.dirname(os.path.realpath(__file__))
-    seed = int(os.getenv("TILIQUA_TUNER_SEED", "4"))
+    seed = int(os.getenv("TILIQUA_TUNER_SEED", "1"))
+    modeline = os.getenv("TILIQUA_TUNER_MODELINE", "1280x720p60")
+    name = os.getenv("TILIQUA_TUNER_NAME", "TUNER")
     top_level_cli(
         TunerSoc,
         path=this_path,
+        # Display orientation is a build-time layout decision, just as it is
+        # for the REZO family.  The normal target is always the unrotated HDMI
+        # preview; tuner_round.py explicitly selects the physically rotated
+        # production panel.  Do not infer this from mutable bootloader state.
+        argparse_callback=lambda parser: parser.set_defaults(
+            modeline=modeline, name=name),
         archiver_callback=lambda archiver: archiver.with_option_storage(),
-        # Keep release builds reproducible with the best-margin seed from the
-        # lean renderer's multi-seed timing sweep on ECP5-25F R5.
+        # Keep release builds reproducible with a timing-clean placement for
+        # the fixed 1280x720 renderer on ECP5-25F R5.
         nextpnr_opts=f"--timing-allow-fail --seed {seed}",
     )
