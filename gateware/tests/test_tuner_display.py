@@ -25,6 +25,51 @@ def test_tuner_display_elaborates():
     Fragment.get(Peripheral(), platform=None)
 
 
+def test_tuner_display_target_transforms_are_compile_time():
+    async def check_border(ctx, dut, physical_x, physical_y):
+        ctx.set(dut.i.de, 1)
+        ctx.set(dut.menu_active, 1)
+        ctx.set(dut.i.vsync, 1)
+        await ctx.tick("dvi").repeat(4)
+        ctx.set(dut.i.vsync, 0)
+        ctx.set(dut.i.x, physical_x)
+        ctx.set(dut.i.y, physical_y)
+        await ctx.tick("dvi").repeat(5)
+        assert ctx.get(dut.o.pixel.intensity) == 10
+
+    def run_target(*, h_active, rotate_left, physical_x, physical_y):
+        tiles = Memory(
+            shape=unsigned(6), depth=TunerOverlay.COLS * TunerOverlay.ROWS,
+            init=[0] * (TunerOverlay.COLS * TunerOverlay.ROWS))
+        menu = Memory(
+            shape=unsigned(8),
+            depth=TunerOverlay.MENU_COLS * TunerOverlay.MENU_ROWS,
+            init=[0] * (TunerOverlay.MENU_COLS * TunerOverlay.MENU_ROWS))
+        dut = TunerOverlay(
+            tiles, menu, h_active=h_active, rotate_left=rotate_left)
+        m = Module()
+        m.submodules.dut = dut
+        m.submodules.tiles = tiles
+        m.submodules.menu = menu
+        sim = Simulator(m)
+        sim.add_clock(1e-6, domain="dvi")
+
+        async def bench(ctx):
+            await check_border(ctx, dut, physical_x, physical_y)
+
+        sim.add_testbench(bench)
+        sim.run()
+
+    # Standard HDMI centers the native canvas at x=280 without rotation.
+    run_target(
+        h_active=1280, rotate_left=False,
+        physical_x=TunerOverlay.MENU_X + 280, physical_y=400)
+    # The production panel applies the inverse of its physical left rotation.
+    run_target(
+        h_active=720, rotate_left=True,
+        physical_x=719 - 400, physical_y=TunerOverlay.MENU_X)
+
+
 def test_tuner_display_composites_framebuffer_marker_and_menu():
     tiles = Memory(
         shape=unsigned(6), depth=TunerOverlay.COLS * TunerOverlay.ROWS,

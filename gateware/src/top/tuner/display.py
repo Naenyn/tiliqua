@@ -97,9 +97,12 @@ class TunerOverlay(wiring.Component):
     MENU_ROWS = 9
     MENU_ROW_PITCH = 18
 
-    def __init__(self, tile_memory, menu_memory):
+    def __init__(self, tile_memory, menu_memory, *, h_active=720,
+                 rotate_left=False):
         self.tile_memory = tile_memory
         self.menu_memory = menu_memory
+        self.x_offset = 0 if rotate_left else max(0, (h_active - self.PANEL_W) // 2)
+        self.rotate_left = rotate_left
         super().__init__({
             "i": In(ScanPixel),
             "o": Out(ScanPixel),
@@ -111,8 +114,6 @@ class TunerOverlay(wiring.Component):
             "marker_valid": In(1),
             "marker_visualizer": In(1),
             "menu_active": In(1),
-            "x_offset": In(12),
-            "rotate_left": In(1),
         })
 
     def elaborate(self, platform):
@@ -128,8 +129,6 @@ class TunerOverlay(wiring.Component):
         marker_valid_cdc = Signal()
         marker_visualizer_cdc = Signal()
         menu_active_cdc = Signal()
-        x_offset_cdc = Signal(12)
-        rotate_left_cdc = Signal()
         for name, source, target in (
             ("marker_x", self.marker_x, marker_x_cdc),
             ("marker_y", self.marker_y, marker_y_cdc),
@@ -139,8 +138,6 @@ class TunerOverlay(wiring.Component):
             ("marker_valid", self.marker_valid, marker_valid_cdc),
             ("marker_visualizer", self.marker_visualizer, marker_visualizer_cdc),
             ("menu_active", self.menu_active, menu_active_cdc),
-            ("x_offset", self.x_offset, x_offset_cdc),
-            ("rotate_left", self.rotate_left, rotate_left_cdc),
         ):
             m.submodules[name + "_ff"] = FFSynchronizer(
                 source, target, o_domain="dvi")
@@ -153,8 +150,6 @@ class TunerOverlay(wiring.Component):
         marker_valid = Signal()
         marker_visualizer = Signal()
         menu_active = Signal()
-        x_offset = Signal(12)
-        rotate_left = Signal()
         with m.If(self.i.vsync):
             m.d.dvi += [
                 marker_x.eq(marker_x_cdc),
@@ -165,8 +160,6 @@ class TunerOverlay(wiring.Component):
                 marker_valid.eq(marker_valid_cdc),
                 marker_visualizer.eq(marker_visualizer_cdc),
                 menu_active.eq(menu_active_cdc),
-                x_offset.eq(x_offset_cdc),
-                rotate_left.eq(rotate_left_cdc),
             ]
 
         # Character plane: one byte per 16x16 cell. A synchronous tile lookup
@@ -236,10 +229,10 @@ class TunerOverlay(wiring.Component):
         sy0 = self.i.y
         x0 = Signal(signed(12))
         y0 = Signal(signed(12))
-        with m.If(rotate_left):
+        if self.rotate_left:
             m.d.comb += [x0.eq(sy0), y0.eq((self.PANEL_H - 1) - sx0)]
-        with m.Else():
-            m.d.comb += [x0.eq(sx0 - x_offset), y0.eq(sy0)]
+        else:
+            m.d.comb += [x0.eq(sx0 - self.x_offset), y0.eq(sy0)]
         active0 = self.i.de & (x0 >= 0) & (x0 < self.PANEL_W) & \
             (y0 >= 0) & (y0 < self.PANEL_H)
         cell_x0 = Signal(6)
@@ -639,11 +632,7 @@ class Peripheral(wiring.Component):
         base: csr.Field(csr.action.W, unsigned(14))
         bank: csr.Field(csr.action.W, unsigned(2))
 
-    class Layout(csr.Register, access="w"):
-        x_offset: csr.Field(csr.action.W, unsigned(12))
-        rotate_left: csr.Field(csr.action.W, unsigned(1))
-
-    def __init__(self):
+    def __init__(self, *, h_active=1280, rotate_left=False):
         self.tile_memory = Memory(
             shape=unsigned(6), depth=TunerOverlay.COLS * TunerOverlay.ROWS,
             init=[0] * (TunerOverlay.COLS * TunerOverlay.ROWS))
@@ -652,12 +641,13 @@ class Peripheral(wiring.Component):
         self.menu_memory = Memory(
             shape=unsigned(8), depth=TunerOverlay.MENU_COLS * TunerOverlay.MENU_ROWS,
             init=[0] * (TunerOverlay.MENU_COLS * TunerOverlay.MENU_ROWS))
-        self.overlay = TunerOverlay(self.tile_memory, self.menu_memory)
+        self.overlay = TunerOverlay(
+            self.tile_memory, self.menu_memory,
+            h_active=h_active, rotate_left=rotate_left)
 
         regs = csr.Builder(addr_width=4, data_width=8)
         self._marker = regs.add("marker", self.Marker(), offset=0x0)
         self._tile_write = regs.add("tile_write", self.TileWrite(), offset=0x4)
-        self._layout = regs.add("layout", self.Layout(), offset=0x8)
         self._marker_shape = regs.add(
             "marker_shape", self.MarkerShape(), offset=0xc)
         self._bridge = csr.Bridge(regs.as_memory_map())
@@ -699,11 +689,6 @@ class Peripheral(wiring.Component):
                 self.overlay.marker_valid.eq(self._marker.f.valid.w_data),
                 self.overlay.marker_visualizer.eq(self._marker.f.visualizer.w_data),
                 self.overlay.menu_active.eq(self._marker.f.menu_active.w_data),
-            ]
-        with m.If(self._layout.element.w_stb):
-            m.d.sync += [
-                self.overlay.x_offset.eq(self._layout.f.x_offset.w_data),
-                self.overlay.rotate_left.eq(self._layout.f.rotate_left.w_data),
             ]
         with m.If(self._marker_shape.element.w_stb):
             m.d.sync += [

@@ -35,7 +35,12 @@ class TunerSoc(TiliquaSoc):
     )
 
     def __init__(self, **kwargs):
-        self.tuner_display = TunerDisplayPeripheral()
+        modeline = kwargs["clock_settings"].modeline
+        assert modeline is not None, "tuner display targets require a fixed modeline"
+        round_display = modeline.h_active == 720 and modeline.v_active == 720
+        self.tuner_display = TunerDisplayPeripheral(
+            h_active=modeline.h_active,
+            rotate_left=round_display)
         super().__init__(finalize_csr_bridge=False, mainram_size=0x2000,
                          fb_overlay=self.tuner_display.overlay,
                          pipeline_palette_output=True,
@@ -82,7 +87,7 @@ class TunerSoc(TiliquaSoc):
 
 if __name__ == "__main__":
     this_path = os.path.dirname(os.path.realpath(__file__))
-    seed = int(os.getenv("TILIQUA_TUNER_SEED", "1"))
+    seed = int(os.getenv("TILIQUA_TUNER_SEED", "2"))
     modeline = os.getenv("TILIQUA_TUNER_MODELINE", "1280x720p60")
     name = os.getenv("TILIQUA_TUNER_NAME", "TUNER")
     top_level_cli(

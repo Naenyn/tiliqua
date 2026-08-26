@@ -34,6 +34,7 @@ const MENU_EDIT_COLUMN: u8 = 26;
 const NOTE_NAMES: [&str; 12] = [
     "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
 ];
+const ROUND_DISPLAY: bool = matches!(FIXED_MODELINE, Some((720, 720)));
 
 struct App {
     ui: ui::UI<Encoder0, EurorackPmod0, I2c0, Opts>,
@@ -624,23 +625,16 @@ fn main() -> ! {
         PSRAM_FB_BASE,
         modeline.h_active,
         modeline.v_active,
-        modeline.h_active == 720 && modeline.v_active == 720,
+        ROUND_DISPLAY,
     );
     background.clear();
     background.draw_static_tuner();
     background.finish();
     video.enable();
     let tuner_display = peripherals.TUNER_DISPLAY;
-    let round_display = modeline.h_active == 720 && modeline.v_active == 720;
-    let x_offset = if round_display {
-        0
-    } else {
-        modeline.h_active.saturating_sub(720) / 2
-    };
-    tuner_display.layout().write(|w| unsafe {
-        w.x_offset().bits(x_offset);
-        w.rotate_left().bit(round_display)
-    });
+    info!(
+        "display: compiled={}x{}, rotate_left={}",
+        modeline.h_active, modeline.v_active, ROUND_DISPLAY);
     write_static_text(&tuner_display);
 
     let mut pmod = EurorackPmod0::new(peripherals.PMOD0_PERIPH);
