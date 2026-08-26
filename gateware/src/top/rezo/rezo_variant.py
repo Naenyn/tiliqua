@@ -145,6 +145,25 @@ def output_meter_db_value(magnitude):
     return max(0, min(63, round((dbfs + 60) * 63 / 60)))
 
 
+# REZO's circular UI reserves black for pixels with no semantic geometry.  The
+# eighth palette entry can therefore provide a second, darker surface between
+# BACKGROUND and PANEL without changing the shared REZOMO/STREZO palette
+# contract while this treatment is being evaluated.
+REZO_SEMANTIC_PALETTE = dict(SEMANTIC_PALETTE, surface=0x23)
+REZO_PALETTE_ROLES = PALETTE_ROLES[:-1] + ("surface",)
+REZO_SURFACE_COLORS = (
+    0x232323,  # LCD
+    0x261C0B,  # amber
+    0x0F2829,  # cyan
+    0x123024,  # green
+    0x1E1429,  # violet
+)
+REZO_RGB_PALETTES = tuple(
+    theme[:-1] + (surface,)
+    for theme, surface in zip(RGB_PALETTES, REZO_SURFACE_COLORS)
+)
+
+
 NATIVE_OUTPUT_METER_RADII = (335, 311, 303, 279)
 NATIVE_OUTPUT_METER_LABEL_COLS = (3, 5, 39, 41)
 
@@ -2620,9 +2639,9 @@ class RezoTileDisplay(wiring.Component):
     # Semantic palette roles.  The current LCD theme maps every role to a
     # grayscale intensity; a future color palette can map the same roles to
     # related RGB colors without changing any geometry or modulation logic.
-    PALETTE = SEMANTIC_PALETTE
-    PALETTE_ROLES = PALETTE_ROLES
-    RGB_PALETTES = RGB_PALETTES
+    PALETTE = REZO_SEMANTIC_PALETTE
+    PALETTE_ROLES = REZO_PALETTE_ROLES
+    RGB_PALETTES = REZO_RGB_PALETTES
     CHARS = TILE_CHARS
     CHAR_CODES = {ch: i for i, ch in enumerate(CHARS)}
 
@@ -3726,6 +3745,14 @@ class RezoTileDisplay(wiring.Component):
             content_y0,
             NATIVE_CONTENT_PANEL_X1 if self.compact_layout else 692,
             content_y1)
+        # On BANK, float the page/navigation and PRESET/MODE rows on fixed
+        # black, then place the bands and three main controls on the new dark
+        # surface.  The lower edge sits immediately below FEEDBACK.
+        bank_surface = (
+            active & bank_page & self.compact_layout & self.rect(
+                x, y, NATIVE_CONTENT_PANEL_X0, NATIVE_CONTENT_PANEL_Y0,
+                NATIVE_CONTENT_PANEL_X1,
+                compact_main_control_y0s[2] + 18))
         control_panel_x0 = 283 if self.compact_layout else 118
         control_panel_x1 = 594 if self.compact_layout else 650
         control_fill_x0 = 289 if self.compact_layout else 124
@@ -5271,7 +5298,7 @@ class RezoTileDisplay(wiring.Component):
         mod_q = Signal()
         panel_q = Signal()
         background_q = Signal()
-        active_q = Signal()
+        surface_q = Signal()
         geometry_fill_q0 = Signal()
         geometry_line_q0 = Signal()
         geometry_mod_q0 = Signal()
@@ -5308,7 +5335,7 @@ class RezoTileDisplay(wiring.Component):
             background_q.eq(
                 Mux(self.compact_layout, arc_background,
                     title_panel | content_panel | arc_background)),
-            active_q.eq(active),
+            surface_q.eq(bank_surface),
         ]
 
         palette_role = Signal(unsigned(3), init=7)
@@ -5326,6 +5353,13 @@ class RezoTileDisplay(wiring.Component):
             m.d.comb += palette_role.eq(5)
         with m.Elif(background_q):
             m.d.comb += palette_role.eq(6)
+        with m.Elif(surface_q):
+            m.d.comb += palette_role.eq(7)
+
+        palette_visible = (selected_q | text_q | mod_q | fill_q | line_q |
+                           panel_q | background_q | surface_q)
+        palette_visible_q = Signal()
+        m.d.dvi += palette_visible_q.eq(palette_visible)
 
         palette_init = [color for theme in self.RGB_PALETTES for color in theme]
         m.submodules.palette_mem = palette_mem = Memory(
@@ -5335,9 +5369,12 @@ class RezoTileDisplay(wiring.Component):
         m.d.comb += palette_rport.addr.eq(Cat(palette_role, self.palette))
 
         m.d.comb += [
-            self.r.eq(palette_rport.data[16:24]),
-            self.g.eq(palette_rport.data[8:16]),
-            self.b.eq(palette_rport.data[0:8]),
+            self.r.eq(Mux(palette_visible_q,
+                          palette_rport.data[16:24], 0)),
+            self.g.eq(Mux(palette_visible_q,
+                          palette_rport.data[8:16], 0)),
+            self.b.eq(Mux(palette_visible_q,
+                          palette_rport.data[0:8], 0)),
         ]
 
         return m

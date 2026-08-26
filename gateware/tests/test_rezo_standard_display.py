@@ -396,6 +396,49 @@ def test_compact_pager_keeps_one_pixel_gaps_during_raster_scan():
     assert selected_runs[1][0] - selected_runs[0][0] == 12
 
 
+def test_bank_surface_uses_eighth_palette_role_while_blank_stays_black():
+    """BANK's work area is shaded without tinting semantic blank pixels."""
+    dut = RezoTileDisplay(
+        h_active=720, rotate_left=False, compact_layout=True)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6, domain="sync")
+    sim.add_clock(1e-6, domain="dvi")
+    samples = []
+
+    async def sample(ctx, palette, page, native_x, native_y):
+        ctx.set(dut.palette, palette)
+        ctx.set(dut.page, page)
+        ctx.set(dut.x, native_x)
+        ctx.set(dut.y, native_y)
+        ctx.set(dut.de, 1)
+        for _ in range(12):
+            await ctx.tick("dvi")
+        samples.append((ctx.get(dut.r), ctx.get(dut.g), ctx.get(dut.b)))
+
+    async def bench(ctx):
+        for palette in range(len(dut.RGB_PALETTES)):
+            await sample(ctx, palette, 0, 400, 240)  # BANK surface
+            await sample(ctx, palette, 0, 400, 180)  # header/content gap
+            await sample(ctx, palette, 0, 400, 540)  # below FEEDBACK
+            await sample(ctx, palette, 1, 400, 240)  # another page
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    assert dut.PALETTE_ROLES[-1] == "surface"
+    for palette, theme in enumerate(dut.RGB_PALETTES):
+        packed_surface = theme[-1]
+        surface_rgb = (
+            (packed_surface >> 16) & 0xff,
+            (packed_surface >> 8) & 0xff,
+            packed_surface & 0xff,
+        )
+        assert samples[palette * 4] == surface_rgb
+        assert samples[palette * 4 + 1:palette * 4 + 4] == [
+            (0, 0, 0), (0, 0, 0), (0, 0, 0),
+        ]
+
+
 def test_compact_output_meters_are_persistent_and_independent():
     """All four output meters render in their fixed left/right arc lanes."""
     dut = RezoTileDisplay(
@@ -522,7 +565,7 @@ def test_compact_labels_use_native_control_rows():
 
     palette = RezoTileDisplay.PALETTE
     assert samples == [
-        palette["text"], palette["blank"],
+        palette["text"], palette["surface"],
         palette["text"], palette["blank"],
         palette["text"],
         palette["blank"], palette["text"],
