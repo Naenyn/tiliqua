@@ -134,7 +134,13 @@ class TiliquaSoc(Component):
         self.cpu = VexiiRiscv(
             # Writing outside these regions will cause CPU traps.
             regions = [
-                VexiiRiscv.MemoryRegion(base=self.mainram_base, size=self.mainram_size, cacheable=True, executable=False),
+                # Keep a stable 16 KiB PMA window so lean applications can use
+                # less physical BRAM without requiring another generated CPU
+                # netlist. The Wishbone decoder still rejects addresses beyond
+                # the application's actual mainram_size.
+                VexiiRiscv.MemoryRegion(base=self.mainram_base,
+                                        size=max(self.mainram_size, 0x4000),
+                                        cacheable=True, executable=False),
                 VexiiRiscv.MemoryRegion(base=self.spiflash_base, size=self.spiflash_size, cacheable=True, executable=True),
                 VexiiRiscv.MemoryRegion(base=self.psram_base, size=self.psram_size, cacheable=True, executable=True),
                 VexiiRiscv.MemoryRegion(base=self.csr_base, size=0x10000, cacheable=False, executable=False),

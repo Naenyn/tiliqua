@@ -25,7 +25,7 @@ def test_tuner_display_elaborates():
     Fragment.get(Peripheral(), platform=None)
 
 
-def test_tuner_display_regenerates_guide_and_clips_corners():
+def test_tuner_display_composites_framebuffer_marker_and_menu():
     tiles = Memory(
         shape=unsigned(6), depth=TunerOverlay.COLS * TunerOverlay.ROWS,
         init=[0] * (TunerOverlay.COLS * TunerOverlay.ROWS))
@@ -44,8 +44,10 @@ def test_tuner_display_regenerates_guide_and_clips_corners():
     async def bench(ctx):
         ctx.set(dut.i.de, 1)
 
-        # The pitch guide begins at C0 and winds continuously outward by one
-        # revolution per octave.
+        # Static guide pixels arrive from the retained PSRAM framebuffer and
+        # pass through the live overlay unchanged.
+        ctx.set(dut.i.pixel.color, 9)
+        ctx.set(dut.i.pixel.intensity, 5)
         ctx.set(dut.i.x, 360)
         ctx.set(dut.i.y, 360 - 52)
         await ctx.tick("dvi").repeat(5)
@@ -65,8 +67,8 @@ def test_tuner_display_regenerates_guide_and_clips_corners():
         await ctx.tick("dvi").repeat(5)
         assert ctx.get(dut.o.pixel.intensity) == 5
 
-        # A point on the former 52-pixel circle is no longer a guide pixel: the
-        # spiral has already expanded at this angle.
+        # Background pixels pass through as black.
+        ctx.set(dut.i.pixel.intensity, 0)
         ctx.set(dut.i.x, 393)
         ctx.set(dut.i.y, 400)
         await ctx.tick("dvi").repeat(5)
@@ -83,7 +85,8 @@ def test_tuner_display_regenerates_guide_and_clips_corners():
         await ctx.tick("dvi").repeat(5)
         assert ctx.get(dut.o.pixel.intensity) == 0
 
-        # An exact C# radial tick outside the box remains live.
+        # A retained radial tick outside the box remains live.
+        ctx.set(dut.i.pixel.intensity, 2)
         ctx.set(dut.i.x, 477)
         ctx.set(dut.i.y, 157)
         await ctx.tick("dvi").repeat(5)
@@ -99,14 +102,13 @@ def test_tuner_display_regenerates_guide_and_clips_corners():
         await ctx.tick("dvi").repeat(4)
         ctx.set(dut.i.vsync, 0)
 
-        # The C# tick is rasterized at an exact 30-degree chromatic division.
+        # Closing the menu reveals the retained guide again.
         ctx.set(dut.i.x, 477)
         ctx.set(dut.i.y, 157)
         await ctx.tick("dvi").repeat(5)
         assert ctx.get(dut.o.pixel.intensity) == 2
 
-        # Radial divisions continue through the center rather than stopping at
-        # the outermost octave ring.
+        # Retained radial divisions continue through the center.
         ctx.set(dut.i.x, 360)
         ctx.set(dut.i.y, 360)
         await ctx.tick("dvi").repeat(5)
@@ -119,15 +121,16 @@ def test_tuner_display_regenerates_guide_and_clips_corners():
         ctx.set(dut.marker_hue, 2)
         ctx.set(dut.marker_valid, 1)
         ctx.set(dut.marker_visualizer, 0)
+        ctx.set(dut.marker_lens_base, 8 * 33 * 33)  # 45-degree tangent
+        ctx.set(dut.marker_lens_bank, 0)
         ctx.set(dut.i.vsync, 1)
         await ctx.tick("dvi").repeat(4)
         ctx.set(dut.i.vsync, 0)
         # Analytical mode renders a filled, rounded lens centered on the stored
         # spiral rather than only recoloring its thin centerline.
-        ctx.set(dut.marker_lens_base, 8 * 33 * 33)  # 45-degree tangent
-        ctx.set(dut.marker_lens_bank, 0)
         ctx.set(dut.i.x, 492)
         ctx.set(dut.i.y, 228)
+        ctx.set(dut.i.pixel.intensity, 5)
         await ctx.tick("dvi").repeat(5)
         assert ctx.get(dut.o.pixel.intensity) == 15
 
@@ -184,6 +187,7 @@ def test_tuner_display_regenerates_guide_and_clips_corners():
         assert ctx.get(dut.o.pixel.intensity) == 8
 
         # The square corner is outside the official panel's circular viewport.
+        ctx.set(dut.i.pixel.intensity, 0)
         ctx.set(dut.i.x, 0)
         ctx.set(dut.i.y, 0)
         await ctx.tick("dvi").repeat(5)

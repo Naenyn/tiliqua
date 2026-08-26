@@ -288,135 +288,13 @@ class TunerOverlay(wiring.Component):
             menu_ymap_r.en.eq(active0),
         ]
 
-        # Exact circular viewport mask, shared by the real panel and the
-        # centered development preview. Doubled coordinates preserve symmetry
-        # about the half-pixel center at 359.5 without fractional arithmetic.
-        circle_bounds = []
-        for pixel_y in range(self.PANEL_H):
-            dy2 = abs((pixel_y << 1) - (self.PANEL_H - 1))
-            circle_bounds.append(isqrt((self.PANEL_W * self.PANEL_W) - dy2 * dy2))
-        circle_mem = Memory(
-            shape=unsigned(10), depth=self.PANEL_H, init=circle_bounds,
-            attrs={"ram_style": "block"})
-        circle_r = circle_mem.read_port(domain="dvi")
-        m.submodules.circle_mem = circle_mem
-
-        # Rasterize the same Archimedean pitch spiral used by firmware for the
-        # marker. One revolution is one octave: C0 begins at radius 52 and C8
-        # ends at radius 228. Each scanline is stored as narrow X intervals,
-        # retaining a genuinely smooth curve without live trigonometry or a
-        # framebuffer. Coordinates fit in nine bits after subtracting 128.
-        spiral_pixels = [set() for _ in range(self.PANEL_H)]
-        samples_per_octave = 12 * 16
-        previous = None
-        for step in range(8 * samples_per_octave + 1):
-            turns = 1 + step / samples_per_octave
-            radius = 52 + 22 * (turns - 1)
-            angle = turns * 2 * pi - pi / 2
-            px = round(360 + radius * cos(angle))
-            py = round(360 + radius * sin(angle))
-            # Join adjacent pitch samples before thickening the path. Merely
-            # stamping the endpoints leaves visible gaps in the outer turns,
-            # where one sixteenth of a semitone spans several display pixels.
-            if previous is None:
-                segment = [(px, py)]
-            else:
-                dx = px - previous[0]
-                dy = py - previous[1]
-                length = max(abs(dx), abs(dy))
-                segment = [
-                    (round(previous[0] + dx * n / length),
-                     round(previous[1] + dy * n / length))
-                    for n in range(1, length + 1)
-                ] if length else [(px, py)]
-            for line_x, line_y in segment:
-                for oy in range(-1, 2):
-                    for ox in range(-1, 2):
-                        x = line_x + ox
-                        y = line_y + oy
-                        if 128 <= x < 640 and 0 <= y < self.PANEL_H:
-                            spiral_pixels[y].add(x - 128)
-            previous = (px, py)
-        spiral_intervals = []
-        for pixels in spiral_pixels:
-            intervals = []
-            for px in sorted(pixels):
-                if not intervals or px > intervals[-1][1] + 1:
-                    intervals.append([px, px])
-                else:
-                    intervals[-1][1] = px
-            assert len(intervals) <= 19
-            spiral_intervals.append(intervals)
+        # Static viewport, chromatic divisions, and spiral now live in the
+        # PSRAM framebuffer. This overlay only composites live state, text, and
+        # the modal menu; no duplicate guide geometry is stored in FPGA EBR.
         spiral_ports = []
-        for slot in range(19):
-            bounds = []
-            for intervals in spiral_intervals:
-                if slot < len(intervals):
-                    lower, upper = intervals[slot]
-                else:
-                    lower, upper = 0x1ff, 0
-                bounds.append(lower | (upper << 9))
-            spiral_mem = Memory(
-                shape=unsigned(18), depth=self.PANEL_H, init=bounds,
-                attrs={"ram_style": "block"})
-            spiral_ports.append(spiral_mem.read_port(domain="dvi"))
-            m.submodules[f"spiral_mem_{slot}"] = spiral_mem
-
-        # Rasterize twelve accurately angled radial guides at elaboration time.
-        # Symmetry leaves at most three absolute-X intervals per scanline. This
-        # gives exact 30-degree divisions from the center through the outer ring
-        # without multipliers in the live pixel path.
-        spoke_pixels = [set() for _ in range(self.PANEL_H)]
-        for pitch_class in range(12):
-            angle = -pi / 2 + pitch_class * (2 * pi / 12)
-            for quarter_radius in range(0, 242 * 4 + 1):
-                radius = quarter_radius / 4
-                px = round(360 + radius * cos(angle))
-                py = round(360 + radius * sin(angle))
-                for oy in range(-1, 2):
-                    for ox in range(-1, 2):
-                        if 0 <= py + oy < self.PANEL_H:
-                            spoke_pixels[py + oy].add(abs(px + ox - 360))
-        spoke_intervals = []
-        for pixels in spoke_pixels:
-            intervals = []
-            for px in sorted(pixels):
-                if not intervals or px > intervals[-1][1] + 1:
-                    intervals.append([px, px])
-                else:
-                    intervals[-1][1] = px
-            assert len(intervals) <= 3
-            spoke_intervals.append(intervals)
         spoke_ports = []
-        for slot in range(3):
-            bounds = []
-            for intervals in spoke_intervals:
-                if slot < len(intervals):
-                    lower, upper = intervals[slot]
-                else:
-                    lower, upper = 0x1ff, 0
-                bounds.append(lower | (upper << 9))
-            spoke_mem = Memory(
-                shape=unsigned(18), depth=self.PANEL_H, init=bounds,
-                attrs={"ram_style": "block"})
-            spoke_ports.append(spoke_mem.read_port(domain="dvi"))
-            m.submodules[f"spoke_mem_{slot}"] = spoke_mem
         dx2_0 = Signal(11)
-        m.d.comb += [
-            circle_r.addr.eq(y0.as_unsigned()[:10]),
-            circle_r.en.eq(active0),
-            dx2_0.eq(Mux(x0 < 360, 719 - (x0 << 1), (x0 << 1) - 719)),
-        ]
-        for spiral_port in spiral_ports:
-            m.d.comb += [
-                spiral_port.addr.eq(y0.as_unsigned()[:10]),
-                spiral_port.en.eq(active0),
-            ]
-        for spoke_port in spoke_ports:
-            m.d.comb += [
-                spoke_port.addr.eq(y0.as_unsigned()[:10]),
-                spoke_port.en.eq(active0),
-            ]
+        m.d.comb += dx2_0.eq(0)
 
         scan1 = Signal(ScanPixel)
         scan2 = Signal(ScanPixel)
@@ -519,8 +397,8 @@ class TunerOverlay(wiring.Component):
         m.d.comb += lens_addr1.eq(
             lens_base1 + (lens_y1 << 5) + lens_y1 + lens_x1)
 
-        circle_inside1 = active1 & (dx2_1 <= circle_r.data)
-        circle_edge1 = circle_inside1 & (dx2_1 + 4 >= circle_r.data)
+        circle_inside1 = active1
+        circle_edge1 = Const(0)
         marker_min1 = Signal(13)
         marker_max1 = Signal(13)
         marker_distance1 = Signal(14)
@@ -557,7 +435,7 @@ class TunerOverlay(wiring.Component):
                           for index in range(len(spiral_ports))]
         x_rel2 = Signal.like(x_rel1)
         x_rel_valid2 = Signal()
-        spoke_hits2 = Signal(len(spoke_ports))
+        spoke_hits2 = Signal(1)
         menu_inside2 = Signal()
         menu_border2 = Signal()
         menu_rule2 = Signal()
@@ -582,7 +460,7 @@ class TunerOverlay(wiring.Component):
                 (marker_distance1 <= 12), 2,
                 Mux(marker_valid & marker_visualizer &
                     (marker_distance1 <= 22), 1, 0))),
-            spoke_hits2.eq(Cat(*exact_spoke_hits)),
+            spoke_hits2.eq(0),
             menu_inside2.eq(menu_inside1),
             menu_border2.eq(menu_border1),
             menu_rule2.eq(menu_rule1),
@@ -597,15 +475,6 @@ class TunerOverlay(wiring.Component):
                 lens_port.addr.eq(lens_addr2),
                 lens_port.en.eq(lens_valid2),
             ]
-
-        exact_spiral_hits2 = []
-        for bounds in spiral_bounds2:
-            lower = bounds[:9]
-            upper = bounds[9:18]
-            interval_valid = lower <= upper
-            exact_spiral_hits2.append(
-                x_rel_valid2 & interval_valid &
-                (x_rel2 >= lower) & (x_rel2 <= upper))
 
         text_hit2 = Signal()
         glyph_bit = Signal(3)
@@ -652,12 +521,9 @@ class TunerOverlay(wiring.Component):
             lens_valid3.eq(lens_valid2),
             lens_bank3.eq(lens_bank2),
             text_hit3.eq(text_hit2),
-            spiral3.eq(Cat(*exact_spiral_hits2).any()),
-            # Preserve the exact guide centerline through the filled lens. The
-            # surrounding marker body comes from the oriented lens ROM above.
-            arc3.eq(Cat(*exact_spiral_hits2).any() & marker_valid &
-                    ~marker_visualizer & (marker_distance2 <= 14)),
-            spoke3.eq(spoke_hits2.any()),
+            spiral3.eq(0),
+            arc3.eq(0),
+            spoke3.eq(0),
             menu_inside3.eq(menu_inside2),
             menu_border3.eq(menu_border2),
             menu_rule3.eq(menu_rule2),
@@ -713,7 +579,7 @@ class TunerOverlay(wiring.Component):
         ]
 
         pixel = Signal(Pixel)
-        m.d.comb += pixel.eq(0)
+        m.d.comb += pixel.eq(scan4.pixel)
         with m.If(geometry4 == 1):
             m.d.comb += [pixel.color.eq(9), pixel.intensity.eq(5)]
         with m.If(geometry4 == 2):

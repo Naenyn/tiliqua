@@ -162,6 +162,128 @@ fn spiral_point(cx: i32, cy: i32, radius: f32, turns: f32) -> (u16, u16) {
     )
 }
 
+/// Minimal retained-mode background canvas. Static geometry is written once
+/// through the CPU before scanout is enabled; live pitch and menu state remain
+/// in the small DVI overlay. Keeping those jobs separate avoids storing a full
+/// rasterized spiral in scarce FPGA block RAM.
+struct BackgroundCanvas {
+    base: *mut u8,
+    width: i32,
+    height: i32,
+    x_offset: i32,
+    rotate_left: bool,
+}
+
+impl BackgroundCanvas {
+    fn new(base: usize, width: u16, height: u16, rotate_left: bool) -> Self {
+        Self {
+            base: base as *mut u8,
+            width: width as i32,
+            height: height as i32,
+            x_offset: if rotate_left { 0 } else { (width as i32 - 720).max(0) / 2 },
+            rotate_left,
+        }
+    }
+
+    fn clear(&mut self) {
+        let words = (self.width as usize * self.height as usize + 3) / 4;
+        let ptr = self.base.cast::<u32>();
+        for offset in 0..words {
+            unsafe { ptr.add(offset).write_volatile(0) };
+        }
+    }
+
+    fn put_panel_pixel(&mut self, x: i32, y: i32, pixel: u8) {
+        if !(0..720).contains(&x) || !(0..720).contains(&y) {
+            return;
+        }
+        let (screen_x, screen_y) = if self.rotate_left {
+            (719 - y, x)
+        } else {
+            (x + self.x_offset, y)
+        };
+        if screen_x < 0 || screen_x >= self.width || screen_y < 0 || screen_y >= self.height {
+            return;
+        }
+        let offset = screen_y as usize * self.width as usize + screen_x as usize;
+        unsafe { self.base.add(offset).write_volatile(pixel) };
+    }
+
+    fn line(&mut self, mut x0: i32, mut y0: i32, x1: i32, y1: i32, pixel: u8) {
+        let dx = (x1 - x0).abs();
+        let sx = if x0 < x1 { 1 } else { -1 };
+        let dy = -(y1 - y0).abs();
+        let sy = if y0 < y1 { 1 } else { -1 };
+        let mut error = dx + dy;
+        loop {
+            self.put_panel_pixel(x0, y0, pixel);
+            if x0 == x1 && y0 == y1 { break; }
+            let twice = error * 2;
+            if twice >= dy { error += dy; x0 += sx; }
+            if twice <= dx { error += dx; y0 += sy; }
+        }
+    }
+
+    fn thick_line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, pixel: u8) {
+        for offset in -1..=1 {
+            self.line(x0 + offset, y0, x1 + offset, y1, pixel);
+            self.line(x0, y0 + offset, x1, y1 + offset, pixel);
+        }
+    }
+
+    fn draw_static_tuner(&mut self) {
+        const GUIDE: u8 = (5 << 4) | 9;
+        const SUBTLE: u8 = (2 << 4) | 9;
+        let cx = 360;
+        let cy = 360;
+
+        // Circular viewport edge and twelve chromatic divisions.
+        let mut previous = None;
+        for step in 0..=2048 {
+            let angle = step as f32 * core::f32::consts::TAU / 2048.0;
+            let point = (
+                cx + (356.0 * angle.cos()).round() as i32,
+                cy + (356.0 * angle.sin()).round() as i32,
+            );
+            if let Some((px, py)) = previous {
+                self.line(px, py, point.0, point.1, SUBTLE);
+            }
+            previous = Some(point);
+        }
+        for pitch_class in 0..12 {
+            let angle = -core::f32::consts::FRAC_PI_2
+                + pitch_class as f32 * core::f32::consts::TAU / 12.0;
+            self.thick_line(
+                cx,
+                cy,
+                cx + (242.0 * angle.cos()).round() as i32,
+                cy + (242.0 * angle.sin()).round() as i32,
+                SUBTLE,
+            );
+        }
+
+        // One continuous Archimedean spiral, one revolution per octave. This
+        // uses the same spiral_point() mapping as the live pitch marker.
+        let samples_per_octave = 12 * 16;
+        let mut previous = None;
+        for step in 0..=(8 * samples_per_octave) {
+            let turns = 1.0 + step as f32 / samples_per_octave as f32;
+            let radius = 52.0 + 22.0 * (turns - 1.0);
+            let (x, y) = spiral_point(cx, cy, radius, turns);
+            if let Some((px, py)) = previous {
+                self.thick_line(px, py, x as i32, y as i32, GUIDE);
+            }
+            previous = Some((x as i32, y as i32));
+        }
+    }
+
+    fn finish(&self) {
+        // Vexii's fence.i drains stores and flushes the small write-back data
+        // cache, making the CPU-authored image visible to the framebuffer DMA.
+        unsafe { core::arch::asm!("fence.i", options(nostack, preserves_flags)) };
+    }
+}
+
 fn glyph_index(byte: u8) -> u8 {
     match byte {
         b' ' => 0,
@@ -498,6 +620,16 @@ fn main() -> ! {
     // tuner overlay replaces every active pixel. There is no framebuffer draw
     // or initialization phase: the initialized tile RAM is visible immediately.
     palette::ColorPalette::default().write_to_hardware(&mut video);
+    let mut background = BackgroundCanvas::new(
+        PSRAM_FB_BASE,
+        modeline.h_active,
+        modeline.v_active,
+        modeline.h_active == 720 && modeline.v_active == 720,
+    );
+    background.clear();
+    background.draw_static_tuner();
+    background.finish();
+    video.enable();
     let tuner_display = peripherals.TUNER_DISPLAY;
     let round_display = modeline.h_active == 720 && modeline.v_active == 720;
     let x_offset = if round_display {

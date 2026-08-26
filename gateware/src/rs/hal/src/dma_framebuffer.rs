@@ -137,16 +137,26 @@ macro_rules! impl_lean_dma_framebuffer {
                         w.v_sync_invert().bit(mode.v_sync_invert);
                         w.active_pixels().bits(mode.h_active as u32 * mode.v_active as u32)
                     });
-                    registers_fb.flags().write(|w| unsafe {
-                        w.enable().bit(true);
-                        w.rotation().bits(mode.rotate as u8)
-                    });
                     Self {
                         registers_fb,
                         registers_palette,
                         mode,
                         framebuffer_base: fb_base as *mut u32,
                     }
+                }
+
+                pub fn enable(&mut self) {
+                    self.registers_fb.flags().write(|w| unsafe {
+                        w.enable().bit(true);
+                        w.rotation().bits(self.mode.rotate as u8)
+                    });
+                }
+
+                pub fn disable(&mut self) {
+                    self.registers_fb.flags().write(|w| unsafe {
+                        w.enable().bit(false);
+                        w.rotation().bits(self.mode.rotate as u8)
+                    });
                 }
 
                 pub fn rotate(&mut self, rotation: Rotate) {

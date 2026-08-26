@@ -36,7 +36,7 @@ class TunerSoc(TiliquaSoc):
 
     def __init__(self, **kwargs):
         self.tuner_display = TunerDisplayPeripheral()
-        super().__init__(finalize_csr_bridge=False, mainram_size=0x4000,
+        super().__init__(finalize_csr_bridge=False, mainram_size=0x2000,
                          fb_overlay=self.tuner_display.overlay,
                          pipeline_palette_output=True,
                          with_persistence=False,
@@ -82,12 +82,12 @@ class TunerSoc(TiliquaSoc):
 
 if __name__ == "__main__":
     this_path = os.path.dirname(os.path.realpath(__file__))
-    seed = int(os.getenv("TILIQUA_TUNER_SEED", "2"))
+    seed = int(os.getenv("TILIQUA_TUNER_SEED", "4"))
     top_level_cli(
         TunerSoc,
         path=this_path,
         archiver_callback=lambda archiver: archiver.with_option_storage(),
-        # The framebuffer-heavy design is placement-sensitive at 60 MHz. Keep
-        # builds reproducible with a seed that closes timing on ECP5-25F R5.
+        # Keep release builds reproducible with the best-margin seed from the
+        # lean renderer's multi-seed timing sweep on ECP5-25F R5.
         nextpnr_opts=f"--timing-allow-fail --seed {seed}",
     )
