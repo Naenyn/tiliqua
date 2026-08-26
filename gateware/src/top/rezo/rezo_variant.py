@@ -2804,26 +2804,17 @@ class RezoTileDisplay(wiring.Component):
                           (ui_y >= 0) & (ui_y < self.PANEL_H)),
             ]
 
-        if self.compact_layout:
-            # BANK's shaded work area gets one native-row top inset. FILTER retains
-            # the family geometry authored for the unshaded main page.
-            zero_y = Mux(self.filter_mode, 350, 366)
-            zero_y_init = 366
-            main_band_y0 = Mux(self.filter_mode, 259, 275)
-            main_band_y1 = Mux(self.filter_mode, 440, 456)
-        else:
-            zero_y = 366
-            zero_y_init = zero_y
-            main_band_y0 = 202
-            main_band_y1 = 532
+        zero_y = 350 if self.compact_layout else 366
+        main_band_y0 = 259 if self.compact_layout else 202
+        main_band_y1 = 440 if self.compact_layout else 532
         # Retain the compact field's lower edge while reclaiming the unused
         # space above it.  This leaves modest padding below the BANDS label
         # and a clear gutter before the first horizontal control.
-        band_top_values = [Signal(signed(12), init=zero_y_init, name=f"tile_band_top_value{n}")
+        band_top_values = [Signal(signed(12), init=zero_y, name=f"tile_band_top_value{n}")
                            for n in range(RezoCore.N_BANDS)]
-        band_bottom_values = [Signal(signed(12), init=zero_y_init, name=f"tile_band_bottom_value{n}")
+        band_bottom_values = [Signal(signed(12), init=zero_y, name=f"tile_band_bottom_value{n}")
                               for n in range(RezoCore.N_BANDS)]
-        band_base_marker_values = [Signal(signed(12), init=zero_y_init,
+        band_base_marker_values = [Signal(signed(12), init=zero_y,
                                           name=f"tile_band_base_marker{n}")
                                    for n in range(RezoCore.N_BANDS)]
         band_positive_values = [Signal(name=f"tile_band_positive{n}")
@@ -3010,13 +3001,13 @@ class RezoTileDisplay(wiring.Component):
             put_native_page_heading(put_native, 0, "PRESET")
             put_native_page_heading(put_native, 0, "MODE", 25)
             put_native_page_heading(put_native, 0, "BANK", 31)
-            put_native(0, "BANDS", 8, 15)
-            put_native(0, "FREQ:", 23, 15)
+            put_native(0, "BANDS", 8, 14)
+            put_native(0, "FREQ:", 23, 14)
             # BANK occupies the first three slots of the same five-slot grid
             # used by FILTER below.
-            put_native(0, "DRIVE", 12, compact_main_control_text_rows[0] + 1)
-            put_native(0, "RESONANCE", 8, compact_main_control_text_rows[1] + 1)
-            put_native(0, "FEEDBACK", 9, compact_main_control_text_rows[2] + 1)
+            put_native(0, "DRIVE", 12, compact_main_control_text_rows[0])
+            put_native(0, "RESONANCE", 8, compact_main_control_text_rows[1])
+            put_native(0, "FEEDBACK", 9, compact_main_control_text_rows[2])
 
             # Shared support pages. REZO writes INPUT DEPTH dynamically so
             # AUDIO lanes leave the inapplicable row completely blank.
@@ -3300,7 +3291,7 @@ class RezoTileDisplay(wiring.Component):
                     0, 16, NATIVE_PAGE_HEADING_ROW, pos)
             for pos in range(3):
                 writer_address_init[8 + pos] = native_text_address(
-                    0, 29, 15, pos)
+                    0, 29, 14, pos)
             for n, (mode_row, value_row, _) in enumerate(
                     compact_input_text_rows):
                 for pos in range(3):
@@ -3770,7 +3761,7 @@ class RezoTileDisplay(wiring.Component):
             active & bank_page & self.compact_layout & self.rect(
                 x, y, NATIVE_CONTENT_PANEL_X0, NATIVE_CONTENT_PANEL_Y0,
                 NATIVE_CONTENT_PANEL_X1,
-                compact_main_control_y0s[2] + 34))
+                compact_main_control_y0s[2] + 18))
         control_panel_x0 = 283 if self.compact_layout else 118
         control_panel_x1 = 594 if self.compact_layout else 650
         control_fill_x0 = 289 if self.compact_layout else 124
@@ -3783,7 +3774,7 @@ class RezoTileDisplay(wiring.Component):
         if self.compact_layout:
             bank_meter_rows = Const(0)
             filter_meter_rows = Const(0)
-            for row_y0 in tuple(y0 + 16 for y0 in compact_main_control_y0s[:3]):
+            for row_y0 in compact_main_control_y0s[:3]:
                 bank_meter_rows = bank_meter_rows | self.rect(
                     x, y, control_panel_x0, row_y0 - 2,
                     control_panel_x1, row_y0 + 18)
@@ -4960,8 +4951,7 @@ class RezoTileDisplay(wiring.Component):
                 ~self.editing & self.outline(
                     x, y, 131, 95, 269, 143, t=3))
         bank_control_y0s = (
-            tuple(y0 + 16 for y0 in compact_main_control_y0s[:3])
-            if self.compact_layout
+            compact_main_control_y0s[:3] if self.compact_layout
             else (556, 588, 620))
         bank_panel_bounds = (
             tuple((row_y0 - 2, row_y0 + 18)

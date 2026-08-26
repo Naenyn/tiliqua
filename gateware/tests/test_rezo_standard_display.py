@@ -464,7 +464,7 @@ def test_bank_surface_uses_eighth_palette_role_while_blank_stays_black():
         for palette in range(len(dut.RGB_PALETTES)):
             await sample(ctx, palette, 0, 350, 240)  # BANK surface
             await sample(ctx, palette, 0, 400, 180)  # header/content gap
-            await sample(ctx, palette, 0, 400, 550)  # below BANK surface
+            await sample(ctx, palette, 0, 400, 540)  # below BANK surface
             await sample(ctx, palette, 1, 400, 240)  # another page
 
     sim.add_testbench(bench)
@@ -585,8 +585,8 @@ def test_compact_labels_use_native_control_rows():
             await ctx.tick("sync")
 
         # BANK labels share the native x=272 right edge of the fader gutter.
-        await sample(ctx, 12 * 16, 464)       # DRIVE
-        await sample(ctx, 10 * 16, 464)       # old, too-far-left start
+        await sample(ctx, 12 * 16, 448)       # DRIVE
+        await sample(ctx, 10 * 16, 448)       # old, too-far-left start
 
         # FILTER's deepest row remains inside the content field, and its
         # first label begins on the same inner gutter as MATRIX.
