@@ -24,14 +24,13 @@ use tiliqua_pac as pac;
 
 const TIMER0_ISR_PERIOD_MS: u32 = 5;
 const FRAME_PERIOD_TICKS: u8 = 4; // Publish measurements at up to 50Hz.
-const MENU_COLUMN: u8 = 9;
-const MENU_ROW: u8 = 15;
-const MENU_WIDTH: u8 = 27;
-const MENU_HEIGHT: u8 = 10;
-const MENU_PAGE_COLUMN: u8 = 10;
-const MENU_PAGE_WIDTH: u8 = 9;
-const MENU_ITEM_COLUMN: u8 = 20;
-const MENU_ITEM_WIDTH: u8 = 15;
+const MENU_COLS: u8 = 28;
+const MENU_ROWS: u8 = 9;
+const MENU_PAGE_COLUMN: u8 = 0;
+const MENU_PAGE_WIDTH: u8 = 8;
+const MENU_ITEM_COLUMN: u8 = 10;
+const MENU_VALUE_RIGHT: u8 = 25;
+const MENU_EDIT_COLUMN: u8 = 26;
 const NOTE_NAMES: [&str; 12] = [
     "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
 ];
@@ -237,79 +236,113 @@ fn write_static_text(display: &pac::TUNER_DISPLAY) {
 }
 
 fn clear_menu_text(display: &pac::TUNER_DISPLAY) {
-    for row in MENU_ROW..MENU_ROW + MENU_HEIGHT {
-        for column in MENU_COLUMN..MENU_COLUMN + MENU_WIDTH {
-            display.tile_write().write(|w| unsafe {
-                w.address().bits(row as u16 * 45 + column as u16);
-                w.glyph().bits(glyph_index(b' '))
-            });
+    for row in 0..MENU_ROWS {
+        for column in 0..MENU_COLS {
+            write_menu_char(display, column, row, b' ', false);
         }
     }
 }
 
-fn write_menu_field(display: &pac::TUNER_DISPLAY, column: u8, row: u8, width: u8, text: &str) {
-    for offset in 0..width {
-        display.tile_write().write(|w| unsafe {
-            w.address().bits(row as u16 * 45 + column as u16 + offset as u16);
-            w.glyph().bits(glyph_index(b' '))
-        });
-    }
-    for (offset, byte) in text.bytes().take(width as usize).enumerate() {
-        display.tile_write().write(|w| unsafe {
-            w.address()
-                .bits(row as u16 * 45 + column as u16 + offset as u16);
-            w.glyph().bits(glyph_index(byte))
-        });
+fn menu_glyph_index(byte: u8) -> u8 {
+    if (b' '..=b'~').contains(&byte) {
+        byte - b' '
+    } else {
+        0
     }
 }
 
+fn write_menu_char(
+    display: &pac::TUNER_DISPLAY,
+    column: u8,
+    row: u8,
+    byte: u8,
+    bold: bool,
+) {
+    if column >= MENU_COLS || row >= MENU_ROWS {
+        return;
+    }
+    let glyph = menu_glyph_index(byte);
+    let address = 0x800
+        | ((bold as u16) << 10)
+        | (((glyph as u16) & 0x40) << 3)
+        | (row as u16 * MENU_COLS as u16 + column as u16);
+    display.tile_write().write(|w| unsafe {
+        w.address().bits(address);
+        w.glyph().bits(glyph & 0x3f)
+    });
+}
+
+fn write_menu_text(
+    display: &pac::TUNER_DISPLAY,
+    column: u8,
+    row: u8,
+    text: &str,
+    bold: bool,
+) {
+    for (offset, byte) in text.bytes().enumerate() {
+        write_menu_char(display, column.saturating_add(offset as u8), row, byte, bold);
+    }
+}
+
+fn write_menu_right_aligned(
+    display: &pac::TUNER_DISPLAY,
+    right: u8,
+    row: u8,
+    text: &str,
+    bold: bool,
+) {
+    let length = text.len().min(right as usize + 1) as u8;
+    write_menu_text(display, right + 1 - length, row, text, bold);
+}
+
 fn publish_menu(display: &pac::TUNER_DISPLAY, opts: &Opts) {
+    clear_menu_text(display);
     let page = opts.tracker.page.value;
     let page_label = match page {
         Page::Tuner => "TUNER",
         Page::Settings => "SETTINGS",
         Page::Help => "HELP",
     };
-    let mut page_line: String<16> = String::new();
-    let page_prefix = if opts.selected().is_none() { "+" } else { " " };
-    write!(page_line, "{}{}", page_prefix, page_label).ok();
-    let page_column = MENU_PAGE_COLUMN
-        + MENU_PAGE_WIDTH.saturating_sub(page_line.len().min(MENU_PAGE_WIDTH as usize) as u8);
-    write_menu_field(display, MENU_PAGE_COLUMN, 16, MENU_PAGE_WIDTH, "");
-    write_menu_field(
+    let page_bold = opts.selected().is_none();
+    write_menu_right_aligned(
         display,
-        page_column,
-        16,
-        MENU_PAGE_COLUMN + MENU_PAGE_WIDTH - page_column,
-        &page_line,
+        MENU_PAGE_COLUMN + MENU_PAGE_WIDTH - 1,
+        0,
+        page_label,
+        page_bold,
     );
-    if opts.selected().is_none() && opts.modify() {
-        write_text(display, MENU_PAGE_COLUMN + MENU_PAGE_WIDTH - 1, 18, "^");
+    if page_bold && opts.modify() {
+        write_menu_char(
+            display,
+            MENU_PAGE_COLUMN + MENU_PAGE_WIDTH - 1,
+            1,
+            b'^',
+            true,
+        );
     }
 
     let options = opts.view().options();
     for index in 0..3 {
-        let mut line: String<32> = String::new();
         if let Some(option) = options.get(index) {
-            let prefix = if opts.selected() == Some(index) { "+" } else { " " };
+            let selected = opts.selected() == Some(index);
             let label = match (page, index) {
-                (Page::Tuner, 2) => "REF TONE",
-                (Page::Settings, 0) => "A4 REF",
-                (Page::Settings, 1) => "SAVE",
-                (Page::Settings, 2) => "RESET",
+                (Page::Tuner, 2) => "ref tone",
+                (Page::Settings, 0) => "a4 ref",
+                (Page::Settings, 1) => "save",
+                (Page::Settings, 2) => "reset",
                 _ => option.name(),
             };
-            write!(line, "{}{} {}", prefix, label, option.value()).ok();
-        }
-        let row = 16 + index as u8 * 2;
-        write_menu_field(display, MENU_ITEM_COLUMN, row, MENU_ITEM_WIDTH, &line);
-        if opts.selected() == Some(index) && opts.modify() {
-            write_text(
+            write_menu_text(display, MENU_ITEM_COLUMN, index as u8, label, selected);
+            write_menu_right_aligned(
                 display,
-                MENU_ITEM_COLUMN + MENU_ITEM_WIDTH - 1,
-                row,
-                "<",
+                MENU_VALUE_RIGHT,
+                index as u8,
+                &option.value(),
+                selected,
             );
+            if selected && opts.modify() {
+                write_menu_char(display, MENU_EDIT_COLUMN, index as u8, b'<', true);
+            }
         }
     }
 }
@@ -411,10 +444,10 @@ fn publish_tuner(
         }
     };
 
-    if !menu_active {
-        write_centered(display, 20, &note_line, 8);
-        write_centered(display, 22, &cents_line, 20);
-    }
+    // The compact menu overlays only the established right-side panel, so the
+    // underlying tuner remains complete and live while it is open.
+    write_centered(display, 20, &note_line, 8);
+    write_centered(display, 22, &cents_line, 20);
     write_centered(display, 37, &frequency_line, 24);
     write_centered(display, 39, &voltage_line, 28);
     write_centered(display, 41, &reference_line, 24);

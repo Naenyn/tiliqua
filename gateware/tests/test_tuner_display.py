@@ -4,6 +4,7 @@ from amaranth.lib.memory import Memory
 from amaranth.sim import Simulator
 
 from top.tuner.display import FONT, FONT_CHARS, FONT_INDEX, Peripheral, TunerOverlay
+from top.tuner.font_9x15 import MENU_FONT_BOLD, MENU_FONT_NORMAL
 
 
 def test_tuner_font_contract():
@@ -13,6 +14,9 @@ def test_tuner_font_contract():
     assert all(char in FONT for char in FONT_CHARS)
     assert all(len(FONT[char]) == 7 for char in FONT_CHARS)
     assert all(0 <= row < 32 for char in FONT_CHARS for row in FONT[char])
+    assert len(MENU_FONT_NORMAL) == 95 * 15
+    assert len(MENU_FONT_BOLD) == 95 * 15
+    assert all(0 <= row < 512 for row in MENU_FONT_NORMAL + MENU_FONT_BOLD)
 
 
 def test_tuner_display_elaborates():
@@ -25,10 +29,15 @@ def test_tuner_display_regenerates_guide_and_clips_corners():
     tiles = Memory(
         shape=unsigned(6), depth=TunerOverlay.COLS * TunerOverlay.ROWS,
         init=[0] * (TunerOverlay.COLS * TunerOverlay.ROWS))
-    dut = TunerOverlay(tiles)
+    menu = Memory(
+        shape=unsigned(8),
+        depth=TunerOverlay.MENU_COLS * TunerOverlay.MENU_ROWS,
+        init=[0] * (TunerOverlay.MENU_COLS * TunerOverlay.MENU_ROWS))
+    dut = TunerOverlay(tiles, menu)
     m = Module()
     m.submodules.dut = dut
     m.submodules.tiles = tiles
+    m.submodules.menu = menu
     sim = Simulator(m)
     sim.add_clock(1e-6, domain="dvi")
 
@@ -63,14 +72,14 @@ def test_tuner_display_regenerates_guide_and_clips_corners():
         await ctx.tick("dvi").repeat(5)
         assert ctx.get(dut.o.pixel.intensity) == 0
 
-        # The modal menu masks only its central panel while leaving the live
+        # The modal menu masks only its established right-side panel while leaving the live
         # tuner visible around it.
         ctx.set(dut.menu_active, 1)
         ctx.set(dut.i.vsync, 1)
         await ctx.tick("dvi").repeat(4)
         ctx.set(dut.i.vsync, 0)
-        ctx.set(dut.i.x, 360)
-        ctx.set(dut.i.y, 360 - 52)
+        ctx.set(dut.i.x, 500)
+        ctx.set(dut.i.y, 400)
         await ctx.tick("dvi").repeat(5)
         assert ctx.get(dut.o.pixel.intensity) == 0
 
@@ -81,8 +90,8 @@ def test_tuner_display_regenerates_guide_and_clips_corners():
         assert ctx.get(dut.o.pixel.intensity) == 2
 
         # The panel border is procedural and does not depend on stale tiles.
-        ctx.set(dut.i.x, 144)
-        ctx.set(dut.i.y, 280)
+        ctx.set(dut.i.x, TunerOverlay.MENU_X)
+        ctx.set(dut.i.y, 400)
         await ctx.tick("dvi").repeat(5)
         assert ctx.get(dut.o.pixel.intensity) == 10
         ctx.set(dut.menu_active, 0)

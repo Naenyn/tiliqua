@@ -18,6 +18,11 @@ from math import cos, isqrt, pi, sin
 
 from tiliqua.video.types import Pixel, ScanPixel
 
+try:
+    from .font_9x15 import MENU_FONT_BOLD, MENU_FONT_NORMAL
+except ImportError:
+    from font_9x15 import MENU_FONT_BOLD, MENU_FONT_NORMAL
+
 
 # A deliberately small 5x7 font. Unsupported characters render as spaces.
 # Rows are encoded most-significant pixel first.
@@ -81,8 +86,20 @@ class TunerOverlay(wiring.Component):
     ROWS = 45
     CELL = 16
 
-    def __init__(self, tile_memory):
+    # Exact OSCIO/SONORO overlay geometry on the logical 720x720 canvas.
+    MENU_X = 454
+    MENU_Y = 342
+    MENU_W = 250
+    MENU_H = 160
+    MENU_TEXT_X = 455
+    MENU_TEXT_Y = 349
+    MENU_COLS = 28
+    MENU_ROWS = 9
+    MENU_ROW_PITCH = 18
+
+    def __init__(self, tile_memory, menu_memory):
         self.tile_memory = tile_memory
+        self.menu_memory = menu_memory
         super().__init__({
             "i": In(ScanPixel),
             "o": Out(ScanPixel),
@@ -160,6 +177,24 @@ class TunerOverlay(wiring.Component):
         font_r = font_mem.read_port(domain="dvi")
         m.submodules.font_mem = font_mem
 
+        # Menus in XBEAM, OSCIO, and SONORO use embedded-graphics' exact 9x15
+        # normal/bold fonts. Keep a dedicated compact plane so the tuner can
+        # retain its larger display lettering without approximating the menu.
+        menu_r = self.menu_memory.read_port(domain="dvi")
+        # Lay glyph rows out on power-of-two address boundaries so the live
+        # address is only Cat(row, glyph, bold), not glyph*15 plus a bank add.
+        menu_font_init = [0] * 4096
+        for bold, font in enumerate((MENU_FONT_NORMAL, MENU_FONT_BOLD)):
+            for glyph in range(95):
+                for row in range(15):
+                    menu_font_init[row | (glyph << 4) | (bold << 11)] = \
+                        font[glyph * 15 + row]
+        menu_font_mem = Memory(
+            shape=unsigned(9), depth=len(menu_font_init), init=menu_font_init,
+            attrs={"ram_style": "block"})
+        menu_font_r = menu_font_mem.read_port(domain="dvi")
+        m.submodules.menu_font_mem = menu_font_mem
+
         # The Snail-style analytical marker is a compact filled lens, not a
         # widened copy of a scanline interval. Thirty-two unoriented axes cover
         # 180 degrees at 5.625-degree resolution (an ellipse at angle + 180
@@ -216,6 +251,41 @@ class TunerOverlay(wiring.Component):
                 (cell_y0 << 5) + (cell_y0 << 3) +
                 (cell_y0 << 2) + cell_y0 + cell_x0),
             tile_r.en.eq(active0 & (cell_x0 < self.COLS) & (cell_y0 < self.ROWS)),
+        ]
+
+        # Predecode the non-power-of-two 9x15 font grid into two tiny ROMs.
+        # This reproduces embedded-graphics placement without putting division
+        # or modulo operators on the DVI pixel path.
+        menu_xmap = []
+        menu_ymap = []
+        for pixel_x in range(self.PANEL_W):
+            relative = pixel_x - self.MENU_TEXT_X
+            valid = 0 <= relative < self.MENU_COLS * 9
+            column = relative // 9 if valid else 0
+            glyph_column = relative % 9 if valid else 0
+            menu_xmap.append(column | (glyph_column << 5) | (int(valid) << 9))
+        for pixel_y in range(self.PANEL_H):
+            relative = pixel_y - self.MENU_TEXT_Y
+            row = relative // self.MENU_ROW_PITCH if relative >= 0 else 0
+            glyph_row = relative % self.MENU_ROW_PITCH if relative >= 0 else 0
+            valid = (0 <= row < self.MENU_ROWS) and glyph_row < 15
+            menu_ymap.append(
+                (row * self.MENU_COLS) | (glyph_row << 8) | (int(valid) << 12))
+        menu_xmap_mem = Memory(
+            shape=unsigned(10), depth=self.PANEL_W, init=menu_xmap,
+            attrs={"ram_style": "block"})
+        menu_ymap_mem = Memory(
+            shape=unsigned(13), depth=self.PANEL_H, init=menu_ymap,
+            attrs={"ram_style": "block"})
+        menu_xmap_r = menu_xmap_mem.read_port(domain="dvi")
+        menu_ymap_r = menu_ymap_mem.read_port(domain="dvi")
+        m.submodules.menu_xmap_mem = menu_xmap_mem
+        m.submodules.menu_ymap_mem = menu_ymap_mem
+        m.d.comb += [
+            menu_xmap_r.addr.eq(x0.as_unsigned()[:10]),
+            menu_xmap_r.en.eq(active0),
+            menu_ymap_r.addr.eq(y0.as_unsigned()[:10]),
+            menu_ymap_r.en.eq(active0),
         ]
 
         # Exact circular viewport mask, shared by the real panel and the
@@ -362,17 +432,18 @@ class TunerOverlay(wiring.Component):
         menu_border1 = Signal()
         menu_rule1 = Signal()
 
-        # OSCIO/SONORO-style modal menu bounds. The box remains comfortably
-        # inside the official circular display while leaving the outer pitch
-        # labels and enough of the live spiral visible to retain context.
-        menu_inside0 = active0 & (x0 >= 144) & (x0 < 576) & \
-            (y0 >= 240) & (y0 < 400)
+        # Use the established right-side 250x160 menu placement verbatim.
+        menu_inside0 = active0 & (x0 >= self.MENU_X) & \
+            (x0 < self.MENU_X + self.MENU_W) & (y0 >= self.MENU_Y) & \
+            (y0 < self.MENU_Y + self.MENU_H)
         menu_border0 = menu_inside0 & (
-            (x0 < 147) | (x0 >= 573) | (y0 < 243) | (y0 >= 397))
+            (x0 < self.MENU_X + 2) | (x0 >= self.MENU_X + self.MENU_W - 2) |
+            (y0 < self.MENU_Y + 2) | (y0 >= self.MENU_Y + self.MENU_H - 2))
         # Match OSCIO/SONORO's page gutter: page name on the left, option
         # names and values on the right, separated by one quiet vertical rule.
-        menu_rule0 = menu_inside0 & (x0 >= 303) & (x0 < 305) & \
-            (y0 >= 248) & (y0 < 392)
+        menu_rule0 = menu_inside0 & (x0 >= self.MENU_X + 79) & \
+            (x0 < self.MENU_X + 80) & (y0 >= self.MENU_Y + 8) & \
+            (y0 < self.MENU_Y + 62)
 
         # Cheap polar approximation. It is deliberately generated every scan,
         # so guide pixels never need to be stored, erased, or repaired. The
@@ -428,6 +499,19 @@ class TunerOverlay(wiring.Component):
             lens_bank1.eq(marker_lens_bank),
         ]
 
+        menu_valid1 = Signal()
+        menu_glyph_col1 = Signal(4)
+        menu_glyph_row1 = Signal(4)
+        menu_cell_addr1 = Signal(range(self.MENU_COLS * self.MENU_ROWS))
+        m.d.comb += [
+            menu_valid1.eq(menu_xmap_r.data[9] & menu_ymap_r.data[12]),
+            menu_glyph_col1.eq(menu_xmap_r.data[5:9]),
+            menu_glyph_row1.eq(menu_ymap_r.data[8:12]),
+            menu_cell_addr1.eq(menu_ymap_r.data[:8] + menu_xmap_r.data[:5]),
+            menu_r.addr.eq(menu_cell_addr1),
+            menu_r.en.eq(menu_active & menu_valid1),
+        ]
+
         # Split coordinate normalization from the ROM address addition. The
         # extra register keeps the large lens memory physically off the path
         # from the live DVI pixel counters.
@@ -477,6 +561,9 @@ class TunerOverlay(wiring.Component):
         menu_inside2 = Signal()
         menu_border2 = Signal()
         menu_rule2 = Signal()
+        menu_valid2 = Signal()
+        menu_glyph_col2 = Signal(4)
+        menu_glyph_row2 = Signal(4)
         m.d.dvi += [
             scan2.eq(scan1),
             glyph_col2.eq(glyph_col1),
@@ -499,6 +586,9 @@ class TunerOverlay(wiring.Component):
             menu_inside2.eq(menu_inside1),
             menu_border2.eq(menu_border1),
             menu_rule2.eq(menu_rule1),
+            menu_valid2.eq(menu_valid1),
+            menu_glyph_col2.eq(menu_glyph_col1),
+            menu_glyph_row2.eq(menu_glyph_row1),
         ]
         for bounds, spiral_port in zip(spiral_bounds2, spiral_ports):
             m.d.dvi += bounds.eq(spiral_port.data)
@@ -526,6 +616,15 @@ class TunerOverlay(wiring.Component):
                 font_r.data.bit_select(glyph_bit, 1)),
         ]
 
+
+        menu_font_addr2 = Signal(12)
+        m.d.comb += [
+            menu_font_addr2.eq(Cat(
+                menu_glyph_row2, menu_r.data[:7], menu_r.data[7])),
+            menu_font_r.addr.eq(menu_font_addr2),
+            menu_font_r.en.eq(menu_active & menu_valid2),
+        ]
+
         # Keep normalization, radial classification, and final color selection
         # in separate pixel-clock stages. This is deliberately a few pixels of
         # latency: the scan stream is delayed alongside it, and the shorter
@@ -542,6 +641,9 @@ class TunerOverlay(wiring.Component):
         menu_inside3 = Signal()
         menu_border3 = Signal()
         menu_rule3 = Signal()
+        menu_valid3 = Signal()
+        menu_glyph_col3 = Signal(4)
+        menu_bold3 = Signal()
         m.d.dvi += [
             scan3.eq(scan2),
             circle_edge3.eq(circle_edge2),
@@ -559,6 +661,18 @@ class TunerOverlay(wiring.Component):
             menu_inside3.eq(menu_inside2),
             menu_border3.eq(menu_border2),
             menu_rule3.eq(menu_rule2),
+            menu_valid3.eq(menu_valid2),
+            menu_glyph_col3.eq(menu_glyph_col2),
+            menu_bold3.eq(menu_r.data[7]),
+        ]
+
+        menu_text_hit3 = Signal()
+        menu_font_bit3 = Signal(4)
+        m.d.comb += [
+            menu_font_bit3.eq(8 - menu_glyph_col3),
+            menu_text_hit3.eq(
+                menu_active & menu_valid3 &
+                menu_font_r.data.bit_select(menu_font_bit3, 1)),
         ]
 
         guide3 = Signal()
@@ -573,6 +687,8 @@ class TunerOverlay(wiring.Component):
         menu_inside4 = Signal()
         menu_border4 = Signal()
         menu_rule4 = Signal()
+        menu_text_hit4 = Signal()
+        menu_bold4 = Signal()
         analytical_lens3 = Signal()
         selected_lens_data3 = Signal()
         m.d.comb += selected_lens_data3.eq(
@@ -592,6 +708,8 @@ class TunerOverlay(wiring.Component):
             menu_inside4.eq(menu_inside3),
             menu_border4.eq(menu_border3),
             menu_rule4.eq(menu_rule3),
+            menu_text_hit4.eq(menu_text_hit3),
+            menu_bold4.eq(menu_bold3),
         ]
 
         pixel = Signal(Pixel)
@@ -619,8 +737,13 @@ class TunerOverlay(wiring.Component):
                 m.d.comb += [pixel.color.eq(9), pixel.intensity.eq(10)]
             with m.Elif(menu_rule4):
                 m.d.comb += [pixel.color.eq(9), pixel.intensity.eq(3)]
-        with m.If(text_hit4):
+        with m.If(text_hit4 & ~(menu_active & menu_inside4)):
             m.d.comb += [pixel.color.eq(9), pixel.intensity.eq(13)]
+        with m.If(menu_text_hit4):
+            m.d.comb += [
+                pixel.color.eq(9),
+                pixel.intensity.eq(Mux(menu_bold4, 15, 10)),
+            ]
 
         m.d.comb += [
             self.o.eq(scan4),
@@ -658,7 +781,12 @@ class Peripheral(wiring.Component):
         self.tile_memory = Memory(
             shape=unsigned(6), depth=TunerOverlay.COLS * TunerOverlay.ROWS,
             init=[0] * (TunerOverlay.COLS * TunerOverlay.ROWS))
-        self.overlay = TunerOverlay(self.tile_memory)
+        # Bits 0..6 select printable ASCII; bit 7 selects the bold face used
+        # by draw_options for the active page or option.
+        self.menu_memory = Memory(
+            shape=unsigned(8), depth=TunerOverlay.MENU_COLS * TunerOverlay.MENU_ROWS,
+            init=[0] * (TunerOverlay.MENU_COLS * TunerOverlay.MENU_ROWS))
+        self.overlay = TunerOverlay(self.tile_memory, self.menu_memory)
 
         regs = csr.Builder(addr_width=4, data_width=8)
         self._marker = regs.add("marker", self.Marker(), offset=0x0)
@@ -677,13 +805,25 @@ class Peripheral(wiring.Component):
         m.submodules.bridge = self._bridge
         m.submodules.overlay = self.overlay
         m.submodules.tile_memory = self.tile_memory
+        m.submodules.menu_memory = self.menu_memory
         wiring.connect(m, wiring.flipped(self.bus), self._bridge.bus)
 
         tile_w = self.tile_memory.write_port(domain="sync")
+        menu_w = self.menu_memory.write_port(domain="sync")
         m.d.comb += [
             tile_w.addr.eq(self._tile_write.f.address.w_data),
             tile_w.data.eq(self._tile_write.f.glyph.w_data),
-            tile_w.en.eq(self._tile_write.element.w_stb),
+            tile_w.en.eq(
+                self._tile_write.element.w_stb &
+                ~self._tile_write.f.address.w_data[11]),
+            menu_w.addr.eq(self._tile_write.f.address.w_data[:8]),
+            menu_w.data.eq(Cat(
+                self._tile_write.f.glyph.w_data,
+                self._tile_write.f.address.w_data[9],
+                self._tile_write.f.address.w_data[10])),
+            menu_w.en.eq(
+                self._tile_write.element.w_stb &
+                self._tile_write.f.address.w_data[11]),
         ]
         with m.If(self._marker.element.w_stb):
             m.d.sync += [
