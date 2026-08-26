@@ -632,9 +632,6 @@ fn main() -> ! {
     background.finish();
     video.enable();
     let tuner_display = peripherals.TUNER_DISPLAY;
-    info!(
-        "display: compiled={}x{}, rotate_left={}",
-        modeline.h_active, modeline.v_active, ROUND_DISPLAY);
     write_static_text(&tuner_display);
 
     let mut pmod = EurorackPmod0::new(peripherals.PMOD0_PERIPH);
