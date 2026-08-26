@@ -34,7 +34,7 @@ some listening time on real hardware.
 
 import os
 import sys
-from math import log10
+from math import isqrt, log10
 
 from amaranth import *
 from amaranth.lib import data, stream, wiring
@@ -145,8 +145,20 @@ def output_meter_db_value(magnitude):
     return max(0, min(63, round((dbfs + 60) * 63 / 60)))
 
 
-NATIVE_OUTPUT_METER_X0S = (25, 57, 639, 671)
+NATIVE_OUTPUT_METER_RADII = (332, 308, 300, 276)
 NATIVE_OUTPUT_METER_LABEL_COLS = (2, 4, 40, 42)
+
+
+def native_output_meter_bounds(y):
+    """Return left-edge intersections for the four concentric meter radii."""
+    dy2 = abs((y << 1) - 719)
+    bounds = []
+    for radius in NATIVE_OUTPUT_METER_RADII:
+        radius2 = radius << 1
+        remainder = max(0, radius2 * radius2 - dy2 * dy2)
+        dx2 = isqrt(remainder)
+        bounds.append((719 - dx2 + 1) // 2)
+    return tuple(bounds)
 
 
 class RezoCore(RezoCoreConstants, wiring.Component):
@@ -3567,56 +3579,72 @@ class RezoTileDisplay(wiring.Component):
             pager_current = active & pager_window & pager_rport.data[2] & \
                 (y >= 76) & (y < 97)
 
-            # Two persistent output lanes per side. Meters grow upward from
-            # y=460, using a 0..63 display value and three pixels per step.
-            meter_lane = Signal(unsigned(2))
+            # Two persistent output lanes per side. Four precomputed circle
+            # intersections form two annular strips on either side, concentric
+            # with the display border. Horizontal y clips keep the meter tops,
+            # bottoms, fill thresholds, and clip lamps perfectly flat.
+            meter_curve_init = []
+            for pixel_y in range(720):
+                packed_bounds = 0
+                for index, bound in enumerate(
+                        native_output_meter_bounds(pixel_y)):
+                    packed_bounds |= bound << (index * 10)
+                meter_curve_init.append(packed_bounds)
+            m.submodules.output_meter_curve_mem = output_meter_curve_mem = Memory(
+                shape=unsigned(40), depth=len(meter_curve_init),
+                init=meter_curve_init, attrs={"ram_style": "block"})
+            meter_curve_rport = output_meter_curve_mem.read_port(domain="dvi")
+            m.d.comb += meter_curve_rport.addr.eq(text_y_pre)
+
             meter_lane_valid = Signal()
-            meter_x0 = Signal(unsigned(10))
+            meter_curve_x = Signal(unsigned(10))
+            meter_bound_lo = Signal(unsigned(10))
+            meter_bound_hi = Signal(unsigned(10))
             meter_value = Signal(unsigned(6))
             meter_clip = Signal()
-            with m.If((x >= NATIVE_OUTPUT_METER_X0S[0]) &
-                      (x < NATIVE_OUTPUT_METER_X0S[0] + 24)):
+            m.d.comb += meter_curve_x.eq(Mux(x < 360, x, 719 - x))
+            with m.If((meter_curve_x >= meter_curve_rport.data[0:10]) &
+                      (meter_curve_x < meter_curve_rport.data[10:20])):
                 m.d.comb += [
-                    meter_lane.eq(0), meter_lane_valid.eq(1),
-                    meter_x0.eq(NATIVE_OUTPUT_METER_X0S[0]),
-                    meter_value.eq(self.output_meters[0]),
-                    meter_clip.eq(self.output_clips[0])]
-            with m.Elif((x >= NATIVE_OUTPUT_METER_X0S[1]) &
-                        (x < NATIVE_OUTPUT_METER_X0S[1] + 24)):
+                    meter_lane_valid.eq(1),
+                    meter_bound_lo.eq(meter_curve_rport.data[0:10]),
+                    meter_bound_hi.eq(meter_curve_rport.data[10:20]),
+                    meter_value.eq(Mux(
+                        x < 360, self.output_meters[0],
+                        self.output_meters[3])),
+                    meter_clip.eq(Mux(
+                        x < 360, self.output_clips[0],
+                        self.output_clips[3]))]
+            with m.Elif(
+                    (meter_curve_x >= meter_curve_rport.data[20:30]) &
+                    (meter_curve_x < meter_curve_rport.data[30:40])):
                 m.d.comb += [
-                    meter_lane.eq(1), meter_lane_valid.eq(1),
-                    meter_x0.eq(NATIVE_OUTPUT_METER_X0S[1]),
-                    meter_value.eq(self.output_meters[1]),
-                    meter_clip.eq(self.output_clips[1])]
-            with m.Elif((x >= NATIVE_OUTPUT_METER_X0S[2]) &
-                        (x < NATIVE_OUTPUT_METER_X0S[2] + 24)):
-                m.d.comb += [
-                    meter_lane.eq(2), meter_lane_valid.eq(1),
-                    meter_x0.eq(NATIVE_OUTPUT_METER_X0S[2]),
-                    meter_value.eq(self.output_meters[2]),
-                    meter_clip.eq(self.output_clips[2])]
-            with m.Elif((x >= NATIVE_OUTPUT_METER_X0S[3]) &
-                        (x < NATIVE_OUTPUT_METER_X0S[3] + 24)):
-                m.d.comb += [
-                    meter_lane.eq(3), meter_lane_valid.eq(1),
-                    meter_x0.eq(NATIVE_OUTPUT_METER_X0S[3]),
-                    meter_value.eq(self.output_meters[3]),
-                    meter_clip.eq(self.output_clips[3])]
+                    meter_lane_valid.eq(1),
+                    meter_bound_lo.eq(meter_curve_rport.data[20:30]),
+                    meter_bound_hi.eq(meter_curve_rport.data[30:40]),
+                    meter_value.eq(Mux(
+                        x < 360, self.output_meters[1],
+                        self.output_meters[2])),
+                    meter_clip.eq(Mux(
+                        x < 360, self.output_clips[1],
+                        self.output_clips[2]))]
 
-            # Register lane selection before its magnitude scaling and y
-            # comparison. Without this boundary, synthesis can merge the
-            # x-to-lane mux, dynamic meter value, subtractor, and the existing
-            # page geometry into one unrouteable pixel-clock cone.
+            # Register curve/lane selection before magnitude scaling and the
+            # final shape comparisons. Without this boundary, the ROM, side
+            # reflection, telemetry mux, and page geometry form one
+            # unrouteable pixel-clock cone.
             meter_x_q = Signal.like(x)
             meter_y_q = Signal.like(y)
-            meter_x0_q = Signal.like(meter_x0)
+            meter_bound_lo_q = Signal.like(meter_bound_lo)
+            meter_bound_hi_q = Signal.like(meter_bound_hi)
             meter_value_q = Signal.like(meter_value)
             meter_clip_q = Signal()
             meter_lane_valid_q = Signal()
             m.d.dvi += [
-                meter_x_q.eq(x),
+                meter_x_q.eq(meter_curve_x),
                 meter_y_q.eq(y),
-                meter_x0_q.eq(meter_x0),
+                meter_bound_lo_q.eq(meter_bound_lo),
+                meter_bound_hi_q.eq(meter_bound_hi),
                 meter_value_q.eq(meter_value),
                 meter_clip_q.eq(meter_clip),
                 meter_lane_valid_q.eq(meter_lane_valid),
@@ -3624,18 +3652,24 @@ class RezoTileDisplay(wiring.Component):
             meter_top = Signal(unsigned(10))
             m.d.comb += meter_top.eq(
                 460 - ((meter_value_q << 1) + meter_value_q))
-            output_meter_panel = meter_lane_valid_q & self.outline(
-                meter_x_q, meter_y_q, meter_x0_q, 260,
-                meter_x0_q + 24, 462, t=2)
-            output_meter_fill = meter_lane_valid_q & self.rect(
-                meter_x_q, meter_y_q, meter_x0_q + 4, meter_top,
-                          meter_x0_q + 20, 458)
+            meter_shape = meter_lane_valid_q & (meter_y_q >= 260) & \
+                (meter_y_q < 462) & (meter_x_q >= meter_bound_lo_q) & \
+                (meter_x_q < meter_bound_hi_q)
+            meter_interior = (meter_y_q >= 262) & (meter_y_q < 460) & \
+                (meter_x_q >= meter_bound_lo_q + 2) & \
+                (meter_x_q < meter_bound_hi_q - 2)
+            output_meter_panel = meter_shape & ~meter_interior
+            output_meter_fill = meter_lane_valid_q & (meter_y_q >= 264) & \
+                (meter_y_q >= meter_top) & (meter_y_q < 458) & \
+                (meter_x_q >= meter_bound_lo_q + 4) & \
+                (meter_x_q < meter_bound_hi_q - 4)
             # On the calibrated -60..0 dBFS scale the upper six decibels are
             # the top tenth of the lane, matching conventional DAW meters.
             output_meter_hot = output_meter_fill & (meter_y_q < 290)
-            output_meter_clip = meter_lane_valid_q & meter_clip_q & self.rect(
-                meter_x_q, meter_y_q, meter_x0_q + 4, 248,
-                meter_x0_q + 20, 254)
+            output_meter_clip = meter_lane_valid_q & meter_clip_q & \
+                (meter_y_q >= 248) & (meter_y_q < 254) & \
+                (meter_x_q >= meter_bound_lo_q + 4) & \
+                (meter_x_q < meter_bound_hi_q - 4)
             output_meter_panel_q0 = Signal()
             output_meter_fill_q0 = Signal()
             output_meter_hot_q0 = Signal()

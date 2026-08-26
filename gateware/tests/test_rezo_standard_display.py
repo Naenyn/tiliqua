@@ -2,8 +2,9 @@ from amaranth import Module
 from amaranth.sim import Simulator
 
 from top.rezo.rezo_variant import (
-    NATIVE_OUTPUT_METER_LABEL_COLS, NATIVE_OUTPUT_METER_X0S,
+    NATIVE_OUTPUT_METER_LABEL_COLS,
     RezoCore, RezoHardwareUI, RezoTileDisplay, output_meter_db_value,
+    native_output_meter_bounds,
 )
 
 
@@ -16,13 +17,18 @@ def test_output_meter_uses_calibrated_daw_scale():
 
 
 def test_output_meter_pairs_and_labels_are_centered_in_side_arcs():
-    meter_centers = tuple(x0 + 12 for x0 in NATIVE_OUTPUT_METER_X0S)
-    assert ((meter_centers[0] + meter_centers[1]) // 2,
-            (meter_centers[2] + meter_centers[3]) // 2) == (53, 667)
+    bounds = native_output_meter_bounds(360)
+    left_meter_centers = (
+        (bounds[0] + bounds[1]) // 2,
+        (bounds[2] + bounds[3]) // 2,
+    )
+    meter_centers = left_meter_centers + tuple(
+        719 - center for center in reversed(left_meter_centers))
+    assert left_meter_centers == (40, 72)
     label_centers = tuple(
         col * 16 + 8 for col in NATIVE_OUTPUT_METER_LABEL_COLS)
-    assert tuple(label - meter for label, meter in zip(
-        label_centers, meter_centers)) == (3, 3, -3, -3)
+    assert tuple(abs(label - meter) for label, meter in zip(
+        label_centers, meter_centers)) == (0, 0, 1, 1)
 
 
 def _render_text_bounds(*regions, page=0, palette=0, input_modes=(),
@@ -360,14 +366,14 @@ def test_compact_output_meters_are_persistent_and_independent():
             ctx.set(dut.output_meters[lane], value)
         ctx.set(dut.output_clips[0], 1)
         # Empty lane interior, then increasing fills in lanes 2 through 4.
-        await sample(ctx, 33, 400)
-        await sample(ctx, 65, 400)
+        await sample(ctx, 42, 400)
+        await sample(ctx, 75, 400)
         await sample(ctx, 647, 350)
-        await sample(ctx, 679, 280)
+        await sample(ctx, 669, 280)
         # An outline remains visible around an empty lane.
-        await sample(ctx, 25, 360)
+        await sample(ctx, 28, 360)
         # A held clipping lamp sits above the corresponding lane.
-        await sample(ctx, 33, 250)
+        await sample(ctx, 60, 250)
 
     sim.add_testbench(bench)
     sim.run()
