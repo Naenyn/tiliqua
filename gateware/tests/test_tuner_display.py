@@ -81,8 +81,8 @@ def test_tuner_display_regenerates_guide_and_clips_corners():
         assert ctx.get(dut.o.pixel.intensity) == 2
 
         # The panel border is procedural and does not depend on stale tiles.
-        ctx.set(dut.i.x, 128)
-        ctx.set(dut.i.y, 240)
+        ctx.set(dut.i.x, 144)
+        ctx.set(dut.i.y, 280)
         await ctx.tick("dvi").repeat(5)
         assert ctx.get(dut.o.pixel.intensity) == 10
         ctx.set(dut.menu_active, 0)

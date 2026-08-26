@@ -15,7 +15,7 @@ use tiliqua_hal::pca9635::Pca9635Driver;
 use tiliqua_hal::pmod::EurorackPmod;
 use tiliqua_lib::*;
 
-use options::{DisplayMode, Opts, ReferenceTone};
+use options::{DisplayMode, Opts, Page, ReferenceTone};
 use opts::persistence::*;
 use opts::Options as _;
 use pac::constants::*;
@@ -24,12 +24,14 @@ use tiliqua_pac as pac;
 
 const TIMER0_ISR_PERIOD_MS: u32 = 5;
 const FRAME_PERIOD_TICKS: u8 = 4; // Publish measurements at up to 50Hz.
-const MENU_COLUMN: u8 = 8;
-const MENU_ROW: u8 = 11;
-const MENU_WIDTH: u8 = 29;
-const MENU_HEIGHT: u8 = 19;
-const MENU_TEXT_COLUMN: u8 = MENU_COLUMN + 2;
-const MENU_TEXT_WIDTH: u8 = MENU_WIDTH - 4;
+const MENU_COLUMN: u8 = 9;
+const MENU_ROW: u8 = 15;
+const MENU_WIDTH: u8 = 27;
+const MENU_HEIGHT: u8 = 10;
+const MENU_PAGE_COLUMN: u8 = 10;
+const MENU_PAGE_WIDTH: u8 = 9;
+const MENU_ITEM_COLUMN: u8 = 20;
+const MENU_ITEM_WIDTH: u8 = 15;
 const NOTE_NAMES: [&str; 12] = [
     "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
 ];
@@ -174,6 +176,7 @@ fn glyph_index(byte: u8) -> u8 {
         b'A'..=b'Z' => 17 + byte - b'A',
         b'a'..=b'z' => 17 + byte - b'a',
         b'<' => 43,
+        b'^' => 44,
         _ => 0,
     }
 }
@@ -244,79 +247,71 @@ fn clear_menu_text(display: &pac::TUNER_DISPLAY) {
     }
 }
 
-fn write_menu_line(display: &pac::TUNER_DISPLAY, row: u8, text: &str) {
-    for offset in 0..MENU_TEXT_WIDTH {
+fn write_menu_field(display: &pac::TUNER_DISPLAY, column: u8, row: u8, width: u8, text: &str) {
+    for offset in 0..width {
         display.tile_write().write(|w| unsafe {
-            w.address()
-                .bits(row as u16 * 45 + MENU_TEXT_COLUMN as u16 + offset as u16);
+            w.address().bits(row as u16 * 45 + column as u16 + offset as u16);
             w.glyph().bits(glyph_index(b' '))
         });
     }
-    for (offset, byte) in text.bytes().take(MENU_TEXT_WIDTH as usize).enumerate() {
+    for (offset, byte) in text.bytes().take(width as usize).enumerate() {
         display.tile_write().write(|w| unsafe {
             w.address()
-                .bits(row as u16 * 45 + MENU_TEXT_COLUMN as u16 + offset as u16);
+                .bits(row as u16 * 45 + column as u16 + offset as u16);
             w.glyph().bits(glyph_index(byte))
         });
     }
 }
 
 fn publish_menu(display: &pac::TUNER_DISPLAY, opts: &Opts) {
-    let mut page_line: String<48> = String::new();
-    let page = opts.page().value();
-    let page_prefix = if opts.selected().is_none() {
-        if opts.modify() {
-            "#"
-        } else {
-            "+"
-        }
-    } else {
-        " "
+    let page = opts.tracker.page.value;
+    let page_label = match page {
+        Page::Tuner => "TUNER",
+        Page::Settings => "SETTINGS",
+        Page::Help => "HELP",
     };
-    write!(page_line, "{} PAGE  {}", page_prefix, page).ok();
-    write_menu_line(display, 12, &page_line);
+    let mut page_line: String<16> = String::new();
+    let page_prefix = if opts.selected().is_none() { "+" } else { " " };
+    write!(page_line, "{}{}", page_prefix, page_label).ok();
+    let page_column = MENU_PAGE_COLUMN
+        + MENU_PAGE_WIDTH.saturating_sub(page_line.len().min(MENU_PAGE_WIDTH as usize) as u8);
+    write_menu_field(display, MENU_PAGE_COLUMN, 16, MENU_PAGE_WIDTH, "");
+    write_menu_field(
+        display,
+        page_column,
+        16,
+        MENU_PAGE_COLUMN + MENU_PAGE_WIDTH - page_column,
+        &page_line,
+    );
     if opts.selected().is_none() && opts.modify() {
-        write_text(
-            display,
-            MENU_TEXT_COLUMN + MENU_TEXT_WIDTH - 1,
-            12,
-            "<",
-        );
+        write_text(display, MENU_PAGE_COLUMN + MENU_PAGE_WIDTH - 1, 18, "^");
     }
 
     let options = opts.view().options();
-    for index in 0..4 {
-        let mut line: String<48> = String::new();
+    for index in 0..3 {
+        let mut line: String<32> = String::new();
         if let Some(option) = options.get(index) {
-            let prefix = if opts.selected() == Some(index) {
-                if opts.modify() {
-                    "#"
-                } else {
-                    "+"
-                }
-            } else {
-                " "
+            let prefix = if opts.selected() == Some(index) { "+" } else { " " };
+            let label = match (page, index) {
+                (Page::Tuner, 2) => "REF TONE",
+                (Page::Settings, 0) => "A4 REF",
+                (Page::Settings, 1) => "SAVE",
+                (Page::Settings, 2) => "RESET",
+                _ => option.name(),
             };
-            write!(line, "{} {:<12} {}", prefix, option.name(), option.value()).ok();
+            write!(line, "{}{} {}", prefix, label, option.value()).ok();
         }
-        write_menu_line(display, 15 + index as u8 * 3, &line);
+        let row = 16 + index as u8 * 2;
+        write_menu_field(display, MENU_ITEM_COLUMN, row, MENU_ITEM_WIDTH, &line);
         if opts.selected() == Some(index) && opts.modify() {
             write_text(
                 display,
-                MENU_TEXT_COLUMN + MENU_TEXT_WIDTH - 1,
-                15 + index as u8 * 3,
+                MENU_ITEM_COLUMN + MENU_ITEM_WIDTH - 1,
+                row,
                 "<",
             );
         }
     }
-
-    let mut help: String<48> = String::new();
-    if opts.modify() {
-        write!(help, "TURN CHANGE  PRESS DONE").ok();
-    } else {
-        write!(help, "TURN NAV  PRESS EDIT").ok();
-    }
-    write_menu_line(display, 27, &help);
 }
 
 fn publish_tuner(

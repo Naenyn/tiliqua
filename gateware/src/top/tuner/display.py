@@ -30,6 +30,7 @@ FONT = {
     "/": [0x01, 0x02, 0x04, 0x08, 0x10, 0x00, 0x00],
     ":": [0x00, 0x06, 0x06, 0x00, 0x06, 0x06, 0x00],
     "<": [0x02, 0x04, 0x08, 0x10, 0x08, 0x04, 0x02],
+    "^": [0x04, 0x0a, 0x11, 0x00, 0x00, 0x00, 0x00],
     "0": [0x0e, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0e],
     "1": [0x04, 0x0c, 0x14, 0x04, 0x04, 0x04, 0x1f],
     "2": [0x0e, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1f],
@@ -68,7 +69,7 @@ FONT = {
     "Z": [0x1f, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1f],
 }
 
-FONT_CHARS = " #+-./:0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ<"
+FONT_CHARS = " #+-./:0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ<^"
 FONT_INDEX = {char: index for index, char in enumerate(FONT_CHARS)}
 FONT_INIT = [row for char in FONT_CHARS for row in (*FONT[char], 0)]
 
@@ -364,13 +365,14 @@ class TunerOverlay(wiring.Component):
         # OSCIO/SONORO-style modal menu bounds. The box remains comfortably
         # inside the official circular display while leaving the outer pitch
         # labels and enough of the live spiral visible to retain context.
-        menu_inside0 = active0 & (x0 >= 128) & (x0 < 592) & \
-            (y0 >= 176) & (y0 < 480)
+        menu_inside0 = active0 & (x0 >= 144) & (x0 < 576) & \
+            (y0 >= 240) & (y0 < 400)
         menu_border0 = menu_inside0 & (
-            (x0 < 131) | (x0 >= 589) | (y0 < 179) | (y0 >= 477))
-        menu_rule0 = menu_inside0 & (
-            ((y0 >= 216) & (y0 < 218)) |
-            ((y0 >= 424) & (y0 < 426)))
+            (x0 < 147) | (x0 >= 573) | (y0 < 243) | (y0 >= 397))
+        # Match OSCIO/SONORO's page gutter: page name on the left, option
+        # names and values on the right, separated by one quiet vertical rule.
+        menu_rule0 = menu_inside0 & (x0 >= 303) & (x0 < 305) & \
+            (y0 >= 248) & (y0 < 392)
 
         # Cheap polar approximation. It is deliberately generated every scan,
         # so guide pixels never need to be stored, erased, or repaired. The
