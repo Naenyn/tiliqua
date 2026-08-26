@@ -3773,29 +3773,25 @@ class RezoTileDisplay(wiring.Component):
         # content rather than a full-height generic field. Dense INPUT keeps
         # the complete shared work area; shorter pages expose black above and
         # below their smaller content blocks.
-        surface_y0 = Signal(unsigned(10), init=NATIVE_CONTENT_PANEL_Y0)
-        surface_y1 = Signal(unsigned(10), init=NATIVE_CONTENT_PANEL_Y1)
+        # Surface edges follow the native 16px text grid. Selecting two
+        # six-bit row numbers from the already-decoded text page is much
+        # cheaper than routing two ten-bit pixel bounds through an eight-way
+        # page mux on this nearly full device.
+        surface_row_y0 = Signal(unsigned(6), init=14)
+        surface_row_y1 = Signal(unsigned(6), init=35)
+        surface_row_y0s = Array(Const(row, 6) for row in (
+            14, 16, 13, 16, 18, 16, 16, 14, 16))
+        surface_row_y1s = Array(Const(row, 6) for row in (
+            35, 33, 38, 32, 36, 24, 28, 39, 37))
         m.d.comb += [
-            surface_y0.eq(Mux(
-                bank_page | filter_page, 234,
-                Mux(input_page, 218,
-                    Mux(tune_page | group_page | bands_page |
-                        filter_cv_page, 266,
-                        Mux(output_page, 298, 276))))),
-            surface_y1.eq(Mux(
-                bank_page, compact_main_control_y0s[2] + 18,
-                Mux(filter_page, compact_main_control_y0s[4] + 18,
-                    Mux(tune_page, 520,
-                        Mux(input_page, 599,
-                            Mux(group_page, 500,
-                                Mux(output_page, 566,
-                                    Mux(advanced_page, 380,
-                                        Mux(bands_page, 436, 578))))))))),
+            surface_row_y0.eq(surface_row_y0s[text_page_q]),
+            surface_row_y1.eq(surface_row_y1s[text_page_q]),
         ]
         content_surface = (
-            active & self.compact_layout & self.rect(
-                x, y, NATIVE_CONTENT_PANEL_X0, surface_y0,
-                NATIVE_CONTENT_PANEL_X1, surface_y1))
+            active & self.compact_layout &
+            (x >= NATIVE_CONTENT_PANEL_X0) &
+            (x < NATIVE_CONTENT_PANEL_X1) &
+            (cell_y >= surface_row_y0) & (cell_y < surface_row_y1))
         control_panel_x0 = 283 if self.compact_layout else 118
         control_panel_x1 = 594 if self.compact_layout else 650
         control_fill_x0 = 289 if self.compact_layout else 124
