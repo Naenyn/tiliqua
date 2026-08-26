@@ -15,11 +15,12 @@ use tiliqua_hal::pca9635::Pca9635Driver;
 use tiliqua_hal::pmod::EurorackPmod;
 use tiliqua_lib::*;
 
-use opts::persistence::*;
 use options::{DisplayMode, Opts, ReferenceTone};
+use opts::persistence::*;
+use opts::Options as _;
+use pac::constants::*;
 use tiliqua_fw::*;
 use tiliqua_pac as pac;
-use pac::constants::*;
 
 const TIMER0_ISR_PERIOD_MS: u32 = 5;
 const FRAME_PERIOD_TICKS: u8 = 4; // Publish measurements at up to 50Hz.
@@ -37,7 +38,9 @@ impl App {
         let encoder = Encoder0::new(peripherals.ENCODER0);
         let pca9635 = Pca9635Driver::new(I2c0::new(peripherals.I2C0));
         let pmod = EurorackPmod0::new(peripherals.PMOD0_PERIPH);
-        Self { ui: ui::UI::new(opts, TIMER0_ISR_PERIOD_MS, encoder, pca9635, pmod) }
+        Self {
+            ui: ui::UI::new(opts, TIMER0_ISR_PERIOD_MS, encoder, pca9635, pmod),
+        }
     }
 }
 
@@ -46,9 +49,10 @@ fn timer0_handler(app: &Mutex<RefCell<App>>) {
         let mut app = app.borrow_ref_mut(cs);
         app.ui.update();
         let peripherals = unsafe { pac::Peripherals::steal() };
-        peripherals.TUNER_PERIPH.control().write(|w| unsafe {
-            w.channel().bits(app.ui.opts.tuner.input.value)
-        });
+        peripherals
+            .TUNER_PERIPH
+            .control()
+            .write(|w| unsafe { w.channel().bits(app.ui.opts.tuner.input.value) });
     });
 }
 
@@ -69,7 +73,9 @@ fn read_measurement(tuner: &pac::TUNER_PERIPH, counts_per_v: f32) -> Measurement
         let cycles = tuner.period_cycles().read().cycles().bits();
         let age = tuner.pitch_age().read().samples().bits();
         let after = tuner.pitch_sequence().read().sequence().bits();
-        if before == after { break (after, samples, cycles, age); }
+        if before == after {
+            break (after, samples, cycles, age);
+        }
     };
     let (_level_sequence, mean_square, minimum, maximum) = loop {
         let before = tuner.level_sequence().read().sequence().bits();
@@ -77,12 +83,16 @@ fn read_measurement(tuner: &pac::TUNER_PERIPH, counts_per_v: f32) -> Measurement
         let minimum = tuner.minimum().read().value().bits() as i32;
         let maximum = tuner.maximum().read().value().bits() as i32;
         let after = tuner.level_sequence().read().sequence().bits();
-        if before == after { break (after, power, minimum, maximum); }
+        if before == after {
+            break (after, power, minimum, maximum);
+        }
     };
     let sample_rate = tuner.info().read().sample_rate().bits();
     let frequency_hz = if period_samples != 0 {
         sample_rate as f32 * period_cycles as f32 / period_samples as f32
-    } else { 0.0 };
+    } else {
+        0.0
+    };
     let vrms = (mean_square as f32).sqrt() / counts_per_v;
     let vpp = (maximum - minimum) as f32 / counts_per_v;
     Measurement {
@@ -93,29 +103,32 @@ fn read_measurement(tuner: &pac::TUNER_PERIPH, counts_per_v: f32) -> Measurement
     }
 }
 
-fn reference_frequency(measurement: Measurement, reference_hz: f32,
-                       mode: ReferenceTone) -> Option<f32> {
+fn reference_frequency(
+    measurement: Measurement,
+    reference_hz: f32,
+    mode: ReferenceTone,
+) -> Option<f32> {
     match mode {
         ReferenceTone::Off => None,
         ReferenceTone::A4 => Some(reference_hz),
         ReferenceTone::Nearest if measurement.valid => {
-            let midi = (69.0 + 12.0 *
-                (measurement.frequency_hz / reference_hz).log2()).round();
+            let midi = (69.0 + 12.0 * (measurement.frequency_hz / reference_hz).log2()).round();
             Some(reference_hz * (2.0_f32).powf((midi - 69.0) / 12.0))
         }
         ReferenceTone::Nearest => None,
     }
 }
 
-fn configure_reference(tuner: &pac::TUNER_PERIPH, frequency: Option<f32>,
-                       sample_rate: u32) {
+fn configure_reference(tuner: &pac::TUNER_PERIPH, frequency: Option<f32>, sample_rate: u32) {
     let increment = frequency.map_or(0, |hz| {
         (hz * 4_294_967_296.0_f32 / sample_rate as f32).round() as u32
     });
-    tuner.reference_increment().write(|w| unsafe { w.value().bits(increment) });
-    tuner.reference_control().write(|w| {
-        w.enable().bit(frequency.is_some())
-    });
+    tuner
+        .reference_increment()
+        .write(|w| unsafe { w.value().bits(increment) });
+    tuner
+        .reference_control()
+        .write(|w| w.enable().bit(frequency.is_some()));
 }
 
 #[derive(Clone, Copy)]
@@ -129,14 +142,21 @@ struct Marker {
 
 fn spiral_point(cx: i32, cy: i32, radius: f32, turns: f32) -> (u16, u16) {
     let angle = turns * core::f32::consts::TAU - core::f32::consts::FRAC_PI_2;
-    ((cx + (radius * angle.cos()) as i32) as u16,
-     (cy + (radius * angle.sin()) as i32) as u16)
+    (
+        (cx + (radius * angle.cos()) as i32) as u16,
+        (cy + (radius * angle.sin()) as i32) as u16,
+    )
 }
 
 fn glyph_index(byte: u8) -> u8 {
     match byte {
-        b' ' => 0, b'#' => 1, b'+' => 2, b'-' => 3, b'.' => 4,
-        b'/' => 5, b':' => 6,
+        b' ' => 0,
+        b'#' => 1,
+        b'+' => 2,
+        b'-' => 3,
+        b'.' => 4,
+        b'/' => 5,
+        b':' => 6,
         b'0'..=b'9' => 7 + byte - b'0',
         b'A'..=b'Z' => 17 + byte - b'A',
         b'a'..=b'z' => 17 + byte - b'a',
@@ -147,7 +167,9 @@ fn glyph_index(byte: u8) -> u8 {
 fn write_text(display: &pac::TUNER_DISPLAY, column: u8, row: u8, text: &str) {
     for (offset, byte) in text.bytes().enumerate() {
         let x = column as usize + offset;
-        if x >= 45 || row >= 45 { break; }
+        if x >= 45 || row >= 45 {
+            break;
+        }
         display.tile_write().write(|w| unsafe {
             w.address().bits(row as u16 * 45 + x as u16);
             w.glyph().bits(glyph_index(byte))
@@ -155,15 +177,20 @@ fn write_text(display: &pac::TUNER_DISPLAY, column: u8, row: u8, text: &str) {
     }
 }
 
-fn write_centered<const N: usize>(display: &pac::TUNER_DISPLAY, row: u8,
-                                  text: &String<N>, width: u8) {
+fn write_centered<const N: usize>(
+    display: &pac::TUNER_DISPLAY,
+    row: u8,
+    text: &String<N>,
+    width: u8,
+) {
     // Always erase the complete field before drawing its new value. In
     // particular, note names vary between two and three characters (B1/A#1),
     // and a shorter name must not leave the old final tile behind.
     let field_column = (45 - width) / 2;
     for offset in 0..width {
         display.tile_write().write(|w| unsafe {
-            w.address().bits(row as u16 * 45 + field_column as u16 + offset as u16);
+            w.address()
+                .bits(row as u16 * 45 + field_column as u16 + offset as u16);
             w.glyph().bits(glyph_index(b' '))
         });
     }
@@ -173,19 +200,95 @@ fn write_centered<const N: usize>(display: &pac::TUNER_DISPLAY, row: u8,
 
 fn write_static_text(display: &pac::TUNER_DISPLAY) {
     for (column, row, label) in [
-        (22, 5, "C "), (31, 7, "C#"), (37, 13, "D "), (39, 22, "D#"),
-        (37, 30, "E "), (31, 34, "F "), (22, 35, "F#"), (14, 34, "G "),
-        (7, 30, "G#"), (5, 22, "A "), (7, 13, "A#"), (14, 7, "B "),
+        (22, 5, "C "),
+        (31, 7, "C#"),
+        (37, 13, "D "),
+        (39, 22, "D#"),
+        (37, 30, "E "),
+        (31, 34, "F "),
+        (22, 35, "F#"),
+        (14, 34, "G "),
+        (7, 30, "G#"),
+        (5, 22, "A "),
+        (7, 13, "A#"),
+        (14, 7, "B "),
     ] {
         write_text(display, column, row, label);
     }
     write_text(display, 20, 1, "TUNER");
+    write_text(display, 12, 42, "TURN ENCODER FOR MENU");
 }
 
-fn publish_tuner(display: &pac::TUNER_DISPLAY, measurement: Measurement,
-                 reference_hz: f32, input: u8, display_mode: DisplayMode,
-                 reference_mode: ReferenceTone, reference_output_hz: Option<f32>,
-                 smoothed_midi: &mut Option<f32>) {
+fn clear_text(display: &pac::TUNER_DISPLAY) {
+    for address in 0..(45 * 45) {
+        display.tile_write().write(|w| unsafe {
+            w.address().bits(address);
+            w.glyph().bits(glyph_index(b' '))
+        });
+    }
+}
+
+fn publish_menu(display: &pac::TUNER_DISPLAY, opts: &Opts) {
+    let mut page_line: String<48> = String::new();
+    let page = opts.page().value();
+    let page_prefix = if opts.selected().is_none() {
+        if opts.modify() {
+            "#"
+        } else {
+            "+"
+        }
+    } else {
+        " "
+    };
+    write!(page_line, "{} PAGE  {}", page_prefix, page).ok();
+    write_centered(display, 8, &page_line, 32);
+
+    let options = opts.view().options();
+    for index in 0..5 {
+        let mut line: String<48> = String::new();
+        if let Some(option) = options.get(index) {
+            let prefix = if opts.selected() == Some(index) {
+                if opts.modify() {
+                    "#"
+                } else {
+                    "+"
+                }
+            } else {
+                " "
+            };
+            write!(line, "{} {:<15} {}", prefix, option.name(), option.value()).ok();
+        }
+        write_centered(display, 13 + index as u8 * 3, &line, 32);
+    }
+
+    let mut help: String<48> = String::new();
+    if opts.modify() {
+        write!(help, "TURN CHANGE  PRESS DONE").ok();
+    } else {
+        write!(help, "TURN NAV  PRESS EDIT").ok();
+    }
+    write_centered(display, 31, &help, 32);
+
+    display.marker().write(|w| unsafe {
+        w.x().bits(0);
+        w.y().bits(0);
+        w.hue().bits(0);
+        w.valid().bit(false);
+        w.visualizer().bit(false);
+        w.menu_active().bit(true)
+    });
+}
+
+fn publish_tuner(
+    display: &pac::TUNER_DISPLAY,
+    measurement: Measurement,
+    reference_hz: f32,
+    input: u8,
+    display_mode: DisplayMode,
+    reference_mode: ReferenceTone,
+    reference_output_hz: Option<f32>,
+    smoothed_midi: &mut Option<f32>,
+) {
     let cx = 360;
     let cy = 360;
     let outer_radius = 228;
@@ -202,8 +305,9 @@ fn publish_tuner(display: &pac::TUNER_DISPLAY, measurement: Measurement,
     if measurement.valid {
         let midi_float = 69.0 + 12.0 * (measurement.frequency_hz / reference_hz).log2();
         let display_midi = match *smoothed_midi {
-            Some(previous) if (midi_float - previous).abs() <= 2.0 =>
-                previous + (midi_float - previous) * 0.20,
+            Some(previous) if (midi_float - previous).abs() <= 2.0 => {
+                previous + (midi_float - previous) * 0.20
+            }
             _ => midi_float,
         };
         *smoothed_midi = Some(display_midi);
@@ -213,28 +317,34 @@ fn publish_tuner(display: &pac::TUNER_DISPLAY, measurement: Measurement,
         let octave = midi_note / 12 - 1;
         write!(note_line, "{}{}", NOTE_NAMES[pitch_class], octave).ok();
         write!(cents_line, "{:^20}", format_args!("{:+04} CENTS", cents)).ok();
-        write!(frequency_line, "{:^24}",
-               format_args!("{:8.2} HZ   IN {}", measurement.frequency_hz, input + 1)).ok();
-        write!(voltage_line, "{:^28}",
-               format_args!("{:5.3} VRMS  {:5.3} VPP", measurement.vrms, measurement.vpp)).ok();
+        write!(
+            frequency_line,
+            "{:^24}",
+            format_args!("{:8.2} HZ   IN {}", measurement.frequency_hz, input + 1)
+        )
+        .ok();
+        write!(
+            voltage_line,
+            "{:^28}",
+            format_args!("{:5.3} VRMS  {:5.3} VPP", measurement.vrms, measurement.vpp)
+        )
+        .ok();
 
         let octave_turns = ((display_midi - 12.0) / 12.0).max(0.0).min(8.0);
         let marker_radius = inner_radius as f32 + octave_spacing * octave_turns;
-        let (x, y) = spiral_point(
-            cx, cy,
-            marker_radius,
-            display_midi / 12.0,
-        );
+        let (x, y) = spiral_point(cx, cy, marker_radius, display_midi / 12.0);
         let marker_hue = if cents.abs() <= 5 { 5 } else { 2 };
         // 32 unoriented lens axes cover a half-turn at 5.625-degree steps. The small
         // positive correction follows the Archimedean spiral's outward slope
         // rather than merely touching its corresponding circular ring.
-        let tangent_turn = display_midi / 12.0 * 64.0 +
-            64.0 * octave_spacing /
-            (core::f32::consts::TAU * core::f32::consts::TAU * marker_radius);
+        let tangent_turn = display_midi / 12.0 * 64.0
+            + 64.0 * octave_spacing
+                / (core::f32::consts::TAU * core::f32::consts::TAU * marker_radius);
         let marker_angle = (tangent_turn.round() as i32).rem_euclid(32) as u32;
         marker = Some(Marker {
-            x, y, hue: marker_hue,
+            x,
+            y,
+            hue: marker_hue,
             lens_base: ((marker_angle % 11) * 33 * 33) as u16,
             lens_bank: (marker_angle / 11) as u8,
         });
@@ -243,16 +353,26 @@ fn publish_tuner(display: &pac::TUNER_DISPLAY, measurement: Measurement,
         write!(note_line, "--").ok();
         write!(cents_line, "{:^20}", "WAITING FOR SIGNAL").ok();
         write!(frequency_line, "{:^24}", format_args!("IN {}", input + 1)).ok();
-        write!(voltage_line, "{:^28}",
-               format_args!("{:5.3} VRMS  {:5.3} VPP", measurement.vrms, measurement.vpp)).ok();
+        write!(
+            voltage_line,
+            "{:^28}",
+            format_args!("{:5.3} VRMS  {:5.3} VPP", measurement.vrms, measurement.vpp)
+        )
+        .ok();
     }
 
     match reference_output_hz {
         Some(hz) => {
-            let label = if reference_mode == ReferenceTone::A4 { "A4" } else { "NOTE" };
+            let label = if reference_mode == ReferenceTone::A4 {
+                "A4"
+            } else {
+                "NOTE"
+            };
             write!(reference_line, "REF1 {:7.2} HZ {}", hz, label).ok();
         }
-        None => { write!(reference_line, "REF1 OFF").ok(); }
+        None => {
+            write!(reference_line, "REF1 OFF").ok();
+        }
     };
 
     write_centered(display, 20, &note_line, 8);
@@ -266,13 +386,15 @@ fn publish_tuner(display: &pac::TUNER_DISPLAY, measurement: Measurement,
             w.y().bits(marker.y);
             w.hue().bits(marker.hue);
             w.valid().bit(true);
-            w.visualizer().bit(display_mode == DisplayMode::Visualizer)
+            w.visualizer().bit(display_mode == DisplayMode::Visualizer);
+            w.menu_active().bit(false)
         } else {
             w.x().bits(0);
             w.y().bits(0);
             w.hue().bits(0);
             w.valid().bit(false);
-            w.visualizer().bit(display_mode == DisplayMode::Visualizer)
+            w.visualizer().bit(display_mode == DisplayMode::Visualizer);
+            w.menu_active().bit(false)
         }
     });
     display.marker_shape().write(|w| unsafe {
@@ -292,11 +414,18 @@ fn main() -> ! {
     info!("Hello from Tiliqua TUNER POC");
 
     let bootinfo = unsafe { bootinfo::BootInfo::from_addr(BOOTINFO_BASE) }.unwrap();
-    let modeline = bootinfo.modeline.maybe_override_fixed(FIXED_MODELINE, CLOCK_DVI_HZ);
+    let modeline = bootinfo
+        .modeline
+        .maybe_override_fixed(FIXED_MODELINE, CLOCK_DVI_HZ);
     let mut video = DMAFramebuffer0::new(
-        peripherals.FRAMEBUFFER_PERIPH, peripherals.PALETTE_PERIPH,
-        peripherals.BLIT, peripherals.PIXEL_PLOT, peripherals.LINE,
-        PSRAM_FB_BASE, modeline.clone(), BLIT_MEM_BASE,
+        peripherals.FRAMEBUFFER_PERIPH,
+        peripherals.PALETTE_PERIPH,
+        peripherals.BLIT,
+        peripherals.PIXEL_PLOT,
+        peripherals.LINE,
+        PSRAM_FB_BASE,
+        modeline.clone(),
+        BLIT_MEM_BASE,
     );
     // Scanout timing still comes from the standard video peripheral, but the
     // tuner overlay replaces every active pixel. There is no framebuffer draw
@@ -304,7 +433,9 @@ fn main() -> ! {
     palette::ColorPalette::default().write_to_hardware(&mut video);
     let tuner_display = peripherals.TUNER_DISPLAY;
     let round_display = modeline.h_active == 720 && modeline.v_active == 720;
-    let x_offset = if round_display { 0 } else {
+    let x_offset = if round_display {
+        0
+    } else {
         modeline.h_active.saturating_sub(720) / 2
     };
     tuner_display.layout().write(|w| unsafe {
@@ -315,8 +446,7 @@ fn main() -> ! {
 
     let mut pmod = EurorackPmod0::new(peripherals.PMOD0_PERIPH);
     let counts_per_v = pmod.counts_per_v() as f32;
-    calibration::CalibrationConstants::load_or_default(
-        &mut I2c1::new(peripherals.I2C1), &mut pmod);
+    calibration::CalibrationConstants::load_or_default(&mut I2c1::new(peripherals.I2C1), &mut pmod);
 
     let mut opts = Opts::default();
     let mut flash_persist = if let Some(window) = bootinfo.manifest.get_option_storage_window() {
@@ -337,38 +467,57 @@ fn main() -> ! {
         let sample_rate = tuner.info().read().sample_rate().bits();
         let mut frame_ticks = FRAME_PERIOD_TICKS;
         let mut smoothed_midi = None;
+        let mut menu_was_active = false;
         loop {
             riscv::asm::wfi();
-            let (opts, save, wipe) = critical_section::with(|cs| {
+            let (opts, save, wipe, menu_active) = critical_section::with(|cs| {
                 let mut app = app.borrow_ref_mut(cs);
                 let save = app.ui.opts.settings.save_opts.poll();
                 let wipe = app.ui.opts.settings.wipe_opts.poll();
-                app.ui.draw();
-                (app.ui.opts.clone(), save, wipe)
+                let menu_active = app.ui.encoder_recently_touched(3_000) || app.ui.opts.modify();
+                (app.ui.opts.clone(), save, wipe, menu_active)
             });
             if save {
-                if let Some(storage) = flash_persist.as_mut() { storage.save_options(&opts).ok(); }
+                if let Some(storage) = flash_persist.as_mut() {
+                    storage.save_options(&opts).ok();
+                }
             }
             if wipe {
                 critical_section::with(|cs| app.borrow_ref_mut(cs).ui.opts = Opts::default());
-                if let Some(storage) = flash_persist.as_mut() { storage.erase_all().ok(); }
+                if let Some(storage) = flash_persist.as_mut() {
+                    storage.erase_all().ok();
+                }
             }
 
             frame_ticks = frame_ticks.saturating_add(1);
             if frame_ticks >= FRAME_PERIOD_TICKS {
                 frame_ticks = 0;
+                if menu_active != menu_was_active {
+                    clear_text(&tuner_display);
+                    if !menu_active {
+                        write_static_text(&tuner_display);
+                    }
+                    menu_was_active = menu_active;
+                }
                 let measurement = read_measurement(&tuner, counts_per_v);
                 let reference_hz = opts.settings.reference.value as f32;
-                let reference_output_hz = reference_frequency(
-                    measurement, reference_hz, opts.tuner.reference_tone.value);
+                let reference_output_hz =
+                    reference_frequency(measurement, reference_hz, opts.tuner.reference_tone.value);
                 configure_reference(&tuner, reference_output_hz, sample_rate);
-                publish_tuner(&tuner_display, measurement,
-                              reference_hz,
-                              opts.tuner.input.value,
-                              opts.tuner.display.value,
-                              opts.tuner.reference_tone.value,
-                              reference_output_hz,
-                              &mut smoothed_midi);
+                if menu_active {
+                    publish_menu(&tuner_display, &opts);
+                } else {
+                    publish_tuner(
+                        &tuner_display,
+                        measurement,
+                        reference_hz,
+                        opts.tuner.input.value,
+                        opts.tuner.display.value,
+                        opts.tuner.reference_tone.value,
+                        reference_output_hz,
+                        &mut smoothed_midi,
+                    );
+                }
             }
         }
     })

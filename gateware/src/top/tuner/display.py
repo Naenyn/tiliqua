@@ -91,6 +91,7 @@ class TunerOverlay(wiring.Component):
             "marker_lens_bank": In(2),
             "marker_valid": In(1),
             "marker_visualizer": In(1),
+            "menu_active": In(1),
             "x_offset": In(12),
             "rotate_left": In(1),
         })
@@ -107,6 +108,7 @@ class TunerOverlay(wiring.Component):
         marker_lens_bank_cdc = Signal(2)
         marker_valid_cdc = Signal()
         marker_visualizer_cdc = Signal()
+        menu_active_cdc = Signal()
         x_offset_cdc = Signal(12)
         rotate_left_cdc = Signal()
         for name, source, target in (
@@ -117,6 +119,7 @@ class TunerOverlay(wiring.Component):
             ("marker_lens_bank", self.marker_lens_bank, marker_lens_bank_cdc),
             ("marker_valid", self.marker_valid, marker_valid_cdc),
             ("marker_visualizer", self.marker_visualizer, marker_visualizer_cdc),
+            ("menu_active", self.menu_active, menu_active_cdc),
             ("x_offset", self.x_offset, x_offset_cdc),
             ("rotate_left", self.rotate_left, rotate_left_cdc),
         ):
@@ -130,6 +133,7 @@ class TunerOverlay(wiring.Component):
         marker_lens_bank = Signal(2)
         marker_valid = Signal()
         marker_visualizer = Signal()
+        menu_active = Signal()
         x_offset = Signal(12)
         rotate_left = Signal()
         with m.If(self.i.vsync):
@@ -141,6 +145,7 @@ class TunerOverlay(wiring.Component):
                 marker_lens_bank.eq(marker_lens_bank_cdc),
                 marker_valid.eq(marker_valid_cdc),
                 marker_visualizer.eq(marker_visualizer_cdc),
+                menu_active.eq(menu_active_cdc),
                 x_offset.eq(x_offset_cdc),
                 rotate_left.eq(rotate_left_cdc),
             ]
@@ -542,12 +547,13 @@ class TunerOverlay(wiring.Component):
             (lens_bank3 < len(lens_ports)) & selected_lens_data3)
         m.d.dvi += [
             scan4.eq(scan3),
-            geometry4.eq(Mux(marker3 | analytical_lens3, 2,
+            geometry4.eq(Mux(menu_active, 0,
+                         Mux(marker3 | analytical_lens3, 2,
                          Mux(arc3, 5,
                          Mux(marker_halo3 == 2, 6,
                          Mux(marker_halo3 == 1, 7,
                          Mux(guide3, 1,
-                         Mux(spoke3, 4, Mux(circle_edge3, 3, 0)))))))),
+                         Mux(spoke3, 4, Mux(circle_edge3, 3, 0))))))))),
             text_hit4.eq(text_hit3),
         ]
 
@@ -586,6 +592,7 @@ class Peripheral(wiring.Component):
         hue: csr.Field(csr.action.W, unsigned(4))
         valid: csr.Field(csr.action.W, unsigned(1))
         visualizer: csr.Field(csr.action.W, unsigned(1))
+        menu_active: csr.Field(csr.action.W, unsigned(1))
 
     class TileWrite(csr.Register, access="w"):
         address: csr.Field(csr.action.W, unsigned(12))
@@ -639,6 +646,7 @@ class Peripheral(wiring.Component):
                 self.overlay.marker_hue.eq(self._marker.f.hue.w_data),
                 self.overlay.marker_valid.eq(self._marker.f.valid.w_data),
                 self.overlay.marker_visualizer.eq(self._marker.f.visualizer.w_data),
+                self.overlay.menu_active.eq(self._marker.f.menu_active.w_data),
             ]
         with m.If(self._layout.element.w_stb):
             m.d.sync += [

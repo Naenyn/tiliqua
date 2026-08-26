@@ -63,6 +63,21 @@ def test_tuner_display_regenerates_guide_and_clips_corners():
         await ctx.tick("dvi").repeat(5)
         assert ctx.get(dut.o.pixel.intensity) == 0
 
+        # The on-screen options menu owns the canvas while active, so the
+        # underlying spiral cannot compete visually with its text.
+        ctx.set(dut.menu_active, 1)
+        ctx.set(dut.i.vsync, 1)
+        await ctx.tick("dvi").repeat(4)
+        ctx.set(dut.i.vsync, 0)
+        ctx.set(dut.i.x, 360)
+        ctx.set(dut.i.y, 360 - 52)
+        await ctx.tick("dvi").repeat(5)
+        assert ctx.get(dut.o.pixel.intensity) == 0
+        ctx.set(dut.menu_active, 0)
+        ctx.set(dut.i.vsync, 1)
+        await ctx.tick("dvi").repeat(4)
+        ctx.set(dut.i.vsync, 0)
+
         # The C# tick is rasterized at an exact 30-degree chromatic division.
         ctx.set(dut.i.x, 477)
         ctx.set(dut.i.y, 157)

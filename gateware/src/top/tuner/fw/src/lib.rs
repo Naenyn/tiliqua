@@ -8,4 +8,3 @@ hal::impl_tiliqua_soc_pac!();
 
 pub mod handlers;
 pub mod options;
-
