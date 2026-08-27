@@ -26,6 +26,10 @@ except ImportError:
 
 
 class TunerSoc(TiliquaSoc):
+    # Keep enough CPU RAM for the retained options/UI state plus nested calls
+    # and interrupt frames. See the constructor comment below.
+    MAINRAM_SIZE = 0x4000
+
     module_docstring = sys.modules[__name__].__doc__
     bitstream_help = BitstreamHelp(
         brief="Monophonic tuner proof of concept.",
@@ -41,7 +45,12 @@ class TunerSoc(TiliquaSoc):
         self.tuner_display = TunerDisplayPeripheral(
             h_active=modeline.h_active,
             rotate_left=round_display)
-        super().__init__(finalize_csr_bridge=False, mainram_size=0x2000,
+        # The firmware's retained UI/options state gives main() a roughly
+        # 7.25-KiB stack frame before nested calls and interrupt frames. 8 KiB
+        # silently corrupts the stack as soon as the timer ISR begins; retain
+        # the original 16-KiB allocation and treat it as a functional minimum.
+        super().__init__(finalize_csr_bridge=False,
+                         mainram_size=self.MAINRAM_SIZE,
                          fb_overlay=self.tuner_display.overlay,
                          pipeline_palette_output=True,
                          with_persistence=False,
@@ -87,7 +96,7 @@ class TunerSoc(TiliquaSoc):
 
 if __name__ == "__main__":
     this_path = os.path.dirname(os.path.realpath(__file__))
-    seed = int(os.getenv("TILIQUA_TUNER_SEED", "2"))
+    seed = int(os.getenv("TILIQUA_TUNER_SEED", "5"))
     modeline = os.getenv("TILIQUA_TUNER_MODELINE", "1280x720p60")
     name = os.getenv("TILIQUA_TUNER_NAME", "TUNER")
     top_level_cli(
@@ -100,7 +109,7 @@ if __name__ == "__main__":
         argparse_callback=lambda parser: parser.set_defaults(
             modeline=modeline, name=name),
         archiver_callback=lambda archiver: archiver.with_option_storage(),
-        # Keep release builds reproducible with a timing-clean placement for
-        # the fixed 1280x720 renderer on ECP5-25F R5.
+        # Seed 5 closes every clock with the required 16-KiB CPU RAM on the
+        # fixed 1280x720 renderer. Keep release placement reproducible.
         nextpnr_opts=f"--timing-allow-fail --seed {seed}",
     )

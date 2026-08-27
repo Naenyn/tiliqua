@@ -647,12 +647,12 @@ fn main() -> ! {
     let tuner_display = peripherals.TUNER_DISPLAY;
     write_static_text(&tuner_display);
 
-    let pmod = EurorackPmod0::new(peripherals.PMOD0_PERIPH);
+    let mut pmod = EurorackPmod0::new(peripherals.PMOD0_PERIPH);
     let counts_per_v = pmod.counts_per_v() as f32;
-    // The PMOD peripheral already powers up with safe default calibration.
-    // Do not risk wedging application startup on the current unbounded I2C
-    // EEPROM driver. Loading stored calibration will return once that driver
-    // supports a finite timeout and recovery.
+    calibration::CalibrationConstants::load_or_default(
+        &mut I2c1::new(peripherals.I2C1),
+        &mut pmod,
+    );
 
     let mut opts = Opts::default();
     let mut flash_persist = if let Some(window) = bootinfo.manifest.get_option_storage_window() {

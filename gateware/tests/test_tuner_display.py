@@ -5,6 +5,14 @@ from amaranth.sim import Simulator
 
 from top.tuner.display import FONT, FONT_CHARS, FONT_INDEX, Peripheral, TunerOverlay
 from top.tuner.font_9x15 import MENU_FONT_BOLD, MENU_FONT_NORMAL
+from top.tuner.top import TunerSoc
+
+
+def test_tuner_cpu_ram_has_interrupt_headroom():
+    # main() currently reserves about 7.25 KiB before nested calls or interrupt
+    # frames. The old 8-KiB allocation booted far enough to draw static content
+    # and then silently corrupted the stack when the live UI started.
+    assert TunerSoc.MAINRAM_SIZE >= 0x4000
 
 
 def test_tuner_font_contract():
