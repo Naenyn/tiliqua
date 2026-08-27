@@ -3688,7 +3688,7 @@ class RezoTileDisplay(wiring.Component):
             # the top tenth of the lane, matching conventional DAW meters.
             output_meter_hot = output_meter_fill & (meter_y_q < 290)
             output_meter_clip = meter_lane_valid_q & meter_clip_q & \
-                (meter_y_q >= 248) & (meter_y_q < 254) & \
+                (meter_y_q >= 260) & (meter_y_q < 264) & \
                 (meter_x_q >= meter_bound_lo_q + 4) & \
                 (meter_x_q < meter_bound_hi_q - 4)
             output_meter_panel_q0 = Signal()

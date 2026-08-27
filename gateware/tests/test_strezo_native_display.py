@@ -163,6 +163,32 @@ def test_pager_tracks_strezo_navigation_order_and_reflows_neighbors():
     ]
 
 
+def test_page_selection_outline_fits_the_page_chip():
+    palette = RezoTileDisplay.PALETTE
+    assert _render_samples(
+        selected=RezoHardwareUI.TARGET_PAGE,
+        points=((212, 119), (212, 120), (212, 149), (212, 150)),
+    ) == [
+        (palette["blank"],) * 3,
+        (palette["selected"],) * 3,
+        (palette["selected"],) * 3,
+        (palette["blank"],) * 3,
+    ]
+
+
+def test_feedback_amount_is_spaced_below_the_band_buttons():
+    palette = RezoTileDisplay.PALETTE
+    assert _render_samples(
+        page=1,
+        selected=RezoHardwareUI.TARGET_FEEDBACK,
+        points=((263, 344), (264, 344), (265, 344)),
+    ) == [
+        (palette["surface"],) * 3,
+        (palette["selected"],) * 3,
+        (palette["selected"],) * 3,
+    ]
+
+
 def test_curved_output_meters_are_persistent_and_independent():
     palette = RezoTileDisplay.PALETTE
     assert _render_samples(
@@ -170,7 +196,7 @@ def test_curved_output_meters_are_persistent_and_independent():
         output_meters=(0, 20, 40, 63),
         output_clips=(1, 0, 0, 0),
         points=((42, 400), (75, 400), (647, 350), (669, 280),
-                (25, 360), (60, 250)),
+                (25, 360), (60, 261)),
     ) == [
         (palette["background"],) * 3,
         (palette["control"],) * 3,
@@ -373,7 +399,7 @@ def test_feedback_amount_maximum_fills_the_compact_track():
     assert _render_samples(
         page=1,
         feedback=128,
-        points=((576, 328), (577, 328), (578, 328), (579, 328)),
+        points=((576, 344), (577, 344), (578, 344), (579, 344)),
     ) == [
         (control, control, control),
         (panel, panel, panel), (panel, panel, panel),

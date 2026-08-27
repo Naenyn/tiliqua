@@ -19,7 +19,8 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
                     turing_target=RezoCore.TURING_TARGET_ALL,
                     turing_start=0,
                     band_enables=(), feedback_sends=(), input_gains=(),
-                    input_modes=(), cv_targets=(), selected=0):
+                    input_modes=(), cv_targets=(), selected=0,
+                    output_meters=(), output_clips=()):
     """Render settled pixels from the native REZOMO coordinate space."""
     dut = RezoTileDisplay(
         h_active=h_active,
@@ -60,6 +61,10 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
             ctx.set(dut.input_modes[index], value)
         for index, value in enumerate(cv_targets):
             ctx.set(dut.cv_targets[index], value)
+        for index, value in enumerate(output_meters):
+            ctx.set(dut.output_meters[index], value)
+        for index, value in enumerate(output_clips):
+            ctx.set(dut.output_clips[index], value)
         ctx.set(dut.de, 1)
         # Dynamic labels refresh through the sync-domain tile writer. Let one
         # complete 185-entry pass settle before inspecting their glyph pixels.
@@ -253,7 +258,7 @@ def test_feedback_navigation_outlines_share_the_native_track_edges():
     selected = RezoTileDisplay.PALETTE["selected"]
     surface = RezoTileDisplay.PALETTE["surface"]
     for target, y in (
-        (RezoHardwareUI.TARGET_FEEDBACK, 328),
+        (RezoHardwareUI.TARGET_FEEDBACK, 344),
         (RezoHardwareUI.TARGET_LIMIT_KNEE, 408),
         (RezoHardwareUI.TARGET_LIMIT_CAP, 440),
     ):
@@ -264,6 +269,28 @@ def test_feedback_navigation_outlines_share_the_native_track_edges():
             (selected, selected, selected),
             (selected, selected, selected),
         ]
+
+
+def test_page_selection_outline_fits_the_page_chip():
+    selected = RezoTileDisplay.PALETTE["selected"]
+    blank = RezoTileDisplay.PALETTE["blank"]
+    assert _render_samples(
+        selected=RezoHardwareUI.TARGET_PAGE,
+        points=((212, 119), (212, 120), (212, 149), (212, 150)),
+    ) == [
+        (blank, blank, blank),
+        (selected, selected, selected),
+        (selected, selected, selected),
+        (blank, blank, blank),
+    ]
+
+
+def test_clipping_lamp_sits_on_meter_top_edge_below_out_label():
+    selected = RezoTileDisplay.PALETTE["selected"]
+    assert _render_samples(
+        output_meters=(63, 0, 0, 0), output_clips=(1, 0, 0, 0),
+        points=((60, 261),),
+    ) == [(selected, selected, selected)]
 
 
 def test_input_text_chips_use_fixed_widths_and_shared_row_centres():

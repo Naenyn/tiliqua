@@ -580,8 +580,8 @@ def test_compact_output_meters_are_persistent_and_independent():
         await sample(ctx, 669, 280)
         # An outline remains visible around an empty lane.
         await sample(ctx, 25, 360)
-        # A held clipping lamp sits above the corresponding lane.
-        await sample(ctx, 60, 250)
+        # A held clipping lamp sits on the lane's top edge, below OUT.
+        await sample(ctx, 60, 261)
 
     sim.add_testbench(bench)
     sim.run()

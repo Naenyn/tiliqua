@@ -182,24 +182,27 @@ def native_viewport_regions(m, x, lookup_y, *, inner_radius=250):
     return circle_inside, annulus
 
 
-def native_feedback_track_rows(rect, x, y, x0, x1, *, y_shift=0):
+def native_feedback_track_rows(
+        rect, x, y, x0, x1, *, y_shift=0, amount_y_shift=0):
     """Return the three shared FEEDBACK-page shaded control tracks."""
     return (
-        rect(x, y, x0, NATIVE_FEEDBACK_AMOUNT_Y0 + y_shift - 2,
-             x1, NATIVE_FEEDBACK_AMOUNT_Y0 + y_shift + 18) |
+        rect(x, y, x0,
+             NATIVE_FEEDBACK_AMOUNT_Y0 + y_shift + amount_y_shift - 2,
+             x1, NATIVE_FEEDBACK_AMOUNT_Y0 + y_shift + amount_y_shift + 18) |
         rect(x, y, x0, NATIVE_FEEDBACK_KNEE_Y0 + y_shift - 2,
              x1, NATIVE_FEEDBACK_KNEE_Y0 + y_shift + 18) |
         rect(x, y, x0, NATIVE_FEEDBACK_CEILING_Y0 + y_shift - 2,
              x1, NATIVE_FEEDBACK_CEILING_Y0 + y_shift + 18))
 
 
-def put_native_feedback_labels(put, *, content_row_offset=0):
+def put_native_feedback_labels(
+        put, *, content_row_offset=0, amount_row_offset=0):
     """Place the labels shared by every native REZO FEEDBACK page."""
     put_native_page_heading(put, 1, "FEEDBACK SOURCES")
     put(1, "BANDS", 8, 16 + content_row_offset)
     put(1, "FREQ:", 23, 16 + content_row_offset)
     put(1, "FEEDBACK", NATIVE_FEEDBACK_LABEL_RIGHT - len("FEEDBACK"),
-        NATIVE_FEEDBACK_AMOUNT_ROW + content_row_offset)
+        NATIVE_FEEDBACK_AMOUNT_ROW + content_row_offset + amount_row_offset)
     put(1, "FEEDBACK SAFETY", 8,
         NATIVE_FEEDBACK_SAFETY_TITLE_ROW + content_row_offset)
     put(1, "KNEE", NATIVE_FEEDBACK_LABEL_RIGHT - len("KNEE"),
@@ -224,7 +227,8 @@ def put_native_page_heading(put, page, text, x0=8):
 
 
 def put_native_support_page_labels(put, *, output_label_col=9,
-                                   content_row_offsets=None):
+                                   content_row_offsets=None,
+                                   feedback_amount_row_offset=0):
     """Place the common FEEDBACK through BANDS native static labels.
 
     Product-specific additions such as STREZO's OPTIONS ADVANCED section and
@@ -239,7 +243,8 @@ def put_native_support_page_labels(put, *, output_label_col=9,
     bands_offset = offsets.get(6, 0)
 
     put_native_feedback_labels(
-        put, content_row_offset=feedback_offset)
+        put, content_row_offset=feedback_offset,
+        amount_row_offset=feedback_amount_row_offset)
 
     put_native_page_heading(put, 2, "INPUT ROUTING")
     for input_index, (mode_row, value_row, depth_row) in enumerate(

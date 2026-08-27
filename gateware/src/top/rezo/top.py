@@ -3993,7 +3993,8 @@ class RezoTileDisplay(wiring.Component):
 
             put_native_support_page_labels(
                 put,
-                content_row_offsets={1: -1, 3: -1, 4: -3, 5: -1, 6: -1})
+                content_row_offsets={1: -1, 3: -1, 4: -3, 5: -1, 6: -1},
+                feedback_amount_row_offset=1)
 
             # CLOCK is REZOMO-specific, but follows the same native row grid
             # as the shared pages.  Every possible control occupies one row
@@ -4942,7 +4943,7 @@ class RezoTileDisplay(wiring.Component):
                 (meter_x_q < meter_bound_hi_q - 4)
             output_meter_hot = output_meter_fill & (meter_y_q < 290)
             output_meter_clip = meter_lane_valid_q & meter_clip_q & \
-                (meter_y_q >= 248) & (meter_y_q < 254) & \
+                (meter_y_q >= 260) & (meter_y_q < 264) & \
                 (meter_x_q >= meter_bound_lo_q + 4) & \
                 (meter_x_q < meter_bound_hi_q - 4)
             output_meter_panel_q0 = Signal()
@@ -5022,7 +5023,8 @@ class RezoTileDisplay(wiring.Component):
                 self.compact_layout,
                 native_feedback_track_rows(
                     self.rect, x, y, tune_panel_x0, tune_panel_x1,
-                    y_shift=tune_y_shift),
+                    y_shift=tune_y_shift,
+                    amount_y_shift=compact_content_shift),
                 (self.rect(x, y, tune_panel_x0, 408,
                            tune_panel_x1, 432) |
                  self.rect(x, y, tune_panel_x0, 456,
@@ -6154,8 +6156,8 @@ class RezoTileDisplay(wiring.Component):
             self.compact_layout,
             tune_page & compact_fader_x_valid &
             (compact_fader_threshold <= self.feedback) &
-            (y >= NATIVE_FEEDBACK_AMOUNT_Y0 + tune_y_shift) &
-            (y < NATIVE_FEEDBACK_AMOUNT_Y0 + 16 + tune_y_shift),
+            (y >= NATIVE_FEEDBACK_AMOUNT_Y0) &
+            (y < NATIVE_FEEDBACK_AMOUNT_Y0 + 16),
             tune_page & self.rect(
                 x, y, 156, 380, 124 + (self.feedback << 2), 396))
         tune_feedback_select = (
@@ -6163,9 +6165,9 @@ class RezoTileDisplay(wiring.Component):
             (self.selected == RezoHardwareUI.TARGET_FEEDBACK) & Mux(
                 self.compact_layout,
                 self.outline(x, y, tune_panel_x0,
-                             NATIVE_FEEDBACK_AMOUNT_Y0 - 4 + tune_y_shift,
+                             NATIVE_FEEDBACK_AMOUNT_Y0 - 4,
                              tune_panel_x1,
-                             NATIVE_FEEDBACK_AMOUNT_Y0 + 20 + tune_y_shift,
+                             NATIVE_FEEDBACK_AMOUNT_Y0 + 20,
                              t=3),
                 self.rect(x, y, 144, 376, 148, 400)))
         dry_fill = Mux(
@@ -6216,9 +6218,9 @@ class RezoTileDisplay(wiring.Component):
         page_select = (self.selected == RezoHardwareUI.TARGET_PAGE) & self.outline(
             x, y,
             212 if self.compact_layout else 20,
-            116 if self.compact_layout else 20,
+            120 if self.compact_layout else 20,
             364 if self.compact_layout else 196,
-            164 if self.compact_layout else 82, t=3)
+            150 if self.compact_layout else 82, t=3)
 
         bank_selected_q = Signal()
         clock_selected_q = Signal()
