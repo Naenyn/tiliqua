@@ -3,6 +3,8 @@
 import os
 from pathlib import Path
 
+import git
+
 from tiliqua.tiliqua_soc import TiliquaSoc
 
 try:
@@ -16,7 +18,7 @@ class StrezoCpuTop(RezoBeamTop):
 
     nextpnr_opts = (
         "--timing-allow-fail "
-        f"--seed {os.getenv('TILIQUA_STREZO_CPU_SEED', '8')}")
+        f"--seed {os.getenv('TILIQUA_STREZO_CPU_SEED', '9')}")
     minimum_timing_headroom_percent = 3.0
 
 
@@ -30,7 +32,15 @@ def compile_firmware(args):
     build_path.mkdir(parents=True, exist_ok=True)
     firmware_bin_path = build_path / "firmware.bin"
     TiliquaSoc.compile_firmware(str(FW_ROOT), str(firmware_bin_path))
-    return {"firmware_bin_path": str(firmware_bin_path)}
+    repo = git.Repo(search_parent_directories=True)
+    try:
+        version_text = repo.git.describe("--tags", "--exact-match", "--dirty")
+    except git.exc.GitCommandError:
+        version_text = repo.git.describe("--always", "--dirty")
+    return {
+        "firmware_bin_path": str(firmware_bin_path),
+        "version_text": version_text[:8],
+    }
 
 
 if __name__ == "__main__":
