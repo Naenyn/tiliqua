@@ -2874,20 +2874,10 @@ class RezoTileDisplay(wiring.Component):
         cell_y = Signal(unsigned(6))
         glyph_col = Signal(unsigned(3))
         glyph_row = Signal(unsigned(3))
-        text_lookup_x = Signal.like(text_x)
         m.d.comb += [
-            # NAV occupies the same four-cell status slot as EDIT, but its
-            # leading blank only needs half a cell visually. Offset the text
-            # lookup by eight pixels in NAV mode so the three glyphs remain
-            # centred without changing the fixed tile-RAM layout.
-            text_lookup_x.eq(Mux(
-                self.compact_layout & ~self.editing &
-                (text_y >= 122) & (text_y < 148) &
-                (text_x >= 520) & (text_x < 600),
-                text_x + 8, text_x)),
-            cell_x.eq(text_lookup_x[self.CELL_SHIFT:]),
+            cell_x.eq(text_x[self.CELL_SHIFT:]),
             cell_y.eq(text_y[self.CELL_SHIFT:]),
-            glyph_col.eq(text_lookup_x[1:4]),
+            glyph_col.eq(text_x[1:4]),
             glyph_row.eq(text_y[1:4]),
         ]
 
@@ -3225,7 +3215,7 @@ class RezoTileDisplay(wiring.Component):
             editing_sync & (selected_sync == RezoHardwareUI.TARGET_BAND_LAYOUT),
             frequency_layout_preview_sync, frequency_layout_sync))
         target_names = BASE_TARGET_NAMES
-        nav_names = (" NAV", "EDIT") if self.compact_layout else NAV_NAMES
+        nav_names = ("NAV ", "EDIT") if self.compact_layout else NAV_NAMES
         nav_chars = [Array(Const(self.code(name[pos]), 6) for name in nav_names)
                      for pos in range(4)]
         preset_chars = [Array(Const(self.code(name[pos]), 6) for name in preset_names)
@@ -3752,10 +3742,11 @@ class RezoTileDisplay(wiring.Component):
             # in the central header.  The circular side wings remain blank.
             side_page_chip = active & self.rect(
                 text_x, text_y, 216, 124, 360, 146)
-            # MOVE/EDIT is status rather than a navigable value. Its outline
-            # remains identical in both modes; only the dynamic text changes.
+            # NAV/EDIT is status rather than a navigable value. Both labels
+            # share one left edge; the outline grows by one cell for EDIT.
             cursor_chip = active & self.outline(
-                text_x, text_y, 520, 122, 600, 148, t=2)
+                text_x, text_y, 520, 122,
+                Mux(self.editing, 600, 584), 148, t=2)
         # One shared rectangle keeps the pixel path shallow. FILTER needs the
         # deepest field because its fifth fader ends at y=690; ending its
         # background at y=666 left RESONANCE floating in the black margin.

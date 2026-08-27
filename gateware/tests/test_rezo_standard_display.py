@@ -295,12 +295,14 @@ def test_compact_header_controls_are_tight():
         await sample(ctx, 350, 124)  # PAGE chip top
         await sample(ctx, 350, 145)  # PAGE chip bottom
         await sample(ctx, 350, 146)  # immediately below PAGE chip
-        await sample(ctx, 520, 121)  # immediately above MOVE outline
-        await sample(ctx, 520, 122)  # MOVE outline top/left
-        await sample(ctx, 520, 147)  # MOVE outline bottom/left
-        await sample(ctx, 520, 148)  # immediately below MOVE outline
-        await sample(ctx, 528, 128)  # old full-cell leading pad is blank
-        await sample(ctx, 536, 128)  # first pixel after half-cell NAV pad
+        await sample(ctx, 520, 121)  # immediately above NAV outline
+        await sample(ctx, 520, 122)  # NAV outline top/left
+        await sample(ctx, 520, 147)  # NAV outline bottom/left
+        await sample(ctx, 520, 148)  # immediately below NAV outline
+        await sample(ctx, 528, 128)  # NAV begins at the shared text edge
+        await sample(ctx, 598, 122)  # NAV's fitted outline ends earlier
+        ctx.set(dut.editing, 1)
+        await sample(ctx, 598, 122)  # EDIT expands the outline by one cell
 
     sim.add_testbench(bench)
     sim.run()
@@ -311,7 +313,7 @@ def test_compact_header_controls_are_tight():
         palette["panel"], palette["blank"],
         palette["blank"], palette["line"],
         palette["line"], palette["blank"],
-        palette["blank"], palette["text"],
+        palette["text"], palette["blank"], palette["line"],
     ]
 
 
