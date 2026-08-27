@@ -5782,7 +5782,8 @@ class RezoTileDisplay(wiring.Component):
                 group_selected_index.eq(
                     self.selected - RezoHardwareUI.TARGET_GROUP_BASE),
                 group_selected_x_pre.eq(
-                    (208 + group_selected_index * 34
+                    (208 + (group_selected_index << 5) +
+                     (group_selected_index << 1)
                      if self.compact_layout else
                      144 + (group_selected_index << 5) +
                      (group_selected_index << 4))),

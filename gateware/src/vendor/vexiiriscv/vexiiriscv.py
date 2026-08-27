@@ -58,6 +58,7 @@ CPU_VARIANTS = {
         '--with-iterative-shift',
         '--without-lsu-bypass',
         '--regfile-sync',
+        '--with-dispatcher-buffer',
     ],
     # special variant with big icache, necessary if
     # the CPU is directly fetching instructions from spiflash
