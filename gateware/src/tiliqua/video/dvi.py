@@ -191,12 +191,14 @@ class DVIPHY(wiring.Component):
         tmds_clk_shift = Signal(10, reset_less=True)
 
         # One phase ring normally defines the shared word boundary. Very dense
-        # products may instead use one identically reset ring per lane. That
-        # removes the extra strobe register and keeps each phase/load route
-        # local without relying on synthesis to preserve equivalent copies.
+        # products may instead use one identically reset ring per five-bit
+        # lane half. That removes the extra strobe register and keeps each
+        # phase/load route local without relying on synthesis to preserve
+        # equivalent copies.
         phase_rings = [
-            Signal(5, reset=1, name=f"shift5_{n}")
-            for n in range(4 if self.local_phase_rings else 1)
+            Signal(5, reset=1, name=f"shift5_{n}",
+                   attrs={"keep": True})
+            for n in range(8 if self.local_phase_rings else 1)
         ]
         shift5 = phase_rings[0]
         load_strobes = [
@@ -234,10 +236,14 @@ class DVIPHY(wiring.Component):
                     shift[7:10], Const(0, 2)))
 
         if self.local_phase_rings:
-            serialize_lane(tmds_ch0_shift, phase_rings[0][0], s_tmds_ch0)
-            serialize_lane(tmds_ch1_shift, phase_rings[1][0], s_tmds_ch1)
-            serialize_lane(tmds_ch2_shift, phase_rings[2][0], s_tmds_ch2)
-            serialize_lane(tmds_clk_shift, phase_rings[3][0], 0b0000011111)
+            serialize_lane(tmds_ch0_shift, phase_rings[0][0], s_tmds_ch0,
+                           phase_rings[1][0])
+            serialize_lane(tmds_ch1_shift, phase_rings[2][0], s_tmds_ch1,
+                           phase_rings[3][0])
+            serialize_lane(tmds_ch2_shift, phase_rings[4][0], s_tmds_ch2,
+                           phase_rings[5][0])
+            serialize_lane(tmds_clk_shift, phase_rings[6][0], 0b0000011111,
+                           phase_rings[7][0])
         elif self.split_load_strobes:
             serialize_lane(tmds_ch0_shift, load_strobes[0], s_tmds_ch0,
                            load_strobes[1])
