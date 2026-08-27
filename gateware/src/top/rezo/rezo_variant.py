@@ -4871,7 +4871,10 @@ class RezoTileDisplay(wiring.Component):
                 (output_x_q < output_send_end)),
         ]
         output_target = Signal(unsigned(7))
+        output_target_q = Signal.like(output_target)
+        output_outline_q = Signal()
         output_header_select = Signal()
+        output_header_select_q = Signal()
         output_header_row = Signal(unsigned(2))
         output_header_col = Signal(unsigned(2))
         output_header_row_target = Signal()
@@ -4880,10 +4883,9 @@ class RezoTileDisplay(wiring.Component):
             output_target.eq(RezoHardwareUI.TARGET_OUTPUT_BASE + output_source +
                              output_row + (output_row << 2)),
             output_select.eq(
-                (output_page & output_row_active & output_col_active &
-                 (self.selected == output_target) &
-                 (output_row_edge | output_col_edge)) |
-                output_header_select),
+                (output_outline_q &
+                 (self.selected == output_target_q)) |
+                output_header_select_q),
             output_header_row.eq(
                 self.selected - RezoHardwareUI.TARGET_OUTPUT_ROW_BASE),
             output_header_col.eq(
@@ -4909,6 +4911,17 @@ class RezoTileDisplay(wiring.Component):
                 x=output_geom_x, y=output_geom_y,
                 compact=self.compact_layout,
                 compact_y_shift=-3 * compact_content_shift)),
+        ]
+        # Split the coordinate/target decode from the selected-target compare.
+        # ``output_select`` previously placed both halves in the path to its
+        # first register. This midpoint retains the same two DVI-clock stages
+        # to ``routing_selected_q`` while shortening each combinational path.
+        m.d.dvi += [
+            output_target_q.eq(output_target),
+            output_outline_q.eq(
+                output_page & output_row_active & output_col_active &
+                (output_row_edge | output_col_edge)),
+            output_header_select_q.eq(output_header_select),
         ]
 
         for target, signals in [
@@ -4940,14 +4953,13 @@ class RezoTileDisplay(wiring.Component):
         group_select_q0 = tile_registered_or(group_select_signals, "group_select")
         output_cell_q0 = Signal()
         output_fill_q0 = Signal()
-        output_select_q0 = Signal()
+        output_select_q0 = output_select
         filter_cv_panel_q0 = tile_registered_or(filter_cv_panel_signals, "filter_cv_panel")
         filter_cv_fill_q0 = tile_registered_or(filter_cv_fill_signals, "filter_cv_fill")
         filter_cv_line_q0 = tile_registered_or(filter_cv_line_signals, "filter_cv_line")
         filter_cv_select_q0 = tile_registered_or(filter_cv_select_signals, "filter_cv_select")
         m.d.dvi += [
             output_cell_q0.eq(output_cell),
-            output_select_q0.eq(output_select),
         ]
         m.d.dvi += output_fill_q0.eq(output_fill)
         m.d.comb += group_fill_q0.eq(group_fill)
