@@ -143,34 +143,6 @@ def output_meter_db_value(magnitude):
     return max(0, min(63, round((dbfs + 60) * 63 / 60)))
 
 
-# REZO's circular UI reserves black for pixels with no semantic geometry.  The
-# eighth palette entry can therefore retain the former BACKGROUND shade as a
-# work surface while BACKGROUND moves halfway toward black. This leaves PANEL
-# distinctly brighter without changing the shared REZOMO/STREZO contract.
-REZO_SEMANTIC_PALETTE = dict(
-    SEMANTIC_PALETTE, background=0x0A, surface=0x14)
-REZO_PALETTE_ROLES = PALETTE_ROLES[:-1] + ("surface",)
-REZO_BACKGROUND_COLORS = (
-    0x0A0A0A,  # LCD
-    0x0C0803,  # amber
-    0x040C0C,  # cyan
-    0x040E0B,  # green
-    0x08050C,  # violet
-)
-REZO_SURFACE_COLORS = (
-    0x141414,  # LCD
-    0x171006,  # amber
-    0x071718,  # cyan
-    0x081C15,  # green
-    0x100A18,  # violet
-)
-REZO_RGB_PALETTES = tuple(
-    theme[:6] + (background, surface)
-    for theme, background, surface in zip(
-        RGB_PALETTES, REZO_BACKGROUND_COLORS, REZO_SURFACE_COLORS)
-)
-
-
 NATIVE_OUTPUT_METER_RADII = (335, 311, 303, 279)
 NATIVE_OUTPUT_METER_LABEL_COLS = (3, 5, 39, 41)
 
@@ -2646,9 +2618,9 @@ class RezoTileDisplay(wiring.Component):
     # Semantic palette roles.  The current LCD theme maps every role to a
     # grayscale intensity; a future color palette can map the same roles to
     # related RGB colors without changing any geometry or modulation logic.
-    PALETTE = REZO_SEMANTIC_PALETTE
-    PALETTE_ROLES = REZO_PALETTE_ROLES
-    RGB_PALETTES = REZO_RGB_PALETTES
+    PALETTE = SEMANTIC_PALETTE
+    PALETTE_ROLES = PALETTE_ROLES
+    RGB_PALETTES = RGB_PALETTES
     CHARS = TILE_CHARS
     CHAR_CODES = {ch: i for i, ch in enumerate(CHARS)}
 

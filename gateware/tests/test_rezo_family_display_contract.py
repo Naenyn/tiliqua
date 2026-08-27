@@ -43,7 +43,7 @@ def make_sim(display_type):
 
 
 @pytest.mark.parametrize("display_type", ALL_FAMILY_DISPLAYS)
-def test_native_preview_draws_round_panel_edge_not_safe_square(display_type):
+def test_native_preview_uses_round_panel_edge_not_safe_square(display_type):
     dut = display_type(h_active=1280, compact_layout=True)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
@@ -51,8 +51,9 @@ def test_native_preview_draws_round_panel_edge_not_safe_square(display_type):
     samples = []
 
     async def bench(ctx):
-        # Cardinal points touch the 720x720 canvas boundary. The former
-        # 508x508 square's side midpoints must now be blank.
+        # Cardinal points touch the 720x720 canvas boundary; REZO deliberately
+        # leaves its former guide unrendered. The old 508x508 square's side
+        # midpoints remain blank in every family member.
         for x, y in ((0, 359), (1, 359), (2, 359),
                      (719, 360), (718, 360), (717, 360),
                      (359, 0), (359, 1), (359, 2),
@@ -66,13 +67,14 @@ def test_native_preview_draws_round_panel_edge_not_safe_square(display_type):
 
     line = display_type.PALETTE["line"]
     blank = display_type.PALETTE["blank"]
+    edge = blank if display_type is RezoTileDisplay else line
     expected_blank = (display_type.PALETTE["background"]
                       if display_type is RezoTileDisplay else blank)
     assert samples == [
-        line, line, expected_blank,
-        line, line, expected_blank,
-        line, line, expected_blank,
-        line, line, expected_blank,
+        edge, edge, expected_blank,
+        edge, edge, expected_blank,
+        edge, edge, expected_blank,
+        edge, edge, expected_blank,
         expected_blank, expected_blank, expected_blank, expected_blank,
     ]
 

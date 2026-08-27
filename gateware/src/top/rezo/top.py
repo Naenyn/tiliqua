@@ -6066,6 +6066,13 @@ class RezoTileDisplay(wiring.Component):
         with m.Elif(background_q):
             m.d.comb += palette_role.eq(6)
 
+        # Black is a renderer constant rather than a palette entry. The
+        # eighth hardware color is now available for shaded content surfaces.
+        palette_visible = (selected_q | text_q | mod_q | fill_q | line_q |
+                           panel_q | background_q)
+        palette_visible_q = Signal()
+        m.d.dvi += palette_visible_q.eq(palette_visible)
+
         palette_init = [color for theme in self.RGB_PALETTES for color in theme]
         m.submodules.palette_mem = palette_mem = Memory(
             shape=unsigned(24), depth=len(palette_init), init=palette_init,
@@ -6074,9 +6081,12 @@ class RezoTileDisplay(wiring.Component):
         m.d.comb += palette_rport.addr.eq(Cat(palette_role, self.palette))
 
         m.d.comb += [
-            self.r.eq(palette_rport.data[16:24]),
-            self.g.eq(palette_rport.data[8:16]),
-            self.b.eq(palette_rport.data[0:8]),
+            self.r.eq(Mux(palette_visible_q,
+                          palette_rport.data[16:24], 0)),
+            self.g.eq(Mux(palette_visible_q,
+                          palette_rport.data[8:16], 0)),
+            self.b.eq(Mux(palette_visible_q,
+                          palette_rport.data[0:8], 0)),
         ]
 
         return m
