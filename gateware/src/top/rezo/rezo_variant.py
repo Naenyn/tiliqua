@@ -3887,7 +3887,7 @@ class RezoTileDisplay(wiring.Component):
         group_select = Signal()
         output_cell = Signal()
         output_fill = Signal()
-        output_select = Signal()
+        output_select_signals = []
         filter_cv_panel = Signal()
         filter_cv_fill = Signal()
         filter_cv_line = Signal()
@@ -4837,6 +4837,31 @@ class RezoTileDisplay(wiring.Component):
                         (output_geom_x < cell_x0 + cell_width - 4)),
                     output_cell_x0.eq(cell_x0),
                 ]
+        # Decode each matrix selection against its constant target. The prior
+        # dynamic ``row * 5 + source`` target calculation put the coordinate
+        # decoders, an adder, and the final outline test in one pixel-clock
+        # path. Constant per-cell terms synthesize independently and are
+        # registered below before their OR reduction.
+        for output in range(4):
+            row_y = (
+                compact_output_row_centers[output] - 13
+                if self.compact_layout else 326 + output * 80)
+            for source in range(5):
+                cell_width = 56 if self.compact_layout else 72
+                cell_x0 = (
+                    compact_output_col_centers[source] - 27
+                    if self.compact_layout else 188 + source * 96)
+                source_visible = ~self.filter_mode if source == 4 else Const(1)
+                select_term = Signal(
+                    name=f"output_select_r{output}_c{source}")
+                m.d.comb += select_term.eq(
+                    output_page & source_visible &
+                    (self.selected ==
+                     RezoHardwareUI.TARGET_OUTPUT_BASE + source + output * 5) &
+                    self.outline(output_geom_x, output_geom_y,
+                                 cell_x0, row_y,
+                                 cell_x0 + cell_width, row_y + 28, t=2))
+                output_select_signals.append(select_term)
         m.d.comb += [
             output_send_index.eq(output_source + (output_row << 2) + output_row),
             output_send_rport.addr.eq(output_send_index),
@@ -4870,20 +4895,12 @@ class RezoTileDisplay(wiring.Component):
                 (output_x_q >= output_x0_q + 4) &
                 (output_x_q < output_send_end)),
         ]
-        output_target = Signal(unsigned(7))
         output_header_select = Signal()
         output_header_row = Signal(unsigned(2))
         output_header_col = Signal(unsigned(2))
         output_header_row_target = Signal()
         output_header_col_target = Signal()
         m.d.comb += [
-            output_target.eq(RezoHardwareUI.TARGET_OUTPUT_BASE + output_source +
-                             output_row + (output_row << 2)),
-            output_select.eq(
-                (output_page & output_row_active & output_col_active &
-                 (self.selected == output_target) &
-                 (output_row_edge | output_col_edge)) |
-                output_header_select),
             output_header_row.eq(
                 self.selected - RezoHardwareUI.TARGET_OUTPUT_ROW_BASE),
             output_header_col.eq(
@@ -4910,6 +4927,7 @@ class RezoTileDisplay(wiring.Component):
                 compact=self.compact_layout,
                 compact_y_shift=-3 * compact_content_shift)),
         ]
+        output_select_signals.append(output_header_select)
 
         for target, signals in [
                 (preset_chip, preset_chip_signals),
@@ -4940,14 +4958,14 @@ class RezoTileDisplay(wiring.Component):
         group_select_q0 = tile_registered_or(group_select_signals, "group_select")
         output_cell_q0 = Signal()
         output_fill_q0 = Signal()
-        output_select_q0 = Signal()
+        output_select_q0 = tile_registered_or(
+            output_select_signals, "output_select")
         filter_cv_panel_q0 = tile_registered_or(filter_cv_panel_signals, "filter_cv_panel")
         filter_cv_fill_q0 = tile_registered_or(filter_cv_fill_signals, "filter_cv_fill")
         filter_cv_line_q0 = tile_registered_or(filter_cv_line_signals, "filter_cv_line")
         filter_cv_select_q0 = tile_registered_or(filter_cv_select_signals, "filter_cv_select")
         m.d.dvi += [
             output_cell_q0.eq(output_cell),
-            output_select_q0.eq(output_select),
         ]
         m.d.dvi += output_fill_q0.eq(output_fill)
         m.d.comb += group_fill_q0.eq(group_fill)
