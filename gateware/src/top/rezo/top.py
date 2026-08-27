@@ -4467,6 +4467,8 @@ class RezoTileDisplay(wiring.Component):
         micro_operation = text_operation_rport.data
         micro_writer_address = Signal(unsigned(15))
         micro_writer_char = Signal(unsigned(6))
+        micro_writer_address_q = Signal.like(micro_writer_address)
+        micro_writer_char_q = Signal.like(micro_writer_char)
         micro_source = micro_operation[15:20]
         micro_argument = micro_operation[20:24]
         micro_pos = micro_operation[24:28]
@@ -4487,10 +4489,10 @@ class RezoTileDisplay(wiring.Component):
                 Array(band_frequencies_sync)[bands_selected_band])),
             micro_frequency_word.eq(Mux(
                 micro_pos < 3, micro_pos[:2], (micro_pos - 3)[:2])),
-            micro_text_wport.addr.eq(micro_writer_address),
-            micro_text_wport.data.eq(micro_writer_char),
+            micro_text_wport.addr.eq(micro_writer_address_q),
+            micro_text_wport.data.eq(micro_writer_char_q),
             micro_text_wport.en.eq(
-                micro_update_active & (micro_writer_phase == 2)),
+                micro_update_active & (micro_writer_phase == 3)),
         ]
 
         def dynamic_characters(value):
@@ -4731,6 +4733,12 @@ class RezoTileDisplay(wiring.Component):
 
         with m.If(micro_update_active):
             with m.If(micro_writer_phase == 2):
+                m.d.sync += [
+                    micro_writer_address_q.eq(micro_writer_address),
+                    micro_writer_char_q.eq(micro_writer_char),
+                    micro_writer_phase.eq(3),
+                ]
+            with m.Elif(micro_writer_phase == 3):
                 m.d.sync += micro_writer_phase.eq(0)
                 with m.If(micro_update_index == len(text_operation_init) - 1):
                     m.d.sync += [
