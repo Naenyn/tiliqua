@@ -5896,10 +5896,10 @@ class RezoBeamTop(Elaboratable):
 
         if sim.is_hw(platform):
             # REZO's dense placement makes the 5x serializer load enable the
-            # limiting route. Keep one local strobe per five-bit half so the
-            # shared phase bit does not fan out across an entire TMDS lane.
+            # limiting route. Give each lane an identically reset local phase
+            # ring so its load mux remains nearby without an extra register.
             m.submodules.dvi_gen = dvi_gen = dvi.DVIPHY(
-                split_load_strobes=True)
+                local_phase_rings=True)
             display_de0 = Signal()
             display_hsync0 = Signal()
             display_vsync0 = Signal()

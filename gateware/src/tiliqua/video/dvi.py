@@ -127,9 +127,14 @@ class DVIPHY(wiring.Component):
 
     i: In(DVIPixel)
 
-    def __init__(self, *, split_load_strobes=False):
+    def __init__(self, *, split_load_strobes=False,
+                 local_phase_rings=False):
         super().__init__()
         self.split_load_strobes = split_load_strobes
+        self.local_phase_rings = local_phase_rings
+        if split_load_strobes and local_phase_rings:
+            raise ValueError(
+                "split load strobes and local phase rings are exclusive")
 
     def elaborate(self, platform):
         m = Module()
@@ -185,19 +190,27 @@ class DVIPHY(wiring.Component):
         tmds_ch2_shift = Signal(10, reset_less=True)
         tmds_clk_shift = Signal(10, reset_less=True)
 
-        # One phase ring defines the shared word boundary. Dense designs use
-        # one kept local copy per lane; products whose serializer placement is
-        # the limiting path may split that copy across two five-bit halves.
-        shift5 = Signal(5, reset=1)
+        # One phase ring normally defines the shared word boundary. Very dense
+        # products may instead use one identically reset ring per lane. That
+        # removes the extra strobe register and keeps each phase/load route
+        # local without relying on synthesis to preserve equivalent copies.
+        phase_rings = [
+            Signal(5, reset=1, name=f"shift5_{n}")
+            for n in range(4 if self.local_phase_rings else 1)
+        ]
+        shift5 = phase_rings[0]
         load_strobes = [
             Signal(reset_less=True, name=f"tmds_load{n}",
                    attrs={"keep": True})
-            for n in range(8 if self.split_load_strobes else 4)
+            for n in range(
+                0 if self.local_phase_rings else
+                (8 if self.split_load_strobes else 4))
         ]
 
         # Serialization in the 5x DVI clock domain
         m.d.dvi5x += [
-            shift5.eq(Cat(shift5[4], shift5[0:4])),
+            *(phase.eq(Cat(phase[4], phase[0:4]))
+              for phase in phase_rings),
             *(strobe.eq(shift5[0]) for strobe in load_strobes),
         ]
 
@@ -220,7 +233,12 @@ class DVIPHY(wiring.Component):
                 m.d.dvi5x += shift[5:].eq(Cat(
                     shift[7:10], Const(0, 2)))
 
-        if self.split_load_strobes:
+        if self.local_phase_rings:
+            serialize_lane(tmds_ch0_shift, phase_rings[0][0], s_tmds_ch0)
+            serialize_lane(tmds_ch1_shift, phase_rings[1][0], s_tmds_ch1)
+            serialize_lane(tmds_ch2_shift, phase_rings[2][0], s_tmds_ch2)
+            serialize_lane(tmds_clk_shift, phase_rings[3][0], 0b0000011111)
+        elif self.split_load_strobes:
             serialize_lane(tmds_ch0_shift, load_strobes[0], s_tmds_ch0,
                            load_strobes[1])
             serialize_lane(tmds_ch1_shift, load_strobes[2], s_tmds_ch1,
