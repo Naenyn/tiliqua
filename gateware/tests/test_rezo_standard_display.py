@@ -157,7 +157,7 @@ def test_compact_input_and_options_values_use_fixed_left_origins():
         assert 320 <= bounds[0] <= 322
         assert bounds[2] <= chip[2]
 
-    options_chips = ((336, 276, 456, 316), (336, 340, 472, 380))
+    options_chips = ((336, 244, 456, 284), (336, 308, 472, 348))
     options_bounds = _render_text_bounds(
         *options_chips, page=5, palette=3, save_default_available=1)
     for bounds, chip in zip(options_bounds, options_chips):
@@ -167,7 +167,7 @@ def test_compact_input_and_options_values_use_fixed_left_origins():
 
 
 def test_output_dry_label_is_centered_and_hidden_with_its_filter_column():
-    dry_bounds, = _render_text_bounds((500, 296, 568, 324), page=4)
+    dry_bounds, = _render_text_bounds((500, 232, 568, 260), page=4)
     assert dry_bounds[0] + dry_bounds[2] in range(1066, 1074)
 
     dut = RezoTileDisplay(
@@ -180,7 +180,7 @@ def test_output_dry_label_is_centered_and_hidden_with_its_filter_column():
     async def sample(ctx, filter_mode):
         ctx.set(dut.filter_mode, filter_mode)
         ctx.set(dut.x, dut.x_offset + 534)
-        ctx.set(dut.y, 345)
+        ctx.set(dut.y, 281)
         for _ in range(16):
             await ctx.tick("dvi")
         samples.append(ctx.get(dut.r))
@@ -296,7 +296,7 @@ def test_compact_header_controls_are_tight():
         await sample(ctx, 520, 122)  # MOVE outline top/left
         await sample(ctx, 520, 147)  # MOVE outline bottom/left
         await sample(ctx, 520, 148)  # immediately below MOVE outline
-        await sample(ctx, 528, 128)  # first pixel of MOVE
+        await sample(ctx, 544, 128)  # first pixel of centred NAV
 
     sim.add_testbench(bench)
     sim.run()
@@ -483,6 +483,40 @@ def test_page_surfaces_use_eighth_palette_role_while_header_stays_black():
         assert samples[palette * 4 + 3] == surface_rgb
 
 
+def test_sparse_page_content_frames_share_the_main_page_top_edge():
+    """Sparse page frames begin one native row below their heading row."""
+    dut = RezoTileDisplay(
+        h_active=720, rotate_left=False, compact_layout=True)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6, domain="sync")
+    sim.add_clock(1e-6, domain="dvi")
+    samples = []
+
+    async def sample(ctx, page, native_y):
+        ctx.set(dut.page, page)
+        ctx.set(dut.x, 350)
+        ctx.set(dut.y, native_y)
+        ctx.set(dut.de, 1)
+        for _ in range(12):
+            await ctx.tick("dvi")
+        samples.append(ctx.get(dut.r))
+
+    async def bench(ctx):
+        for page in (1, 3, 4, 5, 6):
+            await sample(ctx, page, 223)
+            await sample(ctx, page, 224)
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    palette = RezoTileDisplay.PALETTE
+    assert samples == [
+        value
+        for _ in range(5)
+        for value in (palette["blank"], palette["surface"])
+    ]
+
+
 def test_compact_output_meters_are_persistent_and_independent():
     """All four output meters render in their fixed left/right arc lanes."""
     dut = RezoTileDisplay(
@@ -595,7 +629,7 @@ def test_compact_labels_use_native_control_rows():
 
         # MATRIX uses the same native 64px row cadence for text and controls.
         ctx.set(dut.page, 7)
-        await sample(ctx, 8 * 16, 19 * 16)   # FREQUENCY
+        await sample(ctx, 8 * 16, 17 * 16)   # FREQUENCY
 
         # Dynamic INPUT targets align with the value-only CV chip. Labels to
         # its left remain on the unshaded field.
@@ -672,10 +706,10 @@ def test_compact_input_groups_and_enable_buttons_share_requested_geometry():
         ctx.set(dut.page, 1)
         ctx.set(dut.band_enables[0], 1)
         ctx.set(dut.feedback_sends[0], 1)
-        await sample(ctx, 145, 306)  # FEEDBACK full-height button fill
+        await sample(ctx, 145, 274)  # FEEDBACK full-height button fill
         ctx.set(dut.page, 6)
         ctx.set(dut.band_enables[0], 1)
-        await sample(ctx, 145, 306)  # BANDS now matches FEEDBACK
+        await sample(ctx, 145, 274)  # BANDS now matches FEEDBACK
 
     sim.add_testbench(bench)
     sim.run()
@@ -709,9 +743,9 @@ def test_compact_group_rails_share_native_label_centers():
 
     async def bench(ctx):
         ctx.set(dut.page, 3)
-        # Shifted text rows 21/24/27/30 retain their native centres.
+        # Shifted text rows 19/22/25/28 retain their native centres.
         # Each rail occupies the two pixels straddling that same center.
-        for center_y in (342, 390, 438, 486):
+        for center_y in (310, 358, 406, 454):
             await sample(ctx, 560, center_y)
             await sample(ctx, 560, center_y - 2)
 
@@ -752,14 +786,14 @@ def test_compact_feedback_sources_and_safety_share_centered_geometry():
 
         # KNEE and CEILING use the shared x=[268,579) track. Their maximum
         # fill retains two visible panel pixels at the right edge.
-        await sample(ctx, 268, 437)
-        await sample(ctx, 260, 437)
-        await sample(ctx, 578, 437)
-        await sample(ctx, 579, 437)
+        await sample(ctx, 268, 405)
+        await sample(ctx, 260, 405)
+        await sample(ctx, 578, 405)
+        await sample(ctx, 579, 405)
 
         # DAMPING leaves one label-to-chip cell, then one chip-to-text cell.
-        await sample(ctx, 272, 490)
-        await sample(ctx, 271, 490)
+        await sample(ctx, 272, 458)
+        await sample(ctx, 271, 458)
 
     sim.add_testbench(bench)
     sim.run()
@@ -993,7 +1027,7 @@ def test_compact_output_cells_share_native_label_centers():
     async def bench(ctx):
         ctx.set(dut.page, 4)
         # Top edges at each row centre verify the native vertical centres.
-        row_centers = (358, 422, 486, 550)
+        row_centers = (294, 358, 422, 486)
         assert tuple(b - a for a, b in zip(
             row_centers, row_centers[1:])) == (64, 64, 64)
         for center_y in row_centers:
@@ -1002,8 +1036,8 @@ def test_compact_output_cells_share_native_label_centers():
         # First-row top edges at each heading centre include the wider DRY
         # label; a pixel beyond each cell verifies the symmetric 56px bounds.
         for center_x in (270, 334, 398, 462, 534):
-            await sample(ctx, center_x, 345)
-            await sample(ctx, center_x + 29, 345)
+            await sample(ctx, center_x, 281)
+            await sample(ctx, center_x + 29, 281)
 
     sim.add_testbench(bench)
     sim.run()
@@ -1035,7 +1069,7 @@ def test_compact_output_send_scaling_preserves_exact_fill_endpoint():
 
     async def sample(ctx, panel_x):
         ctx.set(dut.x, dut.x_offset + panel_x)
-        ctx.set(dut.y, 358)
+        ctx.set(dut.y, 294)
         ctx.set(dut.de, 1)
         for _ in range(12):
             await ctx.tick("dvi")

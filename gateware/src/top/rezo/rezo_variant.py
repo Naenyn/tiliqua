@@ -2960,21 +2960,22 @@ class RezoTileDisplay(wiring.Component):
         # 14-scanline glyph has its visual centre at row*16 + 6.5; the rail
         # occupies the two native pixels surrounding that same half-pixel.
         compact_group_text_rows = tuple(
-            row + compact_content_row_shift for row in NATIVE_GROUP_TEXT_ROWS)
+            row - compact_content_row_shift for row in NATIVE_GROUP_TEXT_ROWS)
         compact_group_centers = tuple(
-            center + compact_content_shift for center in NATIVE_GROUP_CENTERS)
+            center - compact_content_shift for center in NATIVE_GROUP_CENTERS)
         # Four native text rows apart gives OUTPUT a uniform 64px cadence.
         # Keep OUT0/OUT1 fixed and place OUT2/OUT3 on the next two positions;
         # the earlier 21/25/28/32 tuple accidentally produced 64/48/64px gaps.
         compact_output_text_rows = tuple(
-            row + compact_content_row_shift for row in NATIVE_OUTPUT_TEXT_ROWS)
+            row - 3 * compact_content_row_shift
+            for row in NATIVE_OUTPUT_TEXT_ROWS)
         # OUTPUT headings/labels and their cells share these native visual
         # centres. A glyph's visual centre is at row*16 + 6.5; a two-character
         # heading beginning at column N is centred at N*16 + 14.5, while DRY
         # is centred at N*16 + 22.5. Keeping the upper pixel of each half-pixel
         # centre here lets the native cells use the exact same centreline.
         compact_output_row_centers = tuple(
-            center + compact_content_shift
+            center - 3 * compact_content_shift
             for center in NATIVE_OUTPUT_ROW_CENTERS)
         compact_output_col_centers = NATIVE_OUTPUT_COL_CENTERS
         # BANK and FILTER share this bottom-anchored native five-slot grid.
@@ -2989,7 +2990,7 @@ class RezoTileDisplay(wiring.Component):
         # MATRIX labels and faders share a native four-character-row cadence.
         # Deriving both from this tuple removes all accumulated scale/rounding
         # drift and keeps the header on its separate row above the matrix.
-        compact_matrix_text_rows = (19, 23, 27, 31, 35)
+        compact_matrix_text_rows = (17, 21, 25, 29, 33)
         # FEEDBACK safety labels share one right edge. Their value controls
         # begin seven native pixels later, after the compact geometry lookup.
         # This keeps the two faders and DAMPING chip on one physical x axis.
@@ -3026,7 +3027,7 @@ class RezoTileDisplay(wiring.Component):
             # AUDIO lanes leave the inapplicable row completely blank.
             put_native_support_page_labels(
                 put_native,
-                content_row_offsets={1: 1, 3: 1, 4: 1, 5: 1, 6: 1})
+                content_row_offsets={1: -1, 3: -1, 4: -3, 5: -1, 6: -1})
 
             # FILTER main page.
             put_native_page_heading(put_native, 7, "TYPE")
@@ -3042,9 +3043,9 @@ class RezoTileDisplay(wiring.Component):
 
             # FILTER modulation matrix.
             put_native_page_heading(put_native, 8, "MOD MATRIX")
-            put_native(8, "IN 1", 18, 17)
-            put_native(8, "IN 2", 25, 17)
-            put_native(8, "IN 3", 32, 17)
+            put_native(8, "IN 1", 18, 15)
+            put_native(8, "IN 2", 25, 15)
+            put_native(8, "IN 3", 32, 15)
             for row, (x0, label) in zip(compact_matrix_text_rows, (
                     (8, "FREQUENCY"), (8, "RESONANCE"), (12, "WIDTH"),
                     (12, "SLOPE"), (12, "DRIVE"))):
@@ -3216,7 +3217,7 @@ class RezoTileDisplay(wiring.Component):
             editing_sync & (selected_sync == RezoHardwareUI.TARGET_BAND_LAYOUT),
             frequency_layout_preview_sync, frequency_layout_sync))
         target_names = BASE_TARGET_NAMES
-        nav_names = ("MOVE", "EDIT") if self.compact_layout else NAV_NAMES
+        nav_names = (" NAV", "EDIT") if self.compact_layout else NAV_NAMES
         nav_chars = [Array(Const(self.code(name[pos]), 6) for name in nav_names)
                      for pos in range(4)]
         preset_chars = [Array(Const(self.code(name[pos]), 6) for name in preset_names)
@@ -3322,24 +3323,24 @@ class RezoTileDisplay(wiring.Component):
                     7, 14, NATIVE_PAGE_HEADING_ROW, pos)
                 # OUTPUT values share one fixed left origin.
                 writer_address_init[39 + pos] = native_text_address(
-                    4, 32, 19, pos)
+                    4, 32, 15, pos)
             for pos in range(3):
                 writer_address_init[43 + pos] = native_text_address(
-                    1, 29, 17, pos)
+                    1, 29, 15, pos)
             for pos in range(6):
                 writer_address_init[46 + pos] = native_text_address(
-                    5, 22, 18, pos)
+                    5, 22, 16, pos)
             for pos in range(7):
                 writer_address_init[52 + pos] = native_text_address(
-                    5, 22, 22, pos)
+                    5, 22, 20, pos)
                 writer_address_init[59 + pos] = native_text_address(
                     6, 16, NATIVE_PAGE_HEADING_ROW, pos)
             for pos in range(5):
                 writer_address_init[66 + pos] = native_text_address(
-                    6, 20, 23, pos)
+                    6, 20, 21, pos)
                 writer_address_init[71 + pos] = native_text_address(
                     1, NATIVE_FEEDBACK_DAMPING_TEXT_COL,
-                    NATIVE_FEEDBACK_DAMPING_TEXT_ROW + 1, pos)
+                    NATIVE_FEEDBACK_DAMPING_TEXT_ROW - 1, pos)
             for n, (_, _, depth_row) in enumerate(compact_input_text_rows):
                 for pos in range(5):
                     writer_address_init[76 + n * 5 + pos] = native_text_address(
@@ -3780,9 +3781,9 @@ class RezoTileDisplay(wiring.Component):
         surface_row_y0 = Signal(unsigned(6), init=14)
         surface_row_y1 = Signal(unsigned(6), init=35)
         surface_row_y0s = Array(Const(row, 6) for row in (
-            14, 16, 13, 16, 18, 16, 16, 14, 16))
+            14, 14, 13, 14, 14, 14, 14, 14, 14))
         surface_row_y1s = Array(Const(row, 6) for row in (
-            35, 33, 38, 32, 36, 24, 28, 39, 37))
+            35, 31, 38, 30, 32, 22, 26, 39, 35))
         m.d.comb += [
             surface_row_y0.eq(surface_row_y0s[text_page_q]),
             surface_row_y1.eq(surface_row_y1s[text_page_q]),
@@ -3800,7 +3801,7 @@ class RezoTileDisplay(wiring.Component):
         tune_panel_x0 = NATIVE_FEEDBACK_TRACK_X0 if self.compact_layout else 144
         tune_panel_x1 = NATIVE_FEEDBACK_TRACK_X1 if self.compact_layout else control_panel_x1
         tune_fill_x0 = NATIVE_FEEDBACK_FILL_X0 if self.compact_layout else 156
-        tune_y_shift = compact_content_shift if self.compact_layout else 0
+        tune_y_shift = -compact_content_shift if self.compact_layout else 0
         if self.compact_layout:
             bank_meter_rows = Const(0)
             filter_meter_rows = Const(0)
@@ -3841,28 +3842,28 @@ class RezoTileDisplay(wiring.Component):
             # Value-chip geometry is fixed while its text uses a stable,
             # inexpensive left origin in the tile RAM.
             palette_chip = advanced_page & self.rect(
-                text_x, text_y, native_value_chip_x0(22), 276, 456, 316)
+                text_x, text_y, native_value_chip_x0(22), 244, 456, 284)
             palette_select = advanced_page & (
                 self.selected == RezoHardwareUI.TARGET_PALETTE) & self.outline(
                     text_x, text_y, native_value_chip_x0(22) - 4,
-                    272, 460, 320, t=3)
+                    240, 460, 288, t=3)
             save_default_chip = advanced_page & self.rect(
-                text_x, text_y, native_value_chip_x0(22), 340, 472, 380)
+                text_x, text_y, native_value_chip_x0(22), 308, 472, 348)
             save_default_select = advanced_page & (
                 self.selected == RezoHardwareUI.TARGET_SAVE_DEFAULT) & self.outline(
                     text_x, text_y, native_value_chip_x0(22) - 4,
-                    336, 476, 384, t=3)
+                    304, 476, 352, t=3)
             damp_chip = tune_page & self.rect(
                 text_x, text_y, NATIVE_FEEDBACK_DAMPING_CHIP_X0,
-                NATIVE_FEEDBACK_DAMPING_CHIP_Y0 + compact_content_shift,
+                NATIVE_FEEDBACK_DAMPING_CHIP_Y0 - compact_content_shift,
                 NATIVE_FEEDBACK_DAMPING_CHIP_X1,
-                NATIVE_FEEDBACK_DAMPING_CHIP_Y1 + compact_content_shift)
+                NATIVE_FEEDBACK_DAMPING_CHIP_Y1 - compact_content_shift)
             damp_select = tune_page & (
                 self.selected == RezoHardwareUI.TARGET_DAMP) & self.outline(
                     text_x, text_y, NATIVE_FEEDBACK_DAMPING_CHIP_X0 - 4,
-                    NATIVE_FEEDBACK_DAMPING_CHIP_Y0 + compact_content_shift - 4,
+                    NATIVE_FEEDBACK_DAMPING_CHIP_Y0 - compact_content_shift - 4,
                     NATIVE_FEEDBACK_DAMPING_CHIP_X1 + 4,
-                    NATIVE_FEEDBACK_DAMPING_CHIP_Y1 + compact_content_shift + 4,
+                    NATIVE_FEEDBACK_DAMPING_CHIP_Y1 - compact_content_shift + 4,
                     t=3)
             layout_chip = bands_page & self.rect(
                 text_x, text_y, native_value_chip_x0(16),
@@ -4305,9 +4306,9 @@ class RezoTileDisplay(wiring.Component):
             band_selected_target_value_q.eq(band_selected_target_q),
         ]
 
-        bands_enable_y0 = 299 if self.compact_layout else 232
+        bands_enable_y0 = 267 if self.compact_layout else 232
         bands_button_h = 34 if self.compact_layout else 48
-        bands_frequency_y0 = 398 if self.compact_layout else 392
+        bands_frequency_y0 = 366 if self.compact_layout else 392
         bands_button_y = (
             ((band_y_value_q >= bands_enable_y0) &
              (band_y_value_q < bands_enable_y0 + bands_button_h)) |
@@ -4683,8 +4684,8 @@ class RezoTileDisplay(wiring.Component):
         ]
         group_select_signals.append(
             group_page & group_selected_valid & self.outline(
-                x, y, group_selected_x - 5, 322,
-                group_selected_x + 23, 502, t=3))
+                x, y, group_selected_x - 5, 290,
+                group_selected_x + 23, 470, t=3))
         group_band = Signal(range(RezoCore.N_BANDS))
         group_row = Signal(unsigned(2))
         group_band_active = Signal()
@@ -4925,7 +4926,7 @@ class RezoTileDisplay(wiring.Component):
                     self.selected == RezoHardwareUI.TARGET_OUTPUT_DRY_COL),
                 x=output_geom_x, y=output_geom_y,
                 compact=self.compact_layout,
-                compact_y_shift=compact_content_shift)),
+                compact_y_shift=-3 * compact_content_shift)),
         ]
 
         for target, signals in [
