@@ -464,10 +464,11 @@ def native_input_depth_endpoint(depth):
 
 def native_input_meter_endpoint(meter, is_cv):
     """Scale INPUT telemetry across the compact lane and clamp its endpoint."""
-    # Audio telemetry is signed(6) but non-negative in AUDIO mode, so its
-    # usable full-scale range is 0..31. 8.75 pixels per step maps 31 exactly
-    # onto the 272-pixel lane without a divider: 31 * (8 + 1 - 1/4) = 272.
-    audio_offset = (meter << 3) + meter - (meter >> 2)
+    # Audio telemetry is signed(6) but non-negative in AUDIO mode. Nine pixels
+    # per step reaches the end of the 272-pixel lane at the top code, while a
+    # single shift/add keeps this display-only path inexpensive. The clamp
+    # absorbs the final seven-pixel overrun at full scale.
+    audio_offset = (meter << 3) + meter
     mapped = Mux(
         is_cv,
         NATIVE_INPUT_CONTROL_MID + (meter << 2) + (meter << 1),
