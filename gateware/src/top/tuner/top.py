@@ -96,7 +96,7 @@ class TunerSoc(TiliquaSoc):
 
 if __name__ == "__main__":
     this_path = os.path.dirname(os.path.realpath(__file__))
-    seed = int(os.getenv("TILIQUA_TUNER_SEED", "5"))
+    seed = int(os.getenv("TILIQUA_TUNER_SEED", "13"))
     modeline = os.getenv("TILIQUA_TUNER_MODELINE", "1280x720p60")
     name = os.getenv("TILIQUA_TUNER_NAME", "TUNER")
     top_level_cli(
@@ -109,7 +109,7 @@ if __name__ == "__main__":
         argparse_callback=lambda parser: parser.set_defaults(
             modeline=modeline, name=name),
         archiver_callback=lambda archiver: archiver.with_option_storage(),
-        # Seed 5 closes every clock with the required 16-KiB CPU RAM on the
+        # Seed 13 closes every clock with the required 16-KiB CPU RAM on the
         # fixed 1280x720 renderer. Keep release placement reproducible.
         nextpnr_opts=f"--timing-allow-fail --seed {seed}",
     )
