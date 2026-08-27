@@ -102,27 +102,27 @@ def _render_text_bounds(*regions, **values):
     return result
 
 
-def test_native_canvas_shows_round_panel_edge_on_standard_video():
+def test_native_canvas_uses_unoutlined_circular_chrome_on_standard_video():
     points = ((0, 359), (719, 360), (106, 300), (613, 300))
     pixels = _render_samples(points=points)
-    line = RezoTileDisplay.PALETTE["line"]
     blank = RezoTileDisplay.PALETTE["blank"]
+    background = RezoTileDisplay.PALETTE["background"]
 
     assert pixels == [
-        (line, line, line),
-        (line, line, line),
+        (blank, blank, blank),
+        (blank, blank, blank),
         (blank, blank, blank),
         (blank, blank, blank),
     ]
 
 
-def test_interactive_content_stays_inside_the_508_pixel_safe_square():
-    # The identity is intentionally allowed in the circular top arc. These
-    # samples instead guard the four sides around the interactive content.
+def test_outer_arcs_surround_the_508_pixel_safe_square():
+    # The centered content square stays black while the surrounding circular
+    # canvas carries the darker themed chrome.
     points = ((100, 300), (620, 300), (300, 100), (300, 620))
-    blank = RezoTileDisplay.PALETTE["blank"]
+    background = RezoTileDisplay.PALETTE["background"]
     assert _render_samples(points=points, page=7) == [
-        (blank, blank, blank),
+        (background, background, background),
     ] * len(points)
 
 
@@ -159,7 +159,7 @@ def test_clock_editor_uses_native_stacked_control_rows():
 def test_clock_editor_value_chips_and_depth_end_at_their_content_widths():
     panel = RezoTileDisplay.PALETTE["panel"]
     control = RezoTileDisplay.PALETTE["control"]
-    background = RezoTileDisplay.PALETTE["background"]
+    surface = RezoTileDisplay.PALETTE["surface"]
     pixels = _render_samples(
         page=7,
         clock_algorithm=RezoCore.CLOCK_ALGORITHM_TURING,
@@ -178,21 +178,21 @@ def test_clock_editor_value_chips_and_depth_end_at_their_content_widths():
         ),
     )
     assert pixels == [
-        (panel, panel, panel), (background, background, background),
-        (panel, panel, panel), (background, background, background),
-        (panel, panel, panel), (background, background, background),
+        (panel, panel, panel), (surface, surface, surface),
+        (panel, panel, panel), (surface, surface, surface),
+        (panel, panel, panel), (surface, surface, surface),
         (control, control, control),
         (panel, panel, panel), (panel, panel, panel),
-        (background, background, background),
-        (panel, panel, panel), (background, background, background),
-        (panel, panel, panel), (background, background, background),
-        (panel, panel, panel), (background, background, background),
+        (surface, surface, surface),
+        (panel, panel, panel), (surface, surface, surface),
+        (panel, panel, panel), (surface, surface, surface),
+        (panel, panel, panel), (surface, surface, surface),
     ]
 
 
 def test_clock_walk_and_shift_chips_use_their_own_semantic_widths():
     panel = RezoTileDisplay.PALETTE["panel"]
-    background = RezoTileDisplay.PALETTE["background"]
+    surface = RezoTileDisplay.PALETTE["surface"]
     assert _render_samples(
         page=7,
         clock_algorithm=RezoCore.CLOCK_ALGORITHM_WALK,
@@ -202,16 +202,16 @@ def test_clock_walk_and_shift_chips_use_their_own_semantic_widths():
             (369, 484), (370, 484),  # CHANCE: three characters
         ),
     ) == [
-        (panel, panel, panel), (background, background, background),
-        (panel, panel, panel), (background, background, background),
-        (panel, panel, panel), (background, background, background),
+        (panel, panel, panel), (surface, surface, surface),
+        (panel, panel, panel), (surface, surface, surface),
+        (panel, panel, panel), (surface, surface, surface),
     ]
     assert _render_samples(
         page=7,
         clock_algorithm=RezoCore.CLOCK_ALGORITHM_SHIFT,
         points=((465, 420), (466, 420)),  # DATA: AUTO RAND is longest
     ) == [
-        (panel, panel, panel), (background, background, background),
+        (panel, panel, panel), (surface, surface, surface),
     ]
 
 
@@ -251,16 +251,16 @@ def test_even_preset_uses_all_four_visible_glyphs():
 
 def test_feedback_navigation_outlines_share_the_native_track_edges():
     selected = RezoTileDisplay.PALETTE["selected"]
-    background = RezoTileDisplay.PALETTE["background"]
+    surface = RezoTileDisplay.PALETTE["surface"]
     for target, y in (
-        (RezoHardwareUI.TARGET_FEEDBACK, 344),
-        (RezoHardwareUI.TARGET_LIMIT_KNEE, 424),
-        (RezoHardwareUI.TARGET_LIMIT_CAP, 456),
+        (RezoHardwareUI.TARGET_FEEDBACK, 328),
+        (RezoHardwareUI.TARGET_LIMIT_KNEE, 408),
+        (RezoHardwareUI.TARGET_LIMIT_CAP, 440),
     ):
         assert _render_samples(
             page=1, selected=target, points=((267, y), (268, y), (269, y)),
         ) == [
-            (background, background, background),
+            (surface, surface, surface),
             (selected, selected, selected),
             (selected, selected, selected),
         ]
@@ -268,7 +268,7 @@ def test_feedback_navigation_outlines_share_the_native_track_edges():
 
 def test_input_text_chips_use_fixed_widths_and_shared_row_centres():
     panel = RezoTileDisplay.PALETTE["panel"]
-    background = RezoTileDisplay.PALETTE["background"]
+    surface = RezoTileDisplay.PALETTE["surface"]
     assert _render_samples(
         page=2,
         input_modes=(RezoCore.INPUT_MODE_AUDIO, RezoCore.INPUT_MODE_CV),
@@ -280,10 +280,10 @@ def test_input_text_chips_use_fixed_widths_and_shared_row_centres():
             (320, 240), (320, 241),  # MODE chip bottom edge
         ),
     ) == [
-        (panel, panel, panel), (background, background, background),
-        (panel, panel, panel), (background, background, background),
-        (panel, panel, panel), (background, background, background),
-        (panel, panel, panel), (background, background, background),
+        (panel, panel, panel), (surface, surface, surface),
+        (panel, panel, panel), (surface, surface, surface),
+        (panel, panel, panel), (surface, surface, surface),
+        (panel, panel, panel), (surface, surface, surface),
     ]
 
 
@@ -393,7 +393,7 @@ def test_bands_enable_buttons_reuse_feedback_button_geometry():
 def test_input_audio_value_fill_stays_inside_its_panel():
     accent = RezoTileDisplay.PALETTE["control"]
     panel = RezoTileDisplay.PALETTE["panel"]
-    background = RezoTileDisplay.PALETTE["background"]
+    surface = RezoTileDisplay.PALETTE["surface"]
     pixels = _render_samples(
         page=2,
         input_gains=(255,),
@@ -401,7 +401,7 @@ def test_input_audio_value_fill_stays_inside_its_panel():
     )
     assert pixels[0] == (accent, accent, accent)
     assert pixels[1:3] == [(panel, panel, panel)] * 2
-    assert pixels[3] == (background, background, background)
+    assert pixels[3] == (surface, surface, surface)
 
 
 def test_output_row_selector_uses_native_safe_square_coordinates():
@@ -410,9 +410,9 @@ def test_output_row_selector_uses_native_safe_square_coordinates():
     assert _render_samples(
         page=4,
         selected=RezoHardwareUI.TARGET_OUTPUT_ROW_BASE,
-        points=((26, 342), (116, 342)),
+        points=((105, 294), (116, 294)),
     ) == [
-        (blank, blank, blank),
+        (RezoTileDisplay.PALETTE["background"],) * 3,
         (selected, selected, selected),
     ]
 
@@ -428,7 +428,7 @@ def test_output_send_scaling_preserves_exact_fill_endpoint():
 
     async def sample(ctx, panel_x):
         ctx.set(dut.x, dut.x_offset + panel_x)
-        ctx.set(dut.y, 342)
+        ctx.set(dut.y, 294)
         ctx.set(dut.de, 1)
         for _ in range(12):
             await ctx.tick("dvi")
@@ -448,4 +448,4 @@ def test_output_send_scaling_preserves_exact_fill_endpoint():
     sim.run()
 
     palette = RezoTileDisplay.PALETTE
-    assert samples == [palette["control"], palette["background"]]
+    assert samples == [palette["control"], palette["surface"]]
