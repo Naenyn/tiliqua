@@ -3687,8 +3687,11 @@ class RezoTileDisplay(wiring.Component):
             # On the calibrated -60..0 dBFS scale the upper six decibels are
             # the top tenth of the lane, matching conventional DAW meters.
             output_meter_hot = output_meter_fill & (meter_y_q < 290)
+            # 260..263 is an aligned four-line span. Decode the shared upper
+            # bits directly instead of building two full-width comparators.
+            meter_clip_row = meter_y_q[2:] == (260 >> 2)
             output_meter_clip = meter_lane_valid_q & meter_clip_q & \
-                (meter_y_q >= 260) & (meter_y_q < 264) & \
+                meter_clip_row & \
                 (meter_x_q >= meter_bound_lo_q + 4) & \
                 (meter_x_q < meter_bound_hi_q - 4)
             output_meter_panel_q0 = Signal()
