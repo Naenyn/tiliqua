@@ -653,7 +653,7 @@ impl State {
                     self.turing_start -= 1;
                 }
             }
-            PALETTE => self.palette = (self.palette as i32 + d).rem_euclid(5) as u8,
+            PALETTE => self.palette = (self.palette as i32 + d).rem_euclid(8) as u8,
             LAYOUT => self.layout_preview = (self.layout_preview as i32 + d).rem_euclid(4) as u32,
             t if (BAND..BAND + 10).contains(&t) => {
                 let n = (t - BAND) as usize;

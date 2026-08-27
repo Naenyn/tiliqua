@@ -79,7 +79,7 @@ try:
         add_feedback_navigation, add_group_navigation, add_input_navigation,
         native_cross_fader_endpoint, native_input_depth_endpoint,
         native_input_gain_endpoint, native_main_fader_endpoint,
-        native_motion_depth_endpoint,
+        native_motion_depth_endpoint, native_input_meter_endpoint,
         native_input_unity_x, native_value_chip_x0,
         native_feedback_track_rows, native_viewport_regions,
         output_header_selection,
@@ -120,7 +120,7 @@ except ImportError:  # top_level_cli executes this file directly.
         add_feedback_navigation, add_group_navigation, add_input_navigation,
         native_cross_fader_endpoint, native_input_depth_endpoint,
         native_input_gain_endpoint, native_main_fader_endpoint,
-        native_motion_depth_endpoint,
+        native_motion_depth_endpoint, native_input_meter_endpoint,
         native_input_unity_x, native_value_chip_x0,
         native_feedback_track_rows, native_viewport_regions,
         output_header_selection,
@@ -2214,7 +2214,7 @@ class RezoHardwareUI(wiring.Component):
         ]
         page = Signal(unsigned(3), init=0)
         preset = Signal(range(7), init=0)
-        palette = Signal(range(5), init=0)
+        palette = Signal(range(len(PALETTE_NAMES)), init=0)
         next_preset = Signal(range(7))
         next_selected = Signal(range(self.N_TARGETS))
         bank_target_visible = Signal()
@@ -2925,9 +2925,13 @@ class RezoHardwareUI(wiring.Component):
                             m.d.sync += frequency_preview.eq(0)
                 with m.Elif(selected == self.TARGET_PALETTE):
                     with m.If(edit_direction):
-                        m.d.sync += palette.eq(Mux(palette == 4, 0, palette + 1))
+                        m.d.sync += palette.eq(Mux(
+                            palette == len(PALETTE_NAMES) - 1,
+                            0, palette + 1))
                     with m.Else():
-                        m.d.sync += palette.eq(Mux(palette == 0, 4, palette - 1))
+                        m.d.sync += palette.eq(Mux(
+                            palette == 0, len(PALETTE_NAMES) - 1,
+                            palette - 1))
                 with m.Elif(selected == self.TARGET_MOTION_SOURCE):
                     with m.If(edit_direction):
                         m.d.sync += motion_source.eq(Mux(
@@ -3602,9 +3606,9 @@ class RezoTileDisplay(wiring.Component):
             put_native(5, "ADVANCED", 8, 26)
             put_native(5, "CROSS CURVE", 9, 30)
 
-            put_native(6, "MOTION", 8, 26)
-            for label, row in (("LFO SHAPE", 28), ("RATE HZ", 30),
-                               ("PHASE", 32), ("DEPTH", 34)):
+            put_native(6, "MOTION", 8, 27)
+            for label, row in (("LFO SHAPE", 29), ("RATE HZ", 31),
+                               ("PHASE", 33), ("DEPTH", 35)):
                 put_native(6, label,
                            NATIVE_MOTION_LABEL_RIGHT - len(label), row)
 
@@ -3973,12 +3977,12 @@ class RezoTileDisplay(wiring.Component):
                     7, 16, NATIVE_PAGE_HEADING_ROW, pos)
             for pos in range(8):
                 writer_address_init[83 + pos] = writer_cell(
-                    6, NATIVE_MOTION_VALUE_TEXT_COL, 28, pos)
+                    6, NATIVE_MOTION_VALUE_TEXT_COL, 29, pos)
             for pos in range(4):
                 writer_address_init[91 + pos] = writer_cell(
-                    6, NATIVE_MOTION_VALUE_TEXT_COL, 30, pos)
+                    6, NATIVE_MOTION_VALUE_TEXT_COL, 31, pos)
                 writer_address_init[95 + pos] = writer_cell(
-                    6, NATIVE_MOTION_VALUE_TEXT_COL, 32, pos)
+                    6, NATIVE_MOTION_VALUE_TEXT_COL, 33, pos)
             for pos in range(8):
                 writer_address_init[99 + pos] = writer_cell(5, 22, 30, pos)
             for n, (_, _, depth_row) in enumerate(compact_input_text_rows):
@@ -4464,16 +4468,16 @@ class RezoTileDisplay(wiring.Component):
         # Native glyph ink occupies y=[row*16, row*16+14). Starting each
         # compact chip two pixels above that span gives exact 2px top/bottom
         # padding instead of leaving the shaded row one pixel above the text.
-        motion_top_y0 = 446 if self.compact_layout else 520
-        motion_top_y1 = 464 if self.compact_layout else 552
-        motion_rate_y0 = 478 if self.compact_layout else 584
-        motion_rate_y1 = 496 if self.compact_layout else 616
-        motion_phase_y0 = 510 if self.compact_layout else 520
-        motion_phase_y1 = 528 if self.compact_layout else 552
+        motion_top_y0 = 462 if self.compact_layout else 520
+        motion_top_y1 = 480 if self.compact_layout else 552
+        motion_rate_y0 = 494 if self.compact_layout else 584
+        motion_rate_y1 = 512 if self.compact_layout else 616
+        motion_phase_y0 = 526 if self.compact_layout else 520
+        motion_phase_y1 = 544 if self.compact_layout else 552
         # DEPTH uses a 20px fader row, so three pixels around the same 14px
-        # glyph span center both the label and lane at y=567.
-        motion_bottom_y0 = 541 if self.compact_layout else 584
-        motion_bottom_y1 = 561 if self.compact_layout else 616
+        # glyph span center both the label and lane at y=583.
+        motion_bottom_y0 = 557 if self.compact_layout else 584
+        motion_bottom_y1 = 577 if self.compact_layout else 616
         # SOURCE, RATE, and PHASE share the same 24-on/8-off vertical cadence.
         # Decode the column once instead of synthesizing three full rectangles.
         motion_value_x1 = Signal(unsigned(10), init=motion_rate_x1)
@@ -4716,12 +4720,9 @@ class RezoTileDisplay(wiring.Component):
                         native_input_gain_endpoint(self.input_gains[n])),
                     input_depth_ends[n].eq(
                         native_input_depth_endpoint(self.cv_depths[n])),
-                    input_meter_ends[n].eq(Mux(
-                        self.input_modes[n] == RezoCore.INPUT_MODE_CV,
-                        440 + (self.input_meters[n] << 2) +
-                              (self.input_meters[n] << 1),
-                        304 + (self.input_meters[n] << 3) +
-                              (self.input_meters[n] << 2))),
+                    input_meter_ends[n].eq(native_input_meter_endpoint(
+                        self.input_meters[n],
+                        self.input_modes[n] == RezoCore.INPUT_MODE_CV)),
                 ]
             else:
                 m.d.dvi += [

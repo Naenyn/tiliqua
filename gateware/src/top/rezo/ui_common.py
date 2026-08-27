@@ -15,7 +15,10 @@ COMMON_PAGE_TITLES = (
 NAV_NAMES = ("NAV ", "EDIT")
 BASE_TARGET_NAMES = ("FB ", "RES", "DRV", "G1 ", "G2 ", "G3 ", "G4 ")
 LAYOUT_NAMES = ("LEGACY ", "OCTAVE ", "PERCEPT", "USER   ")
-PALETTE_NAMES = ("LCD   ", "AMBER ", "CYAN  ", "GREEN ", "VIOLET")
+PALETTE_NAMES = (
+    "LCD   ", "AMBER ", "CYAN  ", "GREEN ",
+    "VIOLET", "EMBER ", "NEON  ", "AZURE ",
+)
 DAMP_NAMES = ("OFF  ", "LIGHT", "MED  ", "HEAVY", "MAX  ")
 SAVE_NAMES = ("SAVE   ", "SAVING ", "SAVED  ", "ERROR  ", "NO SLOT")
 
@@ -460,11 +463,15 @@ def native_input_depth_endpoint(depth):
 
 
 def native_input_meter_endpoint(meter, is_cv):
-    """Map INPUT telemetry into the compact control lane, never beyond it."""
+    """Scale INPUT telemetry across the compact lane and clamp its endpoint."""
+    # Audio telemetry is signed(6) but non-negative in AUDIO mode, so its
+    # usable full-scale range is 0..31. 8.75 pixels per step maps 31 exactly
+    # onto the 272-pixel lane without a divider: 31 * (8 + 1 - 1/4) = 272.
+    audio_offset = (meter << 3) + meter - (meter >> 2)
     mapped = Mux(
         is_cv,
         NATIVE_INPUT_CONTROL_MID + (meter << 2) + (meter << 1),
-        NATIVE_INPUT_CONTROL_X0 + (meter << 3) + (meter << 2),
+        NATIVE_INPUT_CONTROL_X0 + audio_offset,
     )
     return Mux(mapped < NATIVE_INPUT_CONTROL_X0,
                NATIVE_INPUT_CONTROL_X0,

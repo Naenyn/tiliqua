@@ -9,6 +9,7 @@ from top.rezo.strezo_variant import RezoCore as StrezoCore
 from top.rezo.strezo_variant import RezoHardwareUI as StrezoHardwareUI
 from top.rezo.top import RezoCore as RezomoCore
 from top.rezo.top import RezoHardwareUI as RezomoHardwareUI
+from top.rezo.ui_common import PALETTE_NAMES
 
 
 REZO_AND_REZOMO = (
@@ -82,7 +83,7 @@ def test_ui_advanced_palette_selection_wraps(ui_type):
         endpoint = await turn(ctx, dut, endpoint, 0)
         assert ctx.get(dut.palette) == 0
         endpoint = await turn(ctx, dut, endpoint, 0)
-        assert ctx.get(dut.palette) == 4
+        assert ctx.get(dut.palette) == len(PALETTE_NAMES) - 1
 
     sim.add_testbench(bench)
     sim.run()

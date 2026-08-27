@@ -4,6 +4,7 @@ from rezo_ui_support import click as _click
 from rezo_ui_support import fast_click_ui
 from rezo_ui_support import turn as _turn
 from top.rezo.strezo_variant import RezoCore, RezoHardwareUI
+from top.rezo.ui_common import PALETTE_NAMES
 
 
 FastClickRezoUI = fast_click_ui(RezoHardwareUI)
@@ -133,7 +134,7 @@ def test_ui_advanced_palette_and_cross_curve_selection_wrap():
         endpoint = await _turn(ctx, dut, endpoint, 0)
         assert ctx.get(dut.palette) == 0
         endpoint = await _turn(ctx, dut, endpoint, 0)
-        assert ctx.get(dut.palette) == 4
+        assert ctx.get(dut.palette) == len(PALETTE_NAMES) - 1
 
         await _click(ctx, dut)
         endpoint = await _turn(ctx, dut, endpoint, 1)

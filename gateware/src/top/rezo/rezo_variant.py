@@ -1667,7 +1667,7 @@ class RezoHardwareUI(wiring.Component):
         selected = Signal(range(self.N_TARGETS), init=self.TARGET_PAGE)
         page = Signal(unsigned(3), init=0)
         preset = Signal(range(7), init=0)
-        palette = Signal(range(5), init=0)
+        palette = Signal(range(len(PALETTE_NAMES)), init=0)
         next_preset = Signal(range(7))
         next_selected = Signal(range(self.N_TARGETS))
         bank_target_visible = Signal()
@@ -2308,9 +2308,13 @@ class RezoHardwareUI(wiring.Component):
                     m.d.sync += filter_mode.eq(~filter_mode)
                 with m.Elif(selected == self.TARGET_PALETTE):
                     with m.If(edit_direction):
-                        m.d.sync += palette.eq(Mux(palette == 4, 0, palette + 1))
+                        m.d.sync += palette.eq(Mux(
+                            palette == len(PALETTE_NAMES) - 1,
+                            0, palette + 1))
                     with m.Else():
-                        m.d.sync += palette.eq(Mux(palette == 0, 4, palette - 1))
+                        m.d.sync += palette.eq(Mux(
+                            palette == 0, len(PALETTE_NAMES) - 1,
+                            palette - 1))
                 with m.Elif(output_row_target):
                     output_row = selected - self.TARGET_OUTPUT_ROW_BASE
                     m.d.sync += [

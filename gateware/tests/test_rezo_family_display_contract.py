@@ -4,11 +4,13 @@ import pytest
 from amaranth.sim import Simulator
 
 from rezo_display_support import sample_panel_rgb
+from top.rezo.display_common import RGB_PALETTES
 from top.rezo.rezo_variant import RezoCore, RezoHardwareUI, RezoTileDisplay
 from top.rezo.strezo_variant import RezoTileDisplay as StrezoTileDisplay
 from top.rezo.top import RezoCore as RezomoCore
 from top.rezo.top import RezoHardwareUI as RezomoHardwareUI
 from top.rezo.top import RezoTileDisplay as RezomoTileDisplay
+from top.rezo.ui_common import PALETTE_NAMES
 
 
 REZO_AND_REZOMO = (
@@ -32,6 +34,15 @@ REZO_AND_REZOMO_UI_DISPLAYS = (
     pytest.param(RezoHardwareUI, RezoTileDisplay, id="rezo"),
     pytest.param(RezomoHardwareUI, RezomoTileDisplay, id="rezomo"),
 )
+
+
+def test_family_palette_store_fills_all_three_bit_theme_addresses():
+    assert PALETTE_NAMES == (
+        "LCD   ", "AMBER ", "CYAN  ", "GREEN ",
+        "VIOLET", "EMBER ", "NEON  ", "AZURE ",
+    )
+    assert len(RGB_PALETTES) == len(PALETTE_NAMES) == 8
+    assert all(len(theme) == 8 for theme in RGB_PALETTES)
 
 
 def make_sim(display_type):
@@ -200,7 +211,9 @@ def test_bands_page_writes_all_five_frequency_digits(core_type, ui_type,
         ctx.set(dut.page, 6)
         ctx.set(dut.selected, ui_type.TARGET_BAND_FREQ_BASE + 9)
         ctx.set(dut.band_frequencies[9], core_type.frequency_index(16000))
-        for _ in range(240):
+        # REZOMO's resource-shared text writer takes four sync clocks per
+        # operation and currently has 205 operations in a complete refresh.
+        for _ in range(900):
             await ctx.tick("sync")
         for cell in range(14, 19):
             samples.append((await sample_panel_rgb(

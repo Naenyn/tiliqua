@@ -424,7 +424,7 @@ impl State {
                 self.cross_layout_preview =
                     (self.cross_layout_preview as i32 + d).rem_euclid(6) as u32
             }
-            PALETTE => self.palette = (self.palette as i32 + d).rem_euclid(5) as u8,
+            PALETTE => self.palette = (self.palette as i32 + d).rem_euclid(8) as u8,
             LAYOUT => self.layout_preview = (self.layout_preview as i32 + d).rem_euclid(4) as u32,
             MOTION_SOURCE => {
                 self.motion_source = (self.motion_source as i32 + d).rem_euclid(3) as u32

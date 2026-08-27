@@ -28,7 +28,8 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
                     limit_knee=32, limit_cap=112, selected=0,
                     matrix_values=(), motion_source=0, motion_rate=12,
                     motion_phase=28, motion_depth=0, motion_monitor=0,
-                    output_sides=(), output_meters=(), output_clips=()):
+                    input_meters=(), output_sides=(), output_meters=(),
+                    output_clips=()):
     """Render settled pixels from STREZO's upright native canvas."""
     dut = RezoTileDisplay(
         h_active=h_active,
@@ -70,6 +71,8 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
         ctx.set(dut.motion_phase, motion_phase)
         ctx.set(dut.motion_depth, motion_depth)
         ctx.set(dut.motion_monitor, motion_monitor)
+        for index, value in enumerate(input_meters):
+            ctx.set(dut.input_meters[index], value)
         for index, value in enumerate(output_sides):
             ctx.set(dut.output_sides[index], value)
         for index, value in enumerate(output_meters):
@@ -475,6 +478,25 @@ def test_cross_lower_rows_have_balanced_clear_bands():
     ]
 
 
+def test_bands_motion_section_clears_frequency_buttons_by_one_text_row():
+    bounds = _render_text_bounds((125, 416, 300, 448), page=6)
+    assert bounds[1] >= 27 * 16
+
+
+def test_input_audio_meter_is_bounded_by_value_lane():
+    modulation = RezoTileDisplay.PALETTE["modulation"]
+    surface = RezoTileDisplay.PALETTE["surface"]
+    assert _render_samples(
+        page=2,
+        input_modes=(RezoCore.INPUT_MODE_LEFT,),
+        input_meters=(31,),
+        points=((574, 271), (576, 271)),
+    ) == [
+        (modulation, modulation, modulation),
+        (surface, surface, surface),
+    ]
+
+
 def test_bands_motion_controls_form_one_complete_vertical_column():
     control = RezoTileDisplay.PALETTE["control"]
     panel = RezoTileDisplay.PALETTE["panel"]
@@ -482,12 +504,12 @@ def test_bands_motion_controls_form_one_complete_vertical_column():
     assert _render_samples(
         page=6,
         motion_depth=32,
-        points=((288, 454), (439, 454), (440, 454),
-                (288, 486), (375, 486), (376, 486),
-                (288, 518), (375, 518), (376, 518),
-                (287, 550), (288, 550), (289, 550), (290, 550),
-                (360, 550), (361, 550), (575, 550), (576, 550),
-                (448, 454), (448, 518)),
+        points=((288, 470), (439, 470), (440, 470),
+                (288, 502), (375, 502), (376, 502),
+                (288, 534), (375, 534), (376, 534),
+                (287, 566), (288, 566), (289, 566), (290, 566),
+                (360, 566), (361, 566), (575, 566), (576, 566),
+                (448, 470), (448, 534)),
     ) == [
         (panel, panel, panel), (panel, panel, panel),
         (surface, surface, surface),
@@ -506,10 +528,10 @@ def test_bands_motion_controls_form_one_complete_vertical_column():
 
 def test_bands_motion_labels_share_a_right_edge_and_value_gutter():
     for row, control_y0, control_y1, padding in (
-        (28, 446, 464, 2),
-        (30, 478, 496, 2),
-        (32, 510, 528, 2),
-        (34, 541, 561, 3),
+        (29, 462, 480, 2),
+        (31, 494, 512, 2),
+        (33, 526, 544, 2),
+        (35, 557, 577, 3),
     ):
         bounds = _render_text_bounds(
             (125, row * 16, NATIVE_MOTION_CONTROL_X0, (row + 1) * 16),
@@ -527,9 +549,9 @@ def test_bands_motion_text_chips_share_vertically_centered_rows():
     surface = RezoTileDisplay.PALETTE["surface"]
     assert _render_samples(
         page=6,
-        points=((300, 445), (300, 446), (300, 463), (300, 464),
-                (300, 477), (300, 478), (300, 495), (300, 496),
-                (300, 509), (300, 510), (300, 527), (300, 528)),
+        points=((300, 461), (300, 462), (300, 479), (300, 480),
+                (300, 493), (300, 494), (300, 511), (300, 512),
+                (300, 525), (300, 526), (300, 543), (300, 544)),
     ) == [
         (surface, surface, surface),
         (panel, panel, panel), (panel, panel, panel),
@@ -548,7 +570,7 @@ def test_bands_random_motion_retains_the_blank_phase_value_field():
     assert _render_samples(
         page=6,
         motion_source=RezoCore.MOTION_SOURCE_RANDOM,
-        points=((300, 454), (300, 486), (300, 518)),
+        points=((300, 470), (300, 502), (300, 534)),
     ) == [
         (panel, panel, panel), (panel, panel, panel),
         (panel, panel, panel),
@@ -562,7 +584,7 @@ def test_bands_motion_monitor_is_a_centered_bipolar_line():
     assert _render_samples(
         page=6,
         motion_monitor=16,
-        points=((431, 560), (432, 560), (575, 560), (576, 560)),
+        points=((431, 576), (432, 576), (575, 576), (576, 576)),
     ) == [
         (panel, panel, panel), (mod, mod, mod),
         (panel, panel, panel), (surface, surface, surface),
@@ -570,7 +592,7 @@ def test_bands_motion_monitor_is_a_centered_bipolar_line():
     assert _render_samples(
         page=6,
         motion_monitor=-16,
-        points=((287, 560), (288, 560), (431, 560), (432, 560)),
+        points=((287, 576), (288, 576), (431, 576), (432, 576)),
     ) == [
         (surface, surface, surface), (panel, panel, panel),
         (mod, mod, mod), (panel, panel, panel),
