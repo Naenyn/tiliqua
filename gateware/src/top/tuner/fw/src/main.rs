@@ -62,7 +62,9 @@ impl App {
 fn timer0_handler(app: &Mutex<RefCell<App>>) {
     critical_section::with(|cs| {
         let mut app = app.borrow_ref_mut(cs);
-        app.ui.update();
+        // Never perform an unbounded motherboard-I2C transaction in this ISR.
+        // Encoder/options and PMOD LEDs are all CSR-backed and deterministic.
+        app.ui.update_realtime();
         let peripherals = unsafe { pac::Peripherals::steal() };
         peripherals
             .TUNER_PERIPH
@@ -82,26 +84,33 @@ struct Measurement {
 fn read_measurement(tuner: &pac::TUNER_PERIPH, counts_per_v: f32) -> Measurement {
     // Sequence reads bracket each multi-register snapshot. If gateware publishes
     // while firmware is reading, retry rather than combine two measurements.
-    let (_pitch_sequence, period_samples, period_cycles, pitch_age) = loop {
+    let mut pitch_snapshot = (0, 0, 0, 0);
+    for _ in 0..4 {
         let before = tuner.pitch_sequence().read().sequence().bits();
         let samples = tuner.period_samples().read().samples().bits();
         let cycles = tuner.period_cycles().read().cycles().bits();
         let age = tuner.pitch_age().read().samples().bits();
         let after = tuner.pitch_sequence().read().sequence().bits();
+        pitch_snapshot = (after, samples, cycles, age);
         if before == after {
-            break (after, samples, cycles, age);
+            break;
         }
-    };
-    let (_level_sequence, mean_square, minimum, maximum) = loop {
+    }
+    let (_pitch_sequence, period_samples, period_cycles, pitch_age) = pitch_snapshot;
+
+    let mut level_snapshot = (0, 0, 0, 0);
+    for _ in 0..4 {
         let before = tuner.level_sequence().read().sequence().bits();
         let power = tuner.mean_square().read().value().bits();
         let minimum = tuner.minimum().read().value().bits() as i32;
         let maximum = tuner.maximum().read().value().bits() as i32;
         let after = tuner.level_sequence().read().sequence().bits();
+        level_snapshot = (after, power, minimum, maximum);
         if before == after {
-            break (after, power, minimum, maximum);
+            break;
         }
-    };
+    }
+    let (_level_sequence, mean_square, minimum, maximum) = level_snapshot;
     let sample_rate = tuner.info().read().sample_rate().bits();
     let frequency_hz = if period_samples != 0 {
         sample_rate as f32 * period_cycles as f32 / period_samples as f32
@@ -638,9 +647,12 @@ fn main() -> ! {
     let tuner_display = peripherals.TUNER_DISPLAY;
     write_static_text(&tuner_display);
 
-    let mut pmod = EurorackPmod0::new(peripherals.PMOD0_PERIPH);
+    let pmod = EurorackPmod0::new(peripherals.PMOD0_PERIPH);
     let counts_per_v = pmod.counts_per_v() as f32;
-    calibration::CalibrationConstants::load_or_default(&mut I2c1::new(peripherals.I2C1), &mut pmod);
+    // The PMOD peripheral already powers up with safe default calibration.
+    // Do not risk wedging application startup on the current unbounded I2C
+    // EEPROM driver. Loading stored calibration will return once that driver
+    // supports a finite timeout and recovery.
 
     let mut opts = Opts::default();
     let mut flash_persist = if let Some(window) = bootinfo.manifest.get_option_storage_window() {

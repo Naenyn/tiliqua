@@ -123,12 +123,24 @@ impl<EncoderT: Encoder,
         self.update_encoder(|opts, ticks| opts.consume_ticks(ticks));
     }
 
+    /// Update encoder/options and the directly attached PMOD LEDs without
+    /// issuing the motherboard PCA9635 I2C transaction.
+    ///
+    /// This is intended for latency-sensitive interrupt handlers. The generic
+    /// I2C implementation waits indefinitely for the controller to become
+    /// idle, so calling `pca9635.push()` from an ISR can otherwise prevent all
+    /// foreground work forever if that bus is absent or wedged.
+    pub fn update_realtime(&mut self) {
+        self.poll_encoder(|opts, ticks| opts.consume_ticks(ticks));
+        self.finish_update(false);
+    }
+
     pub fn update_encoder<F>(&mut self, apply_ticks: F)
     where
         F: FnOnce(&mut OptionsT, i8),
     {
         self.poll_encoder(apply_ticks);
-        self.finish_update();
+        self.finish_update(true);
     }
 
     fn poll_encoder<F>(&mut self, apply_ticks: F)
@@ -162,7 +174,7 @@ impl<EncoderT: Encoder,
         }
     }
 
-    fn finish_update(&mut self) {
+    fn finish_update(&mut self, push_mobo_leds: bool) {
         if self.uptime_ms % (20*self.period_ms) == 0 {
             self.toggle_leds = !self.toggle_leds;
         }
@@ -229,7 +241,9 @@ impl<EncoderT: Encoder,
             }
         }
 
-        self.pca9635.push().ok();
+        if push_mobo_leds {
+            self.pca9635.push().ok();
+        }
 
         self.draw = self.time_since_encoder_touched < self.encoder_fade_ms
             || (!self.hide_while_editing && self.opts.modify());
