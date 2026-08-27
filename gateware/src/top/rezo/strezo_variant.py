@@ -637,11 +637,15 @@ class RezoCore(RezoCoreConstants, wiring.Component):
             cutoff_cur_raw.eq(cutoff_rport.data),
             mac_z.eq(mac_a_q * mac_b_q),
             mac_z_r.eq(mac_a_q_r * mac_b_q_r),
-            svf_product_raw.eq(
-                mac_z.as_value().as_signed() >> dsp.mac.SQNative.f_bits),
+            # The SVF state has two more fractional guard bits than SQNative.
+            # Preserve those bits when reducing the Q30 multiplier result to
+            # Q17; shifting to Q15 here would make every state update 4x too
+            # small, including the inverse-Q damping term.
+            svf_product_raw.eq(mac_z.as_value().as_signed() >>
+                               (dsp.mac.SQNative.f_bits - 2)),
             svf_next.eq(svf_next_safe),
-            svf_product_raw_r.eq(
-                mac_z_r.as_value().as_signed() >> dsp.mac.SQNative.f_bits),
+            svf_product_raw_r.eq(mac_z_r.as_value().as_signed() >>
+                                 (dsp.mac.SQNative.f_bits - 2)),
             svf_next_r.eq(svf_next_safe_r),
             alp_store_raw.eq(alp_next.as_value()),
             abp_store_raw.eq(abp_next.as_value()),

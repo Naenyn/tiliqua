@@ -133,7 +133,7 @@ def test_bank_zero_wet_and_dry_paths(core_type):
 
 
 @pytest.mark.parametrize("core_type", FAMILY_CORES)
-def test_band5_zero_feedback_matches_known_good_drive_scale(core_type):
+def test_band5_zero_feedback_matches_corrected_svf_scale(core_type):
     dut = core_type(fs=192_000)
     sim = Simulator(dut)
     sim.add_clock(1e-6)
@@ -164,8 +164,55 @@ def test_band5_zero_feedback_matches_known_good_drive_scale(core_type):
     sim.run()
 
     assert output[-12:] == [
-        252, 243, 233, 223, 213, 203, 193, 183, 173, 163, 152, 142,
+        -1558, -1577, -1595, -1612, -1628, -1643,
+        -1657, -1670, -1682, -1692, -1702, -1711,
     ]
+
+
+@pytest.mark.parametrize("band", (6, 8), ids=("1k7", "5k3"))
+def test_resonance_zero_moderate_feedback_releases_reported_bands(band):
+    """The reported 1.7/5.3 kHz bands must decay instead of taking off."""
+    dut = RezoCore(fs=192_000)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+    release = []
+
+    async def send(ctx, sample):
+        ctx.set(dut.i.payload[0].as_value(), sample)
+        for channel in range(1, 4):
+            ctx.set(dut.i.payload[channel].as_value(), 0)
+        ctx.set(dut.i.valid, 1)
+        await ctx.tick().until(dut.i.ready == 1)
+        ctx.set(dut.i.valid, 0)
+        ctx.set(dut.o.ready, 1)
+        return (await ctx.tick().sample(
+            dut.o.payload[0].as_value()).until(dut.o.valid == 1))[0]
+
+    async def bench(ctx):
+        for index, level in enumerate(dut.levels):
+            ctx.set(level, 8192 if index == band else 0)
+            ctx.set(dut.feedback_sends[index], index == band)
+            ctx.set(dut.bank_groups[index], 1)
+        for send_level in dut.output_sends:
+            ctx.set(send_level, 0)
+        ctx.set(dut.output_sends[0], 16)
+        ctx.set(dut.resonance, 0)
+        ctx.set(dut.feedback, 16384)
+        ctx.set(dut.damp_mode, 2)
+
+        frequency = dut.PERCEPT_FREQS_HZ[band]
+        for n in range(256):
+            sample = int(4000 * math.sin(2 * math.pi * frequency * n / 192000))
+            await send(ctx, sample)
+        for _ in range(768):
+            release.append(await send(ctx, 0))
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    early_peak = max(abs(value) for value in release[:128])
+    late_peak = max(abs(value) for value in release[-128:])
+    assert late_peak < max(8, early_peak // 8), (early_peak, late_peak)
 
 
 @pytest.mark.parametrize("core_type", FAMILY_CORES)

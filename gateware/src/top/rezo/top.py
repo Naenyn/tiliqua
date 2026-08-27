@@ -621,8 +621,12 @@ class RezoCore(wiring.Component):
             cutoff_rport.addr.eq(frequency_array[cutoff_band]),
             cutoff_cur_raw.eq(cutoff_rport.data),
             mac_z.eq(mac_a_q * mac_b_q),
-            svf_product_raw.eq(
-                mac_z.as_value().as_signed() >> dsp.mac.SQNative.f_bits),
+            # The SVF state has two more fractional guard bits than SQNative.
+            # Preserve those bits when reducing the Q30 multiplier result to
+            # Q17; shifting to Q15 here would make every state update 4x too
+            # small, including the inverse-Q damping term.
+            svf_product_raw.eq(mac_z.as_value().as_signed() >>
+                               (dsp.mac.SQNative.f_bits - 2)),
             svf_next.eq(svf_next_safe),
         ]
 
