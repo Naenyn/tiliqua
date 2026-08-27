@@ -5895,7 +5895,11 @@ class RezoBeamTop(Elaboratable):
             m.d.comb += display.band_frequencies[n].eq(ui.band_frequencies[n])
 
         if sim.is_hw(platform):
-            m.submodules.dvi_gen = dvi_gen = dvi.DVIPHY()
+            # REZO's dense placement makes the 5x serializer load enable the
+            # limiting route. Keep one local strobe per five-bit half so the
+            # shared phase bit does not fan out across an entire TMDS lane.
+            m.submodules.dvi_gen = dvi_gen = dvi.DVIPHY(
+                split_load_strobes=True)
             display_de0 = Signal()
             display_hsync0 = Signal()
             display_vsync0 = Signal()
