@@ -88,7 +88,6 @@ try:
         native_input_meter_endpoint, native_input_unity_x,
         native_value_chip_x0,
         native_feedback_track_rows, native_viewport_regions,
-        native_viewport_circle_outline,
         output_header_selection,
         put_legacy_support_page_labels, put_native_page_heading,
         put_native_page_headers,
@@ -129,7 +128,6 @@ except ImportError:  # top_level_cli executes this file directly.
         native_input_meter_endpoint, native_input_unity_x,
         native_value_chip_x0,
         native_feedback_track_rows, native_viewport_regions,
-        native_viewport_circle_outline,
         output_header_selection,
         put_legacy_support_page_labels, put_native_page_heading,
         put_native_page_headers,
@@ -2876,10 +2874,20 @@ class RezoTileDisplay(wiring.Component):
         cell_y = Signal(unsigned(6))
         glyph_col = Signal(unsigned(3))
         glyph_row = Signal(unsigned(3))
+        text_lookup_x = Signal.like(text_x)
         m.d.comb += [
-            cell_x.eq(text_x[self.CELL_SHIFT:]),
+            # NAV occupies the same four-cell status slot as EDIT, but its
+            # leading blank only needs half a cell visually. Offset the text
+            # lookup by eight pixels in NAV mode so the three glyphs remain
+            # centred without changing the fixed tile-RAM layout.
+            text_lookup_x.eq(Mux(
+                self.compact_layout & ~self.editing &
+                (text_y >= 122) & (text_y < 148) &
+                (text_x >= 520) & (text_x < 600),
+                text_x + 8, text_x)),
+            cell_x.eq(text_lookup_x[self.CELL_SHIFT:]),
             cell_y.eq(text_y[self.CELL_SHIFT:]),
-            glyph_col.eq(text_x[1:4]),
+            glyph_col.eq(text_lookup_x[1:4]),
             glyph_row.eq(text_y[1:4]),
         ]
 
@@ -3531,11 +3539,11 @@ class RezoTileDisplay(wiring.Component):
             text_active_q & (glyph_col_q < 5) &
             glyph_rport.data.bit_select(glyph_bit, 1))
 
-        border = active & (
-            native_viewport_circle_outline(
-                m, x, text_y_pre, pipeline_bounds=True)
-            if self.compact_layout else
-            self.outline(x, y, 12, 12, 708, 708, t=2))
+        # The physical round display already supplies the compact viewport's
+        # edge. Keep the legacy rectangular guide, but leave the circular
+        # canvas unoutlined so its chrome meets the screen bezel naturally.
+        border = (Const(0) if self.compact_layout else
+                  active & self.outline(x, y, 12, 12, 708, 708, t=2))
         arc_background = Const(0)
         pager_line = Const(0)
         pager_current = Const(0)
@@ -3783,7 +3791,7 @@ class RezoTileDisplay(wiring.Component):
         surface_row_y0s = Array(Const(row, 6) for row in (
             14, 14, 13, 14, 14, 14, 14, 14, 14))
         surface_row_y1s = Array(Const(row, 6) for row in (
-            35, 31, 38, 30, 32, 22, 26, 39, 35))
+            35, 31, 38, 30, 32, 23, 26, 39, 35))
         m.d.comb += [
             surface_row_y0.eq(surface_row_y0s[text_page_q]),
             surface_row_y1.eq(surface_row_y1s[text_page_q]),

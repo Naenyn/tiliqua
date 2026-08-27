@@ -251,6 +251,8 @@ def test_compact_round_layout_uses_all_four_arcs():
         await sample(ctx, 256, 128)
         # The side wing now carries persistent circular chrome.
         await sample(ctx, 95, 360)
+        # The circular canvas no longer draws a guide at its outer edge.
+        await sample(ctx, 360, 0)
         # The extreme square corner is deliberately blank outside the circle.
         await sample(ctx, 0, 0)
 
@@ -264,6 +266,7 @@ def test_compact_round_layout_uses_all_four_arcs():
         palette["selected"],
         palette["text"],
         palette["background"],
+        palette["blank"],
         palette["blank"],
     ]
 
@@ -296,7 +299,8 @@ def test_compact_header_controls_are_tight():
         await sample(ctx, 520, 122)  # MOVE outline top/left
         await sample(ctx, 520, 147)  # MOVE outline bottom/left
         await sample(ctx, 520, 148)  # immediately below MOVE outline
-        await sample(ctx, 544, 128)  # first pixel of centred NAV
+        await sample(ctx, 528, 128)  # old full-cell leading pad is blank
+        await sample(ctx, 536, 128)  # first pixel after half-cell NAV pad
 
     sim.add_testbench(bench)
     sim.run()
@@ -307,8 +311,37 @@ def test_compact_header_controls_are_tight():
         palette["panel"], palette["blank"],
         palette["blank"], palette["line"],
         palette["line"], palette["blank"],
-        palette["text"],
+        palette["blank"], palette["text"],
     ]
+
+
+def test_compact_options_surface_has_balanced_vertical_padding():
+    """OPTIONS keeps one 20px inset above and below its two value chips."""
+    dut = RezoTileDisplay(
+        h_active=720, rotate_left=False, compact_layout=True)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6, domain="sync")
+    sim.add_clock(1e-6, domain="dvi")
+    samples = []
+
+    async def sample(ctx, native_y):
+        ctx.set(dut.x, 400)
+        ctx.set(dut.y, native_y)
+        ctx.set(dut.de, 1)
+        for _ in range(12):
+            await ctx.tick("dvi")
+        samples.append(ctx.get(dut.r))
+
+    async def bench(ctx):
+        ctx.set(dut.page, 5)
+        await sample(ctx, 367)  # 20px below the SAVE DEFAULT chip
+        await sample(ctx, 368)  # first row beyond the fitted surface
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    palette = RezoTileDisplay.PALETTE
+    assert samples == [palette["surface"], palette["blank"]]
 
 
 def test_compact_safe_square_cuts_black_field_out_of_curved_chrome():
