@@ -6385,7 +6385,8 @@ class RezoBeamTop(Elaboratable):
                 i=ui.output_routes[n], o=display.output_routes[n], o_domain="dvi")
 
         if sim.is_hw(platform):
-            m.submodules.dvi_gen = dvi_gen = dvi.DVIPHY()
+            m.submodules.dvi_gen = dvi_gen = dvi.DVIPHY(
+                split_load_strobes=True)
             display_de0 = Signal()
             display_hsync0 = Signal()
             display_vsync0 = Signal()
