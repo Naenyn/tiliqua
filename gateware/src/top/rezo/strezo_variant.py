@@ -4712,9 +4712,13 @@ class RezoBeamTop(Elaboratable):
             # reset rings can leave reset on different dvi5x edges and then
             # serialize the colour and clock lanes at different word phases.
             # Split registered load strobes retain the low-fanout timing shape
-            # without sacrificing lane alignment.
+            # without sacrificing lane alignment. Keep each lane's strobes
+            # and shift registers beside its fixed DVI pin; leaving these
+            # unconstrained made an otherwise timing-clean route fail to
+            # produce a receiver-lockable signal in hardware.
             m.submodules.dvi_gen = dvi_gen = dvi.DVIPHY(
-                split_load_strobes=True)
+                split_load_strobes=True,
+                serializer_lane_x=(70, 49, 60, 65))
             display_de0 = Signal()
             display_hsync0 = Signal()
             display_vsync0 = Signal()
