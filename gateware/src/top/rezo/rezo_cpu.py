@@ -1,13 +1,12 @@
 """Production 1280x720 REZO build with firmware-owned UI control."""
 
-import os
 from pathlib import Path
 
-from tiliqua.tiliqua_soc import TiliquaSoc
-
 try:
+    from .cpu_build import family_seed, run_family_cpu_cli
     from .rezo_variant import RezoBeamTop, run_cli
 except ImportError:
+    from cpu_build import family_seed, run_family_cpu_cli
     from rezo_variant import RezoBeamTop, run_cli
 
 
@@ -19,7 +18,7 @@ class RezoCpuTop(RezoBeamTop):
     # and rejects both failures and marginal routes before packaging.
     nextpnr_opts = (
         "--timing-allow-fail "
-        f"--seed {os.getenv('TILIQUA_REZO_FAMILY_SEED', os.getenv('TILIQUA_REZO_CPU_SEED', '5'))}")
+        f"--seed {family_seed('TILIQUA_REZO_CPU_SEED', '5')}")
     # Seed 5 is qualified for the aligned pager renderer. Retain the 3% gate so
     # marginal routes are rejected rather than silently packaged.
     minimum_timing_headroom_percent = 3.0
@@ -27,25 +26,12 @@ class RezoCpuTop(RezoBeamTop):
 
 FW_ROOT = Path(__file__).resolve().parent / "cpu_fw"
 
-
-def compile_firmware(args):
-    """Build the firmware image directly into this target's build folder."""
-    artifact_name = args.artifact_name or args.name
-    build_path = Path("build").resolve() / \
-        f"{artifact_name.lower()}-{args.hw.value}"
-    build_path.mkdir(parents=True, exist_ok=True)
-    firmware_bin_path = build_path / "firmware.bin"
-    TiliquaSoc.compile_firmware(str(FW_ROOT), str(firmware_bin_path))
-    return {"firmware_bin_path": str(firmware_bin_path)}
-
-
 if __name__ == "__main__":
-    run_cli(
-        name=os.getenv("TILIQUA_REZO_FAMILY_NAME", "REZO"),
-        artifact_name=os.getenv(
-            "TILIQUA_REZO_FAMILY_ARTIFACT_NAME", "REZO"),
-        modeline=os.getenv(
-            "TILIQUA_REZO_FAMILY_MODELINE", "1280x720p60"),
+    run_family_cpu_cli(
+        run_cli,
+        default_name="REZO",
+        default_artifact_name="REZO",
+        default_modeline="1280x720p60",
         fragment=RezoCpuTop,
-        argparse_fragment=compile_firmware,
+        firmware_root=FW_ROOT,
     )

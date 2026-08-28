@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from top.rezo import targets
+from top.rezo.cpu_build import family_seed, run_family_cpu_cli
 from top.rezo.cpu_control import (
     RezoCpuControlPlane,
     RezomoCpuControlPlane,
@@ -155,6 +156,39 @@ def test_family_runner_preserves_variant_main_identity(monkeypatch):
     assert targets.os.environ["TILIQUA_REZO_FAMILY_ARTIFACT_NAME"] == \
         "REZOMO-ROUND"
     assert targets.os.environ["TILIQUA_REZO_FAMILY_MODELINE"] == "720x720p60r2"
+
+
+def test_cpu_build_helper_preserves_seed_override_precedence(monkeypatch):
+    monkeypatch.delenv("TILIQUA_REZO_FAMILY_SEED", raising=False)
+    monkeypatch.setenv("TILIQUA_STREZO_CPU_SEED", "13")
+    assert family_seed("TILIQUA_STREZO_CPU_SEED", "7") == "13"
+    monkeypatch.setenv("TILIQUA_REZO_FAMILY_SEED", "17")
+    assert family_seed("TILIQUA_STREZO_CPU_SEED", "7") == "17"
+
+
+def test_cpu_build_helper_forwards_family_identity(monkeypatch, tmp_path):
+    called = {}
+
+    def fake_run_cli(**kwargs):
+        called.update(kwargs)
+
+    fragment = object()
+    monkeypatch.setenv("TILIQUA_REZO_FAMILY_NAME", "TEST-NAME")
+    monkeypatch.setenv("TILIQUA_REZO_FAMILY_ARTIFACT_NAME", "TEST-ARTIFACT")
+    monkeypatch.setenv("TILIQUA_REZO_FAMILY_MODELINE", "TEST-MODELINE")
+    run_family_cpu_cli(
+        fake_run_cli,
+        default_name="REZO",
+        default_artifact_name="REZO",
+        default_modeline="1280x720p60",
+        fragment=fragment,
+        firmware_root=tmp_path,
+    )
+    assert called["name"] == "TEST-NAME"
+    assert called["artifact_name"] == "TEST-ARTIFACT"
+    assert called["modeline"] == "TEST-MODELINE"
+    assert called["fragment"] is fragment
+    assert callable(called["argparse_fragment"])
 
 
 def test_family_cpu_planes_share_generated_core_and_address_map():
