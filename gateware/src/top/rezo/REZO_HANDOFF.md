@@ -132,6 +132,35 @@ Canonical source commit `424d381b` produced
 `2240355b8a7e683a48f9056221b45e79e709ab88d5d63674a216a8a1dc07d1c4`.
 This image has not been flashed.
 
+## Measured renderer/control timing work (step 5)
+
+Clean pre-change builds were essential. At `be69ccec`, REZO passed, but REZOMO
+missed the 3% production gate in sync at 60.79/60 MHz (1.32% headroom), and
+STREZO missed it in DVI at 76.02/74.25 MHz (2.38% headroom). STREZO also spent
+roughly half an hour resolving final routing congestion.
+
+The accepted fixes are deliberately product-specific:
+
+- REZOMO registers the clamped Turing effective length. The UI length/start
+  controls are stable for millions of sync clocks, and the register cuts their
+  long combinational cone out of the worker/modulation update path. The build
+  now reaches sync 66.49 MHz, DVI 78.68 MHz, DVI5X 436.68 MHz, and audio 75.75
+  MHz with 19,013 LUT4s and 8,421 DFFs.
+- STREZO decodes the selected OUTPUT target into registered row/source fields
+  instead of rebuilding a five-column linear index after the column BRAM. DVI
+  rises to 86.61 MHz, sync reaches 63.02 MHz, DVI5X reaches 391.24 MHz, and
+  audio reaches 73.37 MHz. The route completes in minutes with 19,070 LUT4s
+  and 8,445 DFFs.
+- REZO registers its scaled OUTPUT-send BRAM data before the fill endpoint
+  adder. Exact fill-boundary tests pass; the route reaches DVI5X 426.62 MHz,
+  DVI 80.04 MHz, sync 66.49 MHz, and audio 72.55 MHz with 18,864 LUT4s and
+  8,315 DFFs.
+
+The same send-data register was tested in REZOMO and rejected. Although it
+removed the original OUTPUT BRAM critical path, the altered placement exposed
+a band-marker path at only 76.59 MHz DVI (3.15% headroom) and made routing much
+slower. REZOMO therefore retains its pre-existing raw-send pipeline.
+
 ## Superseded pre-runtime-check builds
 
 All three canonical CPU images built with their existing single target seed.

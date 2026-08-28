@@ -3349,6 +3349,7 @@ class RezoTileDisplay(wiring.Component):
         output_y_q = Signal.like(output_geom_y)
         output_x0_q = Signal.like(output_cell_x0)
         output_y0_q = Signal.like(output_cell_y0)
+        output_send_value_q = Signal.like(output_send_rport.data)
         output_row_active_q = Signal()
         output_col_active_q = Signal()
         output_page_q = Signal()
@@ -3357,13 +3358,18 @@ class RezoTileDisplay(wiring.Component):
             output_y_q.eq(output_geom_y),
             output_x0_q.eq(output_cell_x0),
             output_y0_q.eq(output_cell_y0),
+            # The send address is stable throughout a matrix cell and fills
+            # begin four pixels after its left edge. Registering the BRAM data
+            # removes its clock-to-Q delay from the endpoint adder without
+            # changing a visible fill boundary.
+            output_send_value_q.eq(output_send_rport.data),
             output_row_active_q.eq(output_row_active),
             output_col_active_q.eq(output_col_active),
             output_page_q.eq(output_page),
         ]
         output_send_end = Signal(unsigned(10))
         m.d.comb += output_send_end.eq(
-            output_x0_q + 4 + output_send_rport.data)
+            output_x0_q + 4 + output_send_value_q)
         m.d.comb += [
             output_cell.eq(output_page & output_row_active & output_col_active &
                            (output_row_edge | output_col_edge)),
