@@ -192,9 +192,9 @@ class DVIPHY(wiring.Component):
 
         # One phase ring normally defines the shared word boundary. Very dense
         # products may instead use one identically reset ring per five-bit
-        # lane half, each feeding a registered local handoff. Distinct phase
-        # inputs prevent synthesis from merging those handoffs back into a
-        # high-fanout cross-lane control net.
+        # lane half. That removes the extra strobe register and keeps each
+        # phase/load route local without relying on synthesis to preserve
+        # equivalent copies.
         phase_rings = [
             Signal(5, reset=1, name=f"shift5_{n}",
                    attrs={"keep": True})
@@ -205,17 +205,15 @@ class DVIPHY(wiring.Component):
             Signal(reset_less=True, name=f"tmds_load{n}",
                    attrs={"keep": True})
             for n in range(
-                8 if (self.local_phase_rings or self.split_load_strobes)
-                else 4)
+                0 if self.local_phase_rings else
+                (8 if self.split_load_strobes else 4))
         ]
 
         # Serialization in the 5x DVI clock domain
         m.d.dvi5x += [
             *(phase.eq(Cat(phase[4], phase[0:4]))
               for phase in phase_rings),
-            *(strobe.eq(
-                phase_rings[n][0] if self.local_phase_rings else shift5[0])
-              for n, strobe in enumerate(load_strobes)),
+            *(strobe.eq(shift5[0]) for strobe in load_strobes),
         ]
 
         def serialize_lane(shift, load_lo, word, load_hi=None):
@@ -238,14 +236,14 @@ class DVIPHY(wiring.Component):
                     shift[7:10], Const(0, 2)))
 
         if self.local_phase_rings:
-            serialize_lane(tmds_ch0_shift, load_strobes[0], s_tmds_ch0,
-                           load_strobes[1])
-            serialize_lane(tmds_ch1_shift, load_strobes[2], s_tmds_ch1,
-                           load_strobes[3])
-            serialize_lane(tmds_ch2_shift, load_strobes[4], s_tmds_ch2,
-                           load_strobes[5])
-            serialize_lane(tmds_clk_shift, load_strobes[6], 0b0000011111,
-                           load_strobes[7])
+            serialize_lane(tmds_ch0_shift, phase_rings[0][0], s_tmds_ch0,
+                           phase_rings[1][0])
+            serialize_lane(tmds_ch1_shift, phase_rings[2][0], s_tmds_ch1,
+                           phase_rings[3][0])
+            serialize_lane(tmds_ch2_shift, phase_rings[4][0], s_tmds_ch2,
+                           phase_rings[5][0])
+            serialize_lane(tmds_clk_shift, phase_rings[6][0], 0b0000011111,
+                           phase_rings[7][0])
         elif self.split_load_strobes:
             serialize_lane(tmds_ch0_shift, load_strobes[0], s_tmds_ch0,
                            load_strobes[1])

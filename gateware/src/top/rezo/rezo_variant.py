@@ -5909,8 +5909,8 @@ class RezoBeamTop(Elaboratable):
         if sim.is_hw(platform):
             # REZO's dense placement makes the 5x serializer load enable the
             # limiting route. Give each lane an identically reset local phase
-            # ring and handoff per five-bit half so its load mux remains local
-            # and synthesis cannot merge equivalent cross-lane controls.
+            # ring per five-bit half so its load mux remains nearby without an
+            # extra register.
             m.submodules.dvi_gen = dvi_gen = dvi.DVIPHY(
                 local_phase_rings=True)
             display_de0 = Signal()
