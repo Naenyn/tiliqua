@@ -3855,27 +3855,32 @@ class RezoTileDisplay(wiring.Component):
         ]
         cross_cell_selected = Signal()
         output_cell_selected = Signal()
-        output_selected_index = Signal(unsigned(5))
-        output_selected_valid = Signal()
-        output_selected_index_q = Signal.like(output_selected_index)
+        output_selected_row_q = Signal(unsigned(2))
+        output_selected_source_q = Signal(unsigned(3))
         output_selected_valid_q = Signal()
         output_header_group = Signal(unsigned(2))
         output_header_row_target = Signal()
         output_header_col_target = Signal()
-        m.d.comb += [
-            output_selected_index.eq(
-                selected_dvi_q - StrezoUISpec.TARGET_OUTPUT_BASE),
-            output_selected_valid.eq(
-                (selected_dvi_q >= StrezoUISpec.TARGET_OUTPUT_BASE) &
-                (selected_dvi_q < StrezoUISpec.TARGET_OUTPUT_BASE + 20)),
-        ]
-        # Selection changes only on UI events. Register its zero-based index
-        # so the per-pixel OUTPUT outline compares two five-bit values without
-        # also carrying TARGET_OUTPUT_BASE through the DVI critical path.
-        m.d.dvi += [
-            output_selected_index_q.eq(output_selected_index),
-            output_selected_valid_q.eq(output_selected_valid),
-        ]
+        # Selection changes only on UI events. Decode its row and source before
+        # the live pixel path so OUTPUT does not reconstruct and compare a
+        # five-column linear send index after the column BRAM.
+        with m.Switch(selected_dvi_q):
+            for output_row_index in range(4):
+                for output_source_index in range(5):
+                    with m.Case(
+                            StrezoUISpec.TARGET_OUTPUT_BASE +
+                            output_row_index * 5 + output_source_index):
+                        m.d.dvi += [
+                            output_selected_row_q.eq(output_row_index),
+                            output_selected_source_q.eq(output_source_index),
+                            output_selected_valid_q.eq(1),
+                        ]
+            with m.Default():
+                m.d.dvi += [
+                    output_selected_row_q.eq(0),
+                    output_selected_source_q.eq(0),
+                    output_selected_valid_q.eq(0),
+                ]
         m.d.comb += [
             # Both shared target bases are 2 modulo 4. This wiring maps their
             # low bits back to a zero-based group without subtraction.
@@ -3901,7 +3906,8 @@ class RezoTileDisplay(wiring.Component):
             output_cell_selected.eq(
                 output_page &
                 output_selected_valid_q &
-                (output_send_index == output_selected_index_q)),
+                (output_row == output_selected_row_q) &
+                (output_source == output_selected_source_q)),
             output_select.eq(
                 routing_matrix_page & output_row_active & output_col_active &
                 (cross_cell_selected | output_cell_selected) &

@@ -823,7 +823,8 @@ class RezoCore(wiring.Component):
         turing_search_count = Signal(range(self.N_BANDS + 1))
         turing_carry = Signal(signed(16))
         turing_worker_forward = Signal(init=1)
-        turing_effective_length = Signal(range(self.N_BANDS + 1))
+        turing_effective_length = Signal(
+            range(self.N_BANDS + 1), init=self.N_BANDS)
         turing_mutate = Signal()
         turing_map_pending = Signal()
         turing_map_priming = Signal()
@@ -917,12 +918,17 @@ class RezoCore(wiring.Component):
             cv_product.eq(mac_z.as_value().as_signed() >> dsp.mac.SQNative.f_bits),
             cv_acc_next.eq(cv_acc),
             enabled_band_count.eq(sum(self.band_enables)),
-            turing_effective_length.eq(Mux(
+        ]
+        # TURING length/start are UI controls and remain stable for millions of
+        # sync clocks between edits. Register their clamped loop length so the
+        # worker state and modulation writes do not inherit this control cone.
+        m.d.sync += turing_effective_length.eq(Mux(
                 self.turing_target == self.TURING_TARGET_ALL,
                 self.turing_length,
                 Mux(self.turing_length < self.N_BANDS - self.turing_start,
                     self.turing_length,
-                    self.N_BANDS - self.turing_start))),
+                    self.N_BANDS - self.turing_start)))
+        m.d.comb += [
             turing_mutate.eq(
                 ~turing_seeded | (~lock_high &
                     ((self.turing_change == 255) |
