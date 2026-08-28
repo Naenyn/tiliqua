@@ -121,17 +121,16 @@ merges the equivalent copies back into a cross-lane high-fanout select.
 
 At the existing REZO seed, the phase-safe route achieves:
 
-- DVI5X 432.53/371.33 MHz
-- DVI 84.82/74.25 MHz
-- sync 68.75/60 MHz
-- audio 74.73/49.15 MHz
+- DVI5X 402.74/371.33 MHz
+- DVI 81.90/74.25 MHz
+- sync 63.30/60 MHz
+- audio 73.86/49.15 MHz
 - 36 DP16KD, 7 MULT18X18D, 18,879 total LUT4s, 8,308 DFFs
 
-The dirty-tree qualification archive was
-`build/rezo-r5/rezo-5fc0ced0-r5.tar.gz`, SHA-256
-`efc11d1d522ae52926e84cc18f24532989deb056d7b380b7135be4208a8cfbe4`.
-Rebuild after committing to obtain the canonical archive identity. This image
-has not been flashed.
+Canonical source commit `424d381b` produced
+`build/rezo-r5/rezo-424d381b-r5.tar.gz`, SHA-256
+`2240355b8a7e683a48f9056221b45e79e709ab88d5d63674a216a8a1dc07d1c4`.
+This image has not been flashed.
 
 ## Superseded pre-runtime-check builds
 
