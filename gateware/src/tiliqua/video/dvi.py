@@ -128,13 +128,18 @@ class DVIPHY(wiring.Component):
     i: In(DVIPixel)
 
     def __init__(self, *, split_load_strobes=False,
-                 local_phase_rings=False):
+                 local_phase_rings=False, serializer_lane_x=None):
         super().__init__()
         self.split_load_strobes = split_load_strobes
         self.local_phase_rings = local_phase_rings
+        self.serializer_lane_x = serializer_lane_x
         if split_load_strobes and local_phase_rings:
             raise ValueError(
                 "split load strobes and local phase rings are exclusive")
+        if serializer_lane_x is not None and (
+                not local_phase_rings or len(serializer_lane_x) != 4):
+            raise ValueError(
+                "serializer lane locations require four local phase rings")
 
     def elaborate(self, platform):
         m = Module()
@@ -185,10 +190,28 @@ class DVIPHY(wiring.Component):
         # muxes of all 30 flops, creating a high-fanout 5x-clock path that is
         # needlessly sensitive to placement.  Leave only the phase ring
         # resettable and allow these registers to power up unspecified.
-        tmds_ch0_shift = Signal(10, reset_less=True)
-        tmds_ch1_shift = Signal(10, reset_less=True)
-        tmds_ch2_shift = Signal(10, reset_less=True)
-        tmds_clk_shift = Signal(10, reset_less=True)
+        ff_bels = (
+            "SLICEA.FF0", "SLICEA.FF1", "SLICEB.FF0", "SLICEB.FF1",
+            "SLICEC.FF0", "SLICEC.FF1", "SLICED.FF0", "SLICED.FF1",
+        )
+
+        def shift_register(name, lane):
+            if self.serializer_lane_x is None:
+                return Signal(10, reset_less=True, name=name)
+            x = self.serializer_lane_x[lane]
+            return [
+                Signal(reset_less=True, name=f"{name}_{bit}", attrs={
+                    "BEL": (
+                        f"X{x}/Y{3 if bit < 8 else 4}/"
+                        f"{ff_bels[bit if bit < 8 else bit - 8]}")
+                })
+                for bit in range(10)
+            ]
+
+        tmds_ch0_shift = shift_register("tmds_ch0_shift", 0)
+        tmds_ch1_shift = shift_register("tmds_ch1_shift", 1)
+        tmds_ch2_shift = shift_register("tmds_ch2_shift", 2)
+        tmds_clk_shift = shift_register("tmds_clk_shift", 3)
 
         # One phase ring normally defines the shared word boundary. Very dense
         # products may instead use one identically reset ring per lane. That
@@ -199,7 +222,12 @@ class DVIPHY(wiring.Component):
             for lane in range(4):
                 phase_rings.append([
                     Signal(reset=(bit == 0),
-                           name=f"shift5_{lane}_{bit}")
+                           name=f"shift5_{lane}_{bit}", attrs=(
+                               {"BEL":
+                                f"X{self.serializer_lane_x[lane]}/"
+                                "Y2/SLICEA.FF0"}
+                               if bit == 0 and
+                               self.serializer_lane_x is not None else {}))
                     for bit in range(5)
                 ])
         else:
@@ -229,6 +257,39 @@ class DVIPHY(wiring.Component):
 
         def serialize_lane(shift, load_lo, word, load_hi=None):
             word = Value.cast(word)
+            if isinstance(shift, list):
+                if load_hi is None:
+                    with m.If(load_lo):
+                        m.d.dvi5x += [
+                            shift[bit].eq(word[bit]) for bit in range(10)
+                        ]
+                    with m.Else():
+                        m.d.dvi5x += [
+                            shift[bit].eq(shift[bit + 2])
+                            for bit in range(8)
+                        ]
+                        m.d.dvi5x += [shift[8].eq(0), shift[9].eq(0)]
+                    return
+                with m.If(load_lo):
+                    m.d.dvi5x += [
+                        shift[bit].eq(word[bit]) for bit in range(5)
+                    ]
+                with m.Else():
+                    m.d.dvi5x += [
+                        shift[bit].eq(shift[bit + 2])
+                        for bit in range(5)
+                    ]
+                with m.If(load_hi):
+                    m.d.dvi5x += [
+                        shift[bit].eq(word[bit]) for bit in range(5, 10)
+                    ]
+                with m.Else():
+                    m.d.dvi5x += [
+                        shift[bit].eq(shift[bit + 2])
+                        for bit in range(5, 8)
+                    ]
+                    m.d.dvi5x += [shift[8].eq(0), shift[9].eq(0)]
+                return
             if load_hi is None:
                 with m.If(load_lo):
                     m.d.dvi5x += shift.eq(word)

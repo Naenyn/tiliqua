@@ -5447,6 +5447,7 @@ class RezoBeamTop(Elaboratable):
         "abc; techmap -map +/lattice/latches_map.v; "
         f"abc9 -W {abc9_wire_weight}; clean; "
         "synth_ecp5 -abc9 -abc2 -top top -run map_cells:check; "
+        "attrmvcp -copy -attr BEL; "
         "autoname; hierarchy -check; stat; check -noinit; "
         "blackbox =A:whitebox"
     )
@@ -5909,9 +5910,11 @@ class RezoBeamTop(Elaboratable):
         if sim.is_hw(platform):
             # REZO's dense placement makes the 5x serializer load enable the
             # limiting route. Give each lane an identically reset local phase
-            # ring so its load mux remains nearby without an extra register.
+            # ring and keep the small serializer lanes beside their fixed DVI
+            # pins. Only these 44 high-speed flops are floorplanned.
             m.submodules.dvi_gen = dvi_gen = dvi.DVIPHY(
-                local_phase_rings=True)
+                local_phase_rings=True,
+                serializer_lane_x=(70, 49, 60, 65))
             display_de0 = Signal()
             display_hsync0 = Signal()
             display_vsync0 = Signal()

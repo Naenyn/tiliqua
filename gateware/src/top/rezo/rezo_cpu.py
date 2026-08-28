@@ -2,7 +2,6 @@
 
 import os
 from pathlib import Path
-import shlex
 
 import git
 
@@ -14,9 +13,6 @@ except ImportError:
     from rezo_variant import RezoBeamTop, run_cli
 
 
-FLOORPLAN_PATH = Path(__file__).resolve().with_name("rezo_floorplan.py")
-
-
 class RezoCpuTop(RezoBeamTop):
     """REZO DSP/renderer gateware plus the minimal UI control CPU."""
 
@@ -25,7 +21,6 @@ class RezoCpuTop(RezoBeamTop):
     # and rejects both failures and marginal routes before packaging.
     nextpnr_opts = (
         "--timing-allow-fail "
-        f"--pre-place {shlex.quote(str(FLOORPLAN_PATH))} "
         f"--seed {os.getenv('TILIQUA_REZO_CPU_SEED', '5')}")
     # Seed 5 is qualified for the aligned pager renderer. Retain the 3% gate so
     # marginal routes are rejected rather than silently packaged.
