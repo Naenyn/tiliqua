@@ -1288,10 +1288,12 @@ class RezoCore(RezoCoreConstants, wiring.Component):
         # prepared for band zero so the UI reports the modulation actually
         # applied: zero depth collapses the monitor and full depth preserves
         # the source's full displayed excursion.
-        with m.If(state == state_input_limit_commit):
+        with m.If(state == state_drive_commit):
             # Display-only telemetry spans the full signed 6-bit lane at
-            # maximum depth. DSP modulation keeps using motion_term above.
-            m.d.sync += self.motion_monitor.eq(motion_term >> 11)
+            # maximum depth. Capture the band-zero term one cycle after its
+            # existing pipeline register instead of placing the waveform
+            # multiplier on a second direct path into the UI monitor.
+            m.d.sync += self.motion_monitor.eq(motion_term_q >> 11)
 
         with m.Switch(state):
             with m.Case(state_wait):
@@ -3657,10 +3659,21 @@ class RezoTileDisplay(wiring.Component):
         text_address = Signal(unsigned(15))
         text_page_q = Signal(unsigned(3))
         m.d.dvi += text_page_q.eq(self.page)
-        m.d.comb += [
-            text_address.eq(page_offsets[text_page_q] + cell_y * 45 + cell_x),
-            text_rport.addr.eq(text_address),
-        ]
+        if self.compact_layout:
+            # ``text_y_pre`` leads ``cell_y`` by exactly one pixel clock.
+            # Precompute the page/row base from it so the address presented
+            # alongside the current cell only has the inexpensive cell-x
+            # addition left. This removes a multiplier and long page-offset
+            # carry chain from the BRAM setup path without shifting text.
+            text_row_base_q = Signal(unsigned(15))
+            m.d.dvi += text_row_base_q.eq(
+                page_offsets[self.page] +
+                text_y_pre[self.CELL_SHIFT:] * 45)
+            m.d.comb += text_address.eq(text_row_base_q + cell_x)
+        else:
+            m.d.comb += text_address.eq(
+                page_offsets[text_page_q] + cell_y * 45 + cell_x)
+        m.d.comb += text_rport.addr.eq(text_address)
 
         # Dynamic labels are written into the tile RAM in short bursts at
         # 15 Hz. HDMI therefore sees only a BRAM read, never the control muxes.
@@ -4270,7 +4283,10 @@ class RezoTileDisplay(wiring.Component):
             meter_bound_hi = Signal(unsigned(10))
             meter_value = Signal(unsigned(6))
             meter_clip = Signal()
-            m.d.comb += meter_curve_x.eq(Mux(x < 360, x, 719 - x))
+            # Meter pixels only exist in the far side arcs (x < 106 or
+            # x >= 614), so x[9] is an exact and much shallower left/right
+            # selector than a full ``x < 360`` comparison on every lane.
+            m.d.comb += meter_curve_x.eq(Mux(x[9], 719 - x, x))
             with m.If((meter_curve_x >= meter_curve_data[0:10]) &
                       (meter_curve_x < meter_curve_data[10:20])):
                 m.d.comb += [
@@ -4278,11 +4294,11 @@ class RezoTileDisplay(wiring.Component):
                     meter_bound_lo.eq(meter_curve_data[0:10]),
                     meter_bound_hi.eq(meter_curve_data[10:20]),
                     meter_value.eq(Mux(
-                        x < 360, self.output_meters[0],
-                        self.output_meters[3])),
+                        x[9], self.output_meters[3],
+                        self.output_meters[0])),
                     meter_clip.eq(Mux(
-                        x < 360, self.output_clips[0],
-                        self.output_clips[3]))]
+                        x[9], self.output_clips[3],
+                        self.output_clips[0]))]
             with m.Elif(
                     (meter_curve_x >= meter_curve_data[20:30]) &
                     (meter_curve_x < meter_curve_data[30:40])):
@@ -4291,11 +4307,11 @@ class RezoTileDisplay(wiring.Component):
                     meter_bound_lo.eq(meter_curve_data[20:30]),
                     meter_bound_hi.eq(meter_curve_data[30:40]),
                     meter_value.eq(Mux(
-                        x < 360, self.output_meters[1],
-                        self.output_meters[2])),
+                        x[9], self.output_meters[2],
+                        self.output_meters[1])),
                     meter_clip.eq(Mux(
-                        x < 360, self.output_clips[1],
-                        self.output_clips[2]))]
+                        x[9], self.output_clips[2],
+                        self.output_clips[1]))]
 
             meter_x_q = Signal.like(x)
             meter_y_q = Signal.like(y)
@@ -5712,21 +5728,26 @@ class RezoTileDisplay(wiring.Component):
                        cross_track_x0 - 2, cross_y0 + 16)))
         tune_fill_x0 = NATIVE_FEEDBACK_FILL_X0 if self.compact_layout else 156
         tune_fill_scale_shift = 0 if self.compact_layout else 2
-        compact_tune_feedback_end = (
-            native_main_fader_endpoint(self.feedback, tune_fill_x0))
+        compact_tune_feedback_end_q = Signal(unsigned(10))
         # KNEE and CEILING are user-facing 16..128 controls.  The old compact
         # map advanced only 1.125 pixels per step, so the valid maximum stopped
         # near the middle of the 320-pixel lane.  A 2.5x shift/add maps 128 to
         # the lane's exact right edge without changing the DSP coefficient.
-        compact_tune_knee_end = (
-            native_main_fader_endpoint(self.limit_knee, tune_fill_x0))
-        compact_tune_cap_end = (
-            native_main_fader_endpoint(self.limit_cap, tune_fill_x0))
+        compact_tune_knee_end_q = Signal(unsigned(10))
+        compact_tune_cap_end_q = Signal(unsigned(10))
+        m.d.dvi += [
+            compact_tune_feedback_end_q.eq(
+                native_main_fader_endpoint(self.feedback, tune_fill_x0)),
+            compact_tune_knee_end_q.eq(
+                native_main_fader_endpoint(self.limit_knee, tune_fill_x0)),
+            compact_tune_cap_end_q.eq(
+                native_main_fader_endpoint(self.limit_cap, tune_fill_x0)),
+        ]
         tune_feedback_fill = tune_page & self.rect(
             x, y, tune_fill_x0,
             (NATIVE_FEEDBACK_AMOUNT_Y0
              if self.compact_layout else 380),
-            (compact_tune_feedback_end
+            (compact_tune_feedback_end_q
              if self.compact_layout else
              124 + (self.feedback << tune_fill_scale_shift)),
             (NATIVE_FEEDBACK_AMOUNT_Y0 + 16
@@ -5745,7 +5766,7 @@ class RezoTileDisplay(wiring.Component):
             x, y, tune_fill_x0,
             (NATIVE_FEEDBACK_KNEE_Y0 + tune_y_shift
              if self.compact_layout else 412),
-            (compact_tune_knee_end
+            (compact_tune_knee_end_q
              if self.compact_layout else
              124 + (self.limit_knee << tune_fill_scale_shift)),
             (NATIVE_FEEDBACK_KNEE_Y0 + 16 + tune_y_shift
@@ -5764,7 +5785,7 @@ class RezoTileDisplay(wiring.Component):
             x, y, tune_fill_x0,
             (NATIVE_FEEDBACK_CEILING_Y0 + tune_y_shift
              if self.compact_layout else 460),
-            (compact_tune_cap_end
+            (compact_tune_cap_end_q
              if self.compact_layout else
              124 + (self.limit_cap << tune_fill_scale_shift)),
             (NATIVE_FEEDBACK_CEILING_Y0 + 16 + tune_y_shift
@@ -5949,6 +5970,7 @@ class RezoBeamTop(Elaboratable):
     script_after_synth = (
         "abc; techmap -map +/lattice/latches_map.v; abc9 -W 160; clean; "
         "synth_ecp5 -abc9 -abc2 -top top -run map_cells:check; "
+        "attrmvcp -copy -attr BEL; "
         "autoname; hierarchy -check; stat; check -noinit; "
         "blackbox =A:whitebox"
     )
@@ -6390,8 +6412,12 @@ class RezoBeamTop(Elaboratable):
                 i=ui.output_routes[n], o=display.output_routes[n], o_domain="dvi")
 
         if sim.is_hw(platform):
+            # Keep STREZO's four serializer lanes local to their fixed DVI
+            # outputs. Independent phase rings remove the long shared-load
+            # route that otherwise becomes marginal in this dense variant.
             m.submodules.dvi_gen = dvi_gen = dvi.DVIPHY(
-                split_load_strobes=True)
+                local_phase_rings=True,
+                serializer_lane_x=(70, 49, 60, 65))
             display_de0 = Signal()
             display_hsync0 = Signal()
             display_vsync0 = Signal()
