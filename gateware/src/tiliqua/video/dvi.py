@@ -128,18 +128,13 @@ class DVIPHY(wiring.Component):
     i: In(DVIPixel)
 
     def __init__(self, *, split_load_strobes=False,
-                 local_phase_rings=False, local_phase_bels=None):
+                 local_phase_rings=False):
         super().__init__()
         self.split_load_strobes = split_load_strobes
         self.local_phase_rings = local_phase_rings
-        self.local_phase_bels = local_phase_bels
         if split_load_strobes and local_phase_rings:
             raise ValueError(
                 "split load strobes and local phase rings are exclusive")
-        if local_phase_bels is not None and (
-                not local_phase_rings or len(local_phase_bels) != 4):
-            raise ValueError(
-                "local phase BELs require four local phase rings")
 
     def elaborate(self, platform):
         m = Module()
@@ -199,20 +194,16 @@ class DVIPHY(wiring.Component):
         # products may instead use one identically reset ring per lane. That
         # removes the extra strobe register and keeps each phase/load route
         # local without relying on synthesis to preserve equivalent copies.
-        if self.local_phase_rings and self.local_phase_bels is not None:
+        if self.local_phase_rings:
             phase_rings = []
-            for lane, bel in enumerate(self.local_phase_bels):
+            for lane in range(4):
                 phase_rings.append([
                     Signal(reset=(bit == 0),
-                           name=f"shift5_{lane}_{bit}",
-                           attrs={"BEL": bel} if bit == 0 else {})
+                           name=f"shift5_{lane}_{bit}")
                     for bit in range(5)
                 ])
         else:
-            phase_rings = [
-                Signal(5, reset=1, name=f"shift5_{n}")
-                for n in range(4 if self.local_phase_rings else 1)
-            ]
+            phase_rings = [Signal(5, reset=1, name="shift5")]
         shift5 = phase_rings[0]
         load_strobes = [
             Signal(reset_less=True, name=f"tmds_load{n}",
