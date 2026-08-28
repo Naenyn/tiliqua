@@ -137,9 +137,11 @@ class DVIPHY(wiring.Component):
             raise ValueError(
                 "split load strobes and local phase rings are exclusive")
         if serializer_lane_x is not None and (
-                not local_phase_rings or len(serializer_lane_x) != 4):
+                len(serializer_lane_x) != 4 or
+                not (local_phase_rings or split_load_strobes)):
             raise ValueError(
-                "serializer lane locations require four local phase rings")
+                "serializer lane locations require four local phase rings "
+                "or split load strobes")
 
     def elaborate(self, platform):
         m = Module()
@@ -251,9 +253,26 @@ class DVIPHY(wiring.Component):
                 ]
             else:
                 m.d.dvi5x += phase.eq(Cat(phase[4], phase[0:4]))
-        m.d.dvi5x += [
-            strobe.eq(shift5[0]) for strobe in load_strobes
-        ]
+        for n, strobe in enumerate(load_strobes):
+            if self.serializer_lane_x is None:
+                m.d.dvi5x += strobe.eq(shift5[0])
+            else:
+                # A kept primitive prevents synthesis from merging equivalent
+                # registered strobes back into one high-fanout load select.
+                # Two strobes live beside each lane's lower/upper shift bank.
+                lane = n // 2 if self.split_load_strobes else n
+                m.submodules += Instance(
+                    "FD1S3AX",
+                    p_GSR="DISABLED",
+                    i_D=shift5[0],
+                    i_CK=ClockSignal("dvi5x"),
+                    o_Q=strobe,
+                    a_keep=True,
+                    a_BEL=(
+                        f"X{self.serializer_lane_x[lane]}/"
+                        f"Y{5 if n & 1 else 2}/SLICEA.FF0"
+                    ),
+                )
 
         def serialize_lane(shift, load_lo, word, load_hi=None):
             word = Value.cast(word)

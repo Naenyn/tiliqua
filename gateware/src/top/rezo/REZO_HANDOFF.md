@@ -109,6 +109,30 @@ Validation after cleanup:
   phase/load-route weakness addressed by follow-on step 4, not a simulation or
   firmware regression.
 
+## Phase-safe REZO serializer (step 4)
+
+REZO no longer uses four independently reset local TMDS phase rings. Like
+STREZO, it now has one shared word-phase ring, but its dense placement requires
+two explicitly retained load-strobe registers per lane. The lower strobe is at
+Y2 beside bits 0..7 and the upper strobe is at Y5 beside bits 8..9; the ten
+shift registers retain their per-lane floorplan near the fixed DVI pins.
+Keeping the ECP5 register primitives is necessary because synthesis otherwise
+merges the equivalent copies back into a cross-lane high-fanout select.
+
+At the existing REZO seed, the phase-safe route achieves:
+
+- DVI5X 432.53/371.33 MHz
+- DVI 84.82/74.25 MHz
+- sync 68.75/60 MHz
+- audio 74.73/49.15 MHz
+- 36 DP16KD, 7 MULT18X18D, 18,879 total LUT4s, 8,308 DFFs
+
+The dirty-tree qualification archive was
+`build/rezo-r5/rezo-5fc0ced0-r5.tar.gz`, SHA-256
+`efc11d1d522ae52926e84cc18f24532989deb056d7b380b7135be4208a8cfbe4`.
+Rebuild after committing to obtain the canonical archive identity. This image
+has not been flashed.
+
 ## Superseded pre-runtime-check builds
 
 All three canonical CPU images built with their existing single target seed.

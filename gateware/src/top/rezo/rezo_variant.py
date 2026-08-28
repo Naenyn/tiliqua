@@ -4268,12 +4268,12 @@ class RezoBeamTop(Elaboratable):
             m.d.comb += display.band_frequencies[n].eq(ui.band_frequencies[n])
 
         if sim.is_hw(platform):
-            # REZO's dense placement makes the 5x serializer load enable the
-            # limiting route. Give each lane an identically reset local phase
-            # ring and keep the small serializer lanes beside their fixed DVI
-            # pins. Only these 44 high-speed flops are floorplanned.
+            # Keep one shared phase ring so every lane leaves reset on the same
+            # word boundary. REZO's dense placement makes the 5x serializer
+            # load route limiting, so split and floorplan each lane's load
+            # strobes and shift registers beside its fixed DVI pin.
             m.submodules.dvi_gen = dvi_gen = dvi.DVIPHY(
-                local_phase_rings=True,
+                split_load_strobes=True,
                 serializer_lane_x=(70, 49, 60, 65))
             display_de0 = Signal()
             display_hsync0 = Signal()
