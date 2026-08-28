@@ -1,21 +1,14 @@
 #![no_std]
 #![no_main]
 
-use core::ptr::{read_volatile, write_volatile};
 use panic_halt as _;
 use rezo_cpu_fw::{
-    add, adds, clamp_control, gray_encode, pack_bits, progressive_edit_level, read_u16, read_u32,
-    record_crc, step_coarse_byte, step_group_index, step_target, unpack_bits, write_u16, write_u32,
-    GROUP_INDEX_DEFAULTS,
+    add, adds, clamp_control, flash_erase, flash_program, flash_read, gray_encode, pack_bits,
+    progressive_edit_level, read8, read32, read_u16, read_u32, record_crc, step_coarse_byte,
+    step_group_index, step_target, unpack_bits, write_u16, write_u32, write_ui_command,
+    ENCODER_BUTTON, ENCODER_STEP, FLASH_SLOT, GROUP_INDEX_DEFAULTS,
 };
 use riscv_rt::entry;
-
-const ENCODER_STEP: usize = 0xF000_0600;
-const ENCODER_BUTTON: usize = 0xF000_0601;
-const UI_COMMAND: usize = 0xF000_1000;
-const FLASH_COMMAND: usize = 0xF000_1200;
-const FLASH_STATUS: usize = FLASH_COMMAND + 4;
-const FLASH_SLOT: usize = FLASH_COMMAND + 8;
 
 const BAND_ENABLE: u32 = 0;
 const BAND_FREQUENCY: u32 = 1;
@@ -55,12 +48,7 @@ const MOTION_DEPTH_STATE: u32 = 35;
 const OUTPUT_SIDE: u32 = 36;
 const CROSS_MATRIX: u32 = 37;
 
-const FLASH_READ: u32 = 1;
-const FLASH_PROGRAM: u32 = 2;
-const FLASH_ERASE: u32 = 3;
 const BOOT_SLOT_TIMEOUT_POLLS: u32 = 1_000_000;
-const FLASH_READ_TIMEOUT_POLLS: u32 = 1_000_000;
-const FLASH_WRITE_TIMEOUT_POLLS: u32 = 12_000_000;
 const STATE_WORDS: usize = 38;
 const LEGACY_STATE_WORDS: usize = 36;
 const HEADER_BYTES: usize = 16;
@@ -128,20 +116,8 @@ const OUTPUT_DEFAULTS: [u32; 20] = [
     16, 16, 16, 16, 0, 16, 16, 16, 16, 0, 16, 0, 16, 0, 0, 16, 0, 16, 0, 0,
 ];
 
-unsafe fn write32(address: usize, value: u32) {
-    write_volatile(address as *mut u32, value);
-}
-unsafe fn read8(address: usize) -> u8 {
-    read_volatile(address as *const u8)
-}
-unsafe fn read32(address: usize) -> u32 {
-    read_volatile(address as *const u32)
-}
 unsafe fn ui_write(kind: u32, index: usize, value: u32) {
-    write32(
-        UI_COMMAND,
-        kind | ((index as u32) << 6) | ((value & 0xffff) << 11),
-    );
+    write_ui_command::<6>(kind, index, value);
 }
 
 fn cross_factory(layout: u32, source: usize, destination: usize) -> u32 {
@@ -695,41 +671,6 @@ impl State {
         );
         ui_write(STARTUP_STATE, 0, startup as u32);
     }
-}
-
-unsafe fn flash_operation(operation: u32, sector: u8, offset: u16, data: u8) -> Option<u8> {
-    write32(
-        FLASH_COMMAND,
-        operation
-            | (((sector as u32) & 1) << 2)
-            | (((offset as u32) & 0xfff) << 3)
-            | ((data as u32) << 15),
-    );
-    let timeout = if operation == FLASH_READ {
-        FLASH_READ_TIMEOUT_POLLS
-    } else {
-        FLASH_WRITE_TIMEOUT_POLLS
-    };
-    for _ in 0..timeout {
-        let status = read32(FLASH_STATUS);
-        if status & 1 == 0 && status & 2 != 0 {
-            return if status & 4 == 0 {
-                Some(((status >> 3) & 0xff) as u8)
-            } else {
-                None
-            };
-        }
-    }
-    None
-}
-unsafe fn flash_read(sector: u8, offset: u16) -> Option<u8> {
-    flash_operation(FLASH_READ, sector, offset, 0)
-}
-unsafe fn flash_program(sector: u8, offset: u16, data: u8) -> bool {
-    flash_operation(FLASH_PROGRAM, sector, offset, data).is_some()
-}
-unsafe fn flash_erase(sector: u8) -> bool {
-    flash_operation(FLASH_ERASE, sector, 0, 0).is_some()
 }
 
 unsafe fn scan_sector(

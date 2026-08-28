@@ -1,5 +1,85 @@
 #![no_std]
 
+use core::ptr::{read_volatile, write_volatile};
+
+pub const ENCODER_STEP: usize = 0xF000_0600;
+pub const ENCODER_BUTTON: usize = 0xF000_0601;
+pub const FLASH_SLOT: usize = 0xF000_1208;
+
+const UI_COMMAND: usize = 0xF000_1000;
+const FLASH_COMMAND: usize = 0xF000_1200;
+const FLASH_STATUS: usize = FLASH_COMMAND + 4;
+const FLASH_READ: u32 = 1;
+const FLASH_PROGRAM: u32 = 2;
+const FLASH_ERASE: u32 = 3;
+const FLASH_READ_TIMEOUT_POLLS: u32 = 1_000_000;
+const FLASH_WRITE_TIMEOUT_POLLS: u32 = 12_000_000;
+
+unsafe fn write32(address: usize, value: u32) {
+    write_volatile(address as *mut u32, value);
+}
+
+pub unsafe fn read8(address: usize) -> u8 {
+    read_volatile(address as *const u8)
+}
+
+pub unsafe fn read32(address: usize) -> u32 {
+    read_volatile(address as *const u32)
+}
+
+pub const fn ui_command_word<const INDEX_BITS: u32>(kind: u32, index: usize, value: u32) -> u32 {
+    kind | ((index as u32) << INDEX_BITS) | ((value & 0xffff) << (INDEX_BITS + 5))
+}
+
+pub unsafe fn write_ui_command<const INDEX_BITS: u32>(kind: u32, index: usize, value: u32) {
+    write32(
+        UI_COMMAND,
+        ui_command_word::<INDEX_BITS>(kind, index, value),
+    );
+}
+
+pub const fn flash_command_word(operation: u32, sector: u8, offset: u16, data: u8) -> u32 {
+    operation
+        | (((sector as u32) & 1) << 2)
+        | (((offset as u32) & 0x0fff) << 3)
+        | ((data as u32) << 15)
+}
+
+unsafe fn flash_operation(operation: u32, sector: u8, offset: u16, data: u8) -> Option<u8> {
+    write32(
+        FLASH_COMMAND,
+        flash_command_word(operation, sector, offset, data),
+    );
+    let timeout = if operation == FLASH_READ {
+        FLASH_READ_TIMEOUT_POLLS
+    } else {
+        FLASH_WRITE_TIMEOUT_POLLS
+    };
+    for _ in 0..timeout {
+        let status = read32(FLASH_STATUS);
+        if status & 1 == 0 && status & 2 != 0 {
+            return if status & 4 == 0 {
+                Some(((status >> 3) & 0xff) as u8)
+            } else {
+                None
+            };
+        }
+    }
+    None
+}
+
+pub unsafe fn flash_read(sector: u8, offset: u16) -> Option<u8> {
+    flash_operation(FLASH_READ, sector, offset, 0)
+}
+
+pub unsafe fn flash_program(sector: u8, offset: u16, data: u8) -> bool {
+    flash_operation(FLASH_PROGRAM, sector, offset, data).is_some()
+}
+
+pub unsafe fn flash_erase(sector: u8) -> bool {
+    flash_operation(FLASH_ERASE, sector, 0, 0).is_some()
+}
+
 /// Binary positions corresponding to the CPU-less UI's initial Gray masks.
 pub const GROUP_INDEX_DEFAULTS: [u32; 10] = [1, 1, 1, 3, 3, 3, 7, 7, 7, 15];
 
@@ -235,5 +315,21 @@ mod tests {
         let crc = record_crc(&record, 3);
         write_u32(&mut record, 12, crc);
         assert_eq!(record_crc(&record, 3), read_u32(&record, 12));
+    }
+
+    #[test]
+    fn command_words_preserve_product_index_width_and_flash_layout() {
+        assert_eq!(
+            ui_command_word::<5>(3, 17, 0xabcd),
+            3 | (17 << 5) | (0xabcd << 10)
+        );
+        assert_eq!(
+            ui_command_word::<6>(3, 17, 0xabcd),
+            3 | (17 << 6) | (0xabcd << 11)
+        );
+        assert_eq!(
+            flash_command_word(2, 1, 0x0abc, 0x5a),
+            2 | 4 | (0xabc << 3) | (0x5a << 15)
+        );
     }
 }
