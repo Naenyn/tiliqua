@@ -307,10 +307,25 @@ time:
 6. Extract the duplicated Rust persistence, arithmetic, input, navigation, and
    edit-loop primitives into the shared firmware crate behind a product spec or
    trait. In progress: endian record access, journal CRC, and clamp-add helpers
-   are shared and covered by eight host tests. Initial release text sizes are
-   REZO 14,856 bytes, REZOMO 16,944 bytes, and STREZO 13,344 bytes, all within
-   their physical firmware regions. Continue one equivalent block at a time,
-   with firmware-size and full bitstream checks after each checkpoint.
+   are shared. The encoder/flash MMIO addresses, volatile access, flash command
+   transport, and UI command encoding are also shared; the UI index width is an
+   explicit product parameter (five bits for REZO, six for REZOMO/STREZO).
+   Nine host tests cover the common bit packing, CRC, arithmetic, navigation,
+   and both UI command formats. Release text sizes are REZO 14,880 bytes,
+   REZOMO 16,952 bytes, and STREZO 13,356 bytes, all within their physical
+   firmware regions.
+
+   Full `9d3774fb` standard builds preserve the established timing exactly.
+   Archive SHA-256 values are:
+
+   - REZO: `1529a75901dcaf4b0db74fd4becc783ac1738c9c3446d6c67952591f179e3ff3`
+   - REZOMO: `78c497e13177826db124ce63db7289b805b7cbb893b22faba2b5ed9f6b4fddbd`
+   - STREZO: `f4ed326e0430b27b688e289531b525c4f4632113253daad82226095e09697b3a`
+
+   Continue one equivalent block at a time, with firmware-size and full
+   bitstream checks after each checkpoint. The next candidate is shared sector
+   scan/save orchestration behind a product-owned record codec; product record
+   schemas and page/edit behavior remain intentionally local.
 
 `RezoHardwareUI` classes cannot simply be deleted yet: renderer code and tests
 still use their constants and target/navigation contracts. First move that
