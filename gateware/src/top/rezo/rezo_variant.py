@@ -5910,8 +5910,16 @@ class RezoBeamTop(Elaboratable):
             # REZO's dense placement makes the 5x serializer load enable the
             # limiting route. Give each lane an identically reset local phase
             # ring so its load mux remains nearby without an extra register.
+            # The phase source is fixed beside its corresponding board-level
+            # DVI pin; only these four tiny control flops are floorplanned.
             m.submodules.dvi_gen = dvi_gen = dvi.DVIPHY(
-                local_phase_rings=True)
+                local_phase_rings=True,
+                local_phase_bels=(
+                    "X70/Y3/SLICEA.FF0",  # blue / d0 at X72/Y2
+                    "X49/Y3/SLICEA.FF0",  # green / d1 at X49/Y0
+                    "X60/Y3/SLICEA.FF0",  # red / d2 at X60/Y0
+                    "X65/Y3/SLICEA.FF0",  # clock at X65/Y0
+                ))
             display_de0 = Signal()
             display_hsync0 = Signal()
             display_vsync0 = Signal()
