@@ -257,6 +257,8 @@ class DVIPHY(wiring.Component):
 
         def serialize_lane(shift, load_lo, word, load_hi=None):
             word = Value.cast(word)
+            if len(word) < 10:
+                word = Cat(word, Const(0, 10 - len(word)))
             if isinstance(shift, list):
                 if load_hi is None:
                     with m.If(load_lo):
