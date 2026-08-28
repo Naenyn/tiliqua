@@ -669,13 +669,26 @@ class StrezoUIControlPeripheral(Component):
         return m
 
 
-class RezoCpuControlPlane(Component):
-    """Minimal firmware control plane, without video or audio ownership."""
+class RezoFamilyCpuControlPlane(Component):
+    """Shared REZO-family CPU fabric.
+
+    Product subclasses select only the firmware ROM size and UI command
+    contract.  The VexiiRiscv configuration, CPU-visible memory regions,
+    Wishbone/CSR fabric, encoder, and bounded flash window are intentionally
+    identical across REZO, REZOMO, and STREZO.
+    """
+
+    UI_STATE = RezoFirmwareUIState
+    UI_PERIPHERAL = RezoUIControlPeripheral
 
     MAINRAM_BASE = 0x00000000
-    MAINRAM_SIZE = 0x8000
+    # Keep the CPU-visible executable region identical for every product.
+    # CODE_SIZE below controls physical ROM usage independently.
+    MAINRAM_SIZE = 0x10000
     CODE_SIZE = 0x4000
-    DATA_BASE = CODE_SIZE
+    # All products reserve the same decoder window for program memory.  REZO's
+    # smaller ROM still consumes only CODE_SIZE bytes of physical block RAM.
+    DATA_BASE = 0x8000
     DATA_SIZE = 0x0800
     CSR_BASE = 0xF0000000
 
@@ -706,103 +719,11 @@ class RezoCpuControlPlane(Component):
             alignment=0, features={"cti", "bte", "err"})
 
         # Keep immutable firmware and mutable stack/state in separate banks.
-        # Persistence raises the code budget to 16 KiB, while the bounded UI
-        # state and measured 1,136-byte main frame fit in the 2 KiB data RAM.
         self.mainram = RezoProgramMemory(size=self.CODE_SIZE)
         self.dbus_decoder.add(
             self.mainram.dbus, addr=self.MAINRAM_BASE, name="code")
         self.dataram = blockram.Peripheral(
             size=self.DATA_SIZE, name="data")
-        self.dbus_decoder.add(
-            self.dataram.bus, addr=self.DATA_BASE, name="data")
-
-        self.csr_decoder = csr.Decoder(addr_width=28, data_width=8)
-        self.encoder0 = encoder.Peripheral()
-        self.csr_decoder.add(
-            self.encoder0.bus, addr=self.ENCODER_BASE, name="encoder0")
-        self.ui = RezoFirmwareUIState()
-        self.rezo_ui = RezoUIControlPeripheral(self.ui)
-        self.csr_decoder.add(
-            self.rezo_ui.bus, addr=self.REZO_UI_BASE, name="rezo_ui")
-        self.flash_window = RezoFlashWindowPeripheral()
-        self.csr_decoder.add(
-            self.flash_window.bus, addr=self.FLASH_WINDOW_BASE,
-            name="flash_window")
-        self.wb_to_csr = WishboneCSRBridge(
-            self.csr_decoder.bus, data_width=32)
-        self.dbus_decoder.add(
-            self.wb_to_csr.wb_bus, addr=self.CSR_BASE,
-            sparse=False, name="wb_to_csr")
-
-    def elaborate(self, platform):
-        m = Module()
-
-        self.mainram.init = readbin.get_mem_data(
-            self.firmware_bin_path, data_width=32, endianness="little")
-        assert self.mainram.init
-
-        m.submodules.dbus_decoder = self.dbus_decoder
-
-        m.submodules.cpu = self.cpu
-        wiring.connect(m, self.cpu.ibus, self.mainram.ibus)
-        wiring.connect(m, self.cpu.dbus, self.dbus_decoder.bus)
-        m.d.comb += self.cpu.irq_external.eq(0)
-
-        m.submodules.mainram = self.mainram
-        m.submodules.dataram = self.dataram
-        m.submodules.csr_decoder = self.csr_decoder
-        m.submodules.wb_to_csr = self.wb_to_csr
-        m.submodules.encoder0 = self.encoder0
-        m.submodules.rezo_ui = self.rezo_ui
-        m.submodules.flash_window = self.flash_window
-
-        return m
-
-
-class RezomoCpuControlPlane(Component):
-    """REZO's minimal CPU fabric with REZOMO's CLOCK command contract."""
-
-    UI_STATE = RezomoFirmwareUIState
-    UI_PERIPHERAL = RezomoUIControlPeripheral
-
-    MAINRAM_BASE = RezoCpuControlPlane.MAINRAM_BASE
-    MAINRAM_SIZE = 0x10000
-    # CLOCK algorithms and their V3 migration need slightly more than REZO's
-    # 16 KiB image. A 20 KiB ROM consumes two additional DP16KD blocks while
-    # avoiding a wasteful jump to 32 KiB.
-    CODE_SIZE = 0x5000
-    # The 20 KiB memory's bus window rounds to 32 KiB; place mutable RAM after
-    # that decode window while retaining only 20 KiB of physical ROM storage.
-    DATA_BASE = 0x8000
-    DATA_SIZE = RezoCpuControlPlane.DATA_SIZE
-    CSR_BASE = RezoCpuControlPlane.CSR_BASE
-    ENCODER_BASE = RezoCpuControlPlane.ENCODER_BASE
-    REZO_UI_BASE = RezoCpuControlPlane.REZO_UI_BASE
-    FLASH_WINDOW_BASE = RezoCpuControlPlane.FLASH_WINDOW_BASE
-
-    def __init__(self, clock_settings, *, firmware_bin_path):
-        super().__init__({})
-        self.clock_settings = clock_settings
-        self.firmware_bin_path = firmware_bin_path
-        self.cpu = VexiiRiscv(
-            regions=[
-                VexiiRiscv.MemoryRegion(
-                    base=self.MAINRAM_BASE, size=self.MAINRAM_SIZE,
-                    cacheable=True, executable=True),
-                VexiiRiscv.MemoryRegion(
-                    base=self.CSR_BASE, size=0x10000,
-                    cacheable=False, executable=False),
-            ],
-            variant="rezo_control",
-            reset_addr=self.MAINRAM_BASE,
-        )
-        self.dbus_decoder = wishbone.Decoder(
-            addr_width=30, data_width=32, granularity=8,
-            alignment=0, features={"cti", "bte", "err"})
-        self.mainram = RezoProgramMemory(size=self.CODE_SIZE)
-        self.dbus_decoder.add(
-            self.mainram.dbus, addr=self.MAINRAM_BASE, name="code")
-        self.dataram = blockram.Peripheral(size=self.DATA_SIZE, name="data")
         self.dbus_decoder.add(
             self.dataram.bus, addr=self.DATA_BASE, name="data")
 
@@ -826,14 +747,18 @@ class RezomoCpuControlPlane(Component):
 
     def elaborate(self, platform):
         m = Module()
+
         self.mainram.init = readbin.get_mem_data(
             self.firmware_bin_path, data_width=32, endianness="little")
         assert self.mainram.init
+
         m.submodules.dbus_decoder = self.dbus_decoder
+
         m.submodules.cpu = self.cpu
         wiring.connect(m, self.cpu.ibus, self.mainram.ibus)
         wiring.connect(m, self.cpu.dbus, self.dbus_decoder.bus)
         m.d.comb += self.cpu.irq_external.eq(0)
+
         m.submodules.mainram = self.mainram
         m.submodules.dataram = self.dataram
         m.submodules.csr_decoder = self.csr_decoder
@@ -841,11 +766,29 @@ class RezomoCpuControlPlane(Component):
         m.submodules.encoder0 = self.encoder0
         m.submodules.rezo_ui = self.rezo_ui
         m.submodules.flash_window = self.flash_window
+
         return m
 
 
-class StrezoCpuControlPlane(RezomoCpuControlPlane):
+class RezoCpuControlPlane(RezoFamilyCpuControlPlane):
+    """Shared CPU fabric with REZO's UI command contract."""
+
+
+class RezomoCpuControlPlane(RezoFamilyCpuControlPlane):
+    """Shared CPU fabric with REZOMO's CLOCK command contract."""
+
+    UI_STATE = RezomoFirmwareUIState
+    UI_PERIPHERAL = RezomoUIControlPeripheral
+
+    # CLOCK algorithms and their V3 migration need slightly more than REZO's
+    # 16 KiB image. A 20 KiB ROM consumes two additional DP16KD blocks while
+    # avoiding a wasteful jump to 32 KiB.
+    CODE_SIZE = 0x5000
+
+
+class StrezoCpuControlPlane(RezoFamilyCpuControlPlane):
     """REZO-family CPU fabric with STREZO's stereo command contract."""
 
     UI_STATE = StrezoFirmwareUIState
     UI_PERIPHERAL = StrezoUIControlPeripheral
+    CODE_SIZE = 0x5000

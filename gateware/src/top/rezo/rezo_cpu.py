@@ -3,8 +3,6 @@
 import os
 from pathlib import Path
 
-import git
-
 from tiliqua.tiliqua_soc import TiliquaSoc
 
 try:
@@ -21,7 +19,7 @@ class RezoCpuTop(RezoBeamTop):
     # and rejects both failures and marginal routes before packaging.
     nextpnr_opts = (
         "--timing-allow-fail "
-        f"--seed {os.getenv('TILIQUA_REZO_CPU_SEED', '5')}")
+        f"--seed {os.getenv('TILIQUA_REZO_FAMILY_SEED', os.getenv('TILIQUA_REZO_CPU_SEED', '5'))}")
     # Seed 5 is qualified for the aligned pager renderer. Retain the 3% gate so
     # marginal routes are rejected rather than silently packaged.
     minimum_timing_headroom_percent = 3.0
@@ -38,23 +36,16 @@ def compile_firmware(args):
     build_path.mkdir(parents=True, exist_ok=True)
     firmware_bin_path = build_path / "firmware.bin"
     TiliquaSoc.compile_firmware(str(FW_ROOT), str(firmware_bin_path))
-    repo = git.Repo(search_parent_directories=True)
-    try:
-        version_text = repo.git.describe("--tags", "--exact-match", "--dirty")
-    except git.exc.GitCommandError:
-        version_text = repo.git.describe("--always", "--dirty")
-    return {
-        "firmware_bin_path": str(firmware_bin_path),
-        # Match the archive/bootloader tag width used by top_level_cli.
-        "version_text": version_text[:8],
-    }
+    return {"firmware_bin_path": str(firmware_bin_path)}
 
 
 if __name__ == "__main__":
     run_cli(
-        name="REZO",
-        artifact_name="REZO-CPU",
-        modeline="1280x720p60",
+        name=os.getenv("TILIQUA_REZO_FAMILY_NAME", "REZO"),
+        artifact_name=os.getenv(
+            "TILIQUA_REZO_FAMILY_ARTIFACT_NAME", "REZO"),
+        modeline=os.getenv(
+            "TILIQUA_REZO_FAMILY_MODELINE", "1280x720p60"),
         fragment=RezoCpuTop,
         argparse_fragment=compile_firmware,
     )

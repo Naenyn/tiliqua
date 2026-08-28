@@ -410,13 +410,22 @@ def test_feedback_amount_maximum_fills_the_compact_track():
     ]
 
 
-def test_output_dry_header_has_the_same_visible_selection_bar_as_groups():
+def test_output_column_header_selection_bars_sit_above_the_labels():
     selected = RezoTileDisplay.PALETTE["selected"]
-    assert _render_samples(
+    group_samples = _render_samples(
+        page=4,
+        selected=RezoHardwareUI.TARGET_OUTPUT_COL_BASE,
+        points=((270, 233), (270, 281)),
+    )
+    dry_samples = _render_samples(
         page=4,
         selected=RezoHardwareUI.TARGET_OUTPUT_DRY_COL,
-        points=((538, 281),),
-    ) == [(selected, selected, selected)]
+        points=((538, 233), (538, 281)),
+    )
+    assert group_samples[0] == (selected, selected, selected)
+    assert dry_samples[0] == (selected, selected, selected)
+    assert group_samples[1] != (selected, selected, selected)
+    assert dry_samples[1] != (selected, selected, selected)
 
 
 def test_output_side_chip_clears_row_label_and_keeps_right_edge():

@@ -100,6 +100,103 @@ NATIVE_FEEDBACK_DAMPING_TEXT_COL = 18
 NATIVE_FEEDBACK_DAMPING_TEXT_ROW = NATIVE_FEEDBACK_DAMPING_ROW
 
 
+def native_input_row_geometry(height, *, first_y=221):
+    """Encode the four common 96px INPUT lanes for one y-coordinate ROM.
+
+    Bits 0..6 are local y, bits 7..8 are the input index, and bit 9 marks a
+    valid lane.  Keeping this table here prevents the three renderers from
+    independently changing cadence, bit layout, or panel bounds.
+    """
+    init = []
+    for pixel_y in range(height):
+        if first_y <= pixel_y < first_y + 4 * 96:
+            offset = pixel_y - first_y
+            init.append((offset % 96) | ((offset // 96) << 7) | (1 << 9))
+        else:
+            init.append(0)
+    return init
+
+
+def native_clock_row_geometry(height):
+    """Encode REZOMO's nine compact CLOCK value rows in one y ROM.
+
+    Bits 0..3 select the row, bit 4 marks the 28-pixel selection band,
+    bit 5 marks its three-pixel top/bottom outline edge, and bit 6 marks the
+    inset 22-pixel chip fill. The rows share an exact 32-pixel cadence.
+    """
+    init = []
+    for pixel_y in range(height):
+        encoded = 0
+        for row in range(9):
+            select_y0 = 249 + row * 32
+            select_y1 = select_y0 + 28
+            if select_y0 <= pixel_y < select_y1:
+                encoded = row | (1 << 4)
+                if (pixel_y < select_y0 + 3 or
+                        pixel_y >= select_y1 - 3):
+                    encoded |= 1 << 5
+                else:
+                    encoded |= 1 << 6
+                break
+        init.append(encoded)
+    return init
+
+
+def native_group_geometry(
+        width, *, compact=True, content_shift=16, x_prefetch=1):
+    """Encode the common 10x4 GROUPS marker geometry.
+
+    Bits 0..3 select a band, bit 4 marks an active x column, bits 5..6
+    select a group, bit 7 marks an active y row, and bit 8 marks the row's
+    two-pixel ghost rail.
+    """
+    centers = tuple(center - content_shift for center in NATIVE_GROUP_CENTERS)
+    init = []
+    for coordinate in range(width):
+        encoded = 0
+        pixel_x = coordinate + (x_prefetch if compact else 0)
+        for band in range(10):
+            x0 = 208 + band * 34 if compact else 144 + band * 48
+            marker_width = 18 if compact else 24
+            if x0 <= pixel_x < x0 + marker_width:
+                encoded |= band | (1 << 4)
+                break
+        for group, center in enumerate(centers):
+            y0 = center - 9 if compact else 294 + group * 64
+            marker_height = 20 if compact else 24
+            if y0 <= coordinate < y0 + marker_height:
+                encoded |= (group << 5) | (1 << 7)
+                if (coordinate < y0 + 2 or
+                        coordinate >= y0 + marker_height - 2):
+                    encoded |= 1 << 8
+                break
+        init.append(encoded)
+    return init
+
+
+def native_output_column_geometry(width, *, compact=True, x_prefetch=1):
+    """Encode the common five-column OUTPUT routing geometry.
+
+    Bits 0..2 select the source, bit 3 marks the two-pixel edge, and bit 4
+    marks an active cell column.
+    """
+    init = []
+    for address in range(width):
+        pixel_x = address + (x_prefetch if compact else 0)
+        encoded = 0
+        for source, center in enumerate(NATIVE_OUTPUT_COL_CENTERS):
+            x0 = center - 27 if compact else 188 + source * 96
+            cell_width = 56 if compact else 72
+            if x0 <= pixel_x < x0 + cell_width:
+                encoded = source | (1 << 4)
+                if (pixel_x < x0 + 2 or
+                        pixel_x >= x0 + cell_width - 2):
+                    encoded |= 1 << 3
+                break
+        init.append(encoded)
+    return init
+
+
 def native_value_chip_x0(text_col):
     """Return the chip edge one standard inset left of a text-RAM column."""
     return text_col * 16 - NATIVE_VALUE_CHIP_TEXT_INSET

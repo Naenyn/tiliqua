@@ -594,10 +594,9 @@ def test_compact_output_meters_are_persistent_and_independent():
     ]
 
 
-def test_compact_curved_header_and_footer_include_version_text():
+def test_compact_curved_header_and_footer_leave_footer_empty():
     dut = RezoTileDisplay(
-        h_active=720, rotate_left=False, compact_layout=True,
-        version_text="TEST1234")
+        h_active=720, rotate_left=False, compact_layout=True)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
     sim.add_clock(1e-6, domain="dvi")
@@ -615,8 +614,8 @@ def test_compact_curved_header_and_footer_include_version_text():
         await sample(ctx, 360, 105)  # inside curved top band
         await sample(ctx, 360, 112)  # black centre begins below compact cap
         await sample(ctx, 360, 200)  # black gap below the header cap
-        await sample(ctx, 17 * 16, 656)  # first pixel of footer V glyph
-        await sample(ctx, 360, 640)  # footer background, clear of text
+        await sample(ctx, 17 * 16, 656)  # former version-text position
+        await sample(ctx, 360, 640)  # footer background
 
     sim.add_testbench(bench)
     sim.run()
@@ -624,7 +623,7 @@ def test_compact_curved_header_and_footer_include_version_text():
     palette = RezoTileDisplay.PALETTE
     assert samples == [
         palette["background"], palette["blank"], palette["blank"],
-        palette["text"], palette["background"],
+        palette["background"], palette["background"],
     ]
 
 
