@@ -28,9 +28,6 @@ class BuildTarget:
     artifact_name: str
     modeline: str
     default_seed: int
-    yosys: str | None = None
-    nextpnr_ecp5: str | None = None
-    ecppack: str | None = None
 
 
 TARGETS = {
@@ -114,13 +111,5 @@ def run_target(key):
     os.environ["TILIQUA_REZO_FAMILY_NAME"] = target.bitstream_name
     os.environ["TILIQUA_REZO_FAMILY_ARTIFACT_NAME"] = target.artifact_name
     os.environ["TILIQUA_REZO_FAMILY_MODELINE"] = target.modeline
-    if target.yosys is not None:
-        os.environ["YOSYS"] = os.getenv("TILIQUA_REZO_FAMILY_YOSYS", target.yosys)
-    if target.nextpnr_ecp5 is not None:
-        os.environ["NEXTPNR_ECP5"] = os.getenv(
-            "TILIQUA_REZO_FAMILY_NEXTPNR_ECP5", target.nextpnr_ecp5)
-    if target.ecppack is not None:
-        os.environ["ECPPACK"] = os.getenv(
-            "TILIQUA_REZO_FAMILY_ECPPACK", target.ecppack)
     cpu_path = Path(__file__).with_name(f"{target.module}.py")
     runpy.run_path(str(cpu_path), run_name="__main__")

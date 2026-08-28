@@ -130,10 +130,6 @@ def test_family_variants_are_selected_before_elaboration():
     assert TARGETS["rezomo_round"].default_seed == 12
     assert TARGETS["strezo"].default_seed == 7
     assert TARGETS["strezo_round"].default_seed == 7
-    for target in TARGETS.values():
-        assert target.yosys is None
-        assert target.nextpnr_ecp5 is None
-        assert target.ecppack is None
 
 
 def test_family_target_lookup_rejects_ambiguous_names():

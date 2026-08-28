@@ -156,6 +156,17 @@ The accepted fixes are deliberately product-specific:
   DVI 80.04 MHz, sync 66.49 MHz, and audio 72.55 MHz with 18,864 LUT4s and
   8,315 DFFs.
 
+The first combined test archive exposed a route-dependent STREZO HDMI failure:
+audio ran normally, but the receiver detected no connection. The serializer
+logic was unchanged from the prior hardware-qualified image, but its shared
+phase ring, load strobes, and shift registers were left unconstrained. STREZO
+now uses the same proven per-lane serializer floorplan as REZO while retaining
+one shared phase ring. The routed candidate reaches DVI5X 482.39 MHz, DVI
+80.01 MHz, sync 66.34 MHz, and audio 69.80 MHz. Archive
+`build/strezo-r5/strezo-59dc30d1-r5.tar.gz` has SHA-256
+`0cd9bfdeb63cf78592d114c6122549786896a3bc1646766f1f9c7668612c443d`;
+it was flashed to slot 4 and the user confirmed normal HDMI, UI, and audio.
+
 The same send-data register was tested in REZOMO and rejected. Although it
 removed the original OUTPUT BRAM critical path, the altered placement exposed
 a band-marker path at only 76.59 MHz DVI (3.15% headroom) and made routing much
@@ -280,8 +291,9 @@ time:
    standard and round production target passes `compact_layout=True`; round
    720x720 support does not depend on the legacy branches. This is the largest
    remaining renderer-maintenance cleanup.
-4. Remove the unused `yosys`, `nextpnr_ecp5`, and `ecppack` fields from
-   `targets.py`; all current family targets set them to `None`.
+4. ~~Remove the unused `yosys`, `nextpnr_ecp5`, and `ecppack` fields from
+   `targets.py`; all current family targets set them to `None`.~~ Completed
+   after the hardware-qualified STREZO serializer fix.
 5. Consolidate duplicated firmware-build/CLI plumbing in `rezo_cpu.py`,
    `rezomo_cpu.py`, and `strezo_cpu.py`. Decide whether the redundant `*_cpu`
    console entry points remain documented compatibility aliases or are removed
