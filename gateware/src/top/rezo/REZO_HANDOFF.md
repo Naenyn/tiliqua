@@ -8,8 +8,8 @@ Historical work remains available in git and `BUILD_PERFORMANCE.md`.
 - Repository: `/Users/naenyn/git/tiliqua`
 - Gateware: `/Users/naenyn/git/tiliqua/gateware`
 - Branch: `codex/rezo-circular-chrome`
-- Committed HEAD: `874b6c8d` (`strezo: close timing on circular UI`)
-- The convergence/refactor work described below is still uncommitted.
+- Last hardware-qualified commit: `3d7fd783`
+  (`rezo: converge CPU family and fix runtime regressions`)
 - Standard-display slots: REZO 2, REZOMO 3, STREZO 4.
 - Standard development target: `1280x720p60` on the user's 1080p monitor.
 - Retain `720x720p60r2` support, but do not build the round target unless asked.
@@ -80,9 +80,34 @@ rows, but its shared column-header selection bar omitted the matching
 column label instead of above it. STREZO now passes the same offset used by
 REZO; the native regression checks both a group column and DRY at the corrected
 y=232..235 position and rejects the former y=280..283 position. The focused
-family regression remains **102 passed**. This display-only correction has not
-been flashed, per the user's explicit request to leave the powered-down rack
-untouched.
+family regression remains **102 passed**. The `3d7fd783` archive was
+subsequently flashed to slot 4 and the user confirmed that STREZO looks and
+sounds correct.
+
+## Post-convergence cleanup (step 3)
+
+The CPU-less control surfaces, gateware persistence journals, encoder helper,
+and their tests have been retired. Production has required firmware since the
+family convergence, and the deleted implementations remain available in git
+history. `SPIFlashTransfer` remains as the small live firmware flash helper.
+
+The unused `compact_layout=False` renderer branches and legacy-only geometry,
+navigation, labels, and display tests have also been removed. Standard and
+round targets both use the retained native/compact renderer path. Product
+target IDs now live in lightweight `ui_specs.py` classes, with tests that
+compare the Python renderer contracts directly against the Rust firmware
+constants. Obsolete encoder mirror signals in the firmware UI state were also
+removed.
+
+Validation after cleanup:
+
+- focused display/contract suite: **102 passed**
+- complete surviving `test_rezo*.py`/`test_strezo*.py` suite: **169 passed**
+- Python compilation and `git diff --check`: pass
+- REZO fully elaborated and routed, but the timing gate correctly rejected its
+  archive because DVI5X achieved only 358.55/371.33 MHz. This is the existing
+  phase/load-route weakness addressed by follow-on step 4, not a simulation or
+  firmware regression.
 
 ## Superseded pre-runtime-check builds
 

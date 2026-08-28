@@ -64,8 +64,7 @@ const LEGACY_STATE_WORDS: usize = 42;
 const HEADER_BYTES: usize = 16;
 const RECORD_BYTES: usize = HEADER_BYTES + STATE_WORDS * 2;
 const MAGIC: u32 = 0x4f5a4552;
-// The CPU and CPU-less implementations use the exact same 46-word schema.
-// Retaining version 2 keeps saved defaults interchangeable between them.
+// Retaining version 2 preserves saved defaults written by earlier builds.
 const VERSION: u16 = 2;
 
 const PAGE: u8 = 0;

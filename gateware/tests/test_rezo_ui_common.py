@@ -42,7 +42,6 @@ from top.rezo.ui_common import (
     native_input_unity_x,
     native_main_fader_endpoint,
     native_value_chip_x0,
-    put_legacy_support_page_labels,
     put_native_feedback_labels,
     put_native_page_heading,
     put_native_page_headers,
@@ -204,20 +203,3 @@ def test_shared_input_page_reserves_depth_for_dynamic_cv_only_labels():
     assert not any(page == 2 and text == "DEPTH"
                    for page, text, _x, _row in calls)
     assert (2, "VALUE", 13, 34) in calls
-
-
-def test_legacy_support_labels_share_structure_with_product_overrides():
-    calls = []
-    put_legacy_support_page_labels(
-        lambda *args: calls.append(args), frequency_col=18,
-        output_row_col=2,
-        output_labels=("GRP1", "GRP2", "GRP3", "GRP4", ""))
-
-    assert (1, "FREQ:", 18, 11) in calls
-    assert (2, "DEPTH", 8, 35) in calls
-    assert (3, "GRP4", 3, 31) in calls
-    assert (4, "OUT3", 2, 36) in calls
-    assert not any(page == 4 and text == "DRY"
-                   for page, text, _x, _row in calls)
-    assert (5, "SAVE DEFAULT", 3, 19) in calls
-    assert (6, "SET FREQ", 2, 22) in calls

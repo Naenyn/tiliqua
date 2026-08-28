@@ -1,35 +1,13 @@
 # Copyright (c) 2026
 #
 # SPDX-License-Identifier: CERN-OHL-S-2.0
-"""Shared CRC and configuration-flash transport for the REZO family."""
+"""Shared configuration-flash transport for REZO-family firmware."""
 
 from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 
 from luna_soc.gateware.core.spiflash.port import SPIControlPort
-
-
-def crc32_bzip2_next(crc, byte):
-    """One synthesizable byte update for CRC-32/BZIP2 (before final XOR)."""
-    value = crc ^ (byte << 24)
-    for _ in range(8):
-        shifted = Cat(Const(0, 1), value[:31])
-        value = Mux(value[31], shifted ^ 0x04c11db7, shifted)
-    return value
-
-
-def _crc32_bzip2_table():
-    """Build the non-reflected CRC table once at gateware generation time."""
-    table = []
-    for index in range(256):
-        value = index << 24
-        for _ in range(8):
-            value = (((value << 1) & 0xffffffff) ^
-                     (0x04c11db7 if value & 0x80000000 else 0))
-        table.append(value)
-    return table
-
 
 class SPIFlashTransfer(wiring.Component):
     """Issue one 1-bit-wide transfer through LUNA's configuration-flash PHY."""
@@ -56,8 +34,8 @@ class SPIFlashTransfer(wiring.Component):
         m.d.comb += [
             cs_ready.eq(~cs_recovery.any()),
             self.spi.cs.eq(self.chip_select & cs_ready),
-            # The journal holds the request fields until the next start pulse,
-            # so retaining a second copy in this bridge only adds registers.
+            # Firmware holds the request fields until the next start pulse, so
+            # retaining a second copy in this bridge only adds registers.
             self.spi.source.data.eq(self.tx_data),
             self.spi.source.len.eq(self.length),
             self.spi.source.width.eq(1),
@@ -65,10 +43,9 @@ class SPIFlashTransfer(wiring.Component):
         ]
         m.d.sync += self.done.eq(0)
 
-        # The CPU flash driver naturally leaves ample software time between
-        # commands. This CPU-free bridge must enforce the W25Q128's CS#-high
-        # recovery itself. A requested deselect starts a four-cycle holdoff;
-        # physical CS and the next transfer remain inactive during that time.
+        # Enforce the W25Q128's CS#-high recovery in hardware. A requested
+        # deselect starts a four-cycle holdoff; physical CS and the next
+        # transfer remain inactive during that time.
         m.d.sync += last_chip_select.eq(self.chip_select)
         with m.If(last_chip_select & ~self.chip_select):
             m.d.sync += cs_recovery.eq(0b1111)

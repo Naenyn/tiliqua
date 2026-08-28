@@ -3,9 +3,10 @@ from amaranth.sim import Simulator
 
 from top.rezo.rezo_variant import (
     NATIVE_OUTPUT_METER_LABEL_COLS,
-    RezoCore, RezoHardwareUI, RezoTileDisplay, output_meter_db_value,
+    RezoCore, RezoTileDisplay, output_meter_db_value,
     native_output_meter_bounds,
 )
+from top.rezo.ui_specs import RezoUISpec
 
 
 def test_output_meter_uses_calibrated_daw_scale():
@@ -41,7 +42,7 @@ def _render_text_bounds(*regions, page=0, palette=0, input_modes=(),
                         filter_mode=0):
     """Return visible glyph bounds inside native compact value chips."""
     dut = RezoTileDisplay(
-        h_active=1280, rotate_left=False, compact_layout=True)
+        h_active=1280, rotate_left=False)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
     sim.add_clock(1e-6, domain="dvi")
@@ -96,9 +97,9 @@ def _render_text_bounds(*regions, page=0, palette=0, input_modes=(),
 def test_standard_hdmi_compact_preview_is_native_size_and_unrotated():
     """Both targets render identical upright compact pixels at native size."""
     preview = RezoTileDisplay(
-        h_active=1280, rotate_left=False, compact_layout=True)
+        h_active=1280, rotate_left=False)
     round_panel = RezoTileDisplay(
-        h_active=720, rotate_left=True, compact_layout=True)
+        h_active=720, rotate_left=True)
     top = Module()
     top.submodules.preview = preview
     top.submodules.round_panel = round_panel
@@ -171,7 +172,7 @@ def test_output_dry_label_is_centered_and_hidden_with_its_filter_column():
     assert dry_bounds[0] + dry_bounds[2] in range(1066, 1074)
 
     dut = RezoTileDisplay(
-        h_active=1280, rotate_left=False, compact_layout=True)
+        h_active=1280, rotate_left=False)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
     sim.add_clock(1e-6, domain="dvi")
@@ -199,7 +200,7 @@ def test_output_dry_label_is_centered_and_hidden_with_its_filter_column():
 
 def test_main_preset_selection_uses_the_shared_header_outline():
     dut = RezoTileDisplay(
-        h_active=1280, rotate_left=False, compact_layout=True)
+        h_active=1280, rotate_left=False)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
     sim.add_clock(1e-6, domain="dvi")
@@ -207,7 +208,7 @@ def test_main_preset_selection_uses_the_shared_header_outline():
 
     async def bench(ctx):
         ctx.set(dut.page, 0)
-        ctx.set(dut.selected, RezoHardwareUI.TARGET_PRESET)
+        ctx.set(dut.selected, RezoUISpec.TARGET_PRESET)
         ctx.set(dut.de, 1)
         for y in (164, 180):
             ctx.set(dut.x, dut.x_offset + 250)
@@ -225,7 +226,7 @@ def test_main_preset_selection_uses_the_shared_header_outline():
 def test_compact_round_layout_uses_all_four_arcs():
     """Native identity, PAGE, and persistent side chrome share one canvas."""
     dut = RezoTileDisplay(
-        h_active=720, rotate_left=True, compact_layout=True)
+        h_active=720, rotate_left=True)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
     sim.add_clock(1e-6, domain="dvi")
@@ -245,7 +246,7 @@ def test_compact_round_layout_uses_all_four_arcs():
         await sample(ctx, 320, 32)
         # Blank portion of the PAGE value chip remains visibly framed.
         await sample(ctx, 352, 135)
-        ctx.set(dut.selected, RezoHardwareUI.TARGET_PAGE)
+        ctx.set(dut.selected, RezoUISpec.TARGET_PAGE)
         await sample(ctx, 212, 140)
         # MAIN is authored natively in the safe central header.
         await sample(ctx, 256, 128)
@@ -274,7 +275,7 @@ def test_compact_round_layout_uses_all_four_arcs():
 def test_compact_header_controls_are_tight():
     """Header status boxes hug their text."""
     dut = RezoTileDisplay(
-        h_active=720, rotate_left=False, compact_layout=True)
+        h_active=720, rotate_left=False)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
     sim.add_clock(1e-6, domain="dvi")
@@ -320,7 +321,7 @@ def test_compact_header_controls_are_tight():
 def test_compact_options_surface_has_balanced_vertical_padding():
     """OPTIONS keeps one 20px inset above and below its two value chips."""
     dut = RezoTileDisplay(
-        h_active=720, rotate_left=False, compact_layout=True)
+        h_active=720, rotate_left=False)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
     sim.add_clock(1e-6, domain="dvi")
@@ -349,7 +350,7 @@ def test_compact_options_surface_has_balanced_vertical_padding():
 def test_compact_safe_square_cuts_black_field_out_of_curved_chrome():
     """The centered 508px square masks an otherwise shaded circle."""
     dut = RezoTileDisplay(
-        h_active=720, rotate_left=False, compact_layout=True)
+        h_active=720, rotate_left=False)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
     sim.add_clock(1e-6, domain="dvi")
@@ -389,7 +390,7 @@ def test_compact_safe_square_cuts_black_field_out_of_curved_chrome():
 def test_compact_pager_tracks_firmware_navigation_order_and_mode_count():
     """The selected pager box follows encoder order, not raw page number."""
     dut = RezoTileDisplay(
-        h_active=720, rotate_left=False, compact_layout=True)
+        h_active=720, rotate_left=False)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
     sim.add_clock(1e-6, domain="dvi")
@@ -430,7 +431,7 @@ def test_compact_pager_tracks_firmware_navigation_order_and_mode_count():
 def test_compact_pager_keeps_one_pixel_gaps_during_raster_scan():
     """Filled and outlined pager roles remain aligned at one pixel per tick."""
     dut = RezoTileDisplay(
-        h_active=720, rotate_left=False, compact_layout=True)
+        h_active=720, rotate_left=False)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
     sim.add_clock(1e-6, domain="dvi")
@@ -477,7 +478,7 @@ def test_compact_pager_keeps_one_pixel_gaps_during_raster_scan():
 def test_page_surfaces_use_eighth_palette_role_while_header_stays_black():
     """Page work areas are shaded without tinting the header gap."""
     dut = RezoTileDisplay(
-        h_active=720, rotate_left=False, compact_layout=True)
+        h_active=720, rotate_left=False)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
     sim.add_clock(1e-6, domain="dvi")
@@ -521,7 +522,7 @@ def test_page_surfaces_use_eighth_palette_role_while_header_stays_black():
 def test_sparse_page_content_frames_share_the_main_page_top_edge():
     """Sparse page frames begin one native row below their heading row."""
     dut = RezoTileDisplay(
-        h_active=720, rotate_left=False, compact_layout=True)
+        h_active=720, rotate_left=False)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
     sim.add_clock(1e-6, domain="dvi")
@@ -555,7 +556,7 @@ def test_sparse_page_content_frames_share_the_main_page_top_edge():
 def test_compact_output_meters_are_persistent_and_independent():
     """All four output meters render in their fixed left/right arc lanes."""
     dut = RezoTileDisplay(
-        h_active=720, rotate_left=False, compact_layout=True)
+        h_active=720, rotate_left=False)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
     sim.add_clock(1e-6, domain="dvi")
@@ -596,7 +597,7 @@ def test_compact_output_meters_are_persistent_and_independent():
 
 def test_compact_curved_header_and_footer_leave_footer_empty():
     dut = RezoTileDisplay(
-        h_active=720, rotate_left=False, compact_layout=True)
+        h_active=720, rotate_left=False)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
     sim.add_clock(1e-6, domain="dvi")
@@ -630,7 +631,7 @@ def test_compact_curved_header_and_footer_leave_footer_empty():
 def test_compact_labels_use_native_control_rows():
     """Compact text and geometry share final 720-canvas pixel coordinates."""
     dut = RezoTileDisplay(
-        h_active=720, rotate_left=True, compact_layout=True)
+        h_active=720, rotate_left=True)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
     sim.add_clock(1e-6, domain="dvi")
@@ -687,7 +688,7 @@ def test_compact_labels_use_native_control_rows():
 def test_compact_input_groups_and_enable_buttons_share_requested_geometry():
     """INPUT uses value-only panels and mode-dependent meter placement."""
     dut = RezoTileDisplay(
-        h_active=720, rotate_left=False, compact_layout=True)
+        h_active=720, rotate_left=False)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
     sim.add_clock(1e-6, domain="dvi")
@@ -761,7 +762,7 @@ def test_compact_input_groups_and_enable_buttons_share_requested_geometry():
 def test_compact_group_rails_share_native_label_centers():
     """Every GROUPS rail uses the visual center of its 14px label glyph."""
     dut = RezoTileDisplay(
-        h_active=720, rotate_left=False, compact_layout=True)
+        h_active=720, rotate_left=False)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
     sim.add_clock(1e-6, domain="dvi")
@@ -798,7 +799,7 @@ def test_compact_group_rails_share_native_label_centers():
 def test_compact_feedback_sources_and_safety_share_centered_geometry():
     """FEEDBACK sources center as a group and safety values share one edge."""
     dut = RezoTileDisplay(
-        h_active=720, rotate_left=False, compact_layout=True)
+        h_active=720, rotate_left=False)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
     sim.add_clock(1e-6, domain="dvi")
@@ -845,134 +846,9 @@ def test_compact_feedback_sources_and_safety_share_centered_geometry():
     ], samples
 
 
-def test_disabled_band_has_bank_ghosts_but_filter_remains_active():
-    """Disabled BANK columns and group cells keep frames; FILTER stays active."""
-    dut = RezoTileDisplay(h_active=1280)
-    sim = Simulator(dut)
-    sim.add_clock(1e-6, domain="sync")
-    sim.add_clock(1e-6, domain="dvi")
-    samples = []
-
-    async def sample(ctx, panel_x, panel_y):
-        ctx.set(dut.x, dut.x_offset + panel_x)
-        ctx.set(dut.y, panel_y)
-        ctx.set(dut.de, 1)
-        for _ in range(8):
-            await ctx.tick("dvi")
-        samples.append(ctx.get(dut.r))
-
-    async def bench(ctx):
-        ctx.set(dut.levels[0], 64)
-        ctx.set(dut.effective_levels[0], 64)
-        ctx.set(dut.band_enables[0], 0)
-        await sample(ctx, 42, 300)  # ghost frame edge
-        await sample(ctx, 60, 300)  # blank frame interior
-
-        ctx.set(dut.filter_mode, 1)
-        await sample(ctx, 60, 300)  # FILTER column remains active
-
-        ctx.set(dut.filter_mode, 0)
-        ctx.set(dut.page, 3)
-        await sample(ctx, 150, 294)  # disabled group-cell top ghost rail
-        await sample(ctx, 150, 300)  # empty space between ghost rails
-
-    sim.add_testbench(bench)
-    sim.run()
-
-    palette = RezoTileDisplay.PALETTE
-    assert samples == [
-        palette["line"], palette["background"], palette["control"],
-        palette["line"], palette["background"],
-    ]
-
-
-def test_tile_display_drive_modulation_shading_in_both_modes():
-    """DRIVE distinguishes its base setting from CV in BANK and FILTER."""
-    dut = RezoTileDisplay(h_active=1280)
-    sim = Simulator(dut)
-    sim.add_clock(1e-6, domain="sync")
-    sim.add_clock(1e-6, domain="dvi")
-    samples = []
-
-    async def sample(ctx, panel_x, panel_y):
-        ctx.set(dut.x, dut.x_offset + panel_x)
-        ctx.set(dut.y, panel_y)
-        ctx.set(dut.de, 1)
-        for _ in range(8):
-            await ctx.tick("dvi")
-        samples.append(ctx.get(dut.r))
-
-    async def bench(ctx):
-        ctx.set(dut.drive, 64)
-        ctx.set(dut.effective_drive, 96)
-
-        # BANK DRIVE occupies y=556..571. The extension beyond the base
-        # setting uses the modulation palette role.
-        await sample(ctx, 300, 560)
-        await sample(ctx, 450, 560)
-        await sample(ctx, 380, 554)
-
-        # FILTER uses the shared fader renderer but must show the same split.
-        ctx.set(dut.filter_mode, 1)
-        await sample(ctx, 300, 646)
-        await sample(ctx, 450, 646)
-        await sample(ctx, 380, 640)
-
-    sim.add_testbench(bench)
-    sim.run()
-
-    palette = RezoTileDisplay.PALETTE
-    assert samples == [
-        palette["control"],
-        palette["modulation"],
-        palette["line"],
-        palette["control"],
-        palette["modulation"],
-        palette["line"],
-    ]
-
-
-def test_input_page_draws_post_value_audio_and_raw_bipolar_cv_meters():
-    """The one-pixel telemetry line distinguishes audio and CV semantics."""
-    dut = RezoTileDisplay(h_active=1280)
-    sim = Simulator(dut)
-    sim.add_clock(1e-6, domain="sync")
-    sim.add_clock(1e-6, domain="dvi")
-    samples = []
-
-    async def sample(ctx, panel_x, panel_y):
-        ctx.set(dut.x, dut.x_offset + panel_x)
-        ctx.set(dut.y, panel_y)
-        ctx.set(dut.de, 1)
-        for _ in range(8):
-            await ctx.tick("dvi")
-        samples.append(ctx.get(dut.r))
-
-    async def bench(ctx):
-        ctx.set(dut.page, 2)
-        ctx.set(dut.input_modes[0], RezoCore.INPUT_MODE_AUDIO)
-        ctx.set(dut.input_meters[0], 20)
-        ctx.set(dut.input_modes[1], RezoCore.INPUT_MODE_CV)
-        ctx.set(dut.input_meters[1], -10)
-
-        await sample(ctx, 400, 297)
-        await sample(ctx, 550, 297)
-        await sample(ctx, 460, 393)
-        await sample(ctx, 520, 393)
-
-    sim.add_testbench(bench)
-    sim.run()
-
-    palette = RezoTileDisplay.PALETTE
-    assert samples == [
-        palette["modulation"], palette["background"],
-        palette["modulation"], palette["background"],
-    ]
-
-
 def test_compact_audio_gain_fader_stays_inside_value_lane():
     """Maximum audio gain leaves the standard two-pixel chip inset."""
-    dut = RezoTileDisplay(h_active=1280, compact_layout=True)
+    dut = RezoTileDisplay(h_active=1280)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
     sim.add_clock(1e-6, domain="dvi")
@@ -1007,7 +883,7 @@ def test_compact_audio_gain_fader_stays_inside_value_lane():
 
 def test_compact_input_meter_clamps_and_marks_clipping_inside_value_lane():
     """Full-scale telemetry cannot escape the chip; clipping gets an end stop."""
-    dut = RezoTileDisplay(h_active=1280, compact_layout=True)
+    dut = RezoTileDisplay(h_active=1280)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
     sim.add_clock(1e-6, domain="dvi")
@@ -1044,7 +920,7 @@ def test_compact_input_meter_clamps_and_marks_clipping_inside_value_lane():
 def test_compact_output_cells_share_native_label_centers():
     """Every OUTPUT cell is centred from the same native label coordinate."""
     dut = RezoTileDisplay(
-        h_active=1280, rotate_left=False, compact_layout=True)
+        h_active=1280, rotate_left=False)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
     sim.add_clock(1e-6, domain="dvi")
@@ -1095,7 +971,7 @@ def test_compact_output_cells_share_native_label_centers():
 def test_compact_output_send_scaling_preserves_exact_fill_endpoint():
     """A send of eight fills 24 pixels after the four-pixel inset."""
     dut = RezoTileDisplay(
-        h_active=1280, rotate_left=False, compact_layout=True)
+        h_active=1280, rotate_left=False)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
     sim.add_clock(1e-6, domain="dvi")

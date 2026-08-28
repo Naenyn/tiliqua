@@ -8,11 +8,11 @@ from top.rezo.strezo_variant import (
     NATIVE_OUTPUT_SIDE_CHIP_X0,
     NATIVE_OUTPUT_SIDE_CHIP_X1,
     RezoCore,
-    RezoHardwareUI,
     RezoTileDisplay,
     native_output_meter_bounds,
     output_meter_db_value,
 )
+from top.rezo.ui_specs import StrezoUISpec
 from top.rezo.ui_common import (
     NATIVE_FEEDBACK_CEILING_Y0,
     NATIVE_FEEDBACK_KNEE_Y0,
@@ -34,7 +34,6 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
     dut = RezoTileDisplay(
         h_active=h_active,
         rotate_left=rotate_left,
-        compact_layout=True,
     )
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
@@ -169,7 +168,7 @@ def test_pager_tracks_strezo_navigation_order_and_reflows_neighbors():
 def test_page_selection_outline_fits_the_page_chip():
     palette = RezoTileDisplay.PALETTE
     assert _render_samples(
-        selected=RezoHardwareUI.TARGET_PAGE,
+        selected=StrezoUISpec.TARGET_PAGE,
         points=((212, 119), (212, 120), (212, 149), (212, 150)),
     ) == [
         (palette["blank"],) * 3,
@@ -183,7 +182,7 @@ def test_feedback_amount_is_spaced_below_the_band_buttons():
     palette = RezoTileDisplay.PALETTE
     assert _render_samples(
         page=1,
-        selected=RezoHardwareUI.TARGET_FEEDBACK,
+        selected=StrezoUISpec.TARGET_FEEDBACK,
         points=((263, 344), (264, 344), (265, 344)),
     ) == [
         (palette["surface"],) * 3,
@@ -305,7 +304,7 @@ def test_main_preset_selection_uses_the_shared_header_outline():
     blank = RezoTileDisplay.PALETTE["blank"]
     assert _render_samples(
         page=0,
-        selected=RezoHardwareUI.TARGET_PRESET,
+        selected=StrezoUISpec.TARGET_PRESET,
         points=((250, 164), (250, 180)),
     ) == [
         (blank, blank, blank),
@@ -414,12 +413,12 @@ def test_output_column_header_selection_bars_sit_above_the_labels():
     selected = RezoTileDisplay.PALETTE["selected"]
     group_samples = _render_samples(
         page=4,
-        selected=RezoHardwareUI.TARGET_OUTPUT_COL_BASE,
+        selected=StrezoUISpec.TARGET_OUTPUT_COL_BASE,
         points=((270, 233), (270, 281)),
     )
     dry_samples = _render_samples(
         page=4,
-        selected=RezoHardwareUI.TARGET_OUTPUT_DRY_COL,
+        selected=StrezoUISpec.TARGET_OUTPUT_DRY_COL,
         points=((538, 233), (538, 281)),
     )
     assert group_samples[0] == (selected, selected, selected)

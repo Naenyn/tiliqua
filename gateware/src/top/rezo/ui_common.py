@@ -142,8 +142,7 @@ def native_clock_row_geometry(height):
     return init
 
 
-def native_group_geometry(
-        width, *, compact=True, content_shift=16, x_prefetch=1):
+def native_group_geometry(width, *, content_shift=16, x_prefetch=1):
     """Encode the common 10x4 GROUPS marker geometry.
 
     Bits 0..3 select a band, bit 4 marks an active x column, bits 5..6
@@ -154,16 +153,16 @@ def native_group_geometry(
     init = []
     for coordinate in range(width):
         encoded = 0
-        pixel_x = coordinate + (x_prefetch if compact else 0)
+        pixel_x = coordinate + x_prefetch
         for band in range(10):
-            x0 = 208 + band * 34 if compact else 144 + band * 48
-            marker_width = 18 if compact else 24
+            x0 = 208 + band * 34
+            marker_width = 18
             if x0 <= pixel_x < x0 + marker_width:
                 encoded |= band | (1 << 4)
                 break
         for group, center in enumerate(centers):
-            y0 = center - 9 if compact else 294 + group * 64
-            marker_height = 20 if compact else 24
+            y0 = center - 9
+            marker_height = 20
             if y0 <= coordinate < y0 + marker_height:
                 encoded |= (group << 5) | (1 << 7)
                 if (coordinate < y0 + 2 or
@@ -174,7 +173,7 @@ def native_group_geometry(
     return init
 
 
-def native_output_column_geometry(width, *, compact=True, x_prefetch=1):
+def native_output_column_geometry(width, *, x_prefetch=1):
     """Encode the common five-column OUTPUT routing geometry.
 
     Bits 0..2 select the source, bit 3 marks the two-pixel edge, and bit 4
@@ -182,11 +181,11 @@ def native_output_column_geometry(width, *, compact=True, x_prefetch=1):
     """
     init = []
     for address in range(width):
-        pixel_x = address + (x_prefetch if compact else 0)
+        pixel_x = address + x_prefetch
         encoded = 0
         for source, center in enumerate(NATIVE_OUTPUT_COL_CENTERS):
-            x0 = center - 27 if compact else 188 + source * 96
-            cell_width = 56 if compact else 72
+            x0 = center - 27
+            cell_width = 56
             if x0 <= pixel_x < x0 + cell_width:
                 encoded = source | (1 << 4)
                 if (pixel_x < x0 + 2 or
@@ -378,162 +377,10 @@ def put_native_support_page_labels(put, *, output_label_col=9,
     put(6, "HZ", 26, 22 + bands_offset)
 
 
-def put_legacy_support_page_labels(put, *, frequency_col,
-                                   output_row_col=3,
-                                   input_depth_labels=True,
-                                   output_labels=("GRP1", "GRP2", "GRP3",
-                                                  "GRP4", "DRY")):
-    """Place common support-page labels on the original 45-cell layout."""
-    put(1, "FEEDBACK SOURCES", 2, 8)
-    put(1, "BANDS", 2, 11)
-    put(1, "FREQ:", frequency_col, 11)
-    put(1, "FEEDBACK SAFETY", 2, 23)
-    put(1, "KNEE", 2, 26)
-    put(1, "CEILING", 2, 29)
-    put(1, "DAMPING", 2, 32)
-
-    put(2, "INPUT ROUTING", 2, 11)
-    for lane in range(4):
-        row = 13 + lane * 6
-        put(2, f"IN{lane}", 3, row)
-        put(2, "MODE", 8, row)
-        put(2, "VALUE", 8, row + 2)
-        if input_depth_labels:
-            put(2, "DEPTH", 8, row + 4)
-
-    put(3, "BANK GROUPS", 2, 11)
-    put(3, "BANKS", 21, 15)
-    for group in range(4):
-        put(3, f"GRP{group + 1}", 3, 19 + group * 4)
-
-    put(4, "OUTPUT ROUTING", 2, 11)
-    for source, label in enumerate(output_labels):
-        put(4, label, 12 + source * 6, 17)
-    for output in range(4):
-        put(4, f"OUT{output}", output_row_col, 21 + output * 5)
-
-    put(5, "STATE AND DISPLAY", 2, 11)
-    put(5, "PALETTE", 8, 15)
-    put(5, "SAVE DEFAULT", 3, 19)
-
-    put(6, "PRESET", 2, 7)
-    put(6, "ENABLE", 2, 12)
-    put(6, "SET FREQ", 2, 22)
-    put(6, "HZ", 20, 22)
-
-
-def add_feedback_navigation(m, *, edit_direction, selected, next_selected,
-                            target_visible, page_target, send_base,
-                            feedback_target, knee_target, damping_target,
-                            band_count):
-    """Emit navigation shared by every REZO-family FEEDBACK page."""
-    with m.If(edit_direction):
-        with m.If(~target_visible):
-            m.d.comb += next_selected.eq(send_base)
-        with m.Elif(selected == page_target):
-            m.d.comb += next_selected.eq(send_base)
-        with m.Elif(selected == damping_target):
-            m.d.comb += next_selected.eq(page_target)
-        with m.Elif(selected == send_base + band_count - 1):
-            m.d.comb += next_selected.eq(feedback_target)
-        with m.Elif(selected == feedback_target):
-            m.d.comb += next_selected.eq(knee_target)
-        with m.Else():
-            m.d.comb += next_selected.eq(selected + 1)
-    with m.Else():
-        with m.If(~target_visible):
-            m.d.comb += next_selected.eq(damping_target)
-        with m.Elif(selected == page_target):
-            m.d.comb += next_selected.eq(damping_target)
-        with m.Elif(selected == send_base):
-            m.d.comb += next_selected.eq(page_target)
-        with m.Elif(selected == knee_target):
-            m.d.comb += next_selected.eq(feedback_target)
-        with m.Elif(selected == feedback_target):
-            m.d.comb += next_selected.eq(send_base + band_count - 1)
-        with m.Else():
-            m.d.comb += next_selected.eq(selected - 1)
-
-
-def add_input_navigation(m, *, edit_direction, selected, next_selected,
-                         target_visible, page_target, input_base,
-                         input_modes, cv_mode):
-    """Emit four-lane MODE/VALUE/conditional-DEPTH INPUT navigation."""
-    with m.If(edit_direction):
-        with m.If(~target_visible):
-            m.d.comb += next_selected.eq(input_base)
-        with m.Elif(selected == page_target):
-            m.d.comb += next_selected.eq(input_base)
-        for lane in range(4):
-            target_base = input_base + lane * 3
-            next_input = page_target if lane == 3 else target_base + 3
-            with m.Elif(selected == target_base):
-                m.d.comb += next_selected.eq(target_base + 1)
-            with m.Elif(selected == target_base + 1):
-                m.d.comb += next_selected.eq(
-                    Mux(input_modes[lane] == cv_mode,
-                        target_base + 2, next_input))
-            with m.Elif(selected == target_base + 2):
-                m.d.comb += next_selected.eq(next_input)
-    with m.Else():
-        last_base = input_base + 9
-        last_target = Mux(input_modes[3] == cv_mode,
-                          last_base + 2, last_base + 1)
-        with m.If(~target_visible):
-            m.d.comb += next_selected.eq(last_target)
-        with m.Elif(selected == page_target):
-            m.d.comb += next_selected.eq(last_target)
-        for lane in range(4):
-            target_base = input_base + lane * 3
-            if lane == 0:
-                previous_input = page_target
-            else:
-                previous_base = input_base + (lane - 1) * 3
-                previous_input = Mux(
-                    input_modes[lane - 1] == cv_mode,
-                    previous_base + 2, previous_base + 1)
-            with m.Elif(selected == target_base):
-                m.d.comb += next_selected.eq(previous_input)
-            with m.Elif(selected == target_base + 1):
-                m.d.comb += next_selected.eq(target_base)
-            with m.Elif(selected == target_base + 2):
-                m.d.comb += next_selected.eq(target_base + 1)
-
-
-def add_group_navigation(m, *, edit_direction, selected, next_selected,
-                         target_visible, page_target, group_base,
-                         group_count):
-    """Emit the linear BANK GROUPS navigation shared by the family."""
-    last_group = group_base + group_count - 1
-    with m.If(edit_direction):
-        with m.If(~target_visible):
-            m.d.comb += next_selected.eq(group_base)
-        with m.Elif(selected == page_target):
-            m.d.comb += next_selected.eq(group_base)
-        with m.Elif(selected == last_group):
-            m.d.comb += next_selected.eq(page_target)
-        with m.Else():
-            m.d.comb += next_selected.eq(selected + 1)
-    with m.Else():
-        with m.If(~target_visible):
-            m.d.comb += next_selected.eq(last_group)
-        with m.Elif(selected == page_target):
-            m.d.comb += next_selected.eq(last_group)
-        with m.Elif(selected == group_base):
-            m.d.comb += next_selected.eq(page_target)
-        with m.Else():
-            m.d.comb += next_selected.eq(selected - 1)
-
 NATIVE_OUTPUT_ROW_SELECT_X0 = 116
 NATIVE_OUTPUT_ROW_SELECT_X1 = 120
 NATIVE_OUTPUT_COL_SELECT_Y0 = 280
 NATIVE_OUTPUT_COL_SELECT_Y1 = 284
-LEGACY_OUTPUT_ROW_SELECT_X0 = 26
-LEGACY_OUTPUT_ROW_SELECT_X1 = 30
-LEGACY_OUTPUT_COL_SELECT_Y0 = 264
-LEGACY_OUTPUT_COL_SELECT_Y1 = 268
-
-
 def native_input_gain_endpoint(gain):
     """Map an unsigned 8-bit gain onto the inset native VALUE fill lane."""
     mapped = NATIVE_INPUT_FILL_X0 + gain + (gain >> 4)
@@ -605,16 +452,12 @@ def output_header_selection(*, page, row_active, col_active,
                             row_target, col_target,
                             selected_row, selected_col,
                             matrix_row, matrix_col, dry_selected,
-                            x, y, compact, compact_y_shift=0):
+                            x, y, y_shift=0):
     """Shared solid-bar selector for the common OUTPUT routing matrix."""
-    row_x0 = (NATIVE_OUTPUT_ROW_SELECT_X0 if compact
-              else LEGACY_OUTPUT_ROW_SELECT_X0)
-    row_x1 = (NATIVE_OUTPUT_ROW_SELECT_X1 if compact
-              else LEGACY_OUTPUT_ROW_SELECT_X1)
-    col_y0 = ((NATIVE_OUTPUT_COL_SELECT_Y0 + compact_y_shift) if compact
-              else LEGACY_OUTPUT_COL_SELECT_Y0)
-    col_y1 = ((NATIVE_OUTPUT_COL_SELECT_Y1 + compact_y_shift) if compact
-              else LEGACY_OUTPUT_COL_SELECT_Y1)
+    row_x0 = NATIVE_OUTPUT_ROW_SELECT_X0
+    row_x1 = NATIVE_OUTPUT_ROW_SELECT_X1
+    col_y0 = NATIVE_OUTPUT_COL_SELECT_Y0 + y_shift
+    col_y1 = NATIVE_OUTPUT_COL_SELECT_Y1 + y_shift
     return page & (
         (row_active & row_target & (selected_row == matrix_row) &
          (x >= row_x0) & (x < row_x1)) |

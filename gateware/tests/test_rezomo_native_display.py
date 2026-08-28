@@ -1,7 +1,8 @@
 from amaranth.sim import Simulator
 
 from rezo_display_support import sample_native_rgb
-from top.rezo.top import RezoCore, RezoHardwareUI, RezoTileDisplay
+from top.rezo.top import RezoCore, RezoTileDisplay
+from top.rezo.ui_specs import RezomoUISpec
 
 
 def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
@@ -25,7 +26,6 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
     dut = RezoTileDisplay(
         h_active=h_active,
         rotate_left=rotate_left,
-        compact_layout=True,
     )
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
@@ -258,9 +258,9 @@ def test_feedback_navigation_outlines_share_the_native_track_edges():
     selected = RezoTileDisplay.PALETTE["selected"]
     surface = RezoTileDisplay.PALETTE["surface"]
     for target, y in (
-        (RezoHardwareUI.TARGET_FEEDBACK, 344),
-        (RezoHardwareUI.TARGET_LIMIT_KNEE, 408),
-        (RezoHardwareUI.TARGET_LIMIT_CAP, 440),
+        (RezomoUISpec.TARGET_FEEDBACK, 344),
+        (RezomoUISpec.TARGET_LIMIT_KNEE, 408),
+        (RezomoUISpec.TARGET_LIMIT_CAP, 440),
     ):
         assert _render_samples(
             page=1, selected=target, points=((267, y), (268, y), (269, y)),
@@ -275,7 +275,7 @@ def test_page_selection_outline_fits_the_page_chip():
     selected = RezoTileDisplay.PALETTE["selected"]
     blank = RezoTileDisplay.PALETTE["blank"]
     assert _render_samples(
-        selected=RezoHardwareUI.TARGET_PAGE,
+        selected=RezomoUISpec.TARGET_PAGE,
         points=((212, 119), (212, 120), (212, 149), (212, 150)),
     ) == [
         (blank, blank, blank),
@@ -436,7 +436,7 @@ def test_output_row_selector_uses_native_safe_square_coordinates():
     blank = RezoTileDisplay.PALETTE["blank"]
     assert _render_samples(
         page=4,
-        selected=RezoHardwareUI.TARGET_OUTPUT_ROW_BASE,
+        selected=RezomoUISpec.TARGET_OUTPUT_ROW_BASE,
         points=((105, 294), (116, 294)),
     ) == [
         (RezoTileDisplay.PALETTE["background"],) * 3,
@@ -447,7 +447,7 @@ def test_output_row_selector_uses_native_safe_square_coordinates():
 def test_output_send_scaling_preserves_exact_fill_endpoint():
     """A send of eight fills 24 pixels after the four-pixel inset."""
     dut = RezoTileDisplay(
-        h_active=1280, rotate_left=False, compact_layout=True)
+        h_active=1280, rotate_left=False)
     sim = Simulator(dut)
     sim.add_clock(1e-6, domain="sync")
     sim.add_clock(1e-6, domain="dvi")

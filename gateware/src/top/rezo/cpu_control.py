@@ -114,10 +114,6 @@ class RezoFirmwareUIState:
     """Signals shared by firmware CSRs, the DSP, and the hardware renderer."""
 
     def __init__(self):
-        self.enc_i = Signal()
-        self.enc_q = Signal()
-        self.button = Signal()
-
         self.levels = [Signal(signed(16), name=f"fw_level{n}")
                        for n in range(10)]
         self.band_enables = [Signal(init=1, name=f"fw_band_enable{n}")
@@ -315,10 +311,6 @@ class RezomoFirmwareUIState:
     """Signals shared by REZOMO firmware, DSP, and scanline renderer."""
 
     def __init__(self):
-        self.enc_i = Signal()
-        self.enc_q = Signal()
-        self.button = Signal()
-
         self.levels = [Signal(signed(16), name=f"fw_level{n}")
                        for n in range(10)]
         self.band_enables = [Signal(init=1, name=f"fw_band_enable{n}")
@@ -496,10 +488,6 @@ class StrezoFirmwareUIState:
     """Signals shared by STREZO firmware, DSP, and scanline renderer."""
 
     def __init__(self):
-        self.enc_i = Signal()
-        self.enc_q = Signal()
-        self.button = Signal()
-
         self.levels = [Signal(signed(16), init=8192, name=f"fw_level{n}")
                        for n in range(10)]
         self.band_enables = [Signal(init=1, name=f"fw_band_enable{n}")

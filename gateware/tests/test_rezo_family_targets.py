@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,83 @@ from top.rezo.cpu_control import (
     StrezoCpuControlPlane,
 )
 from top.rezo.targets import Display, Product, TARGETS, get_target
+from top.rezo.ui_specs import RezoUISpec, RezomoUISpec, StrezoUISpec
+
+
+COMMON_UI_TARGETS = {
+    "TARGET_PAGE": "PAGE",
+    "TARGET_PRESET": "PRESET",
+    "TARGET_BAND_BASE": "BAND",
+    "TARGET_DRIVE": "DRIVE",
+    "TARGET_RESONANCE": "RESONANCE",
+    "TARGET_FEEDBACK": "FEEDBACK",
+    "TARGET_LIMIT_KNEE": "KNEE",
+    "TARGET_LIMIT_CAP": "CEILING",
+    "TARGET_DAMP": "DAMP",
+    "TARGET_INPUT_BASE": "INPUT",
+    "TARGET_GROUP_BASE": "GROUP",
+    "TARGET_OUTPUT_BASE": "OUTPUT",
+    "TARGET_FEEDBACK_SEND_BASE": "FEEDBACK_ENABLE",
+    "TARGET_PALETTE": "PALETTE",
+    "TARGET_SAVE_DEFAULT": "SAVE",
+    "TARGET_BAND_LAYOUT": "LAYOUT",
+    "TARGET_BAND_ENABLE_BASE": "ENABLE",
+    "TARGET_BAND_FREQ_BASE": "FREQUENCY",
+}
+
+
+@pytest.mark.parametrize(
+    ("firmware_dir", "ui_spec", "product_targets"),
+    (
+        ("cpu_fw", RezoUISpec, {
+            "TARGET_MODE": "MODE",
+            "TARGET_FILTER_TYPE": "FILTER_TYPE",
+            "TARGET_FILTER_CUTOFF": "CUTOFF",
+            "TARGET_FILTER_SLOPE": "SLOPE",
+            "TARGET_FILTER_WIDTH": "WIDTH",
+            "TARGET_FILTER_CV_BASE": "FILTER_MATRIX",
+        }),
+        ("rezomo_cpu_fw", RezomoUISpec, {
+            "TARGET_MODE": "MODE",
+            "TARGET_SHIFT_DIRECTION": "SHIFT_DIRECTION",
+            "TARGET_CLOCK_ALGORITHM": "CLOCK_ALGORITHM",
+            "TARGET_TURING_LENGTH": "TURING_LENGTH",
+            "TARGET_TURING_CHANGE": "TURING_CHANGE",
+            "TARGET_CLOCK_SOURCE": "CLOCK_SOURCE",
+            "TARGET_CLOCK_RATE": "CLOCK_RATE",
+            "TARGET_CLOCK_DEPTH": "CLOCK_DEPTH",
+            "TARGET_TURING_TARGET": "TURING_TARGET",
+            "TARGET_TURING_START": "TURING_START",
+            "TARGET_DATA_SOURCE": "DATA_SOURCE",
+        }),
+        ("strezo_cpu_fw", StrezoUISpec, {
+            "TARGET_CROSS_LAYOUT": "CROSS_LAYOUT",
+            "TARGET_MOTION_SOURCE": "MOTION_SOURCE",
+            "TARGET_MOTION_RATE": "MOTION_RATE",
+            "TARGET_MOTION_PHASE": "MOTION_PHASE",
+            "TARGET_CROSS_MATRIX_BASE": "CROSS_CELL",
+            "TARGET_CROSS_FEEDBACK": "CROSS_FEEDBACK",
+            "TARGET_OUTPUT_SIDE_BASE": "OUTPUT_SIDE_TARGET",
+            "TARGET_CROSS_ROW_BASE": "CROSS_ROW",
+            "TARGET_CROSS_COL_BASE": "CROSS_COL",
+            "TARGET_SAME_FEEDBACK": "SAME_FEEDBACK",
+        }),
+    ),
+)
+def test_renderer_ui_specs_match_firmware_targets(
+        firmware_dir, ui_spec, product_targets):
+    main_rs = (
+        Path(__file__).parents[1] / "src" / "top" / "rezo" /
+        firmware_dir / "src" / "main.rs"
+    ).read_text()
+    rust_targets = {
+        name: int(value)
+        for name, value in re.findall(
+            r"^const ([A-Z_]+): u8 = (\d+);$", main_rs, re.MULTILINE)
+    }
+
+    for spec_name, rust_name in (COMMON_UI_TARGETS | product_targets).items():
+        assert getattr(ui_spec, spec_name) == rust_targets[rust_name]
 
 
 def test_family_exposes_complete_product_display_matrix():
