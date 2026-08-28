@@ -294,14 +294,23 @@ time:
 4. ~~Remove the unused `yosys`, `nextpnr_ecp5`, and `ecppack` fields from
    `targets.py`; all current family targets set them to `None`.~~ Completed
    after the hardware-qualified STREZO serializer fix.
-5. Consolidate duplicated firmware-build/CLI plumbing in `rezo_cpu.py`,
-   `rezomo_cpu.py`, and `strezo_cpu.py`. Decide whether the redundant `*_cpu`
-   console entry points remain documented compatibility aliases or are removed
-   now that CPU images are canonical.
+5. ~~Consolidate duplicated firmware-build/CLI plumbing in `rezo_cpu.py`,
+   `rezomo_cpu.py`, and `strezo_cpu.py`.~~ Completed in `b961597c` through
+   `cpu_build.py`; the `*_cpu` console entry points remain compatibility
+   aliases. Full standard builds reproduced the preceding timing exactly:
+   REZO 426.62/72.55/66.49/80.04 MHz, REZOMO
+   436.68/75.75/66.49/78.68 MHz, and STREZO
+   482.39/69.80/66.34/80.01 MHz (DVI5X/audio/sync/DVI). Archive SHA-256 values
+   are `765bd4c5ef661b2ecad31a0a503c29e034033f5201bc4938492efe323cfcb904`,
+   `dbebd964fa7f8546cb42baf27e68203e61fb32b632e7cfefcfe178919477e271`,
+   and `3a3e464cdd1d5d8b3b8ed5cde636618fbd517676e5ade1bc33a4403031d01b6d`.
 6. Extract the duplicated Rust persistence, arithmetic, input, navigation, and
    edit-loop primitives into the shared firmware crate behind a product spec or
-   trait. This is the most valuable follow-on for preventing firmware drift,
-   but it needs firmware-size checks after each step.
+   trait. In progress: endian record access, journal CRC, and clamp-add helpers
+   are shared and covered by eight host tests. Initial release text sizes are
+   REZO 14,856 bytes, REZOMO 16,944 bytes, and STREZO 13,344 bytes, all within
+   their physical firmware regions. Continue one equivalent block at a time,
+   with firmware-size and full bitstream checks after each checkpoint.
 
 `RezoHardwareUI` classes cannot simply be deleted yet: renderer code and tests
 still use their constants and target/navigation contracts. First move that

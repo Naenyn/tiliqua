@@ -4,8 +4,9 @@
 use core::ptr::{read_volatile, write_volatile};
 use panic_halt as _;
 use rezo_cpu_fw::{
-    clamp_control, crc32_bzip2_update, gray_encode, pack_bits, progressive_edit_level,
-    step_coarse_byte, step_group_index, step_target, unpack_bits, GROUP_INDEX_DEFAULTS,
+    add, adds, clamp_control, gray_encode, pack_bits, progressive_edit_level, read_u16, read_u32,
+    record_crc, step_coarse_byte, step_group_index, step_target, unpack_bits, write_u16, write_u32,
+    GROUP_INDEX_DEFAULTS,
 };
 use riscv_rt::entry;
 
@@ -143,12 +144,6 @@ unsafe fn ui_write(kind: u32, index: usize, value: u32) {
     );
 }
 
-fn add(value: u32, delta: i32, lo: u32, hi: u32) -> u32 {
-    (value as i32 + delta).clamp(lo as i32, hi as i32) as u32
-}
-fn adds(value: i32, delta: i32, lo: i32, hi: i32) -> i32 {
-    (value + delta).clamp(lo, hi)
-}
 fn cross_factory(layout: u32, source: usize, destination: usize) -> u32 {
     match layout {
         1 if source == destination => 16,
@@ -735,34 +730,6 @@ unsafe fn flash_program(sector: u8, offset: u16, data: u8) -> bool {
 }
 unsafe fn flash_erase(sector: u8) -> bool {
     flash_operation(FLASH_ERASE, sector, 0, 0).is_some()
-}
-
-fn read_u16(bytes: &[u8], offset: usize) -> u16 {
-    u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
-}
-fn read_u32(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes([
-        bytes[offset],
-        bytes[offset + 1],
-        bytes[offset + 2],
-        bytes[offset + 3],
-    ])
-}
-fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
-    bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
-}
-fn write_u32(bytes: &mut [u8], offset: usize, value: u32) {
-    bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
-}
-fn record_crc(record: &[u8; RECORD_BYTES], words: usize) -> u32 {
-    let mut crc = 0xffff_ffff;
-    for byte in &record[..12] {
-        crc = crc32_bzip2_update(crc, *byte);
-    }
-    for byte in &record[HEADER_BYTES..HEADER_BYTES + words * 2] {
-        crc = crc32_bzip2_update(crc, *byte);
-    }
-    crc ^ 0xffff_ffff
 }
 
 unsafe fn scan_sector(

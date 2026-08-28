@@ -32,6 +32,14 @@ pub fn clamp_control(value: u32, delta: i32, lo: u32, hi: u32) -> u32 {
     (value as i32 + delta * 256).clamp(lo as i32, hi as i32) as u32
 }
 
+pub fn add(value: u32, delta: i32, lo: u32, hi: u32) -> u32 {
+    (value as i32 + delta).clamp(lo as i32, hi as i32) as u32
+}
+
+pub fn adds(value: i32, delta: i32, lo: i32, hi: i32) -> i32 {
+    (value + delta).clamp(lo, hi)
+}
+
 /// Step the editable high byte of a 16-bit value without disturbing its
 /// precision byte. REZO input gain keeps 0xCC in that byte so exact unity and
 /// the CPU-less endpoint behavior survive every encoder edit.
@@ -87,6 +95,40 @@ pub fn crc32_bzip2_update(mut crc: u32, byte: u8) -> u32 {
     crc
 }
 
+pub fn read_u16(bytes: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
+}
+
+pub fn read_u32(bytes: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes([
+        bytes[offset],
+        bytes[offset + 1],
+        bytes[offset + 2],
+        bytes[offset + 3],
+    ])
+}
+
+pub fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
+    bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+}
+
+pub fn write_u32(bytes: &mut [u8], offset: usize, value: u32) {
+    bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+}
+
+/// Calculate the CRC for a REZO-family journal record. All product records
+/// share a 16-byte header whose CRC field occupies bytes 12..16.
+pub fn record_crc(record: &[u8], words: usize) -> u32 {
+    let mut crc = 0xffff_ffff;
+    for byte in &record[..12] {
+        crc = crc32_bzip2_update(crc, *byte);
+    }
+    for byte in &record[16..16 + words * 2] {
+        crc = crc32_bzip2_update(crc, *byte);
+    }
+    crc ^ 0xffff_ffff
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,6 +165,11 @@ mod tests {
 
     #[test]
     fn scalar_steps_match_cpu_less_coarse_ranges() {
+        assert_eq!(add(3, 2, 0, 4), 4);
+        assert_eq!(add(3, -5, 0, 4), 0);
+        assert_eq!(adds(-3, 2, -4, 4), -1);
+        assert_eq!(adds(3, 5, -4, 4), 4);
+
         assert_eq!(clamp_control(0x2000, 1, 0, 0x8000), 0x2100);
         assert_eq!(clamp_control(0x2000, -1, 0, 0x8000), 0x1f00);
         assert_eq!(clamp_control(0x8000, 1, 0, 0x8000), 0x8000);
@@ -171,5 +218,22 @@ mod tests {
             crc = crc32_bzip2_update(crc, *byte);
         }
         assert_eq!(crc ^ 0xffff_ffff, 0xfc89_1918);
+    }
+
+    #[test]
+    fn little_endian_fields_and_record_crc_share_one_contract() {
+        let mut record = [0u8; 22];
+        write_u16(&mut record, 0, 0x1234);
+        write_u32(&mut record, 4, 0x89ab_cdef);
+        write_u16(&mut record, 16, 0x5678);
+        write_u32(&mut record, 18, 0x0123_4567);
+        assert_eq!(read_u16(&record, 0), 0x1234);
+        assert_eq!(read_u32(&record, 4), 0x89ab_cdef);
+        assert_eq!(read_u16(&record, 16), 0x5678);
+        assert_eq!(read_u32(&record, 18), 0x0123_4567);
+
+        let crc = record_crc(&record, 3);
+        write_u32(&mut record, 12, crc);
+        assert_eq!(record_crc(&record, 3), read_u32(&record, 12));
     }
 }
