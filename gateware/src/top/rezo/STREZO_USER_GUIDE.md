@@ -168,7 +168,8 @@ all five sends on that row. DRY adds the corresponding unfiltered input path.
 The shared **MID** and **SIDE** controls below the matrix reshape only the wet
 G1-G4 signals after the feedback taps and before output routing. DRY bypasses
 this stage, so the original stereo input can always be mixed back unchanged.
-Both controls run from 0 to 128, with 64 as exact unity:
+Both controls run from 0 to 128, with 64 as exact unity. The fixed tick on
+each fader marks that 1.0x position:
 
 - **MID** changes the common center component. Raise it to make the newly
   shared stereo center more pronounced; lower it to leave more difference

@@ -4209,6 +4209,12 @@ class RezoTileDisplay(wiring.Component):
         side_fill = output_page & self.rect(
             x, y, cross_track_x0, cross_y0,
             cross_track_x0 + side_gain_width, cross_y0 + 16)
+        mid_side_unity_x = native_cross_fader_endpoint(64, cross_track_x0)
+        mid_side_unity_marker = output_page & (
+            self.rect(x, y, mid_side_unity_x - 1, same_y0,
+                      mid_side_unity_x + 1, same_y0 + 16) |
+            self.rect(x, y, mid_side_unity_x - 1, cross_y0,
+                      mid_side_unity_x + 1, cross_y0 + 16))
         cross_select = cross_page & (
             ((selected_dvi_q == StrezoUISpec.TARGET_SAME_FEEDBACK) &
              self.rect(x, y, cross_track_x0 - 6, same_y0,
@@ -4355,7 +4361,7 @@ class RezoTileDisplay(wiring.Component):
                 cursor_chip),
             geometry_mod_q0.eq(band_mod_fill | bank_control_mod_fill |
                                input_meter_q0 | motion_monitor_line |
-                               limit_soft_region),
+                               limit_soft_region | mid_side_unity_marker),
             geometry_panel_q0.eq(preset_chip | palette_chip | cross_curve_chip |
                                  save_default_chip |
                                  motion_value_chip |
