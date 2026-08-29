@@ -52,6 +52,10 @@ try:
         STEREO_TILE_CHARS,
     )
     from .core_common import RezoCoreConstants
+    from .feedback import (
+        FeedbackShaper, feedback_damping, feedback_gain_from_control,
+        resonance_control,
+    )
     from .persistence_common import SPIFlashTransfer
     from .ui_specs import StrezoUISpec
     from .ui_common import (
@@ -94,6 +98,10 @@ except ImportError:  # top_level_cli executes this file directly.
         STEREO_TILE_CHARS,
     )
     from core_common import RezoCoreConstants
+    from feedback import (
+        FeedbackShaper, feedback_damping, feedback_gain_from_control,
+        resonance_control,
+    )
     from persistence_common import SPIFlashTransfer
     from ui_specs import StrezoUISpec
     from ui_common import (
@@ -192,6 +200,7 @@ class RezoCore(RezoCoreConstants, wiring.Component):
     CROSS_LAYOUT_ALL = 4
     CROSS_LAYOUT_USER = 5
     CROSS_DEPTH_MAX = 128
+    CROSS_COEFFICIENT_MAX = 32768
     CROSS_CURVE_LINEAR = 0
     CROSS_CURVE_LOG = 1
     MOTION_SOURCE_OFF = 0
@@ -221,7 +230,7 @@ class RezoCore(RezoCoreConstants, wiring.Component):
             # Early-rising logarithmic response: make the low half audible
             # sooner, then progressively refine the approach to full scale.
             shaped = math.log1p(7.0 * position) / math.log(8.0)
-        return round(cls.CROSS_DEPTH_MAX * shaped)
+        return round(cls.CROSS_COEFFICIENT_MAX * shaped)
 
     i: In(stream.Signature(data.ArrayLayout(ASQ, 4)))
     o: Out(stream.Signature(data.ArrayLayout(ASQ, 4)))
@@ -349,12 +358,12 @@ class RezoCore(RezoCoreConstants, wiring.Component):
             init=coefficient_init,
             attrs={"ram_style": "block"})
         cross_curve_rport = coefficient_mem.read_port()
-        effective_cross_feedback = Signal(unsigned(8))
+        effective_cross_feedback = Signal(unsigned(16))
         self._effective_cross_feedback = effective_cross_feedback
         m.d.comb += [
             cross_curve_rport.addr.eq(Cat(
                 self.cross_feedback, self.cross_curve, Const(1, 1))),
-            effective_cross_feedback.eq(cross_curve_rport.data[:8]),
+            effective_cross_feedback.eq(cross_curve_rport.data[:16]),
         ]
 
         # Smooth UI/CV target parameters before the DSP consumes them.  The UI
@@ -402,8 +411,7 @@ class RezoCore(RezoCoreConstants, wiring.Component):
             effective_resonance_raw.eq(smooth_resonance + resonance_cv_term),
             effective_feedback_raw.eq(smooth_feedback + feedback_cv_term),
             effective_drive_raw.eq(self.DRIVE_FLOOR + smooth_drive + drive_cv_term),
-            feedback_gain.eq(Mux(effective_feedback > 31744, 31744,
-                                 effective_feedback)),
+            feedback_gain.eq(feedback_gain_from_control(effective_feedback)),
         ]
         with m.If(effective_resonance_raw < 0):
             m.d.comb += effective_resonance.eq(0)
@@ -440,46 +448,46 @@ class RezoCore(RezoCoreConstants, wiring.Component):
         feedback_sample = Signal(ASQ, name="feedback_sample_l")
         feedback_sample_r = Signal(ASQ)
 
-        # Shared values.  Convert the UI values into ASQ-ish fractions.  The
-        # SVF uses inverse-Q: lower values are more resonant. Keep the safe
-        # inverse-Q floor, then add a feedback-proportional amount selected by
-        # DAMP. The former max(floor, feedback_damp) law made most positions
-        # identical unless RES and FB were already at their extremes; adding
-        # the term gives all five modes a useful, audible decay progression.
+        # STREZO's damping follows the strongest active SAME/CROSS leg rather
+        # than the global FB slider alone. A four-region approximation avoids
+        # spending another multiplier on this slow safety control. As in the
+        # mono cores, damping reduces requested resonance so its upper travel
+        # remains useful instead of collapsing against an inverse-Q floor.
         resonance_ctl = Signal(ASQ)
-        res_ctl = Signal(signed(17))
         feedback_damp = Signal(unsigned(16))
-        resonance_base = Signal(unsigned(16))
-        resonance_damped_raw = Signal(unsigned(17))
-        resonance_base_q = Signal(unsigned(16))
+        spatial_depth = Signal(unsigned(16))
+        spatial_feedback = Signal(unsigned(16))
+        resonance_amount_q = Signal(unsigned(16))
         feedback_damp_q = Signal(unsigned(16))
-        resonance_damped_q = Signal(unsigned(17))
+        resonance_reduced_q = Signal(unsigned(16))
         # Simulation probes; unconnected aliases disappear during synthesis.
         self._resonance_ctl = resonance_ctl
         self._feedback_damp = feedback_damp
-        with m.Switch(self.damp_mode):
-            with m.Case(0):
-                m.d.comb += feedback_damp.eq(0)
-            with m.Case(1):
-                m.d.comb += feedback_damp.eq(effective_feedback >> 4)
-            with m.Case(2):
-                m.d.comb += feedback_damp.eq(effective_feedback >> 3)
-            with m.Case(3):
-                m.d.comb += feedback_damp.eq(effective_feedback >> 2)
-            with m.Default():
-                m.d.comb += feedback_damp.eq((effective_feedback >> 2) + (effective_feedback >> 3))
+        self._spatial_feedback = spatial_feedback
         m.d.comb += [
-            res_ctl.eq(16384 - (effective_resonance >> 1)),
-            resonance_base.eq(Mux(res_ctl < 4096, 4096, res_ctl)),
-            resonance_damped_raw.eq(resonance_base + feedback_damp),
-            resonance_ctl.eq(Mux(
-                resonance_damped_raw > 16384,
-                16384, resonance_damped_raw)),
+            spatial_depth.eq(Mux(
+                (self.same_feedback << 8) > effective_cross_feedback,
+                self.same_feedback << 8, effective_cross_feedback)),
+            feedback_damp.eq(feedback_damping(
+                spatial_feedback, self.damp_mode, "strezo")),
+            resonance_ctl.eq(resonance_control(
+                effective_resonance, feedback_damp)),
         ]
+        with m.If(spatial_depth == 0):
+            m.d.comb += spatial_feedback.eq(0)
+        with m.Elif(spatial_depth <= 8192):
+            m.d.comb += spatial_feedback.eq(effective_feedback >> 2)
+        with m.Elif(spatial_depth <= 16384):
+            m.d.comb += spatial_feedback.eq(effective_feedback >> 1)
+        with m.Elif(spatial_depth <= 24576):
+            m.d.comb += spatial_feedback.eq(
+                effective_feedback - (effective_feedback >> 2))
+        with m.Else():
+            m.d.comb += spatial_feedback.eq(effective_feedback)
 
         # Feedback is smoothed and scheduled through the shared multiplier.
-        # Full-scale UI feedback is capped just below the hardware-tested cliff
-        # so the final encoder tick stays in the "hot but not runaway" region.
+        # A 31/32 scale uses every UI position while keeping the full-scale
+        # endpoint just below the hardware-tested runaway cliff.
         x = Signal(dsp.mac.SQNative, name="x_l")
         x_r = Signal(dsp.mac.SQNative)
         # Keep the input-plus-feedback sum wide until after saturation. A
@@ -752,31 +760,20 @@ class RezoCore(RezoCoreConstants, wiring.Component):
         filtered_next = Signal(mix_shape)
         feedback_drive = Signal(mix_shape)
         feedback_drive_r = Signal(mix_shape)
-        limit_cap_safe = Signal(unsigned(16))
-        clip_drive = Signal(mix_shape)
-        clip_drive_r = Signal(mix_shape)
-        clip_negative = Signal()
-        clip_negative_q = Signal()
-        clip_mag = Signal(unsigned(16))
-        clip_mag_q = Signal(unsigned(16))
-        clip_excess = Signal(unsigned(16))
-        clip_excess_q = Signal(unsigned(16))
-        clip_square = Signal(unsigned(32))
-        clip_square_q = Signal(unsigned(32))
-        clip_shaped_mag = Signal(unsigned(17))
-        clip_output_mag = Signal(unsigned(16))
-        clip_limited = Signal(ASQ)
-        clip_negative_r = Signal()
-        clip_negative_q_r = Signal()
-        clip_mag_r = Signal(unsigned(16))
-        clip_mag_q_r = Signal(unsigned(16))
-        clip_excess_r = Signal(unsigned(16))
-        clip_excess_q_r = Signal(unsigned(16))
-        clip_square_r = Signal(unsigned(32))
-        clip_square_q_r = Signal(unsigned(32))
-        clip_shaped_mag_r = Signal(unsigned(17))
-        clip_output_mag_r = Signal(unsigned(16))
-        clip_limited_r = Signal(ASQ)
+        m.submodules.feedback_shaper_l = feedback_shaper_l = FeedbackShaper(
+            input_width=mix_shape.width)
+        m.submodules.feedback_shaper_r = feedback_shaper_r = FeedbackShaper(
+            input_width=mix_shape.width)
+        m.d.comb += [
+            feedback_shaper_l.drive.eq(feedback_drive),
+            feedback_shaper_l.knee.eq(self.limit_knee),
+            feedback_shaper_l.ceiling.eq(self.limit_cap),
+            feedback_shaper_r.drive.eq(feedback_drive_r),
+            feedback_shaper_r.knee.eq(self.limit_knee),
+            feedback_shaper_r.ceiling.eq(self.limit_cap),
+        ]
+        clip_limited = feedback_shaper_l.sample
+        clip_limited_r = feedback_shaper_r.sample
         bank_input_soft = Signal(mix_shape)
         bank_input_limited = Signal(ASQ)
         bank_input_soft_r = Signal(mix_shape)
@@ -809,6 +806,9 @@ class RezoCore(RezoCoreConstants, wiring.Component):
             for n in range(self.N_GROUPS)
         ]
         matrix_route_index = Signal(range(20))
+        matrix_shape_commit = Signal()
+        matrix_shape_capture = Signal()
+        matrix_shape_destination = Signal(unsigned(2))
         matrix_source = Signal(unsigned(2))
         matrix_destination = Signal(unsigned(2))
         matrix_coefficient_q = Signal(unsigned(5))
@@ -816,10 +816,10 @@ class RezoCore(RezoCoreConstants, wiring.Component):
         matrix_next_source = Signal(unsigned(2))
         matrix_next_destination = Signal(unsigned(2))
         matrix_next_coefficient = Signal(unsigned(5))
-        matrix_cross_feedback_q = Signal(unsigned(8))
+        matrix_cross_feedback_q = Signal(unsigned(16))
         matrix_feedback_gain_q = Signal(unsigned(16))
-        matrix_combined_gain_product = Signal(unsigned(24))
-        matrix_combined_gain_q = Signal(unsigned(15))
+        matrix_combined_gain_product = Signal(unsigned(32))
+        matrix_combined_gain_q = Signal(unsigned(16))
         matrix_source_l = Signal(mix_shape)
         matrix_source_r = Signal(mix_shape)
         matrix_source_limited_l = Signal(ASQ)
@@ -862,15 +862,15 @@ class RezoCore(RezoCoreConstants, wiring.Component):
         self._feedback_gain = feedback_gain
         self._matrix_feedback_term_l = matrix_feedback_term_l
         self._matrix_feedback_term_r = matrix_feedback_term_r
-        # The original 0..16 controls used a /16 normalization. The expanded
-        # 0..128 controls use /128, preserving both historical endpoints while
-        # providing eight times as many useful positions between them.
-        cross_self_gain = Signal(unsigned(8))
-        cross_other_gain = Signal(unsigned(8))
-        cross_ll = Signal(signed(25))
-        cross_lr = Signal(signed(25))
-        cross_rr = Signal(signed(25))
-        cross_rl = Signal(signed(25))
+        # SAME remains a 0..128 retained position while CROSS is translated to
+        # Q1.15 by the curve ROM. Expanding SAME by 256 gives both paths the
+        # same full-resolution multiply and preserves their exact endpoints.
+        cross_self_gain = Signal(unsigned(16))
+        cross_other_gain = Signal(unsigned(16))
+        cross_ll = Signal(signed(33))
+        cross_lr = Signal(signed(33))
+        cross_rr = Signal(signed(33))
+        cross_rl = Signal(signed(33))
         cross_ll_q = Signal.like(cross_ll)
         cross_lr_q = Signal.like(cross_lr)
         cross_rr_q = Signal.like(cross_rr)
@@ -1000,14 +1000,28 @@ class RezoCore(RezoCoreConstants, wiring.Component):
                        feedback_term_q.as_value().as_signed()),
             x_drive_r.eq(drive_term_q_r +
                          feedback_term_q_r.as_value().as_signed()),
-            limit_cap_safe.eq(Mux(self.limit_cap > 32767, 32767,
-                                  self.limit_cap)),
             enabled_term.eq(Mux(band_enable_array[band], term_q, 0)),
             enabled_term_r.eq(Mux(band_enable_array[band], term_q_r, 0)),
             main_next.eq(main_acc + enabled_term),
             filtered_next.eq(main_next - dry_sample.as_value().as_signed()),
-            feedback_drive.eq(feedback_acc),
-            feedback_drive_r.eq(feedback_acc_r),
+            # Once the global tap has settled, reuse its two shapers for the
+            # four completed matrix destinations. Destinations finish four
+            # route cells apart, leaving enough pipeline time to capture each
+            # result without adding another pair of multipliers.
+            matrix_shape_commit.eq(
+                (state == state_output_product_commit) &
+                (matrix_route_index < 16) &
+                (matrix_source == self.N_GROUPS - 1)),
+            matrix_shape_capture.eq(
+                (state == state_output_limit_commit) &
+                (matrix_route_index >= 4) &
+                (matrix_route_index <= 16) &
+                (matrix_route_index[:2] == 0)),
+            matrix_shape_destination.eq((matrix_route_index - 4) >> 2),
+            feedback_drive.eq(Mux(
+                matrix_shape_commit, matrix_route_next_l, feedback_acc)),
+            feedback_drive_r.eq(Mux(
+                matrix_shape_commit, matrix_route_next_r, feedback_acc_r)),
             cv_product.eq(mac_z.as_value().as_signed() >> dsp.mac.SQNative.f_bits),
             cv_acc_value.eq(
                 Mux((input_mode_array[0] == self.INPUT_MODE_CV) &
@@ -1018,7 +1032,7 @@ class RezoCore(RezoCoreConstants, wiring.Component):
                     (cv_target_array[2] == cv_target_scan), cv_products[2], 0) +
                 Mux((input_mode_array[3] == self.INPUT_MODE_CV) &
                     (cv_target_array[3] == cv_target_scan), cv_products[3], 0)),
-            cross_self_gain.eq(self.same_feedback),
+            cross_self_gain.eq(self.same_feedback << 8),
             cross_other_gain.eq(Mux(
                 self.cross_layout == self.CROSS_LAYOUT_GLOBAL,
                 effective_cross_feedback, 0)),
@@ -1030,8 +1044,8 @@ class RezoCore(RezoCoreConstants, wiring.Component):
                         Cat(cross_self_gain, Const(0, 1)).as_signed()),
             cross_rl.eq(feedback_sample.as_value().as_signed() *
                         Cat(cross_other_gain, Const(0, 1)).as_signed()),
-            cross_sum_l.eq((cross_ll_q + cross_lr_q) >> 7),
-            cross_sum_r.eq((cross_rr_q + cross_rl_q) >> 7),
+            cross_sum_l.eq((cross_ll_q + cross_lr_q) >> 15),
+            cross_sum_r.eq((cross_rr_q + cross_rl_q) >> 15),
             matrix_source.eq(matrix_route_index[:2]),
             matrix_destination.eq(Mux(
                 matrix_route_index < 16,
@@ -1110,11 +1124,11 @@ class RezoCore(RezoCoreConstants, wiring.Component):
             matrix_cross_feedback_q.eq(effective_cross_feedback),
             matrix_feedback_gain_q.eq(feedback_gain),
             # source * coefficient / 16 is accumulated per destination.
-            # CROSS now has eight times the old UI resolution, so divide by
-            # 256 rather than 32. The later Q1.15 shift preserves the exact
-            # historical full-scale matrix feedback depth.
+            # CROSS is Q1.15 while FEEDBACK remains a 16-bit amount. Divide by
+            # 65536 so the later Q1.15 multiply preserves the historical
+            # full-scale matrix depth with useful response at every detent.
             matrix_combined_gain_q.eq(
-                (matrix_combined_gain_product + 128) >> 8),
+                (matrix_combined_gain_product + 32768) >> 16),
             cross_ll_q.eq(cross_ll),
             cross_lr_q.eq(cross_lr),
             cross_rr_q.eq(cross_rr),
@@ -1152,66 +1166,10 @@ class RezoCore(RezoCoreConstants, wiring.Component):
             m.d.comb += level_cur.eq(-16384)
         with m.Else():
             m.d.comb += level_cur.eq(level_with_cv)
-        # Smooth-knee quadratic saturation belongs in the feedback loop. The
-        # direct bank input must remain linear when feedback is zero; applying
-        # this curve there pre-distorts every wet signal while DRY stays clean.
-        # Below KNEE the feedback tap is exactly linear. Above it, subtract
-        # excess^2 / 65536; CEIL remains the final emergency rail.
-        m.d.comb += [
-            clip_drive.eq(feedback_drive),
-            clip_excess.eq(Mux(
-                clip_mag > self.limit_knee,
-                clip_mag - self.limit_knee, 0)),
-            clip_square.eq(clip_excess_q * clip_excess_q),
-            clip_shaped_mag.eq(Mux(
-                clip_mag_q > self.limit_knee,
-                clip_mag_q - (clip_square_q >> 16),
-                clip_mag_q)),
-            clip_output_mag.eq(Mux(
-                clip_shaped_mag > limit_cap_safe,
-                limit_cap_safe, clip_shaped_mag)),
-            clip_drive_r.eq(feedback_drive_r),
-            clip_excess_r.eq(Mux(
-                clip_mag_r > self.limit_knee,
-                clip_mag_r - self.limit_knee, 0)),
-            clip_square_r.eq(clip_excess_q_r * clip_excess_q_r),
-            clip_shaped_mag_r.eq(Mux(
-                clip_mag_q_r > self.limit_knee,
-                clip_mag_q_r - (clip_square_q_r >> 16),
-                clip_mag_q_r)),
-            clip_output_mag_r.eq(Mux(
-                clip_shaped_mag_r > limit_cap_safe,
-                limit_cap_safe, clip_shaped_mag_r)),
-        ]
-        with m.If(clip_drive >= 32768):
-            m.d.comb += [clip_negative.eq(0), clip_mag.eq(32768)]
-        with m.Elif(clip_drive <= -32768):
-            m.d.comb += [clip_negative.eq(1), clip_mag.eq(32768)]
-        with m.Elif(clip_drive < 0):
-            m.d.comb += [clip_negative.eq(1), clip_mag.eq(-clip_drive)]
-        with m.Else():
-            m.d.comb += [clip_negative.eq(0), clip_mag.eq(clip_drive)]
-        with m.If(clip_negative_q):
-            m.d.comb += clip_limited.as_value().eq(-clip_output_mag)
-        with m.Else():
-            m.d.comb += clip_limited.as_value().eq(clip_output_mag)
-        with m.If(clip_drive_r >= 32768):
-            m.d.comb += [clip_negative_r.eq(0), clip_mag_r.eq(32768)]
-        with m.Elif(clip_drive_r <= -32768):
-            m.d.comb += [clip_negative_r.eq(1), clip_mag_r.eq(32768)]
-        with m.Elif(clip_drive_r < 0):
-            m.d.comb += [clip_negative_r.eq(1), clip_mag_r.eq(-clip_drive_r)]
-        with m.Else():
-            m.d.comb += [clip_negative_r.eq(0), clip_mag_r.eq(clip_drive_r)]
-        with m.If(clip_negative_q_r):
-            m.d.comb += clip_limited_r.as_value().eq(-clip_output_mag_r)
-        with m.Else():
-            m.d.comb += clip_limited_r.as_value().eq(clip_output_mag_r)
-
         # The feedback saturator above shapes the delayed wet signal. This is
         # a separate, deliberately simple conditioner on the signal entering
-        # every resonator. It restores the transfer curve used by the last
-        # hardware-clean build while retaining the wider pre-limit sum.
+        # every resonator. Its 4:1 over-knee slope keeps the sum bounded while
+        # leaving useful character across the upper DRIVE range.
         with m.If(bank_drive_source_q_l > self.INPUT_LIMIT_KNEE):
             m.d.comb += bank_input_soft.eq(
                 self.INPUT_LIMIT_KNEE +
@@ -1259,19 +1217,6 @@ class RezoCore(RezoCoreConstants, wiring.Component):
         limit_to_asq(matrix_route_next_l, matrix_route_next_limited_l)
         limit_to_asq(matrix_route_next_r, matrix_route_next_limited_r)
 
-        # Pipeline magnitude, square, and clamp/sign across three short stages.
-        # The feedback sum is stable for many routing cycles; x gets explicit
-        # settling states below before clip_limited is captured.
-        m.d.sync += [
-            clip_negative_q.eq(clip_negative),
-            clip_mag_q.eq(clip_mag),
-            clip_excess_q.eq(clip_excess),
-            clip_square_q.eq(clip_square),
-            clip_negative_q_r.eq(clip_negative_r),
-            clip_mag_q_r.eq(clip_mag_r),
-            clip_excess_q_r.eq(clip_excess_r),
-            clip_square_q_r.eq(clip_square_r),
-        ]
         out_valid = Signal()
         out_ready = Signal()
         output_q = [Signal(ASQ, name=f"output_q{n}") for n in range(4)]
@@ -1456,7 +1401,7 @@ class RezoCore(RezoCoreConstants, wiring.Component):
                         m.d.sync += cv_target_scan.eq(cv_target_scan + 1)
                 with m.Else():
                     m.d.sync += [
-                        resonance_base_q.eq(resonance_base),
+                        resonance_amount_q.eq(effective_resonance),
                         feedback_damp_q.eq(feedback_damp),
                         input_mix_acc.eq(0),
                         input_mix_acc_r.eq(0),
@@ -1469,8 +1414,9 @@ class RezoCore(RezoCoreConstants, wiring.Component):
 
             with m.Case(state_input_gain_commit):
                 m.d.sync += [
-                    resonance_damped_q.eq(
-                        resonance_base_q + feedback_damp_q),
+                    resonance_reduced_q.eq(Mux(
+                        resonance_amount_q > feedback_damp_q,
+                        resonance_amount_q - feedback_damp_q, 0)),
                     input_gain_product_q.eq(dry_gain_term),
                     state.eq(state_input_gain_add),
                 ]
@@ -1534,9 +1480,8 @@ class RezoCore(RezoCoreConstants, wiring.Component):
                 m.d.sync += [
                             input_mix_sample.eq(input_mix_limited),
                             input_mix_sample_r.eq(input_mix_limited_r),
-                            resonance.eq(Mux(
-                                resonance_damped_q > 16384,
-                                16384, resonance_damped_q)),
+                            resonance.eq(
+                                16384 - (resonance_reduced_q >> 1)),
                             mac_a_q.as_value().eq(
                                 input_mix_limited.as_value().as_signed()),
                             mac_b_q.as_value().eq(self.effective_drive),
@@ -1798,9 +1743,27 @@ class RezoCore(RezoCoreConstants, wiring.Component):
                         matrix_product_r >> dsp.mac.SQNative.f_bits)),
                     state.eq(state_output_product_commit),
                 ]
+                # The shared shaper was fed the preceding destination's wide
+                # route sum in its commit state. Replace the temporary raw
+                # value before that destination reaches the final gain phase.
+                with m.If(matrix_shape_capture):
+                    m.d.sync += [
+                        matrix_feedback_array_l[
+                            matrix_shape_destination].eq(clip_limited),
+                        matrix_feedback_array_r[
+                            matrix_shape_destination].eq(clip_limited_r),
+                    ]
 
             with m.Case(state_output_product_commit):
                 m.d.sync += output_acc_array[output_chan].eq(output_next)
+                # The full-bank accumulator has had two clocks to traverse the
+                # continuous shaper. Capture it before the same hardware is
+                # borrowed for per-destination matrix shaping.
+                with m.If(matrix_route_index == 0):
+                    m.d.sync += [
+                        feedback_sample.eq(clip_limited),
+                        feedback_sample_r.eq(clip_limited_r),
+                    ]
                 with m.If(matrix_route_index < 15):
                     m.d.sync += matrix_coefficient_q.eq(
                         matrix_next_coefficient)
@@ -1845,8 +1808,6 @@ class RezoCore(RezoCoreConstants, wiring.Component):
                     ]
                 with m.Else():
                     m.d.sync += [
-                        feedback_sample.eq(clip_limited),
-                        feedback_sample_r.eq(clip_limited_r),
                         out_valid.eq(1),
                         state.eq(state_wait),
                     ]
@@ -4154,6 +4115,17 @@ class RezoTileDisplay(wiring.Component):
             ((NATIVE_FEEDBACK_CEILING_Y0 + tune_y_shift)),
             ((compact_tune_cap_end_q)),
             ((NATIVE_FEEDBACK_CEILING_Y0 + 16 + tune_y_shift)))
+        limit_relation_marker = tune_page & (
+            self.rect(
+                x, y, compact_tune_cap_end_q - 1,
+                NATIVE_FEEDBACK_KNEE_Y0 + tune_y_shift,
+                compact_tune_cap_end_q + 1,
+                NATIVE_FEEDBACK_KNEE_Y0 + 16 + tune_y_shift) |
+            self.rect(
+                x, y, compact_tune_knee_end_q - 1,
+                NATIVE_FEEDBACK_CEILING_Y0 + tune_y_shift,
+                compact_tune_knee_end_q + 1,
+                NATIVE_FEEDBACK_CEILING_Y0 + 16 + tune_y_shift))
         res_select = (
             (bank_page &
              (selected_dvi_q == StrezoUISpec.TARGET_RESONANCE) &
@@ -4228,7 +4200,7 @@ class RezoTileDisplay(wiring.Component):
                                 tune_cap_fill | motion_depth_fill),
             geometry_line_q0.eq(
                 band_zero_q0 | bank_control_mod_marker | border |
-                cursor_chip),
+                cursor_chip | limit_relation_marker),
             geometry_mod_q0.eq(band_mod_fill | bank_control_mod_fill |
                                input_meter_q0 | motion_monitor_line),
             geometry_panel_q0.eq(preset_chip | palette_chip | cross_curve_chip |

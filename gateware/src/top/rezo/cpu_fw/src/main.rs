@@ -3,8 +3,9 @@
 
 use panic_halt as _;
 use rezo_cpu_fw::{
-    add, adds, clamp_control, flash_erase, flash_program, flash_read, gray_encode, pack_bits,
-    progressive_edit_level, read8, read32, read_u16, read_u32, record_crc, step_coarse_byte,
+    add, adds, clamp_control, edit_feedback_ceiling, edit_feedback_knee, flash_erase,
+    flash_program, flash_read, gray_encode, normalize_feedback_limits, pack_bits,
+    progressive_edit_level, read32, read8, read_u16, read_u32, record_crc, step_coarse_byte,
     step_group_index, step_target, unpack_bits, write_u16, write_u32, write_ui_command,
     ENCODER_BUTTON, ENCODER_STEP, FLASH_SLOT, GROUP_INDEX_DEFAULTS,
 };
@@ -49,13 +50,14 @@ const STARTUP_STATE: u32 = 31;
 // margin while keeping a failed boot scan short. Sector erase needs a much
 // larger allowance for the flash chip's internal erase cycle.
 const BOOT_SLOT_TIMEOUT_POLLS: u32 = 1_000_000;
-const STATE_WORDS: usize = 46;
+const STATE_WORDS: usize = 48;
+const V2_STATE_WORDS: usize = 46;
 const LEGACY_STATE_WORDS: usize = 42;
 const HEADER_BYTES: usize = 16;
 const RECORD_BYTES: usize = HEADER_BYTES + STATE_WORDS * 2;
 const MAGIC: u32 = 0x4f5a4552;
-// Retaining version 2 preserves saved defaults written by earlier builds.
-const VERSION: u16 = 2;
+// V3 adds two retained precision bits to the large horizontal controls.
+const VERSION: u16 = 3;
 
 const PAGE: u8 = 0;
 const PRESET: u8 = 1;
@@ -145,6 +147,7 @@ unsafe fn scan_sector(
     let version = read_u16(record, 4);
     let declared_words = read_u16(record, 6) as usize;
     let accepted = (version == VERSION && declared_words == STATE_WORDS)
+        || (version == 2 && declared_words == V2_STATE_WORDS)
         || (version == 1 && declared_words == LEGACY_STATE_WORDS);
     if !accepted {
         return None;
@@ -160,7 +163,7 @@ unsafe fn scan_sector(
         *word = read_u16(record, HEADER_BYTES + 2 * n);
     }
     if declared_words == LEGACY_STATE_WORDS {
-        words[LEGACY_STATE_WORDS..].copy_from_slice(&legacy_band_config_words());
+        words[LEGACY_STATE_WORDS..V2_STATE_WORDS].copy_from_slice(&legacy_band_config_words());
     }
     Some(read_u32(record, 8))
 }
@@ -451,8 +454,8 @@ impl State {
                 self.filter_feedback = clamp_control(self.filter_feedback, d, 0, 0x8000)
             }
             FEEDBACK => self.bank_feedback = clamp_control(self.bank_feedback, d, 0, 0x8000),
-            KNEE => self.knee = clamp_control(self.knee, d, 0x1000, 0x8000),
-            CEILING => self.ceiling = clamp_control(self.ceiling, d, 0x1000, 0x8000),
+            KNEE => self.knee = edit_feedback_knee(self.knee, self.ceiling, d),
+            CEILING => self.ceiling = edit_feedback_ceiling(self.ceiling, self.knee, d),
             DAMP => self.damp = (self.damp as i32 + d).clamp(0, 4) as u32,
             MODE => {
                 self.filter_mode = !self.filter_mode;
@@ -593,6 +596,21 @@ impl State {
         }
         pack_bits(&mut words, &mut bit, self.layout, 2);
         pack_bits(&mut words, &mut bit, self.frequencies[9] & 3, 2);
+        for value in [
+            self.bank_drive,
+            self.filter_drive,
+            self.resonance,
+            self.bank_feedback,
+            self.filter_feedback,
+            self.knee,
+            self.ceiling,
+            self.cutoff,
+            self.slope,
+            self.width,
+        ] {
+            pack_bits(&mut words, &mut bit, (value >> 6) & 3, 2);
+        }
+        pack_bits(&mut words, &mut bit, 0, 12);
         debug_assert_eq!(bit, STATE_WORDS * 16);
         words
     }
@@ -675,6 +693,18 @@ impl State {
         }
         self.layout = unpack_bits(words, &mut bit, 2);
         self.frequencies[9] |= unpack_bits(words, &mut bit, 2);
+        self.bank_drive |= unpack_bits(words, &mut bit, 2) << 6;
+        self.filter_drive |= unpack_bits(words, &mut bit, 2) << 6;
+        self.resonance |= unpack_bits(words, &mut bit, 2) << 6;
+        self.bank_feedback |= unpack_bits(words, &mut bit, 2) << 6;
+        self.filter_feedback |= unpack_bits(words, &mut bit, 2) << 6;
+        self.knee |= unpack_bits(words, &mut bit, 2) << 6;
+        self.ceiling |= unpack_bits(words, &mut bit, 2) << 6;
+        self.cutoff |= unpack_bits(words, &mut bit, 2) << 6;
+        self.slope |= unpack_bits(words, &mut bit, 2) << 6;
+        self.width |= unpack_bits(words, &mut bit, 2) << 6;
+        let _reserved = unpack_bits(words, &mut bit, 12);
+        (self.knee, self.ceiling) = normalize_feedback_limits(self.knee, self.ceiling);
         // Older V2 records could retain a dormant USER vector while naming a
         // factory layout. The CPU-less UI materializes that factory vector on
         // restore; do the same here for exact cross-implementation behavior.

@@ -15,10 +15,12 @@ class RezoCoreConstants:
     INPUT_UNITY_POS = 52428
     PARAM_SLEW_STEP = 64
 
-    # Proven input conditioner from the last hardware-clean DSP path. It is
-    # independent of the user-facing feedback safety controls.
+    # Independent of the user-facing feedback safety controls. A 4:1 slope
+    # above the knee keeps hot sums bounded while leaving the upper half of
+    # DRIVE audibly useful; the former 8:1 slope compressed that travel into
+    # roughly six percent of full scale.
     INPUT_LIMIT_KNEE = 12288
-    INPUT_LIMIT_SHIFT = 3  # 8:1 above the knee
+    INPUT_LIMIT_SHIFT = 2  # 4:1 above the knee
 
     CV_TARGET_FEEDBACK = 0
     CV_TARGET_RESONANCE = 1

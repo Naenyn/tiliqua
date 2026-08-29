@@ -254,8 +254,9 @@ def test_cross_curve_lookup_preserves_endpoints_and_shapes_midrange():
         values = [RezoCore.cross_curve_coefficient(curve, raw)
                   for raw in range(RezoCore.CROSS_DEPTH_MAX + 1)]
         assert values[0] == 0
-        assert values[-1] == RezoCore.CROSS_DEPTH_MAX
+        assert values[-1] == RezoCore.CROSS_COEFFICIENT_MAX
         assert values == sorted(values)
+        assert len(set(values)) == RezoCore.CROSS_DEPTH_MAX + 1
 
     midpoint = RezoCore.CROSS_DEPTH_MAX // 2
     linear, log = (
@@ -264,8 +265,8 @@ def test_cross_curve_lookup_preserves_endpoints_and_shapes_midrange():
                       RezoCore.CROSS_CURVE_LOG)
     )
     assert log > linear
-    assert RezoCore.cross_curve_coefficient(RezoCore.CROSS_CURVE_LOG, 32) == 62
-    assert RezoCore.cross_curve_coefficient(RezoCore.CROSS_CURVE_LOG, 64) == 93
+    assert RezoCore.cross_curve_coefficient(RezoCore.CROSS_CURVE_LOG, 32) == 15941
+    assert RezoCore.cross_curve_coefficient(RezoCore.CROSS_CURVE_LOG, 64) == 23701
 
     dut = RezoCore(fs=192_000)
     sim = Simulator(dut)
@@ -324,6 +325,52 @@ def test_group_cross_matrix_routes_source_group_to_selected_destination():
     assert any(values[1] != 0 for values in routed_terms[4:])
     assert all(values[0] == values[2] == values[3] == 0
                for values in routed_terms)
+
+
+def _matrix_feedback_peak(knee, ceiling):
+    """Measure routed feedback after the destination shaper and final gain."""
+    dut = RezoCore(fs=192_000)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+    routed = []
+
+    async def send(ctx, sample):
+        ctx.set(dut.i.payload[0].as_value(), sample)
+        for channel in range(1, 4):
+            ctx.set(dut.i.payload[channel].as_value(), 0)
+        ctx.set(dut.i.valid, 1)
+        await ctx.tick().until(dut.i.ready == 1)
+        ctx.set(dut.i.valid, 0)
+        ctx.set(dut.o.ready, 1)
+        await ctx.tick().until(dut.o.valid == 1)
+        routed.extend(abs(ctx.get(term.as_value()))
+                      for term in dut._matrix_feedback_term_r)
+
+    async def bench(ctx):
+        for level in dut.levels:
+            ctx.set(level, 16_383)
+        ctx.set(dut.feedback, 32_768)
+        ctx.set(dut.same_feedback, 0)
+        ctx.set(dut.cross_feedback, dut.CROSS_DEPTH_MAX)
+        ctx.set(dut.cross_layout, RezoCore.CROSS_LAYOUT_USER)
+        for coefficient in dut.cross_matrix:
+            ctx.set(coefficient, 16)
+        ctx.set(dut.limit_knee, knee)
+        ctx.set(dut.limit_cap, ceiling)
+        for n in range(192):
+            sample = ((n * 7919) & 0xffff) - 32768
+            await send(ctx, sample)
+
+    sim.add_testbench(bench)
+    sim.run()
+    return max(routed[96 * dut.N_GROUPS:])
+
+
+def test_knee_and_ceiling_shape_non_global_matrix_feedback():
+    """Matrix CROSS must obey the same safety controls as GLOBAL CROSS."""
+    constrained = _matrix_feedback_peak(knee=4096, ceiling=8192)
+    open_range = _matrix_feedback_peak(knee=24576, ceiling=32767)
+    assert constrained < open_range, (constrained, open_range)
 
 
 def _render_cross_feedback(layout, depth):
@@ -457,11 +504,11 @@ def test_damp_modes_have_distinct_feedback_dependent_decay_coefficients():
     sim.run()
 
     assert observed == [
-        (0, 4096),
-        (2048, 6144),
-        (4096, 8192),
-        (8192, 12288),
-        (12288, 16384),
+        (0, 0),
+        (2048, 1024),
+        (4096, 2048),
+        (8192, 4096),
+        (12288, 6144),
     ]
 
 

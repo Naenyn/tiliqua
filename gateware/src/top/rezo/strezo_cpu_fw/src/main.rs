@@ -3,8 +3,9 @@
 
 use panic_halt as _;
 use rezo_cpu_fw::{
-    add, adds, clamp_control, flash_erase, flash_program, flash_read, gray_encode, pack_bits,
-    progressive_edit_level, read8, read32, read_u16, read_u32, record_crc, step_coarse_byte,
+    add, adds, clamp_control, edit_feedback_ceiling, edit_feedback_knee, flash_erase,
+    flash_program, flash_read, gray_encode, normalize_feedback_limits, pack_bits,
+    progressive_edit_level, read32, read8, read_u16, read_u32, record_crc, step_coarse_byte,
     step_group_index, step_target, unpack_bits, write_u16, write_u32, write_ui_command,
     ENCODER_BUTTON, ENCODER_STEP, FLASH_SLOT, GROUP_INDEX_DEFAULTS,
 };
@@ -49,12 +50,13 @@ const OUTPUT_SIDE: u32 = 36;
 const CROSS_MATRIX: u32 = 37;
 
 const BOOT_SLOT_TIMEOUT_POLLS: u32 = 1_000_000;
-const STATE_WORDS: usize = 38;
+const STATE_WORDS: usize = 39;
+const V5_STATE_WORDS: usize = 38;
 const LEGACY_STATE_WORDS: usize = 36;
 const HEADER_BYTES: usize = 16;
 const RECORD_BYTES: usize = HEADER_BYTES + STATE_WORDS * 2;
 const MAGIC: u32 = 0x5a525453;
-const VERSION: u16 = 5;
+const VERSION: u16 = 6;
 
 const PAGE: u8 = 0;
 const PRESET: u8 = 1;
@@ -386,8 +388,8 @@ impl State {
             DRIVE => self.drive = clamp_control(self.drive, d, 0, 0x5fff),
             RESONANCE => self.resonance = clamp_control(self.resonance, d, 0, 0x8000),
             FEEDBACK => self.feedback = clamp_control(self.feedback, d, 0, 0x8000),
-            KNEE => self.knee = clamp_control(self.knee, d, 0x1000, 0x8000),
-            CEILING => self.ceiling = clamp_control(self.ceiling, d, 0x1000, 0x8000),
+            KNEE => self.knee = edit_feedback_knee(self.knee, self.ceiling, d),
+            CEILING => self.ceiling = edit_feedback_ceiling(self.ceiling, self.knee, d),
             DAMP => self.damp = (self.damp as i32 + d).clamp(0, 4) as u32,
             CROSS_FEEDBACK => self.cross_feedback = add(self.cross_feedback, d, 0, 128),
             SAME_FEEDBACK => self.same_reduction = add(self.same_reduction, -d, 0, 128),
@@ -537,6 +539,16 @@ impl State {
         pack_bits(&mut words, &mut bit, self.motion_depth, 8);
         pack_bits(&mut words, &mut bit, self.same_reduction >> 5, 3);
         pack_bits(&mut words, &mut bit, self.cross_feedback >> 5, 3);
+        for value in [
+            self.drive,
+            self.resonance,
+            self.feedback,
+            self.knee,
+            self.ceiling,
+        ] {
+            pack_bits(&mut words, &mut bit, (value >> 6) & 3, 2);
+        }
+        pack_bits(&mut words, &mut bit, 0, 6);
         debug_assert_eq!(bit, STATE_WORDS * 16);
         words
     }
@@ -607,6 +619,13 @@ impl State {
         self.motion_depth = unpack_bits(words, &mut bit, 8);
         self.same_reduction |= unpack_bits(words, &mut bit, 3) << 5;
         self.cross_feedback |= unpack_bits(words, &mut bit, 3) << 5;
+        self.drive |= unpack_bits(words, &mut bit, 2) << 6;
+        self.resonance |= unpack_bits(words, &mut bit, 2) << 6;
+        self.feedback |= unpack_bits(words, &mut bit, 2) << 6;
+        self.knee |= unpack_bits(words, &mut bit, 2) << 6;
+        self.ceiling |= unpack_bits(words, &mut bit, 2) << 6;
+        let _reserved = unpack_bits(words, &mut bit, 6);
+        (self.knee, self.ceiling) = normalize_feedback_limits(self.knee, self.ceiling);
         debug_assert_eq!(bit, STATE_WORDS * 16);
     }
 
@@ -687,6 +706,7 @@ unsafe fn scan_sector(
     let version = read_u16(record, 4);
     let declared = read_u16(record, 6) as usize;
     if !((version == VERSION && declared == STATE_WORDS)
+        || (version == 5 && declared == V5_STATE_WORDS)
         || (version == 4 && declared == LEGACY_STATE_WORDS))
     {
         return None;

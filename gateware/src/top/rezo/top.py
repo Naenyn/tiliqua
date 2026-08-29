@@ -58,6 +58,10 @@ try:
         FONT_5X7, PALETTE_ROLES, RGB_PALETTES, SEMANTIC_PALETTE,
         TILE_CHARS,
     )
+    from .feedback import (
+        FeedbackShaper, feedback_damping, feedback_gain_from_control,
+        resonance_control,
+    )
     from .persistence_common import SPIFlashTransfer
     from .ui_specs import RezomoUISpec
     from .ui_common import (
@@ -97,6 +101,10 @@ except ImportError:  # top_level_cli executes this file directly.
     from display_common import (
         FONT_5X7, PALETTE_ROLES, RGB_PALETTES, SEMANTIC_PALETTE,
         TILE_CHARS,
+    )
+    from feedback import (
+        FeedbackShaper, feedback_damping, feedback_gain_from_control,
+        resonance_control,
     )
     from persistence_common import SPIFlashTransfer
     from ui_specs import RezomoUISpec
@@ -180,11 +188,11 @@ class RezoCore(wiring.Component):
     INPUT_MAX = 65535
     INPUT_UNITY_POS = 52428
     PARAM_SLEW_STEP = 64
-    # Proven input conditioner from the last hardware-clean DSP path. Keep it
-    # independent of the user-facing feedback safety controls: its job is only
-    # to prevent a hot Eurorack input from making an SVF state chatter.
+    # Keep this conditioner independent of the user-facing feedback controls.
+    # A 4:1 slope above the knee retains hard state protection while making the
+    # upper half of DRIVE materially more expressive than the old 8:1 slope.
     INPUT_LIMIT_KNEE = 12288
-    INPUT_LIMIT_SHIFT = 3  # 8:1 above the knee
+    INPUT_LIMIT_SHIFT = 2  # 4:1 above the knee
     INPUT_MODE_AUDIO = 0
     INPUT_MODE_CV = 1
     CV_TARGET_FEEDBACK = 0
@@ -443,8 +451,7 @@ class RezoCore(wiring.Component):
             effective_resonance_raw.eq(smooth_resonance + resonance_cv_term),
             effective_feedback_raw.eq(smooth_feedback + feedback_cv_term),
             effective_drive_raw.eq(self.DRIVE_FLOOR + smooth_drive + drive_cv_term),
-            feedback_gain.eq(Mux(effective_feedback > 31744, 31744,
-                                 effective_feedback)),
+            feedback_gain.eq(feedback_gain_from_control(effective_feedback)),
         ]
         with m.If(effective_resonance_raw < 0):
             m.d.comb += effective_resonance.eq(0)
@@ -480,37 +487,22 @@ class RezoCore(wiring.Component):
                 ]
         feedback_sample = Signal(ASQ)
 
-        # Shared values.  Convert the UI values into ASQ-ish fractions.  The
-        # SVF uses inverse-Q: lower values are more resonant.  Keep the safer
-        # inverse-Q floor from the stable hardware tests, then raise it when
-        # feedback is high. This prevents max-Q and max-feedback from combining
-        # into a self-sustaining noisy latch-up state.
+        # REZOMO keeps a gentler feedback-dependent reduction than REZO so
+        # resonant tails can remain part of its rhythmic memory. The mapping
+        # reduces requested resonance rather than flooring inverse-Q, keeping
+        # every DAMP mode responsive across most of the RES slider.
         resonance_ctl = Signal(ASQ)
-        res_ctl = Signal(signed(17))
         feedback_damp = Signal(unsigned(16))
-        resonance_floor_raw = Signal(signed(17))
-        resonance_floor = Signal(signed(17))
-        with m.Switch(self.damp_mode):
-            with m.Case(0):
-                m.d.comb += feedback_damp.eq(0)
-            with m.Case(1):
-                m.d.comb += feedback_damp.eq(effective_feedback >> 4)
-            with m.Case(2):
-                m.d.comb += feedback_damp.eq(effective_feedback >> 3)
-            with m.Case(3):
-                m.d.comb += feedback_damp.eq(effective_feedback >> 2)
-            with m.Default():
-                m.d.comb += feedback_damp.eq((effective_feedback >> 2) + (effective_feedback >> 3))
         m.d.comb += [
-            res_ctl.eq(16384 - (effective_resonance >> 1)),
-            resonance_floor_raw.eq(4096 + feedback_damp),
-            resonance_floor.eq(Mux(resonance_floor_raw > 12288, 12288, resonance_floor_raw)),
-            resonance_ctl.eq(Mux(res_ctl < resonance_floor, resonance_floor, res_ctl)),
+            feedback_damp.eq(feedback_damping(
+                effective_feedback, self.damp_mode, "rezomo")),
+            resonance_ctl.eq(resonance_control(
+                effective_resonance, feedback_damp)),
         ]
 
         # Feedback is smoothed and scheduled through the shared multiplier.
-        # Full-scale UI feedback is capped just below the hardware-tested cliff
-        # so the final encoder tick stays in the "hot but not runaway" region.
+        # A 31/32 scale uses every UI position while keeping the full-scale
+        # endpoint just below the hardware-tested runaway cliff.
         x = Signal(dsp.mac.SQNative)
         # Keep the input-plus-feedback sum wide until after saturation. A
         # 16-bit intermediate can wrap before a limiter has a chance to act.
@@ -666,19 +658,14 @@ class RezoCore(wiring.Component):
         main_next = Signal(mix_shape)
         filtered_next = Signal(mix_shape)
         feedback_drive = Signal(mix_shape)
-        limit_cap_safe = Signal(unsigned(16))
-        clip_drive = Signal(mix_shape)
-        clip_negative = Signal()
-        clip_negative_q = Signal()
-        clip_mag = Signal(unsigned(16))
-        clip_mag_q = Signal(unsigned(16))
-        clip_excess = Signal(unsigned(16))
-        clip_excess_q = Signal(unsigned(16))
-        clip_square = Signal(unsigned(32))
-        clip_square_q = Signal(unsigned(32))
-        clip_shaped_mag = Signal(unsigned(17))
-        clip_output_mag = Signal(unsigned(16))
-        clip_limited = Signal(ASQ)
+        m.submodules.feedback_shaper = feedback_shaper = FeedbackShaper(
+            input_width=mix_shape.width)
+        m.d.comb += [
+            feedback_shaper.drive.eq(feedback_drive),
+            feedback_shaper.knee.eq(self.limit_knee),
+            feedback_shaper.ceiling.eq(self.limit_cap),
+        ]
+        clip_limited = feedback_shaper.sample
         bank_input_soft = Signal(mix_shape)
         bank_input_limited = Signal(ASQ)
         output_limited = Signal(ASQ)
@@ -909,8 +896,6 @@ class RezoCore(wiring.Component):
                 mac_z.as_value().as_signed() >> dsp.mac.SQNative.f_bits),
             x_drive.eq(drive_term_q +
                        feedback_term_q.as_value().as_signed()),
-            limit_cap_safe.eq(Mux(self.limit_cap > 32767, 32767,
-                                  self.limit_cap)),
             enabled_term.eq(Mux(band_enable_array[band], term_q, 0)),
             main_next.eq(main_acc + enabled_term),
             filtered_next.eq(main_next - dry_sample.as_value().as_signed()),
@@ -1080,42 +1065,10 @@ class RezoCore(wiring.Component):
             m.d.comb += level_cur.eq(-16384)
         with m.Else():
             m.d.comb += level_cur.eq(level_with_cv)
-        # Smooth-knee quadratic saturation belongs in the feedback loop. The
-        # direct bank input must remain linear when feedback is zero; applying
-        # this curve there pre-distorts every wet signal while DRY stays clean.
-        # Below KNEE the feedback tap is exactly linear. Above it, subtract
-        # excess^2 / 65536; CEIL remains the final emergency rail.
-        m.d.comb += [
-            clip_drive.eq(feedback_drive),
-            clip_excess.eq(Mux(
-                clip_mag > self.limit_knee,
-                clip_mag - self.limit_knee, 0)),
-            clip_square.eq(clip_excess_q * clip_excess_q),
-            clip_shaped_mag.eq(Mux(
-                clip_mag_q > self.limit_knee,
-                clip_mag_q - (clip_square_q >> 16),
-                clip_mag_q)),
-            clip_output_mag.eq(Mux(
-                clip_shaped_mag > limit_cap_safe,
-                limit_cap_safe, clip_shaped_mag)),
-        ]
-        with m.If(clip_drive >= 32768):
-            m.d.comb += [clip_negative.eq(0), clip_mag.eq(32768)]
-        with m.Elif(clip_drive <= -32768):
-            m.d.comb += [clip_negative.eq(1), clip_mag.eq(32768)]
-        with m.Elif(clip_drive < 0):
-            m.d.comb += [clip_negative.eq(1), clip_mag.eq(-clip_drive)]
-        with m.Else():
-            m.d.comb += [clip_negative.eq(0), clip_mag.eq(clip_drive)]
-        with m.If(clip_negative_q):
-            m.d.comb += clip_limited.as_value().eq(-clip_output_mag)
-        with m.Else():
-            m.d.comb += clip_limited.as_value().eq(clip_output_mag)
-
         # The feedback saturator above shapes the delayed wet signal. This is
         # a separate, deliberately simple conditioner on the signal entering
-        # every resonator. It restores the transfer curve used by the last
-        # hardware-clean build while retaining the wider pre-limit sum.
+        # every resonator. Its 4:1 over-knee slope keeps the sum bounded while
+        # leaving useful character across the upper DRIVE range.
         with m.If(x_drive > self.INPUT_LIMIT_KNEE):
             m.d.comb += bank_input_soft.eq(
                 self.INPUT_LIMIT_KNEE +
@@ -1141,15 +1094,6 @@ class RezoCore(wiring.Component):
         # it cannot wrap before this final rail clamp.
         limit_to_asq(bank_input_soft, bank_input_limited)
 
-        # Pipeline magnitude, square, and clamp/sign across three short stages.
-        # The feedback sum is stable for many routing cycles; x gets explicit
-        # settling states below before clip_limited is captured.
-        m.d.sync += [
-            clip_negative_q.eq(clip_negative),
-            clip_mag_q.eq(clip_mag),
-            clip_excess_q.eq(clip_excess),
-            clip_square_q.eq(clip_square),
-        ]
         out_valid = Signal()
         out_ready = Signal()
         output_q = [Signal(ASQ, name=f"output_q{n}") for n in range(4)]
@@ -4444,6 +4388,14 @@ class RezoTileDisplay(wiring.Component):
             (compact_fader_threshold <= self.limit_cap) &
             (y >= NATIVE_FEEDBACK_CEILING_Y0 + tune_y_shift) &
             (y < NATIVE_FEEDBACK_CEILING_Y0 + 16 + tune_y_shift))
+        limit_relation_marker = (
+            tune_page & compact_fader_x_valid & (
+                ((compact_fader_threshold == self.limit_cap) &
+                 (y >= NATIVE_FEEDBACK_KNEE_Y0 + tune_y_shift) &
+                 (y < NATIVE_FEEDBACK_KNEE_Y0 + 16 + tune_y_shift)) |
+                ((compact_fader_threshold == self.limit_knee) &
+                 (y >= NATIVE_FEEDBACK_CEILING_Y0 + tune_y_shift) &
+                 (y < NATIVE_FEEDBACK_CEILING_Y0 + 16 + tune_y_shift))))
         res_select = ((bank_page & (selected_dvi_q == RezomoUISpec.TARGET_RESONANCE)) |
                       (tune_page & (selected_dvi_q == RezomoUISpec.TARGET_LIMIT_CAP))) & (
             (bank_page & self.outline(
@@ -4512,7 +4464,7 @@ class RezoTileDisplay(wiring.Component):
                                 dry_fill | tune_cap_fill),
             geometry_line_q0.eq(
                 band_zero_q0 | bank_control_mod_marker | border |
-                cursor_chip),
+                cursor_chip | limit_relation_marker),
             geometry_mod_q0.eq(band_mod_fill | bank_control_mod_fill |
                                input_meter_q0),
             geometry_panel_q0.eq(preset_chip | mode_chip | clock_chip |
