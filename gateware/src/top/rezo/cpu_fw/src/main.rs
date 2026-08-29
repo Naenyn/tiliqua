@@ -454,8 +454,10 @@ impl State {
                 self.filter_feedback = clamp_control(self.filter_feedback, d, 0, 0x8000)
             }
             FEEDBACK => self.bank_feedback = clamp_control(self.bank_feedback, d, 0, 0x8000),
-            KNEE => self.knee = edit_feedback_knee(self.knee, self.ceiling, d),
-            CEILING => self.ceiling = edit_feedback_ceiling(self.ceiling, self.knee, d),
+            KNEE => (self.knee, self.ceiling) = edit_feedback_knee(self.knee, self.ceiling, d),
+            CEILING => {
+                (self.knee, self.ceiling) = edit_feedback_ceiling(self.knee, self.ceiling, d)
+            }
             DAMP => self.damp = (self.damp as i32 + d).clamp(0, 4) as u32,
             MODE => {
                 self.filter_mode = !self.filter_mode;

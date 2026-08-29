@@ -69,8 +69,9 @@ class FeedbackShaper(wiring.Component):
         y = x - (x - knee)^2 / 131072             x > knee
 
     Magnitude is bounded at ``knee + 65535`` so the quadratic remains
-    monotonic.  With the supported ``knee < ceiling`` control contract, the
-    curve always reaches CEILING for a sufficiently large overload.
+    monotonic.  With the supported ``knee <= ceiling`` control contract, the
+    curve reaches CEILING for a sufficiently large overload; equality makes
+    the soft region vanish and produces a hard limit at KNEE/CEILING.
 
     The datapath is continuously pipelined and has two sync-clock registers of
     latency.  REZO's feedback accumulator is stable for many clocks before the

@@ -487,8 +487,10 @@ impl State {
             DRIVE => self.bank_drive = clamp_control(self.bank_drive, d, 0, 0x5FFF),
             RESONANCE => self.resonance = clamp_control(self.resonance, d, 0, 0x8000),
             FEEDBACK => self.bank_feedback = clamp_control(self.bank_feedback, d, 0, 0x8000),
-            KNEE => self.knee = edit_feedback_knee(self.knee, self.ceiling, d),
-            CEILING => self.ceiling = edit_feedback_ceiling(self.ceiling, self.knee, d),
+            KNEE => (self.knee, self.ceiling) = edit_feedback_knee(self.knee, self.ceiling, d),
+            CEILING => {
+                (self.knee, self.ceiling) = edit_feedback_ceiling(self.knee, self.ceiling, d)
+            }
             DAMP => self.damp = (self.damp as i32 + d).clamp(0, 4) as u32,
             MODE => {
                 self.clock_mode = !self.clock_mode;

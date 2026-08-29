@@ -38,6 +38,7 @@ def test_damping_profiles_remain_distinct_without_hiding_high_resonance(
     (8192, 28672),
     (16384, 28672),
     (24576, 32767),
+    (16384, 16384),
 ))
 def test_feedback_shaper_is_odd_monotonic_and_bounded(knee, ceiling):
     previous = 0

@@ -24,6 +24,7 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
                     band_enables=(), feedback_sends=(), same_feedback=0,
                     cross_feedback=0, cross_layout=RezoCore.CROSS_LAYOUT_GLOBAL,
                     cross_curve=RezoCore.CROSS_CURVE_LINEAR,
+                    mid_gain=64, side_gain=64,
                     drive=0, resonance=0, feedback=0,
                     limit_knee=32, limit_cap=112, selected=0,
                     matrix_values=(), motion_source=0, motion_rate=12,
@@ -56,6 +57,8 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
         ctx.set(dut.cross_feedback, cross_feedback)
         ctx.set(dut.cross_layout, cross_layout)
         ctx.set(dut.cross_curve, cross_curve)
+        ctx.set(dut.mid_gain, mid_gain)
+        ctx.set(dut.side_gain, side_gain)
         ctx.set(dut.drive, drive)
         ctx.set(dut.effective_drive, drive)
         ctx.set(dut.resonance, resonance)
@@ -352,6 +355,27 @@ def test_cross_feedback_tracks_use_nearly_the_full_chip_width():
     ]
 
 
+def test_output_mid_side_tracks_share_cross_geometry_and_page_local_targets():
+    control = RezoTileDisplay.PALETTE["control"]
+    selected = RezoTileDisplay.PALETTE["selected"]
+    samples = _render_samples(
+        page=4,
+        mid_gain=64,
+        side_gain=128,
+        selected=StrezoUISpec.TARGET_MID_GAIN,
+        points=((230, 550), (234, 550), (405, 550), (406, 550),
+                (577, 582), (578, 582)),
+    )
+    assert samples == [
+        (selected, selected, selected),
+        (control, control, control),
+        (control, control, control),
+        (0, 0, 0),
+        (control, control, control),
+        (0, 0, 0),
+    ]
+
+
 def test_bank_control_maxima_fill_the_compact_tracks():
     control = RezoTileDisplay.PALETTE["control"]
     line = RezoTileDisplay.PALETTE["line"]
@@ -391,6 +415,24 @@ def test_feedback_safety_maxima_fill_the_compact_tracks():
         (panel, panel, panel), (surface, surface, surface),
         (control, control, control), (panel, panel, panel),
         (panel, panel, panel), (surface, surface, surface),
+    ]
+
+
+def test_feedback_ceiling_colors_the_soft_region_from_knee_to_cap():
+    control = RezoTileDisplay.PALETTE["control"]
+    modulation = RezoTileDisplay.PALETTE["modulation"]
+    panel = RezoTileDisplay.PALETTE["panel"]
+    assert _render_samples(
+        page=1,
+        limit_knee=32,
+        limit_cap=112,
+        points=((300, NATIVE_FEEDBACK_CEILING_Y0 - 8),
+                (400, NATIVE_FEEDBACK_CEILING_Y0 - 8),
+                (540, NATIVE_FEEDBACK_CEILING_Y0 - 8)),
+    ) == [
+        (control, control, control),
+        (modulation, modulation, modulation),
+        (panel, panel, panel),
     ]
 
 

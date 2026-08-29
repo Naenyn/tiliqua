@@ -79,7 +79,7 @@ TARGETS = {
         bitstream_name="STREZO",
         artifact_name="STREZO",
         modeline="1280x720p60",
-        default_seed=7,
+        default_seed=8,
     ),
     "strezo_round": BuildTarget(
         key="strezo_round",

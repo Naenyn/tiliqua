@@ -109,33 +109,28 @@ pub fn step_target(current: u8, targets: &[u8], direction: i8) -> u8 {
 
 pub const FEEDBACK_LIMIT_MIN: u32 = 0x1000;
 pub const FEEDBACK_LIMIT_MAX: u32 = 0x8000;
-pub const FEEDBACK_LIMIT_GAP: u32 = 0x0800;
 
 /// Apply one or more 1/1024 UI steps to a 16-bit control value.
 pub fn clamp_control(value: u32, delta: i32, lo: u32, hi: u32) -> u32 {
     (value as i32 + delta * 64).clamp(lo as i32, hi as i32) as u32
 }
 
-/// Edit a feedback knee while retaining useful compression range below cap.
-pub fn edit_feedback_knee(value: u32, ceiling: u32, delta: i32) -> u32 {
-    let hi = ceiling
-        .saturating_sub(FEEDBACK_LIMIT_GAP)
-        .max(FEEDBACK_LIMIT_MIN);
-    clamp_control(value, delta, FEEDBACK_LIMIT_MIN, hi)
+/// Edit KNEE and push CEILING upward when the two controls meet.
+pub fn edit_feedback_knee(knee: u32, ceiling: u32, delta: i32) -> (u32, u32) {
+    let knee = clamp_control(knee, delta, FEEDBACK_LIMIT_MIN, FEEDBACK_LIMIT_MAX);
+    (knee, ceiling.max(knee).min(FEEDBACK_LIMIT_MAX))
 }
 
-/// Edit a feedback ceiling without allowing it to mask the knee control.
-pub fn edit_feedback_ceiling(value: u32, knee: u32, delta: i32) -> u32 {
-    let lo = knee
-        .saturating_add(FEEDBACK_LIMIT_GAP)
-        .min(FEEDBACK_LIMIT_MAX);
-    clamp_control(value, delta, lo, FEEDBACK_LIMIT_MAX)
+/// Edit CEILING and pull KNEE downward when the two controls meet.
+pub fn edit_feedback_ceiling(knee: u32, ceiling: u32, delta: i32) -> (u32, u32) {
+    let ceiling = clamp_control(ceiling, delta, FEEDBACK_LIMIT_MIN, FEEDBACK_LIMIT_MAX);
+    (knee.min(ceiling).max(FEEDBACK_LIMIT_MIN), ceiling)
 }
 
 /// Sanitize legacy or corrupt persisted limiter values, prioritizing safety.
 pub fn normalize_feedback_limits(knee: u32, ceiling: u32) -> (u32, u32) {
-    let ceiling = ceiling.clamp(FEEDBACK_LIMIT_MIN + FEEDBACK_LIMIT_GAP, FEEDBACK_LIMIT_MAX);
-    let knee = knee.clamp(FEEDBACK_LIMIT_MIN, ceiling - FEEDBACK_LIMIT_GAP);
+    let ceiling = ceiling.clamp(FEEDBACK_LIMIT_MIN, FEEDBACK_LIMIT_MAX);
+    let knee = knee.clamp(FEEDBACK_LIMIT_MIN, ceiling);
     (knee, ceiling)
 }
 
@@ -286,9 +281,10 @@ mod tests {
         assert_eq!(clamp_control(0x7000, 64, 0x1000, 0x8000), 0x8000);
         assert_eq!(clamp_control(0x2000, 512, 0, 0x5fff), 0x5fff);
 
-        assert_eq!(edit_feedback_knee(0x2000, 0x2800, 1), 0x2000);
-        assert_eq!(edit_feedback_ceiling(0x2800, 0x2000, -1), 0x2800);
-        assert_eq!(normalize_feedback_limits(0x7000, 0x3000), (0x2800, 0x3000));
+        assert_eq!(edit_feedback_knee(0x27c0, 0x2800, 1), (0x2800, 0x2800));
+        assert_eq!(edit_feedback_knee(0x2800, 0x2800, 1), (0x2840, 0x2840));
+        assert_eq!(edit_feedback_ceiling(0x2800, 0x2800, -1), (0x27c0, 0x27c0));
+        assert_eq!(normalize_feedback_limits(0x7000, 0x3000), (0x3000, 0x3000));
 
         assert_eq!(step_coarse_byte(0xcccc, 1), 0xcdcc);
         assert_eq!(step_coarse_byte(0xcccc, -1), 0xcbcc);

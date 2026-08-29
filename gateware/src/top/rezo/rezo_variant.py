@@ -3533,14 +3533,12 @@ class RezoTileDisplay(wiring.Component):
             (compact_fader_threshold <= tune_cap_q) &
             (tune_y_q >= NATIVE_FEEDBACK_CEILING_Y0 + tune_y_shift) &
             (tune_y_q < NATIVE_FEEDBACK_CEILING_Y0 + 16 + tune_y_shift))
-        limit_relation_marker = (
-            tune_page_q & compact_fader_x_valid & (
-                ((compact_fader_threshold == tune_cap_q) &
-                 (tune_y_q >= NATIVE_FEEDBACK_KNEE_Y0 + tune_y_shift) &
-                 (tune_y_q < NATIVE_FEEDBACK_KNEE_Y0 + 16 + tune_y_shift)) |
-                ((compact_fader_threshold == tune_knee_q) &
-                 (tune_y_q >= NATIVE_FEEDBACK_CEILING_Y0 + tune_y_shift) &
-                 (tune_y_q < NATIVE_FEEDBACK_CEILING_Y0 + 16 + tune_y_shift))))
+        limit_soft_region = (
+            tune_page_q & compact_fader_x_valid &
+            (compact_fader_threshold >= tune_knee_q) &
+            (compact_fader_threshold <= tune_cap_q) &
+            (tune_y_q >= NATIVE_FEEDBACK_CEILING_Y0 + tune_y_shift) &
+            (tune_y_q < NATIVE_FEEDBACK_CEILING_Y0 + 16 + tune_y_shift))
         dry_select = (tune_page &
                       (selected_dvi_q == RezoUISpec.TARGET_LIMIT_KNEE)) & self.outline(x, y, tune_panel_x0,
                          NATIVE_FEEDBACK_KNEE_Y0 - 4 + tune_y_shift,
@@ -3735,9 +3733,10 @@ class RezoTileDisplay(wiring.Component):
             geometry_line_q0.eq(
                 band_zero_q0 | bank_control_mod_marker |
                 filter_control_mod_marker | border |
-                cursor_chip | limit_relation_marker),
+                cursor_chip),
             geometry_mod_q0.eq(band_mod_fill | bank_control_mod_fill |
-                               filter_control_mod_fill | input_meter_q0),
+                               filter_control_mod_fill | input_meter_q0 |
+                               limit_soft_region),
             geometry_panel_q0.eq(preset_chip | filter_type_chip | mode_chip |
                                  palette_chip | save_default_chip | layout_chip |
                                  damp_chip | side_page_chip |

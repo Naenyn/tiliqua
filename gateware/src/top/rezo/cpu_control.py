@@ -548,6 +548,8 @@ class StrezoFirmwareUIState:
             for n in range(20)]
         self.output_sides = [Signal(init=n & 1, name=f"fw_output_side{n}")
                              for n in range(4)]
+        self.mid_gain = Signal(8, init=64)
+        self.side_gain = Signal(8, init=64)
         self.output_routes = [Signal(5, name=f"fw_output_route{n}")
                               for n in range(4)]
 
@@ -636,6 +638,8 @@ class StrezoUIControlPeripheral(Component):
                 33: (self.ui.motion_rate, 8),
                 34: (self.ui.motion_phase, 8),
                 35: (self.ui.motion_depth, 8),
+                38: (self.ui.mid_gain, 8),
+                39: (self.ui.side_gain, 8),
             }
             for command_kind, (signal, width) in scalar.items():
                 with m.Case(command_kind):

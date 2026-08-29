@@ -4388,14 +4388,12 @@ class RezoTileDisplay(wiring.Component):
             (compact_fader_threshold <= self.limit_cap) &
             (y >= NATIVE_FEEDBACK_CEILING_Y0 + tune_y_shift) &
             (y < NATIVE_FEEDBACK_CEILING_Y0 + 16 + tune_y_shift))
-        limit_relation_marker = (
-            tune_page & compact_fader_x_valid & (
-                ((compact_fader_threshold == self.limit_cap) &
-                 (y >= NATIVE_FEEDBACK_KNEE_Y0 + tune_y_shift) &
-                 (y < NATIVE_FEEDBACK_KNEE_Y0 + 16 + tune_y_shift)) |
-                ((compact_fader_threshold == self.limit_knee) &
-                 (y >= NATIVE_FEEDBACK_CEILING_Y0 + tune_y_shift) &
-                 (y < NATIVE_FEEDBACK_CEILING_Y0 + 16 + tune_y_shift))))
+        limit_soft_region = (
+            tune_page & compact_fader_x_valid &
+            (compact_fader_threshold >= self.limit_knee) &
+            (compact_fader_threshold <= self.limit_cap) &
+            (y >= NATIVE_FEEDBACK_CEILING_Y0 + tune_y_shift) &
+            (y < NATIVE_FEEDBACK_CEILING_Y0 + 16 + tune_y_shift))
         res_select = ((bank_page & (selected_dvi_q == RezomoUISpec.TARGET_RESONANCE)) |
                       (tune_page & (selected_dvi_q == RezomoUISpec.TARGET_LIMIT_CAP))) & (
             (bank_page & self.outline(
@@ -4464,9 +4462,9 @@ class RezoTileDisplay(wiring.Component):
                                 dry_fill | tune_cap_fill),
             geometry_line_q0.eq(
                 band_zero_q0 | bank_control_mod_marker | border |
-                cursor_chip | limit_relation_marker),
+                cursor_chip),
             geometry_mod_q0.eq(band_mod_fill | bank_control_mod_fill |
-                               input_meter_q0),
+                               input_meter_q0 | limit_soft_region),
             geometry_panel_q0.eq(preset_chip | mode_chip | clock_chip |
                                  palette_chip |
                                  save_default_chip | damp_chip | layout_chip |

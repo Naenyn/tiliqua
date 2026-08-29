@@ -229,10 +229,18 @@ is already raised.
 
 The three safety controls shape and constrain the returning signal:
 
-- **KNEE** sets the level where soft limiting begins.
-- **CEIL** sets the maximum allowed feedback-loop level.
+- **KNEE** sets the level where soft limiting begins. Below it, the return is
+  unchanged; above it, progressively stronger compression bends the signal
+  toward CEIL.
+- **CEIL** sets the hard maximum allowed feedback-loop level. Its fader colors
+  the span from KNEE to CEIL to show the active soft-limiting region.
 - **DAMP** controls how strongly increasing feedback restrains resonance.
   Higher settings are more conservative.
+
+KNEE and CEIL may meet, which removes the colored soft region and behaves as a
+hard limit. Raising KNEE past CEIL raises CEIL with it; lowering CEIL past KNEE
+lowers KNEE. This keeps the controls valid without creating a blocked encoder
+range.
 
 Start with modest FB and RES settings, especially when several bands feed the
 loop. KNEE and CEIL reduce runaway behavior, but they do not make every extreme

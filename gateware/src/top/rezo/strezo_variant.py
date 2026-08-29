@@ -181,6 +181,21 @@ def native_output_meter_bounds(y):
     return tuple(bounds)
 
 
+def mid_side_reference(selected, opposite, mid_gain, side_gain, width,
+                       input_width=18):
+    """Integer reference for STREZO's saturating wet-path M/S transform."""
+    if mid_gain == 64 and side_gain == 64:
+        return selected
+    input_min = -(1 << (input_width - 1))
+    input_max = (1 << (input_width - 1)) - 1
+    selected = max(input_min, min(input_max, selected))
+    opposite = max(input_min, min(input_max, opposite))
+    value = (((mid_gain + side_gain) * selected +
+              (mid_gain - side_gain) * opposite) >> 7)
+    return max(-(1 << (width - 1)),
+               min((1 << (width - 1)) - 1, value))
+
+
 class RezoCore(RezoCoreConstants, wiring.Component):
     """Ten-band linked-stereo resonant filterbank."""
 
@@ -202,7 +217,7 @@ class RezoCore(RezoCoreConstants, wiring.Component):
     CROSS_DEPTH_MAX = 128
     CROSS_COEFFICIENT_MAX = 32768
     CROSS_CURVE_LINEAR = 0
-    CROSS_CURVE_LOG = 1
+    CROSS_CURVE_FINE = 1
     MOTION_SOURCE_OFF = 0
     MOTION_SOURCE_TRIANGLE = 1
     MOTION_SOURCE_RANDOM = 2
@@ -227,9 +242,10 @@ class RezoCore(RezoCoreConstants, wiring.Component):
         if curve == cls.CROSS_CURVE_LINEAR:
             shaped = position
         else:
-            # Early-rising logarithmic response: make the low half audible
-            # sooner, then progressively refine the approach to full scale.
-            shaped = math.log1p(7.0 * position) / math.log(8.0)
+            # Late-rising response: expand the stable low/middle region and
+            # reserve the strongest stereo-loop coupling for the final part
+            # of the fader. Exact zero and unity endpoints are retained.
+            shaped = position * position
         return round(cls.CROSS_COEFFICIENT_MAX * shaped)
 
     i: In(stream.Signature(data.ArrayLayout(ASQ, 4)))
@@ -309,6 +325,10 @@ class RezoCore(RezoCoreConstants, wiring.Component):
                                                          0b00101, 0b00101))]
         self.output_sides = [Signal(init=n & 1, name=f"output_side{n}")
                              for n in range(4)]
+        # Feed-forward wet-path M/S gains. 64 is exact unity and 128 is 2x;
+        # DRY bypasses these controls and the feedback taps are upstream.
+        self.mid_gain = Signal(unsigned(8), init=64)
+        self.side_gain = Signal(unsigned(8), init=64)
         # Unipolar G1..G4/DRY send levels for OUT0..OUT3. A value of 16 is
         # unity. DRY defaults to zero, matching the old global DRY default.
         initial_routes = (0b01111, 0b01111, 0b00101, 0b00101)
@@ -533,6 +553,7 @@ class RezoCore(RezoCoreConstants, wiring.Component):
         state_input_gain_commit = 12
         state_cv_commit = 13
         state_feedback_limit_commit = 14
+        state_mid_setup = 15
         state_output_route_commit = 16
         state_input_limit_commit = 17
         state_output_limit_commit = 18
@@ -540,6 +561,8 @@ class RezoCore(RezoCoreConstants, wiring.Component):
         state_input_gain_add = 20
         state_cv_apply = 21
         state_cv_apply_setup = 22
+        state_mid_selected_commit = 23
+        state_mid_opposite_commit = 24
         state_output_product_commit = 25
         state_saturator_square_commit = 26
         state_drive_commit = 27
@@ -935,6 +958,9 @@ class RezoCore(RezoCoreConstants, wiring.Component):
         # traverse the 4x5 send matrix after the final band.  Routing every
         # band through every output consumed 120 clocks/sample by itself and
         # exceeded the 312-clock budget at 192 kHz.
+        mid_gain_q = Signal(unsigned(8), init=64)
+        side_gain_q = Signal(unsigned(8), init=64)
+        mid_side_unity = (mid_gain_q == 64) & (side_gain_q == 64)
         output_sources = Array([
             *group_acc,
             input_mix_sample.as_value().as_signed(),
@@ -943,8 +969,26 @@ class RezoCore(RezoCoreConstants, wiring.Component):
             *group_acc_r,
             input_mix_sample_r.as_value().as_signed(),
         ])
-        output_source_signal = Signal(mix_shape)
+        output_selected_source = Signal(mix_shape)
         output_source_q = Signal(mix_shape)
+        spatial_group = Signal(range(self.N_GROUPS))
+        spatial_source_l = Signal(mix_shape)
+        spatial_source_r = Signal(mix_shape)
+        spatial_input_l = Signal(signed(18))
+        spatial_input_r = Signal(signed(18))
+        spatial_operand_l_q = Signal(signed(18))
+        spatial_operand_r_q = Signal(signed(18))
+        spatial_coefficient_q = Signal(signed(10))
+        spatial_product_l = Signal(signed(28))
+        spatial_product_r = Signal(signed(28))
+        spatial_product_a_l_q = Signal(signed(28))
+        spatial_product_a_r_q = Signal(signed(28))
+        mid_coefficient_a = Signal(signed(10))
+        mid_coefficient_b = Signal(signed(10))
+        spatial_combined_l = Signal(signed(29))
+        spatial_combined_r = Signal(signed(29))
+        spatial_scaled_l = Signal(mix_shape)
+        spatial_scaled_r = Signal(mix_shape)
         input_mode_array = Array(self.input_modes)
         cv_target_array = Array(self.cv_targets)
         m.d.comb += [
@@ -1157,13 +1201,40 @@ class RezoCore(RezoCoreConstants, wiring.Component):
             output_send_index.eq(
                 output_source + (output_chan << 2) + output_chan),
             output_send_gain.eq(output_send_array[output_send_index]),
-            output_source_signal.eq(Mux(
-                Array(self.output_sides)[output_chan], output_sources_r[output_source],
-                output_sources[output_source])),
+            output_selected_source.eq(Mux(
+                Array(self.output_sides)[output_chan],
+                output_sources_r[output_source], output_sources[output_source])),
+            # Transform each wet group once, then reuse those four stereo
+            # pairs across all output rows. Two registered 18x10 products run
+            # in parallel; a small setup state lets all four groups share one
+            # pair of source limiters as well as the multipliers.
+            # Four bits of pre-transform headroom retain deliberate overload
+            # while keeping both products in native ECP5 DSP blocks.
+            spatial_source_l.eq(Array(group_acc)[spatial_group]),
+            spatial_source_r.eq(Array(group_acc_r)[spatial_group]),
+            mid_coefficient_a.eq(mid_gain_q + side_gain_q),
+            mid_coefficient_b.eq(
+                Cat(mid_gain_q, Const(0, 2)).as_signed() -
+                Cat(side_gain_q, Const(0, 2)).as_signed()),
+            spatial_product_l.eq(spatial_operand_l_q * spatial_coefficient_q),
+            spatial_product_r.eq(spatial_operand_r_q * spatial_coefficient_q),
+            spatial_combined_l.eq(spatial_product_a_l_q + spatial_product_l),
+            spatial_combined_r.eq(spatial_product_a_r_q + spatial_product_r),
+            spatial_scaled_l.eq(spatial_combined_l >> 7),
+            spatial_scaled_r.eq(spatial_combined_r >> 7),
             output_send_product.eq(output_source_q * output_send_gain_q),
             output_send_term.eq(output_send_product >> 4),
             output_next.eq(output_acc_array[output_chan] + output_send_term_q),
         ]
+        for source, limited in (
+                (spatial_source_l, spatial_input_l),
+                (spatial_source_r, spatial_input_r)):
+            with m.If(source > 131071):
+                m.d.comb += limited.eq(131071)
+            with m.Elif(source < -131072):
+                m.d.comb += limited.eq(-131072)
+            with m.Else():
+                m.d.comb += limited.eq(source)
         m.d.comb += [
             group_cur.eq(group_offsets[band]),
             group_update_raw.eq(
@@ -1262,7 +1333,12 @@ class RezoCore(RezoCoreConstants, wiring.Component):
         with m.Switch(state):
             with m.Case(state_wait):
                 with m.If(self.i.valid & self.i.ready):
-                    m.d.sync += motion_phase_acc.eq(motion_phase_sum[:24])
+                    m.d.sync += [
+                        motion_phase_acc.eq(motion_phase_sum[:24]),
+                        mid_gain_q.eq(self.mid_gain),
+                        side_gain_q.eq(self.side_gain),
+                        spatial_group.eq(0),
+                    ]
                     with m.If(motion_phase_sum[24]):
                         # The random source is sample-and-hold at the selected
                         # motion rate, not audio-rate noise. One LFSR state
@@ -1732,8 +1808,11 @@ class RezoCore(RezoCoreConstants, wiring.Component):
                             self.cross_matrix[0])),
                         matrix_route_acc_l.eq(0),
                         matrix_route_acc_r.eq(0),
-                        state.eq(state_output_route_commit),
                     ]
+                    with m.If(mid_side_unity):
+                        m.d.sync += state.eq(state_output_route_commit)
+                    with m.Else():
+                        m.d.sync += state.eq(state_mid_setup)
                 with m.Else():
                     m.d.sync += [
                         band.eq(band + 1),
@@ -1743,7 +1822,7 @@ class RezoCore(RezoCoreConstants, wiring.Component):
             with m.Case(state_output_route_commit):
                 m.d.sync += [
                     output_send_gain_q.eq(output_send_gain),
-                    output_source_q.eq(output_source_signal),
+                    output_source_q.eq(output_selected_source),
                     state.eq(state_output_limit_commit),
                 ]
                 # The extra registered shaper boundary makes the full-bank
@@ -1753,6 +1832,41 @@ class RezoCore(RezoCoreConstants, wiring.Component):
                         feedback_sample.eq(clip_limited),
                         feedback_sample_r.eq(clip_limited_r),
                     ]
+
+            with m.Case(state_mid_setup):
+                m.d.sync += [
+                    spatial_operand_l_q.eq(spatial_input_l),
+                    spatial_operand_r_q.eq(spatial_input_r),
+                    spatial_coefficient_q.eq(mid_coefficient_a),
+                    state.eq(state_mid_selected_commit),
+                ]
+
+            with m.Case(state_mid_selected_commit):
+                m.d.sync += [
+                    spatial_product_a_l_q.eq(spatial_product_l),
+                    spatial_product_a_r_q.eq(spatial_product_r),
+                    spatial_operand_l_q.eq(spatial_input_r),
+                    spatial_operand_r_q.eq(spatial_input_l),
+                    spatial_coefficient_q.eq(mid_coefficient_b),
+                    state.eq(state_mid_opposite_commit),
+                ]
+
+            with m.Case(state_mid_opposite_commit):
+                m.d.sync += [
+                    # Feedback has already been captured in its separate
+                    # accumulators, so the wet routing groups can be updated
+                    # in place. This avoids a duplicate 4x stereo register
+                    # bank and preserves exact unity by skipping this path.
+                    Array(group_acc)[spatial_group].eq(spatial_scaled_l),
+                    Array(group_acc_r)[spatial_group].eq(spatial_scaled_r),
+                ]
+                with m.If(spatial_group != self.N_GROUPS - 1):
+                    m.d.sync += [
+                        spatial_group.eq(spatial_group + 1),
+                        state.eq(state_mid_setup),
+                    ]
+                with m.Else():
+                    m.d.sync += state.eq(state_output_route_commit)
 
             with m.Case(state_output_limit_commit):
                 m.d.sync += [
@@ -1874,6 +1988,8 @@ class RezoTileDisplay(wiring.Component):
             "effective_feedback": In(unsigned(8)),
             "same_feedback": In(unsigned(8)),
             "cross_feedback": In(unsigned(8)),
+            "mid_gain": In(unsigned(8)),
+            "side_gain": In(unsigned(8)),
             "cross_curve": In(1),
             "cross_layout": In(unsigned(3)),
             "cross_layout_preview": In(unsigned(3)),
@@ -2188,6 +2304,8 @@ class RezoTileDisplay(wiring.Component):
             put_native(7, f"G{group + 1}", 15 + group * 5, 17)
         put_native(7, "SAME", 9, 34)
         put_native(7, "CROSS", 8, 36)
+        put_native(4, "MID", 10, 34)
+        put_native(4, "SIDE", 9, 36)
         m.submodules.text_mem = text_mem = Memory(
             shape=unsigned(6), depth=len(text_init), init=text_init)
         text_rport = text_mem.read_port(domain="dvi")
@@ -2385,7 +2503,7 @@ class RezoTileDisplay(wiring.Component):
                   for name in cross_layout_names)
             for pos in range(8)
         ]
-        cross_curve_names = ("LINEAR  ", "LOG     ")
+        cross_curve_names = ("LINEAR  ", "FINE    ")
         cross_curve_chars = [
             Array(Const(self.code(name[pos]), 6)
                   for name in cross_curve_names)
@@ -4055,6 +4173,8 @@ class RezoTileDisplay(wiring.Component):
         # of the shift/add mapping without introducing perceptible UI latency.
         same_feedback_end_q = Signal(unsigned(10))
         cross_feedback_end_q = Signal(unsigned(10))
+        mid_gain_end_q = Signal(unsigned(10))
+        side_gain_end_q = Signal(unsigned(10))
         m.d.dvi += [
             same_feedback_end_q.eq(
                 native_cross_fader_endpoint(self.same_feedback,
@@ -4062,11 +4182,19 @@ class RezoTileDisplay(wiring.Component):
             cross_feedback_end_q.eq(
                 native_cross_fader_endpoint(self.cross_feedback,
                                              cross_track_x0)),
+            mid_gain_end_q.eq(
+                native_cross_fader_endpoint(self.mid_gain,
+                                             cross_track_x0)),
+            side_gain_end_q.eq(
+                native_cross_fader_endpoint(self.side_gain,
+                                             cross_track_x0)),
         ]
         same_feedback_width = (
             (same_feedback_end_q - cross_track_x0))
         cross_feedback_width = (
             (cross_feedback_end_q - cross_track_x0))
+        mid_gain_width = mid_gain_end_q - cross_track_x0
+        side_gain_width = side_gain_end_q - cross_track_x0
         same_fill = cross_page & self.rect(
             x, y, cross_track_x0, same_y0,
             cross_track_x0 + same_feedback_width,
@@ -4075,11 +4203,24 @@ class RezoTileDisplay(wiring.Component):
             x, y, cross_track_x0, cross_y0,
             cross_track_x0 + cross_feedback_width,
             cross_y0 + 16)
+        mid_fill = output_page & self.rect(
+            x, y, cross_track_x0, same_y0,
+            cross_track_x0 + mid_gain_width, same_y0 + 16)
+        side_fill = output_page & self.rect(
+            x, y, cross_track_x0, cross_y0,
+            cross_track_x0 + side_gain_width, cross_y0 + 16)
         cross_select = cross_page & (
             ((selected_dvi_q == StrezoUISpec.TARGET_SAME_FEEDBACK) &
              self.rect(x, y, cross_track_x0 - 6, same_y0,
                        cross_track_x0 - 2, same_y0 + 16)) |
             ((selected_dvi_q == StrezoUISpec.TARGET_CROSS_FEEDBACK) &
+             self.rect(x, y, cross_track_x0 - 6, cross_y0,
+                       cross_track_x0 - 2, cross_y0 + 16)))
+        mid_side_select = output_page & (
+            ((selected_dvi_q == StrezoUISpec.TARGET_MID_GAIN) &
+             self.rect(x, y, cross_track_x0 - 6, same_y0,
+                       cross_track_x0 - 2, same_y0 + 16)) |
+            ((selected_dvi_q == StrezoUISpec.TARGET_SIDE_GAIN) &
              self.rect(x, y, cross_track_x0 - 6, cross_y0,
                        cross_track_x0 - 2, cross_y0 + 16)))
         tune_fill_x0 = (NATIVE_FEEDBACK_FILL_X0)
@@ -4130,17 +4271,11 @@ class RezoTileDisplay(wiring.Component):
             ((NATIVE_FEEDBACK_CEILING_Y0 + tune_y_shift)),
             ((compact_tune_cap_end_q)),
             ((NATIVE_FEEDBACK_CEILING_Y0 + 16 + tune_y_shift)))
-        limit_relation_marker = tune_page & (
-            self.rect(
-                x, y, compact_tune_cap_end_q - 1,
-                NATIVE_FEEDBACK_KNEE_Y0 + tune_y_shift,
-                compact_tune_cap_end_q + 1,
-                NATIVE_FEEDBACK_KNEE_Y0 + 16 + tune_y_shift) |
-            self.rect(
-                x, y, compact_tune_knee_end_q - 1,
-                NATIVE_FEEDBACK_CEILING_Y0 + tune_y_shift,
-                compact_tune_knee_end_q + 1,
-                NATIVE_FEEDBACK_CEILING_Y0 + 16 + tune_y_shift))
+        limit_soft_region = tune_page & self.rect(
+            x, y, compact_tune_knee_end_q,
+            NATIVE_FEEDBACK_CEILING_Y0 + tune_y_shift,
+            compact_tune_cap_end_q,
+            NATIVE_FEEDBACK_CEILING_Y0 + 16 + tune_y_shift)
         res_select = (
             (bank_page &
              (selected_dvi_q == StrezoUISpec.TARGET_RESONANCE) &
@@ -4182,7 +4317,8 @@ class RezoTileDisplay(wiring.Component):
                                dry_select | res_select | fb_select | damp_select),
             input_selected_q.eq(input_select_q0),
             routing_selected_q.eq(group_select_q0 | output_select_q0 |
-                                  output_side_select | cross_header_select_q0),
+                                  output_side_select | cross_header_select_q0 |
+                                  mid_side_select),
             advanced_selected_q.eq(
                 palette_select | cross_curve_select | save_default_select),
             bands_selected_q.eq(layout_select | band_select_q0 |
@@ -4210,14 +4346,16 @@ class RezoTileDisplay(wiring.Component):
         geometry_panel_q0 = Signal()
         m.d.dvi += [
             geometry_fill_q0.eq(band_fill | band_marker | bank_control_fill |
-                                same_fill | cross_fill | tune_feedback_fill |
+                                same_fill | cross_fill | mid_fill | side_fill |
+                                tune_feedback_fill |
                                 dry_fill |
                                 tune_cap_fill | motion_depth_fill),
             geometry_line_q0.eq(
                 band_zero_q0 | bank_control_mod_marker | border |
-                cursor_chip | limit_relation_marker),
+                cursor_chip),
             geometry_mod_q0.eq(band_mod_fill | bank_control_mod_fill |
-                               input_meter_q0 | motion_monitor_line),
+                               input_meter_q0 | motion_monitor_line |
+                               limit_soft_region),
             geometry_panel_q0.eq(preset_chip | palette_chip | cross_curve_chip |
                                  save_default_chip |
                                  motion_value_chip |
@@ -4427,6 +4565,8 @@ class RezoBeamTop(Elaboratable):
             rezo.motion_rate.eq(ui.motion_rate),
             rezo.motion_phase.eq(ui.motion_phase),
             rezo.motion_depth.eq(ui.motion_depth),
+            rezo.mid_gain.eq(ui.mid_gain),
+            rezo.side_gain.eq(ui.side_gain),
         ]
         for n in range(RezoCore.N_BANDS):
             m.d.comb += [
@@ -4552,6 +4692,8 @@ class RezoBeamTop(Elaboratable):
         display_feedback = Signal(unsigned(8))
         display_cross_feedback = Signal(unsigned(8))
         display_same_feedback = Signal(unsigned(8))
+        display_mid_gain = Signal(unsigned(8))
+        display_side_gain = Signal(unsigned(8))
         display_drive = Signal(unsigned(8))
         display_effective_drive = Signal(unsigned(8))
         display_effective_resonance = Signal(unsigned(8))
@@ -4587,6 +4729,8 @@ class RezoBeamTop(Elaboratable):
             # coefficients, so both faders retain their full visual travel.
             display_same_feedback.eq(ui.same_feedback),
             display_cross_feedback.eq(ui.cross_feedback),
+            display_mid_gain.eq(ui.mid_gain),
+            display_side_gain.eq(ui.side_gain),
             display_effective_resonance.eq(rezo.effective_resonance >> 8),
             display_effective_feedback.eq(rezo.effective_feedback >> 8),
             display_limit_knee.eq(rezo.limit_knee >> 8),
@@ -4631,6 +4775,10 @@ class RezoBeamTop(Elaboratable):
                            o=display.same_feedback, o_domain="dvi"),
             FFSynchronizer(i=display_cross_feedback,
                            o=display.cross_feedback, o_domain="dvi"),
+            FFSynchronizer(i=display_mid_gain,
+                           o=display.mid_gain, o_domain="dvi"),
+            FFSynchronizer(i=display_side_gain,
+                           o=display.side_gain, o_domain="dvi"),
             FFSynchronizer(i=display_effective_resonance, o=display.effective_resonance, o_domain="dvi"),
             FFSynchronizer(i=display_effective_feedback, o=display.effective_feedback, o_domain="dvi"),
             FFSynchronizer(i=display_limit_knee, o=display.limit_knee, o_domain="dvi"),

@@ -111,4 +111,8 @@ class StrezoUISpec:
     TARGET_OUTPUT_DRY_COL = TARGET_CROSS_LAYOUT
     TARGET_SAME_FEEDBACK = 126
     TARGET_CROSS_CURVE = TARGET_MOTION_DEPTH
+    # OUTPUT and CROSS are disjoint pages, so the two page-local faders can
+    # reuse the otherwise exhausted seven-bit target space.
+    TARGET_MID_GAIN = TARGET_SAME_FEEDBACK
+    TARGET_SIDE_GAIN = TARGET_CROSS_FEEDBACK
     N_TARGETS = 127
