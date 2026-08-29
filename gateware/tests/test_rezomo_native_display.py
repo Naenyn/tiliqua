@@ -444,6 +444,24 @@ def test_output_row_selector_uses_native_safe_square_coordinates():
     ]
 
 
+def test_output_column_header_selection_bars_sit_above_the_labels():
+    selected = RezoTileDisplay.PALETTE["selected"]
+    group_samples = _render_samples(
+        page=4,
+        selected=RezomoUISpec.TARGET_OUTPUT_COL_BASE,
+        points=((270, 233), (270, 281)),
+    )
+    dry_samples = _render_samples(
+        page=4,
+        selected=RezomoUISpec.TARGET_OUTPUT_DRY_COL,
+        points=((538, 233), (538, 281)),
+    )
+    assert group_samples[0] == (selected, selected, selected)
+    assert dry_samples[0] == (selected, selected, selected)
+    assert group_samples[1] != (selected, selected, selected)
+    assert dry_samples[1] != (selected, selected, selected)
+
+
 def test_output_send_scaling_preserves_exact_fill_endpoint():
     """A send of eight fills 24 pixels after the four-pixel inset."""
     dut = RezoTileDisplay(

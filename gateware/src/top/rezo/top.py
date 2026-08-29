@@ -4295,7 +4295,8 @@ class RezoTileDisplay(wiring.Component):
                 matrix_col=output_source,
                 dry_selected=(
                     selected_dvi_q == RezomoUISpec.TARGET_OUTPUT_DRY_COL),
-                x=x, y=y)),
+                x=x, y=y,
+                y_shift=-3 * compact_content_shift)),
         ]
 
         for target, signals in [
