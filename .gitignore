@@ -2,6 +2,7 @@
 # Format documentation: https://kicad.org/help/file-formats/
 
 # Temporary files
+.DS_Store
 *.000
 *.bak
 *.bck
@@ -16,6 +17,21 @@ _autosave-*
 *-save.pro
 *-save.kicad_pcb
 fp-info-cache
+
+# Local FPGA build and release-staging output. Gateware has its own build
+# directory ignore; this covers repository-root staging used for RC bundles.
+/build/
+
+# Superseded stock-SoC/framebuffer fit probe. The retained REZO implementation
+# is the lean control-plane target under gateware/src/top/rezo/.
+/gateware/src/top/rezo_cpu_probe/
+
+# Netlist-cache variants generated only by the superseded framebuffer probe.
+# Keep these exact so a new netlist required by a supported target is still
+# reported for explicit reproducibility review.
+/gateware/src/vendor/vexiiriscv/verilog/VexiiRiscv_8a94052796a059b23b09752fa809adcf.v
+/gateware/src/vendor/vexiiriscv/verilog/VexiiRiscv_d903058dfca8bef8ed558de15dbbd8cf.v
+/gateware/src/vendor/vexiiriscv/verilog/VexiiRiscv_ee84da00793a4043d0a074895a3a57e1.v
 
 # Netlist files (exported from Eeschema)
 *.net

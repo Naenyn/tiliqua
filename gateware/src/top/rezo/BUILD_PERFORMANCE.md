@@ -1,4 +1,4 @@
-# REZO build performance log
+# REZO / REZOMO build performance log
 
 This log tracks resource use and final post-route timing for significant REZO
 builds. Keep failed experiments: placement seed sensitivity is material at
@@ -9,301 +9,18 @@ builds. Keep failed experiments: placement seed sensitivity is material at
 - Target: Tiliqua R5 / SoldierCrab R3 (`LFE5U-25F`)
 - Audio rate: 192 kHz
 - Video mode: 1280x720p60
-- Build command: `pdm run rezo build --fs-192khz --modeline 1280x720p60`
+- Build command: `pdm run rezo build --fs-192khz` or, for the clocked variant,
+  `pdm run rezomo build --fs-192khz`
 - Seed override: `TILIQUA_REZO_SEED=<n>`
 - Resource figures and frequencies come from the final `top.tim` report.
 - Required clocks: DVI5X 371.33 MHz, AUDIO 49.15 MHz, SYNC 60.00 MHz,
   DVI 74.25 MHz.
+- The official circular target uses `720x720p60r2`, requiring DVI5X 195.35
+  MHz, AUDIO 49.15 MHz, SYNC 60.00 MHz, and DVI 39.07 MHz.
 
 The formal optimization baseline is **OPT-BASE** below. New feature builds
 should be compared against its 21,668 packed cells and 2,620 free cells while
 also passing every constrained clock.
-
-### 2026-08-11 through 2026-08-12 compact-display target work
-
-These rows use nextpnr's raw `TRELLIS_COMB` utilization rather than the packed
-cell metric in the historical table. The standard preview renders the same
-native-size 508x508 UI as the circular target, centered in 1280x720 with no
-rotation and no enlargement. Only the 720x720 circular target applies the
-90-degree panel-mount correction.
-
-| ID | Target/change | Seed | TRELLIS_COMB | Raw free | FF | BRAM | DVI5X MHz | AUDIO MHz | SYNC MHz | DVI MHz | Result |
-|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| COMPACT-STD-ACCUM-S9 | 1280x720; independent Bresenham coordinate accumulators | 9 | 24,630 | -342 | — | 22 | — | — | — | — | FAIL placement capacity |
-| COMPACT-STD-ROM-S9 | 1280x720; shared block-RAM coordinate map, direct decode from RAM outputs | 9 | 24,135 | 153 | — | 23 | 396.98 | 67.47 | 59.83 | 57.12 | FAIL SYNC and DVI |
-| **COMPACT-STD-ROM-PIPE-S4** | **1280x720; shared block-RAM map plus registered renderer boundary** | **4** | **24,149** | **139** | **6,913** | **23** | **385.65** | **70.77** | **61.15** | **80.87** | **PASS; flashed slot 4** |
-| ROUND2-IRREG-W140-S4 | Photo-round-2 alignment; irregular FILTER fader geometry, ABC9 W=140 | 4 | 24,383 | -95 | 6,916 | 23 | — | — | — | — | FAIL placement capacity |
-| ROUND2-TEXT-W140-S4 | Same UI with FILTER corrections folded into text ROM, ABC9 W=140 | 4 | 24,314 | -26 | 6,913 | 23 | — | — | — | — | FAIL placement capacity |
-| ROUND2-TEXT-W130-S4 | Same UI, denser ABC9 W=130 mapping | 4 | 24,151 | 137 | 6,913 | 23 | 350.26 | 73.05 | 59.20 | 82.01 | FAIL DVI5X and SYNC |
-| **ROUND2-TEXT-W130-S9** | **Exact W=130 JSON rerouted; second photo-alignment pass** | **9** | **24,151** | **137** | **6,913** | **23** | **401.45** | **71.91** | **63.25** | **77.01** | **PASS; flashed slot 4** |
-| ROUND3-INPUT-W130-S9 | Third photo pass; conditional INPUT CV chips/AUD depth text; initial full build | 9 | 24,150 | 138 | 6,913 | 23 | 394.01 | 74.07 | 53.46 | 76.43 | FAIL SYNC |
-| **ROUND3-INPUT-W130-S4** | **Exact synthesized JSON rerouted; third photo-alignment pass** | **4** | **24,150** | **138** | **6,913** | **23** | **407.17** | **73.08** | **63.30** | **76.91** | **PASS; flashed slot 4** |
-| **ROUND4-MAIN-GRID-W130-S4** | **BANK/FILTER shared five-slot native-row grid; exact label/fader lower-edge alignment** | **4** | **24,017** | **271** | **6,920** | **23** | **392.77** | **75.88** | **62.08** | **78.86** | **PASS; flashed slot 4** |
-| ROUND5-MAIN-SPACED-W130-S4 | Roomy alternate-row MAIN grid, shortened bands, wider faders; initial route | 4 | 24,050 | 238 | 6,921 | 23 | 341.18 | 73.23 | 54.30 | 73.90 | FAIL DVI5X, SYNC, and DVI |
-| ROUND5-MAIN-SPACED-W130-S9 | Exact synthesized JSON rerouted | 9 | 24,050 | 238 | 6,921 | 23 | 364.56 | 70.24 | 53.47 | 73.97 | FAIL DVI5X, SYNC, and DVI |
-| **ROUND5-MAIN-SPACED-W130-S6** | **Exact synthesized JSON rerouted; roomy shared BANK/FILTER grid** | **6** | **24,050** | **238** | **6,921** | **23** | **439.56** | **74.95** | **60.16** | **79.85** | **PASS; flashed slot 4** |
-| **ROUND6-MAIN-COMPACT-W130-S6** | **Bottom-anchored 16-pixel control cadence; corrected BANK/FILTER band scaling and clipping** | **6** | **22,985** | **1,303** | **6,842** | **23** | **416.67** | **73.95** | **66.15** | **77.54** | **PASS; flashed slot 4** |
-| ROUND7-MAIN-EXPANDED-BUNDLED-S6 | Alternate-row controls expanded upward; bundled Yosys 0.52 route | 6 | 23,138 | 1,150 | 6,845 | 23 | 443.85 | 71.01 | 58.68 | 72.07 | FAIL SYNC and DVI |
-| **ROUND7-MAIN-EXPANDED-W130-S6** | **Same geometry; native W130 netlist, last row bottom-anchored** | **6** | **22,978** | **1,310** | **6,845** | **23** | **408.00** | **72.12** | **66.09** | **76.76** | **PASS; flashed slot 4** |
-| ROUND8-INPUT-LANES-BUNDLED-S6 | INPUT groups moved upward; unified MODE/VALUE/DEPTH lanes; bundled Yosys 0.52 route | 6 | 23,010 | 1,278 | 6,845 | 23 | 396.51 | 72.17 | 58.70 | 81.14 | FAIL SYNC |
-| ROUND8-INPUT-LANES-W130-S6 | Same INPUT geometry; native W130 netlist | 6 | 22,915 | 1,373 | 6,845 | 23 | 412.03 | 74.02 | 61.59 | 73.61 | FAIL DVI by 0.64 MHz |
-| ROUND8-INPUT-LANES-W130-S7 | Exact native W130 JSON rerouted | 7 | 22,915 | 1,373 | 6,845 | 23 | 363.90 | 69.99 | 64.22 | 76.62 | FAIL DVI5X |
-| **ROUND8-INPUT-LANES-W130-S4** | **Exact native W130 JSON rerouted; STREZO-style INPUT lane alignment** | **4** | **22,915** | **1,373** | **6,845** | **23** | **393.08** | **69.30** | **61.87** | **78.25** | **PASS; flashed slot 4** |
-| ROUND9-INPUT-ALIGN-BUNDLED-S4 | Align VALUE/DEPTH backgrounds to native text; restore compact level monitor; bundled Yosys 0.52 | 4 | 23,044 | 1,244 | 6,845 | 23 | — | — | — | — | Routing aborted after pathological final congestion |
-| **ROUND9-INPUT-ALIGN-W130-S4** | **Same geometry; native W130 mapping and exact VALUE-target spacing** | **4** | **22,960** | **1,328** | **6,845** | **23** | **399.20** | **74.46** | **62.38** | **76.61** | **PASS; flashed slot 4** |
-| ROUND10-INPUT-LANES-BANK-SCALE-BUNDLED-S4 | Taller INPUT lanes and restored half-height BANK default; bundled Yosys 0.52 | 4 | 23,152 | 1,136 | 6,844 | 23 | — | — | — | — | Routing aborted after pathological final congestion |
-| **ROUND10-INPUT-LANES-BANK-SCALE-W130-S4** | **Same geometry; native W130 mapping** | **4** | **23,046** | **1,242** | **6,844** | **23** | **422.12** | **70.34** | **66.12** | **74.79** | **PASS; flashed slot 4** |
-| ROUND11-INPUT-VALUES-BUNDLED-S4 | INPUT value-only shading, 136px groups, and mode-dependent level-monitor placement; bundled Yosys 0.52 | 4 | 23,288 | 1,000 | 6,845 | 23 | — | — | — | — | Routing aborted after pathological final congestion |
-| ROUND11-INPUT-VALUES-W130-S4 | Same geometry; native W130 mapping | 4 | 23,091 | 1,197 | 6,845 | 23 | 368.19 | 77.07 | 62.61 | 81.39 | FAIL DVI5X by 3.14 MHz |
-| **ROUND11-INPUT-VALUES-W130-S6** | **Exact native W130 JSON rerouted** | **6** | **23,091** | **1,197** | **6,845** | **23** | **385.95** | **70.71** | **63.88** | **76.14** | **PASS; flashed slot 4** |
-| ROUND12-INPUT-BOUNDS-BUNDLED-S4 | Compact VALUE/DEPTH gap, centered value chips, and INPUT content panel extended to y=700; bundled Yosys 0.52 | 4 | 23,352 | 936 | 6,845 | 23 | — | — | — | — | Routing aborted after pathological final congestion |
-| ROUND12-INPUT-BOUNDS-W130-S4 | Same geometry; native W130 mapping | 4 | 23,373 | 915 | 6,845 | 23 | — | — | — | — | Routing aborted after pathological final congestion |
-| ROUND12-INPUT-BOUNDS-W130-S6 | Exact native W130 JSON rerouted | 6 | 23,373 | 915 | 6,845 | 23 | 355.37 | 74.32 | 63.49 | 69.68 | FAIL DVI5X and DVI |
-| ROUND12-INPUT-BOUNDS-W130-S9 | Exact native W130 JSON rerouted | 9 | 23,373 | 915 | 6,845 | 23 | 401.77 | 71.50 | 64.97 | 72.54 | FAIL DVI |
-| ROUND12-INPUT-BOUNDS-W130-S8 | Exact native W130 JSON rerouted | 8 | 23,373 | 915 | 6,845 | 23 | 386.25 | 72.87 | 59.97 | 71.24 | FAIL SYNC by 0.03 MHz and DVI |
-| **ROUND12-INPUT-BOUNDS-W130-S1** | **Exact native W130 JSON rerouted; compact INPUT bounds correction** | **1** | **23,373** | **915** | **6,845** | **23** | **391.24** | **73.00** | **62.32** | **77.32** | **PASS; flashed slot 4** |
-| **ROUND13-INPUT-COLUMNS-BUNDLED-S1** | **INPUT panel begins above IN0; right-aligned labels and one left-aligned parameter/fader column** | **1** | **23,210** | **1,078** | **6,846** | **23** | **414.94** | **71.65** | **61.25** | **78.55** | **PASS; flashed slot 4** |
-| ROUND14-INPUT-AUDIO-BUNDLED-S1 | Five-character INPUT MODE fields; bundled Yosys 0.52 route | 1 | 23,218 | 1,070 | 6,846 | 23 | — | — | — | — | Routing aborted after pathological final congestion |
-| **ROUND14-INPUT-AUDIO-W130-S1** | **Five-character AUDIO/CV mode chips, centered vertically and horizontally** | **1** | **23,163** | **1,125** | **6,846** | **23** | **434.03** | **74.21** | **66.33** | **75.67** | **PASS; flashed slot 4** |
-| ROUND15-INPUT-NATIVE-Y-BUNDLED-S1 | INPUT vertical geometry moved onto the native 16px text raster; bundled Yosys 0.52 route | 1 | 23,173 | 1,115 | 6,845 | 23 | 395.73 | 74.04 | 56.72 | 69.47 | FAIL SYNC and DVI |
-| ROUND15-INPUT-NATIVE-Y-W130-S1 | Exact native W130 JSON rerouted | 1 | 23,092 | 1,196 | 6,845 | 23 | 360.36 | 73.94 | 65.68 | 75.34 | FAIL DVI5X by 10.97 MHz |
-| **ROUND15-INPUT-NATIVE-Y-W130-S4** | **Native 96px INPUT cadence and mathematically centered MODE/VALUE/DEPTH lanes** | **4** | **23,092** | **1,196** | **6,845** | **23** | **406.17** | **75.53** | **60.45** | **75.48** | **PASS; flashed slot 4** |
-| ROUND16-GROUPS-NATIVE-Y-BUNDLED-S1 | GROUPS labels, rails, and markers share four native row centers; bundled Yosys 0.52 route | 1 | 23,337 | 951 | 6,845 | 23 | 456.41 | 74.67 | 57.58 | 65.74 | FAIL SYNC and DVI |
-| **ROUND16-GROUPS-NATIVE-Y-W130-S1** | **Exact native W130 route; four 48px GROUPS rows with coincident label/rail/marker centers** | **1** | **23,253** | **1,035** | **6,845** | **23** | **393.24** | **77.31** | **61.63** | **80.62** | **PASS; flashed slot 4** |
-| ROUND17-OUTPUT-NATIVE-XY-BUNDLED-S1 | OUTPUT row/column labels and cells share native centers; bundled Yosys 0.52 route | 1 | 23,365 | 923 | 6,860 | 23 | — | — | — | — | Routing aborted after pathological final congestion |
-| ROUND17-OUTPUT-NATIVE-XY-W130-S1 | Same OUTPUT geometry; native W130 mapping | 1 | 23,281 | 1,007 | 6,860 | 23 | 371.47 | 77.11 | 64.75 | 72.79 | FAIL DVI by 1.46 MHz |
-| **ROUND17-OUTPUT-NATIVE-XY-W130-S2** | **Exact native W130 JSON rerouted; five centered columns and four centered rows** | **2** | **23,281** | **1,007** | **6,860** | **23** | **413.22** | **73.29** | **66.34** | **82.44** | **PASS; flashed slot 4** |
-| ROUND18-OUTPUT-EVEN-ROWS-BUNDLED-S2 | OUTPUT centers corrected from 64/48/64px to a uniform 64px cadence; bundled Yosys 0.52 route | 2 | 23,423 | 865 | 6,861 | 23 | 406.17 | 74.11 | 62.94 | 73.57 | FAIL DVI by 0.68 MHz |
-| ROUND18-OUTPUT-EVEN-ROWS-W130-S1 | Same geometry; native W130 mapping | 1 | 23,256 | 1,032 | 6,861 | 23 | 337.15 | 74.21 | 62.20 | 69.08 | FAIL DVI5X and DVI |
-| ROUND18-OUTPUT-EVEN-ROWS-W130-S4 | Exact native W130 JSON rerouted | 4 | 23,256 | 1,032 | 6,861 | 23 | 364.03 | 72.69 | 64.41 | 79.20 | FAIL DVI5X by 7.30 MHz |
-| ROUND18-OUTPUT-EVEN-ROWS-W130-S8 | Exact native W130 JSON rerouted | 8 | 23,256 | 1,032 | 6,861 | 23 | 331.90 | 76.24 | 62.20 | 78.33 | FAIL DVI5X |
-| **ROUND18-OUTPUT-EVEN-ROWS-W130-S10** | **Exact native W130 JSON rerouted; four OUTPUT rows on one uniform 64px center cadence** | **10** | **23,256** | **1,032** | **6,861** | **23** | **390.93** | **72.76** | **65.61** | **79.50** | **PASS; flashed slot 4** |
-| ROUND19-FEEDBACK-ALIGN-BUNDLED-S1 | FEEDBACK source row centered and safety controls moved onto one shared left edge; bundled Yosys 0.52 | 1 | — | — | 6,868 | 23 | — | — | — | — | Routing stopped after pathological congestion at 107k iterations |
-| **ROUND19-FEEDBACK-ALIGN-W130-S1** | **Native W130 mapping; centered ten-source group and aligned KNEE/CEILING/DAMPING controls** | **1** | **23,361** | **927** | **6,868** | **23** | **395.88** | **70.70** | **62.08** | **75.00** | **PASS; flashed slot 4** |
-| ROUND20-FEEDBACK-SOURCE-CENTER-BUNDLED-S1 | Correct FEEDBACK source decoder prefetch offset from six to five logical pixels; bundled Yosys 0.52 | 1 | — | — | 6,868 | 23 | — | — | — | — | Routing stopped after pathological congestion beyond 113k iterations |
-| **ROUND20-FEEDBACK-SOURCE-CENTER-W130-S1** | **Native W130 mapping; ten-button rendered interval [42,678) centered exactly on x=360** | **1** | **23,443** | **845** | **6,861** | **23** | **390.32** | **71.64** | **64.83** | **79.56** | **PASS; flashed slot 4** |
-| ROUND21-MATRIX-ROWS-BUNDLED-S1 | MATRIX labels moved to one exact 80px native cadence; bundled Yosys 0.52 | 1 | — | — | 6,868 | 23 | — | — | — | — | Route stopped after prolonged congestion; not retained |
-| ROUND21-MATRIX-ROWS-W130-S1 | Native W130 mapping; exact MATRIX row centers | 1 | 23,374 | 914 | 6,861 | 23 | 389.11 | 68.84 | 61.23 | 70.56 | FAIL DVI |
-| **ROUND21-MATRIX-ROWS-W130-S6** | **Exact native W130 JSON rerouted; MATRIX labels share the five fader-row centers** | **6** | **23,374** | **914** | **6,861** | **23** | **346.02** | **72.88** | **63.91** | **76.17** | **DVI5X timing miss; packaged for hardware UI validation** |
-| NATIVE720-PAGES-W130-S4 | All compact pages authored directly in the native 720x720 canvas; coordinate-map BRAM removed | 4 | 24,266 | 22 | 6,888 | 22 | 341.53 | 72.71 | 64.33 | 73.50 | FAIL DVI5X and DVI |
-| NATIVE720-U10-W130-S4 | Native page geometry with unsigned 10-bit renderer coordinates | 4 | 24,039 | 249 | 6,878 | 22 | 359.07 | 70.38 | 59.59 | 73.77 | FAIL DVI5X, SYNC, and DVI |
-| NATIVE720-U10-W130-S6 | Exact optimized JSON reroute | 6 | 24,039 | 249 | 6,878 | 22 | 411.86 | 71.06 | 59.16 | 78.09 | FAIL SYNC by 0.84 MHz |
-| **NATIVE720-U10-W130-S1** | Exact optimized JSON reroute; all pages authored in final native coordinates | **1** | **24,039** | **249** | **6,878** | **22** | **414.94** | **71.35** | **63.24** | **77.54** | **PASS; flashed slot 4** |
-| CIRCULAR720-U10-W130-S1 | Official 720x720p60r2 modeline, rotated output; exact circular netlist | 1 | 23,991 | 297 | 6,878 | 22 | 423.19 | 72.19 | 56.21 | 76.50 | FAIL SYNC |
-| CIRCULAR720-U10-W130-S4 | Exact circular JSON reroute | 4 | 23,991 | 297 | 6,878 | 22 | 414.59 | 75.14 | 55.16 | 69.83 | FAIL SYNC |
-| CIRCULAR720-U10-W130-S6 | Exact circular JSON reroute | 6 | 23,991 | 297 | 6,878 | 22 | 386.85 | 69.03 | 57.20 | 75.80 | FAIL SYNC |
-| CIRCULAR720-U10-W130-S2 | Exact circular JSON reroute | 2 | 23,991 | 297 | 6,878 | 22 | — | — | — | — | Route stopped after pathological final congestion; pre-route SYNC 55.87 MHz |
-| **CIRCULAR720-U10-W130-S8** | **Official 720x720p60r2 modeline; exact circular JSON reroute; rotated, unscaled native UI** | **8** | **23,991** | **297** | **6,878** | **22** | **326.80** | **71.40** | **60.18** | **75.00** | **PASS; packaged only, not flashed** |
-| **SHARED-PARITY-S8** | **1280x720; REZO/REZOMO BANK order, centered INPUT/OPTIONS chips, and unity-marker parity (`8e3ddc2e`)** | **8** | **23,985** | **303** | **6,878** | **22** | **421.41** | **74.42** | **60.82** | **75.45** | **PASS; flashed slot 4** |
-
-The SHARED-PARITY archive is `rezo-8e3ddc2e-r5.tar.gz` with SHA-256
-`58acef4c0f0c0b8ba75f3ba5f303cfffc79225fe7e42aec524dd590958d0f568`.
-Its embedded `top.bit` SHA-256 is
-`442e979ff14cdc9fb95a393433f5c72911c39eea3a9f27ca1e3c48bf79508910`.
-The exact commit-stamped seed-8 route passed every required clock and was
-flashed successfully to slot 4 on 2026-08-13 with option storage preserved.
-
-ROUND21 also explored native seeds 2, 3, 4, 5, 7, 8, 9, 10, and 11.
-Seeds 2 and 3 entered prolonged final-router congestion; seeds 4, 5, 7, 8,
-9, 10, and 11 had materially worse pre-route timing than seed 6 and their
-detailed routes were stopped once that was clear. Seed 6 is the retained
-artifact because its primary DVI, SYNC, and AUDIO clocks all pass and it has
-the best aggregate timing of the completed candidates, though its DVI5X
-serializer clock remains 25.31 MHz short. This is an explicit exception to
-the normal all-clocks rule for the requested hardware UI validation; do not
-use this row as a release-quality timing baseline.
-
-The ROUND21 archive is `rezo-4b874e18-r5.tar.gz` with SHA-256
-`c4297940060f637ccd7683afe4c1ba0941b5666efbf3f1395a60f7d1f822c44a`.
-Its embedded `top.bit` SHA-256 is
-`dd62cf9bba095e858b1d6100b95ee9591f2e8528341b596bb14ef3d94a4b1664`.
-The manifest records the standard, unrotated and unscaled `1280x720p60`
-target. It was flashed successfully to slot 4 on 2026-08-13; option storage
-was preserved.
-
-The ROUND20 archive is `rezo-4b874e18-r5.tar.gz` with SHA-256
-`863f4965e2e39c9e7481becb735b25ddd2eff84887eeca6fbc6d60c1689e4d28`.
-Its embedded `top.bit` SHA-256 is
-`ed8fff27b8b1ee33d4f40658669b94d67b467ed25ea122fc58bd85b35c6cbe50`.
-The manifest records the standard, unrotated and unscaled `1280x720p60`
-target. It was flashed successfully to slot 4 on 2026-08-12; option storage
-was preserved.
-
-The ROUND19 archive is `rezo-4b874e18-r5.tar.gz` with SHA-256
-`f7d324bdd97ed5058ba839516cbb2de5708b0e7cbf67a8da0128f4240a2c2e98`.
-Its embedded `top.bit` is byte-identical to the separately packed passing
-seed-1 route (SHA-256
-`675040a62133562b0913e889ebf1994311786d746e207ae1c1bb63e29e71805b`).
-The manifest records the standard, unrotated and unscaled `1280x720p60`
-target. It was flashed successfully to slot 4 on 2026-08-12; option storage
-was preserved.
-
-The ROUND18 archive is `rezo-4b874e18-r5.tar.gz` with SHA-256
-`30e6747434d65cd4c2328c5645247e1dde75ca10ae5450341a2f1f5caa10340c`.
-Its embedded `top.bit` is byte-identical to the separately packed passing
-seed-10 route (SHA-256
-`d0249cd27b41df2ee985e4c91dfeb6e02026fccb9965754de2627a12a4523293`).
-The manifest records the standard, unrotated and unscaled `1280x720p60`
-target. It was flashed successfully to slot 4 on 2026-08-12; option storage
-was preserved.
-
-The ROUND17 archive is `rezo-4b874e18-r5.tar.gz` with SHA-256
-`7bafc4508a64b7fb35fa993a30cbd40c62f55a3aa5ed442387e85d76ff46e794`.
-Its embedded `top.bit` is byte-identical to the separately packed passing
-seed-2 route (SHA-256
-`f85f2714d35441db069a5a3ac015810118371d5fa2e52782972eeec0ddc8ccea`).
-The manifest records the standard, unrotated and unscaled `1280x720p60`
-target. It was flashed successfully to slot 4 on 2026-08-12; option storage
-was preserved.
-
-The ROUND16 archive is `rezo-4b874e18-r5.tar.gz` with SHA-256
-`98087b13b23f541b50bf7835b151ab57bf06ba2d01e9580cf368bec1be9e1536`.
-Its embedded `top.bit` is byte-identical to the separately packed passing
-seed-1 route (SHA-256
-`db69e9ee34534655a32a98cae0ef3c4e0fd47f375f87ec6e88ac5ce2684ccb5e`).
-The manifest records the standard, unrotated and unscaled `1280x720p60`
-target. It was flashed successfully to slot 4 on 2026-08-12; option storage
-was preserved.
-
-The ROUND15 archive is `rezo-4b874e18-r5.tar.gz` with SHA-256
-`11de9592f89c60c14b865e9a9ac2d1fe40f88c24590a563a36e36ddecf110dca`.
-Its embedded `top.bit` is byte-identical to the separately packed passing
-seed-4 route (SHA-256
-`3985bc741c953195627e10deda7b77aa1e702e4680140d4b74cae546350fd1d7`).
-The manifest records the standard, unrotated and unscaled `1280x720p60`
-target. It was flashed successfully to slot 4 on 2026-08-12; option storage
-was preserved.
-
-The ROUND14 archive is `rezo-4b874e18-r5.tar.gz` with SHA-256
-`e3eb7c4abb4dfa5e0bda224094f0d4508ac5a50ef788563391e623ef8aa574ac`.
-Its embedded `top.bit` is byte-identical to the separately generated passing
-seed-1 route (SHA-256
-`7210dbe78e24db4c628a71d6f087044612bd752b99a86001c1594ee3a72ea3c6`).
-The manifest records the standard, unrotated `1280x720p60` target. It was
-flashed successfully to slot 4 on 2026-08-12; option storage was preserved.
-
-The ROUND13 archive is `rezo-4b874e18-r5.tar.gz` with SHA-256
-`2acab5802a39aa6759038636c5e5f09d958625500e4cb2ddfdcf2134aed2c1f6`.
-Its embedded `top.bit` is byte-identical to the separately generated passing
-seed-1 route (SHA-256
-`8d66a88a842377ef816bf46b46d884cbdfb0989871e04826f8070889b9f4af1c`).
-The manifest records the standard, unrotated `1280x720p60` target.
-It was flashed successfully to slot 4 on 2026-08-12; option storage was
-preserved.
-
-The ROUND12 archive is `rezo-4b874e18-r5.tar.gz` with SHA-256
-`5af320b5e424854f5df38ce71ec09f0a563dbe2bb4e0f5b85cce0ad59f944b04`.
-Its embedded `top.bit` is byte-identical to the separately packed passing
-seed-1 route (SHA-256
-`c10f501e943ba357a1e05964d136b5e9ef754b63cca272e7ae22f07dff79e02e`).
-The manifest records the standard, unrotated `1280x720p60` target. Seed 7 and
-the native seed-4 route were stopped after prolonged final congestion; seed 2
-was likewise stopped after its placement timing and final congestion were both
-substantially worse. Seed 10 was stopped once seed 1 passed all clocks.
-The archive was flashed successfully to slot 4 on 2026-08-12; option storage
-was preserved.
-
-The ROUND11 archive is `rezo-4b874e18-r5.tar.gz` with SHA-256
-`69459d31308aab0a2f2565183faaf252cd5ab4f76dda4eca11d739e62e3e21b9`.
-Its embedded `top.bit` is byte-identical to the separately packed passing
-seed-6 route (SHA-256
-`70706ef5729dab959cce0039a3f9393202b4acc1bf5947ab8dc4eadbdb7fcb05`).
-The manifest records the standard, unrotated `1280x720p60` target. It was
-flashed successfully to slot 4 on 2026-08-12; option storage was preserved.
-
-The ROUND10 archive is `rezo-4b874e18-r5.tar.gz` with SHA-256
-`26bf4237d916b5350e0a6a2885cc2b1798ed77138db9b8704a22a45ef1a93a70`.
-Its embedded `top.bit` is byte-identical to the separately packed passing
-seed-4 route (SHA-256
-`819ad9f92ca82460c0b9f3cd0aa0830f77fbb64f78cf99a79865ec493ab075db`).
-The manifest records the standard, unrotated `1280x720p60` target. It was
-flashed successfully to slot 4 on 2026-08-12; option storage was preserved.
-
-The final archive is `rezo-6f8596b7-r5.tar.gz` with SHA-256
-`34067684bf421d8f7fd72e0f55227c154a079806e771863d633d00f4a71d41d0`.
-Its manifest records `1280x720p60`; this distinguishes it from the earlier
-720x720 circular-panel archive that used the same dirty source identifier.
-The archive was flashed successfully to slot 4 on 2026-08-11.
-
-The second photo-alignment archive is `rezo-6f8596b7-r5.tar.gz` with SHA-256
-`cc46772587c3a24de3f474821f938ad2adaad248697ccbf3fbf53cc8449aeccd`.
-It uses ABC9 wire weight 130 and the all-clock passing seed-9 reroute of the
-exact synthesized JSON. Its manifest also records `1280x720p60`.
-The archive was flashed successfully to slot 4 on 2026-08-11.
-
-The third photo-alignment archive is `rezo-6f8596b7-r5.tar.gz` with SHA-256
-`d1408d8cc4efa04953b4f89ccad8c18bd830a710108bdf3aa475be1b3301af5c`.
-It contains the all-clock passing seed-4 reroute of the exact W=130 JSON; the
-archive's `top.bit` is byte-identical to the separately packed passing route.
-Its manifest records the standard, unrotated `1280x720p60` target. The archive
-was flashed successfully to slot 4 on 2026-08-12.
-
-The shared BANK/FILTER grid archive is `rezo-6f8596b7-r5.tar.gz` with SHA-256
-`2f08dd1b6712d1a2c8a3e7dde00609144da070d0562522673530946a8c103da2`.
-Both modes now derive their lower faders from five native text rows; BANK uses
-the first three slots and FILTER uses all five. Its manifest records the
-standard, unrotated `1280x720p60` target. The archive was flashed successfully
-to slot 4 on 2026-08-12.
-
-The roomy shared-grid archive is `rezo-6f8596b7-r5.tar.gz` with SHA-256
-`61f84215fde31ed5aaab6048be6736c564c05f30a457f5a3d69315a76934165b`.
-Its five control slots use alternate native rows, its faders extend farther
-right, and the compact MAIN band field is shortened symmetrically to preserve
-a clear gutter above the controls. BANK uses the first three slots and FILTER
-uses all five. The retained seed-6 route passes every clock, and its manifest
-records the standard, unrotated `1280x720p60` target. The archive was flashed
-successfully to slot 4 on 2026-08-12.
-
-The corrected compact-grid archive is `rezo-6f8596b7-r5.tar.gz` with SHA-256
-`ac33e24e6aa5c8a9f2d0f4719a36cdf050fed4edc256b1d03720b09b1a90c9b3`.
-Its embedded `top.bit` is byte-identical to the retained passing seed-6 route
-at SHA-256
-`73dfe3dafa46c7840d6de7e4efe00e2faa835d3f7115db78366713d8b36559d2`.
-The horizontal controls retain their bottom anchor but use a 16-physical-pixel
-cadence, exactly half the preceding roomy grid's spacing. The compact band
-field spans logical y=218..474 around zero y=346: BANK maps its signed 0..128
-magnitude one-for-one to each half, while FILTER maps its 0..32 magnitude over
-the full 256-pixel height and clips fills to the field. The manifest records
-the standard, unrotated `1280x720p60` target. Initial slot-4 attempts found no
-debugger and wrote nothing. After reconnecting, the bitstream and manifest
-programmed successfully and FPGA refresh completed on 2026-08-12; option
-storage was preserved.
-
-The expanded-row archive is `rezo-6f8596b7-r5.tar.gz` with SHA-256
-`3b8f9a3556b25de01a1a8ddf37fad4fd196851535acf6fe34376b3baabd41205`.
-Its embedded `top.bit` matches the retained native W130 seed-6 route at
-SHA-256
-`92edffb09a7bf7ae8e6843ec76b451fb8dc420dec180e0d3a77448c3af3e5dba`.
-The five shared MAIN rows occupy alternate native text rows `(28, 30, 32, 34,
-36)` and logical fader starts `(486, 532, 578, 623, 669)`. Thus the final row
-retains the ROUND6 bottom anchor while the preceding rows expand upward into
-the band/control gutter. The band field and its scaling are unchanged. The
-manifest records the standard, unrotated `1280x720p60` target. The archive was
-flashed successfully to slot 4 on 2026-08-12 with option storage preserved.
-
-The compact INPUT-lane archive is `rezo-4b874e18-r5.tar.gz` with SHA-256
-`ea00a34124f071f1fed3a43d1232399fa7741d01dffa4301d26a15293b905f2d`.
-Its embedded `top.bit` is byte-identical to the retained native W130 seed-4
-route at SHA-256
-`bab77e70e57a058d54c9c8664e1f809facb2213646e86c8e645d2c985cb7a6b0`.
-The four INPUT groups use complete shaded lanes that include their labels;
-AUD VALUE remains a gain fader with its attached one-pixel level monitor,
-while an AUD DEPTH lane is absent and skipped by navigation. The manifest
-records the standard, unrotated and unscaled `1280x720p60` target. The archive
-was flashed successfully to slot 4 on 2026-08-12 with option storage
-preserved.
-
-The aligned INPUT-lane archive is `rezo-4b874e18-r5.tar.gz` with SHA-256
-`e8d4dd71f32923761fdc392313c05894eba0c785b4060a5a65a0b6f755ac6ec8`.
-Its embedded `top.bit` is byte-identical to the retained native W130 seed-4
-route at SHA-256
-`0713947852f1194ca116624b201c18ef4dce6831676090d172aca983147d3672`.
-VALUE and DEPTH backgrounds now begin on their native text rows, CV target
-text has a full-cell gap after VALUE, and two logical monitor scanlines
-downsample to a stable one-pixel physical level indicator attached to VALUE.
-The manifest records the standard, unrotated and unscaled `1280x720p60`
-target. The archive was flashed successfully to slot 4 on 2026-08-12 with
-option storage preserved.
 
 ## Results
 
@@ -374,6 +91,77 @@ option storage preserved.
 | GROUP-GHOST-FRAMES | `bc6ebc4b`; four full rectangular GROUPS ghosts for every disabled band | 7 | 20,719 | 24,437 | -149 | 6,351 | 19 | — | — | — | — | FAIL capacity |
 | GROUP-GHOST-RAILS-S7 | `b2812acc`; shared top/bottom ghost rails | 7 | 20,611 | 24,223 | 65 | 6,351 | 19 | 404.37 | 72.50 | 62.63 | 72.24 | FAIL DVI |
 | **GROUP-GHOST-RAILS-S6** | **`b2812acc`; exact committed W160 JSON** | **6** | **20,611** | **24,223** | **65** | **6,351** | **19** | **387.00** | **72.22** | **62.50** | **79.25** | **PASS; flashed slot 4** |
+| **CLOCKED-BANK-BASE-S1** | **`8a27f1a7`; FILTER DSP/UI/pages removed, v2 state positions reserved** | **1** | **16,512** | **19,508** | **4,780** | **5,578** | **15** | **443.07** | **76.24** | **61.16** | **80.57** | **PASS; clocked-feature baseline, not flashed** |
+| **CLOCK-SHIFT-MVP-S6** | **Dirty `176cfc5e`; external DATA/CLOCK/RESET, four directions, CLOCK page** | **6** | **17,573** | **20,713** | **3,575** | **5,868** | **15** | **418.06** | **72.86** | **63.31** | **74.99** | **PASS; hardware candidate, not flashed** |
+| **CLOCK-ROUTING-UI-S6** | **Dirty `176cfc5e`; BANK-like CLOCK main, direction page, DAT/CLK/RST INPUT targets** | **6** | **17,448** | **20,575** | **3,713** | **5,855** | **15** | **390.17** | **73.37** | **61.77** | **77.48** | **PASS; hardware candidate, not flashed** |
+| CLOCK-ROTATE-VALUES-S6 | Dirty `176cfc5e`; sequential exact rotation with ten 16-bit value snapshots | 6 | 18,342 | 21,468 | 2,820 | 6,045 | 15 | 388.80 | 74.09 | 63.79 | 72.85 | FAIL DVI |
+| **CLOCK-ROTATE-ORIGINS-S4** | **Dirty `176cfc5e`; SHIFT/ROTATE selector, mode-specific directions, four-bit origin ring, disabled-band skipping** | **4** | **18,306** | **21,448** | **2,840** | **5,953** | **15** | **449.24** | **72.82** | **61.24** | **79.00** | **PASS; flashed slot 4** |
+| **CLOCK-TURING-S7** | **Dirty `7f6819a3`; full-resolution looping random register, LCK gate, LENGTH and CHANGE controls** | **7** | **19,135** | **22,307** | **1,981** | **6,051** | **15** | **394.94** | **74.58** | **61.08** | **80.28** | **PASS; packaged/flashed slot 4** |
+| **CLOCK-INTERNAL-AUTO-S8** | **Dirty `7f6819a3`; physical-jack AUTO source, INT/EXT overrides, safe handoff, eight internal BPMs** | **8** | **19,524** | **22,760** | **1,528** | **6,105** | **15** | **399.20** | **72.70** | **63.61** | **80.33** | **PASS; flashed slot 4** |
+| **CLOCK-TARGET-DEPTH-S7** | **Dirty `7f6819a3`; TURING ALL/RANGE targeting, one-based START, shared 17-step CLOCK depth** | **7** | **20,505** | **23,831** | **457** | **6,473** | **15** | **389.11** | **74.71** | **61.17** | **74.81** | **PASS; flashed slot 4** |
+| **CLOCK-TURING-BRAM-S1** | **Dirty `c9be114a`; private TURING loop moved from dynamic register muxes to a sequential block-RAM worker** | **1** | **19,619** | **22,935** | **1,353** | **6,363** | **16** | **415.45** | **73.06** | **61.58** | **76.09** | **PASS; flashed slot 4** |
+| **CLOCK-RANDOM-DATA-S2** | **Dirty `965f4783`; SHIFT DATA CV/RAND/AUTO selector and independent continuous 32-bit internal source** | **2** | **19,664** | **22,980** | **1,308** | **6,409** | **16** | **436.11** | **74.37** | **64.77** | **77.10** | **PASS; flashed slot 4** |
+| **CLOCK-SAVE-V3-S2** | **Dirty `965f4783`; 46-word V3 save, V1/V2 migration, shadowed CLOCK snapshot/restore** | **2** | **19,887** | **23,199** | **1,089** | **6,409** | **16** | **400.00** | **74.92** | **60.76** | **81.78** | **PASS; flashed slot 4** |
+| CLOCK-WALK-WIDE-S2 | Dirty `965f4783`; ten-band reflected random walk using a shared 17-bit add/compare path | 2 | 20,667 | 23,995 | 293 | 6,439 | 16 | 387.45 | 74.60 | 54.38 | 74.25 | FAIL SYNC; DVI at boundary, not flashed |
+| **CLOCK-WALK-COMPACT-S2** | **Dirty `965f4783`; identical reflected WALK in high-byte units plus wrapped algorithm selector** | **2** | **20,417** | **23,747** | **541** | **6,439** | **16** | **443.85** | **72.80** | **62.68** | **77.89** | **PASS; flashed slot 4** |
+| CLOCK-HEAD-DUPLICATE-S2 | Dirty `c8706835`; HEAD style and DRUNK 1--4 with a second dynamic modulation write path | 2 | 21,093 | 24,429 | -141 | 6,463 | 16 | — | — | — | — | FAIL capacity |
+| CLOCK-HEAD-SHARED-S2 | Dirty `c8706835`; ALL/HEAD share one dynamic modulation read/write/reflect path | 2 | 20,572 | 23,896 | 392 | 6,463 | 16 | 423.19 | 74.79 | 60.27 | 73.98 | FAIL DVI by 0.27 MHz |
+| **CLOCK-HEAD-SHARED-S8** | **Exact CLOCK-HEAD-SHARED JSON; reflected wandering head, disabled-band skip, random 1--DRUNK stride** | **8** | **20,572** | **23,896** | **392** | **6,463** | **16** | **406.17** | **73.65** | **60.44** | **74.37** | **PASS; flashed slot 4** |
+| CLOCK-HEAD-BURST-WIDE | Dirty `c8706835`; measured external interval plus separate period/countdown counters | 8 | 20,777 | 24,129 | 159 | 6,530 | 16 | — | — | — | — | Routing aborted; excessive congestion |
+| CLOCK-HEAD-BURST-S8 | Dirty `c8706835`; shared upward clock/interval counter, 16-sample burst timing, CHANCE control | 8 | 20,724 | 24,068 | 220 | 6,485 | 16 | 422.12 | 74.42 | 59.18 | 76.78 | FAIL SYNC by 0.82 MHz |
+| **CLOCK-HEAD-BURST-S6** | **Exact optimized burst JSON; DRUNK 1--4 temporal landings and 0--100% CHANCE** | **6** | **20,724** | **24,068** | **220** | **6,485** | **16** | **400.64** | **75.68** | **61.50** | **75.00** | **PASS; hardware candidate** |
+| **CLOCK-UI-BPM-S5** | **Two-column CLOCK editor, readable labels, WALK BAND name, ordered TURING controls, exact 15--300 BPM with accelerated editing** | **5** | **20,783** | **24,103** | **185** | **6,541** | **18** | **449.03** | **73.96** | **60.19** | **75.50** | **PASS; flashed slot 4** |
+| **CLOCK-FIXED-DIRECTION-S8** | **Fixed shared rows; DIRECTION remains visible while WALK reports read-only RANDOM; mode-dependent direction sets retained** | **8** | **20,874** | **24,206** | **82** | **6,529** | **18** | **381.53** | **78.21** | **60.15** | **74.68** | **PASS; flashed slot 4** |
+| **CLOCK-DEPTH-SLIDER-S8** | **Full-width 17-step DEPTH slider; numeric depth text table and three writer slots removed** | **8** | **20,845** | **24,201** | **87** | **6,519** | **18** | **382.70** | **74.10** | **60.37** | **77.86** | **PASS; later flashed slot 4** |
+| **CLOCK-UI-ALIGN-S9** | **One shared MODE box, narrower two-column controls, left labels inset one cell; optimized DEPTH slider retained** | **9** | **20,737** | **24,081** | **207** | **6,519** | **18** | **389.11** | **76.61** | **61.24** | **79.29** | **PASS; flashed slot 4** |
+| **REZOMO-RENAME-S9** | **Clocked variant renamed in both renderers and manifest; `rezomo` build alias; no DSP or layout change** | **9** | **20,737** | **24,081** | **207** | **6,519** | **18** | **418.24** | **77.02** | **60.10** | **76.07** | **PASS; pre-commit release candidate, not flashed** |
+| **REZOMO-BACKPORT-S8** | **STREZO input meters, eight-bit display telemetry, 1/8 continuous-control acceleration, and serialized OUTPUT row/column edits** | **8** | **20,851** | **24,113** | **175** | **6,931** | **19** | **384.91** | **74.34** | **61.78** | **78.03** | **PASS; flashed slot 4 for validation** |
+| REZOMO-NATIVE-STANDARD-S8 | Native 720 coordinate renderer; centered, unscaled 1280x720 preview | 8 | 20,784 | 24,076 | 212 | 6,983 | 20 | 331.46 | 75.25 | 58.22 | 69.53 | FAIL DVI5X, SYNC, and DVI |
+| **REZOMO-NATIVE-STANDARD-S9** | **Same native renderer; centered, unscaled 1280x720 preview** | **9** | **20,784** | **24,076** | **212** | **6,983** | **20** | **437.25** | **71.66** | **63.76** | **74.65** | **PASS; retained standard route** |
+| REZOMO-NATIVE-ROUND-S9 | Native renderer; 720x720p60r2 with panel-mount rotation | 9 | 20,784 | 24,076 | 212 | 6,983 | 20 | 432.71 | 70.99 | 59.72 | 77.39 | FAIL SYNC by 0.28 MHz |
+| REZOMO-NATIVE-ROUND-S5 | Same official-screen target | 5 | 20,784 | 24,076 | 212 | 6,983 | 20 | — | — | 59.98 | — | FAIL SYNC by 0.02 MHz |
+| **REZOMO-NATIVE-ROUND-S6** | **Same official-screen target** | **6** | **20,784** | **24,076** | **212** | **6,983** | **20** | **335.23** | **72.78** | **61.41** | **80.85** | **PASS; retained official-screen route** |
+| REZOMO-UI-POLISH-S9 | `1fe69409`; centered value chips, shared enable-button geometry, bounded INPUT gain fader | 9 | 20,699 | 23,971 | 317 | 6,983 | 20 | — | — | — | 69.50 | FAIL DVI |
+| REZOMO-UI-POLISH-S6 | Exact committed UI-polish RTL | 6 | 20,699 | 23,971 | 317 | 6,983 | 20 | 337.27 | — | — | — | FAIL DVI5X |
+| REZOMO-UI-POLISH-S8 | Exact committed UI-polish RTL | 8 | 20,699 | 23,971 | 317 | 6,983 | 20 | — | — | 54.53 | — | FAIL SYNC |
+| **REZOMO-UI-POLISH-S4** | **`1fe69409`; exact committed UI-polish RTL** | **4** | **20,699** | **23,971** | **317** | **6,983** | **20** | **391.08** | **72.01** | **60.98** | **77.83** | **PASS; standard archive flashed slot 4** |
+| **REZOMO-CLOCK-LAYOUT-S4** | **`edbc20d9`; one-column CLOCK layout, heading, and uniform row geometry** | **4** | **20,753** | **24,041** | **247** | **6,983** | **20** | **397.14** | **70.67** | **63.77** | **76.45** | **PASS; standard archive flashed slot 4** |
+| **REZOMO-CLOCK-FIELDS-S4** | **Dirty `e6e5d25b`; bounded BANK mode chip, content-width CLOCK value chips, and corrected DEPTH geometry** | **4** | **20,837** | **24,113** | **175** | **6,983** | **20** | **400.32** | **73.27** | **62.25** | **78.99** | **PASS; standard archive flashed slot 4** |
+| **REZOMO-CHIP-ALIGN-S4** | **Dirty `e6e5d25b`; centered BANK/INPUT chips, row-derived INPUT label alignment, per-field CLOCK widths, and full-width DEPTH** | **4** | **20,675** | **23,983** | **305** | **6,983** | **20** | **391.85** | **70.92** | **61.01** | **79.82** | **PASS; standard archive flashed to slot 4** |
+| REZOMO-GLYPH-NUDGE-S4 | Dirty `e6e5d25b`; exact per-value pixel-coordinate centering | 4 | 21,126 | 24,486 | -198 | 6,979 | 20 | — | — | — | — | FAIL capacity before placement |
+| REZOMO-HALF-CELL-S4 | Dirty `e6e5d25b`; replace pixel subtractor with dynamic half-cell phase | 4 | — | 24,387 | -99 | 6,977 | 20 | — | — | — | — | FAIL capacity before placement |
+| REZOMO-HALF-CELL-NARROW-S4 | Dirty `e6e5d25b`; restrict half-cell phase to photographed fields | 4 | — | 24,452 | -164 | 6,977 | 20 | — | — | — | — | FAIL capacity before placement |
+| **REZOMO-OPTICAL-GEOMETRY-S4** | **Dirty `e6e5d25b`; parity-balanced fixed chips, exact vertical centers, and mode-specific CLOCK widths** | **4** | **20,902** | **24,252** | **36** | **6,976** | **20** | **439.37** | **74.60** | **61.46** | **79.57** | **PASS; standard archive flashed to slot 4** |
+| REZOMO-MODE-DYNAMIC-S9 | Dirty `e6e5d25b`; BANK/CLOCK mode-dependent chip endpoint | 9 | — | — | — | 6,983 | 20 | — | — | — | — | FAIL placement at utilisation limit |
+| REZOMO-BANK-NAV-S9 | Dirty `e6e5d25b`; fixed mode-chip bias and PRESET-before-MODE navigation, pre-simplification | 9 | — | — | — | 6,983 | 20 | 352.49 | 76.79 | 56.20 | 71.02 | FAIL DVI5X, SYNC, and DVI |
+| REZOMO-BANK-NAV-S4-A | Same pre-simplification netlist | 4 | — | — | — | 6,983 | 20 | — | — | — | 72.88 | FAIL DVI by 1.37 MHz |
+| **REZOMO-BANK-NAV-S4** | **Dirty `e6e5d25b`; PAGE/PRESET/MODE order, simplified reverse path, and CLOCK-biased fixed mode chip** | **4** | **20,817** | **24,169** | **119** | **6,976** | **20** | **424.27** | **72.49** | **60.42** | **75.02** | **PASS; standard archive flashed to slot 4** |
+| REZOMO-EVEN-S1 | Dirty `e6e5d25b`; EVN renamed EVEN in both renderers and guides | 1 | 20,835 | 24,193 | 95 | 6,976 | 20 | 349.28 | 76.09 | 59.40 | 79.60 | FAIL DVI5X and SYNC |
+| REZOMO-EVEN-S2 | Exact REZOMO-EVEN JSON | 2 | 20,835 | 24,193 | 95 | 6,976 | 20 | 427.17 | 72.91 | 60.93 | 72.40 | FAIL DVI |
+| **REZOMO-EVEN-S3** | **Exact REZOMO-EVEN JSON** | **3** | **20,835** | **24,193** | **95** | **6,976** | **20** | **426.44** | **74.16** | **62.42** | **78.85** | **PASS; standard archive flashed to slot 4** |
+| REZOMO-EVEN-S4 | Exact REZOMO-EVEN JSON | 4 | 20,835 | 24,193 | 95 | 6,976 | 20 | 368.46 | 73.54 | 59.53 | 73.30 | FAIL DVI5X, SYNC, and DVI |
+| REZOMO-EVEN-S5 | Exact REZOMO-EVEN JSON | 5 | 20,835 | 24,193 | 95 | 6,976 | 20 | 397.14 | 71.47 | 58.28 | 75.32 | FAIL SYNC |
+| REZOMO-EVEN-S7 | Exact REZOMO-EVEN JSON | 7 | 20,835 | 24,193 | 95 | 6,976 | 20 | 373.97 | 75.59 | 59.85 | 70.90 | FAIL SYNC and DVI |
+| REZOMO-EVEN-S8 | Exact REZOMO-EVEN JSON | 8 | 20,835 | 24,193 | 95 | 6,976 | 20 | 339.21 | 74.18 | 60.98 | 75.11 | FAIL DVI5X |
+| REZOMO-FINAL-ROUND-S6 | `483f5680`; accepted UI on official 720x720p60r2 target | 6 | 20,835 | 24,261 | 27 | 6,976 | 20 | 396.98 | 77.08 | 57.19 | 79.89 | FAIL SYNC |
+| REZOMO-FINAL-ROUND-S1 | Exact circular JSON reroute | 1 | 20,835 | 24,261 | 27 | 6,976 | 20 | 361.93 | 74.24 | 53.02 | 72.48 | FAIL SYNC |
+| **REZOMO-FINAL-ROUND-S3** | **Exact committed circular JSON; accepted shared UI and CLOCK alignment** | **3** | **20,835** | **24,261** | **27** | **6,976** | **20** | **378.36** | **78.65** | **61.65** | **72.40** | **PASS; tester archive, not flashed** |
+| REZOMO-EVENT-ALL-S3 | Dirty `41008f9c`; raw-send local-coordinate renderer and all-algorithm event stage | 3 | — | 23,881 | 407 | — | 21 | 363.64 | 71.80 | 61.77 | 75.94 | FAIL DVI5X; all-algorithm retiming rejected |
+| REZOMO-EVENT-ALL-S1 | Same all-algorithm event netlist | 1 | — | 23,881 | 407 | — | 21 | 346.38 | 73.88 | 62.89 | 74.71 | FAIL DVI5X; final seed trial |
+| REZOMO-DVI-RESET-LOCAL-S3 | Dirty `41008f9c`; separate local DVI5X reset deassertion pipeline | 3 | — | 24,239 | 49 | — | 21 | 247.34 | 76.44 | 56.58 | 69.40 | FAIL DVI5X, SYNC, and DVI; rejected packing regression |
+| REZOMO-SHIFT-WALK-S3 | Dirty `41008f9c`; retime only SHIFT/WALK with local-coordinate OUTPUT fill | 3 | — | 23,995 | 293 | — | 21 | 382.12 | 73.65 | 62.71 | 68.43 | FAIL DVI; INPUT row selector still follows BRAM directly |
+| REZOMO-INPUT-INDEX-S3 | Dirty `41008f9c`; add two-bit INPUT row-index pipeline | 3 | 20,717 | 23,993 | 295 | 7,005 | 21 | 384.47 | 73.36 | 63.22 | 75.51 | PASS 1.25% gate; superseded by exact commit build |
+| **REZOMO-CAPACITY-COMMIT-S3** | **`cbd49d7c`; narrow SHIFT/WALK, INPUT-index, and local OUTPUT-coordinate pipelines** | **3** | **20,698** | **23,978** | **310** | **7,005** | **21** | **377.36** | **72.50** | **60.89** | **77.29** | **PASS 1.25% gate; flashed slot 4** |
+| **STREZO-NATIVE-STANDARD-S9** | **`6348b81`; native 508x508 safe square, centered family UI, pipelined GROUPS/OUTPUT lookups** | **9** | **20,515** | **23,975** | **313** | **6,893** | **19** | **384.17** | **70.01** | **63.85** | **84.18** | **PASS 1.25% gate; flashed slot 4** |
+| **STREZO-NATIVE-ROUND-S1** | **`6348b81`; same upright UI with final panel-mount rotation at 720x720p60r2** | **1** | **20,551** | **24,015** | **273** | **6,893** | **19** | **328.95** | **76.06** | **72.25** | **81.23** | **PASS 1.25% gate; circular archive not flashed** |
+| STREZO-CURVE-SCAN-S4 | Dirty `06608b0d`; configurable linear/logarithmic CROSS plus shared ten-band display scaler | 4 | 19,661 | 22,857 | 1,431 | 6,875 | 21 | 347.46 | 72.00 | 54.19 | 81.52 | FAIL DVI5X and SYNC; no flash |
+| **STREZO-CURVE-SCAN-S16** | **`2ec93a17`; one BRAM replaces ten parallel display scalers** | **16** | **19,661** | **22,857** | **1,431** | **6,875** | **21** | **387.00** | **73.36** | **67.81** | **77.64** | **PASS 1.25% gate; standard archive flashed slot 4** |
+| STREZO-CURVE-UI-S16 | `04c6e663`; corrected dynamic curve value and split OPTIONS panels | 16 | — | 22,937 | 1,351 | 6,875 | 21 | 373.13 | 75.74 | 66.13 | 71.96 | FAIL DVI and DVI5X margin; no flash |
+| **STREZO-CURVE-UI-S9** | **`04c6e663`; centered CROSS layout and dynamic LINEAR/LOG ADVANCED control** | **9** | **—** | **22,937** | **1,351** | **6,875** | **21** | **422.30** | **73.58** | **63.20** | **81.59** | **PASS 1.25% gate; standard archive flashed slot 4** |
+| **STREZO-UI-POLISH-S9** | **`72445513`; padded LAYOUT chip and top-to-bottom OPTIONS navigation** | **9** | **—** | **22,952** | **1,336** | **6,875** | **21** | **437.45** | **73.23** | **63.25** | **82.12** | **PASS 1.25% gate; standard archive flashed slot 4** |
+| **REZO-FIXED-LEFT-S7** | **Fixed-left value origins; exact authoritative JSON packaged without resynthesis** | **7** | **20,572** | **24,148** | **140** | **6,900** | **22** | **388.95** | **70.12** | **62.24** | **74.84** | **PASS; standard archive flashed slot 2** |
+| **REZOMO-FIXED-LEFT-ROM-S9** | **Fixed-left values; CLOCK character muxes replaced by one synchronous ROM** | **9** | **20,969** | **24,265** | **23** | **7,146** | **22** | **431.03** | **69.04** | **65.15** | **77.24** | **PASS; standard archive flashed slot 3** |
+| **STREZO-FIXED-LEFT-S11** | **Fixed-left family and stereo/motion values** | **11** | **20,092** | **23,392** | **896** | **6,919** | **21** | **448.83** | **71.82** | **63.76** | **78.18** | **PASS; standard archive flashed slot 4** |
 
 ## Notes
 
@@ -382,6 +170,121 @@ option storage preserved.
 - DVI5X timing is dominated by the existing TMDS serializer and is highly
   placement-sensitive. A feature can leave REZO logic timing healthy while a
   particular seed fails the independent serializer path.
+- STREZO-CURVE-SCAN trades one additional block RAM for 1,393 packed cells.
+  The display scans the ten bands in ten DVI clocks and looks up the exact
+  former height/sign mapping; DSP, modulation, and audio coefficients are
+  unchanged. An earlier experiment that selected one INPUT row before endpoint
+  scaling packed 15 cells worse and was reverted.
+- For low-cost capacity work, first run focused tests, then use `--skip-build`
+  to extract a fresh build plan without routing or archiving. Run `yosys` on
+  the emitted `top.ys`, followed by `nextpnr-ecp5 --pack-only` on `top.json`.
+  Only start a full route after pack-only reports the desired free-cell target.
+  As of the STREZO-CURVE-SCAN work, `--skip-build` explicitly extracts the
+  plan and cannot silently archive a stale `top.bit`. After a separately
+  qualified route is packed to `top.bit`, use the explicit `--package-only`
+  option to create its commit-stamped archive without rebuilding.
+- The native renderer adds two display lookup memories over the backport
+  baseline: one maps shared horizontal-fader pixels to parameter values and
+  one holds INPUT row geometry. Standard and official-screen builds require
+  different measured seeds because their video clocks and rotation paths
+  produce different placement solutions. The normal commands now default to
+  seed 9 and seed 6 respectively.
+- REZOMO-UI-POLISH-S4 keeps the native coordinate renderer unchanged while
+  centering the BANK, FEEDBACK, and OPTIONS value chips, making BANDS use the
+  FEEDBACK enable-button geometry, and constraining the INPUT audio-gain fill
+  to its native bounding box. Seeds 9, 6, and 8 each missed a different video
+  domain; seed 4 passes all four constrained clocks and is the retained
+  1280x720 route.
+- REZOMO-CLOCK-LAYOUT-S4 replaces CLOCK's mixed row pitches with one 32-pixel
+  single-column grid. The new CLOCKED SETTINGS heading remains outside the
+  panel, while all common and mode-dependent key/value rows remain inside it.
+  A native-geometry regression test samples every row, including the fourth
+  mode-dependent control. Seed 4 passes every clock and supplies the standard
+  1280x720 archive.
+- REZOMO-CLOCK-FIELDS-S4 restores the BANK mode chip to the final panel-color
+  composition, sizes each CLOCK text chip from that field's longest value,
+  and maps DEPTH against its own 160-pixel value column instead of the shared
+  300-pixel fader lookup. Two-pixel gaps between CLOCK rows use the existing
+  panel height without changing the fixed text grid. Seed 4 passes every
+  constrained clock for the standard 1280x720 target.
+- REZOMO-CHIP-ALIGN-S4 derives BANK and INPUT text placement from each chip's
+  fixed native-coordinate bounds, so labels and values share the same row
+  centers. CLOCK keeps independent maximum-content widths for each textual
+  field while DEPTH alone consumes the remaining panel width. The standard
+  1280x720 seed-4 route passes all four constrained clocks with 305 packed
+  cells free.
+- REZOMO-GLYPH-NUDGE-S4 centered every glyph bound exactly with a live pixel
+  coordinate offset, but exceeded the device by 198 packed cells. Replacing
+  the subtractor with a one-bit half-cell tile phase still exceeded capacity;
+  narrowing that phase to only the photographed fields also mapped worse due
+  to the design's packing sensitivity. The retained
+  REZOMO-OPTICAL-GEOMETRY-S4 candidate leaves the tile-reader path unchanged.
+  Fixed chip bounds split the two possible character-parity centers, keeping
+  requested values within five native pixels horizontally and exact
+  vertically. TURING, WALK, and SHIFT use independent mode-specific chip
+  widths. The standard seed-4 route passes all clocks with 36 packed cells
+  free; the archive completed at 2026-08-13 19:29:26 EDT after roughly 383 s
+  and was flashed successfully to slot 4.
+- REZOMO-MODE-DYNAMIC-S9 gave BANK and CLOCK independent exact-content chip
+  endpoints, but the live endpoint comparator prevented legal placement.
+  REZOMO-BANK-NAV retains a fixed 100-pixel chip instead: measured visible
+  glyph bounds place BANK within five native pixels of center and CLOCK within
+  three. BANK navigation now advances PAGE, PRESET, MODE, then the first band;
+  reverse navigation follows the exact inverse order. Seed 9 misses DVI5X,
+  SYNC, and DVI, while the first seed-4 form misses only DVI. Letting PRESET's
+  numeric predecessor provide the reverse PAGE transition removes a redundant
+  comparison. The resulting seed-4 route has 119 packed cells free and passes
+  every clock. Its standard archive completed at 2026-08-13 22:07:32 EDT and
+  was flashed successfully to slot 4.
+- REZOMO-EVEN replaces the abbreviated EVN preset label with the full four-
+  character EVEN spelling in both REZO-family renderers and user guides. A
+  native-display regression verifies that all four glyphs remain inside the
+  existing preset chip. The additional dynamic glyph changes packing by 24
+  cells and makes the route seed-sensitive again: seeds 1, 2, 4, 5, 7, and 8
+  each miss at least one clock. Seed 3 passes all four clocks with 95 packed
+  cells free. Its standard archive completed at 2026-08-13 22:50:56 EDT and
+  was flashed successfully to slot 4.
+- REZOMO-FINAL-ROUND builds the hardware-accepted shared-page and CLOCK UI from
+  exact source commit `483f5680` for the official rotated `720x720p60r2`
+  display. Seeds 6 and 1 fail only the 60 MHz SYNC domain. Seed 3 passes every
+  constrained clock with 27 packed cells free and supplies the tester archive;
+  seed 4 was stopped after seed 3 passed. The retained archive is
+  `rezomo-483f5680-720x720p60r2-r5.tar.gz` with SHA-256
+  `91e82b59edca3fd42cc83024f0a66aa437a50fd19ffb7d1112fcb5591b77b274`.
+  Its embedded `top.bit` SHA-256 is
+  `f520de6e866e353d04c18148bd12a8808abcb56a984af3ee8766db7f01111456`.
+  The archive was verified but not flashed.
+- REZOMO-CAPACITY-COMMIT-S3 is the exact standard-target build from commit
+  `cbd49d7c`. OUTPUT sends remain raw in block memory; registering local pixel
+  coordinates removes the post-RAM offset chain. SHIFT and WALK alone capture
+  accepted events before their wide updates, while a two-bit INPUT row-index
+  stage removes the DVI BRAM-to-endpoint-mux path. The exact route recovers 215
+  packed cells over REZOMO-EVEN-S3 and passes the 1.25% margin gate on every
+  clock. The 39-test focused family suite passes. Archive SHA-256 is
+  `ee8eaa227c35ebe8c7af307af756f984b9df217d8ff05e2be98fdf1aa93cb90e`;
+  `top.bit` SHA-256 is
+  `e67ea8eb4a95ace972fe7e9ed4776964006f01508da6fc9ddbfa84839ed28295`.
+  Flashing to slot 4 completed successfully on 2026-08-14; hardware validation
+  is pending.
+- CLOCK-DEPTH-SLIDER-S8 removes the dynamic three-character numeric DEPTH
+  label and its text-writer scan slots. The replacement geometry uses the
+  existing 0--16 value as a five-bit left shift, yielding a 512-pixel interior
+  with exactly 32 pixels per step. Relative to CLOCK-FIXED-DIRECTION-S8 this
+  saves 29 LUT4, 5 packed cells, and 10 FF. Two broader experiments were
+  rejected: sharing CLOCK selector names through a wide ROM made routing
+  impractically slow, while fixing WALK's hidden legacy step increased packing
+  to 24,289 cells and failed capacity. Removing the now-unread WALK display
+  crossing also changed ECP5 packing unfavorably (24,342 cells), so the benign
+  crossing remains to preserve the measured timing-clean result.
+- CLOCK-UI-ALIGN-S9 uses one 136-pixel MODE rectangle spanning the two former
+  parity-specific positions. Odd- and even-length names sit at most four
+  pixels from its center without a DVI pixel shifter. Parameter boxes shrink
+  from 176 to 160 pixels around their existing centers, allowing DIRECTION,
+  SOURCE, and BPM to move one character cell inside the panel without moving
+  value text. Reusing comparator-friendly rectangle boundaries removes the
+  previous mode-dependent geometry and saves another 108 LUT4 and 120 packed
+  cells over CLOCK-DEPTH-SLIDER-S8. Seeds 1--8 were rejected for timing (seed
+  7 was an aborted congestion outlier); seed 9 passes every domain.
 - Sharing the BANK DRIVE/RES/FB row renderer more than offset the added DRIVE
   animation geometry: DRIVE-SHARED uses 20 fewer packed cells than OPT-BASE.
 - PALETTE-RUNTIME adds one block RAM, 130 packed cells, and 63 flip-flops over
@@ -538,3 +441,232 @@ option storage preserved.
   fits with 65 free, and preserves an unambiguous inactive location. Seed 7
   fails only DVI; seed 6 passes every clock and supplies the flashed archive.
   Seed 8 was stopped once seed 6 passed rather than retained as a partial route.
+- The `rezoclocked` branch begins at `CLOCKED-BANK-BASE-S1`. Removing FILTER's
+  generated response engine, modulation scan, dedicated controls, hidden
+  FILTER/MATRIX text pages, matrix display memory, and mode-dependent routing
+  recovers 4,715 packed cells relative to the flashed release candidate. LUT4
+  demand falls by 4,099, flip-flops by 773, and block RAM by four. The existing
+  46-word version-2 state positions formerly occupied by FILTER remain as inert
+  reserved bits, so established BANK fields and saved frequency fine bits keep
+  their exact on-flash positions. The first configured seed passes all four
+  clocks and is the formal capacity baseline for the shared clock/shift engine.
+- ROTATE first stored ten parallel 16-bit level snapshots. Converting the
+  circulating state to ten four-bit source-band origins removes 92 FF and 20
+  packed cells from the sequential-value candidate, while retaining exact
+  disabled-band skipping. Each destination reads the current natural BANK
+  level of its circulating origin, so editing the BANK shape updates the
+  rotating modulation source without reseeding the ring. Seed 4 passes every
+  clock and supplies the flashed archive; seed 7 also passed a preceding
+  equivalent synthesis but the final regenerated netlist routed best at 4.
+- Version 3 persistence retains the 46-word V2 payload size by reusing six
+  bytes from FILTER's removed modulation matrix for CLOCK configuration and
+  the fourth bit of each input target. V1/V2 imports replace those repurposed
+  words with safe CLOCK defaults, while every established BANK field retains
+  its address. A shadow snapshot keeps the circular journal mux off the live
+  sequencer paths; directly scanning the live CLOCK controls missed SYNC at
+  seeds 1, 2, 3, 5, and 7. The retained seed-2 shadow route adds 219 packed
+  cells over CLOCK-RANDOM-DATA-S2, keeps FF/BRAM counts unchanged, and leaves
+  1,089 packed cells for follow-up modes.
+- WALK advances all ten enabled bands independently on every accepted clock,
+  choosing a positive or negative step per band and reflecting before either
+  signed modulation rail. Its first direct implementation used a shared
+  17-bit add/subtract and two 17-bit comparisons. It fit, but congestion left
+  only 293 cells and seed 2 failed SYNC. Because every supported step is a
+  multiple of 256, the retained implementation performs the exact same walk
+  in signed high-byte units and restores the zero low byte on writeback. It
+  recovers 250 LUT4 and 248 packed cells from the wide attempt. Replacing the
+  four-way algorithm-selection mux tree with wrapped two-bit arithmetic also
+  shortens the UI path that dominated the failed route. Seed 2 passes every
+  clock with 541 cells free and supplies the flashed archive.
+- HEAD is implemented as a second WALK style rather than a fifth global
+  algorithm, preserving the compact two-bit algorithm selector. One cursor
+  randomly travels up or down through enabled bands, reflects at the physical
+  ends, and modifies only its landing. DRUNK 1--4 chooses the maximum stride;
+  each pulse draws an actual distance from one through that ceiling. The first
+  RTL version expressed separate dynamic writes for ALL and HEAD and mapped
+  141 cells over capacity. Folding both through the existing indexed
+  read/write/reflect path recovers 533 packed cells and makes the entire
+  feature cost 149 cells over CLOCK-WALK-COMPACT. Seed 2 misses only DVI;
+  seed 1 misses only DVI5X; seed 7 misses DVI5X and SYNC; and seed 8 passes all
+  clocks with 392 cells free and supplies the flashed archive.
+
+## 2026-08-14 consolidated REZO-family target qualification
+
+The new `codex/rezo-family` target matrix keeps product logic elaborated
+independently while selecting standard/circular modelines, isolated artifact
+names, qualified seeds, and REZO circular's native mapper explicitly. The
+combined regression suite passes 107 tests. Final packed-cell and clock results
+are recorded in `REZO_FAMILY.md`; every retained archive passed all four clocks,
+its archived bitstream matched the routed `top.bit`, and none was flashed.
+
+## 2026-08-16 unified six-target release
+
+All six release archives below were synthesized from exact source commit
+`0defa7645717307599d1d671c9cc60b9c1910bb3` after registering the REZO
+FILTER-CV edit request and REZOMO shared level target. Every route passes the
+project's 1.25% timing-margin gate. The manifests were checked for source tag,
+product name, and modeline. Nothing in this set was flashed.
+
+| Target | Seed | DVI5X / AUDIO / SYNC / DVI MHz | Archive | Archive SHA-256 |
+|---|---:|---|---|---|
+| REZO standard | 9 | 405.68 / 70.27 / 61.88 / 77.97 | `rezo-0defa764-r5.tar.gz` | `42cc02a15b7ba7e6b73680d88cf33853491dadbdc5bd8f6886382bd29b67c550` |
+| REZOMO standard | 4 | 395.26 / 72.16 / 63.64 / 77.99 | `rezomo-0defa764-r5.tar.gz` | `989d2d7cd3281443174366759c7d64e2fec66e287ec2a02d4e87b9b57f1c9592` |
+| STREZO standard | 1 | 382.26 / 71.56 / 62.47 / 82.22 | `strezo-0defa764-r5.tar.gz` | `03859d2f8fa0770ef468682962f6d8e09583441dc3290d30b37367b890f54a01` |
+| REZO circular | 9 | 352.36 / 74.04 / 63.49 / 74.04 | `rezo-round-0defa764-r5.tar.gz` | `452c5ceac8899e07d0fa52f430f3cb34dd563b727340ea4aa54347fa096a387d` |
+| REZOMO circular | 4 | 320.20 / 74.72 / 66.07 / 78.64 | `rezomo-round-0defa764-r5.tar.gz` | `9e0e85d1244cbe1fb562fe1ef851b170fdac1cccb12733e6327e8c6ac1160129` |
+| STREZO circular | 1 | 327.55 / 74.39 / 63.28 / 75.94 | `strezo-round-0defa764-r5.tar.gz` | `32ac2a7dbbcd7d195ced8147290c0afb9565ce73b9a8a20d4c74eeccd63c9d86` |
+
+Collected copies live in `build/rezo-family-release-0defa764/`. Retain each
+seed with its corresponding synthesized netlist: a seed is reproducible for
+the same netlist, toolchain, constraints, and router options, but is not a
+portable timing guarantee after RTL or toolchain changes.
+
+## 2026-08-20 shared-page geometry checkpoint
+
+Standard-display archives were rebuilt from source commit `ccd8a63d` after
+moving common INPUT, OUTPUT, and FEEDBACK geometry into `ui_common.py`. The
+same checkpoint also scales STREZO's display-only motion monitor across the
+full bipolar DEPTH lane; its audio modulation path is unchanged.
+
+| Target | Seed | LUT4 / COMB | DVI5X / AUDIO / SYNC / DVI MHz | Archive SHA-256 |
+|---|---:|---|---|---|
+| REZO standard | 9 | 20,456 / 24,052 | 405.02 / 77.10 / 60.65 / 78.91 | `02dca67ca9fb538ae2d4f2534773c37108671e73588055ee248d6e27f55c0f8a` |
+| REZOMO standard | 9 | 20,674 / 23,946 | 394.63 / 73.56 / 64.70 / 81.94 | `1ad8abf3281e3f3de371be5e1f5c74daa72e3d537626413475ce5c8e706554b8` |
+| STREZO standard | 4 | 19,824 / 23,058 | 440.53 / 73.20 / 62.32 / 81.83 | `73a33e59e2631c894d617eb548f71e07295dae19a6e689e55cd6b24b5d638e36` |
+
+All clocks pass nominal timing. REZO's 60.65 MHz sync result is a 1.08% margin,
+slightly below the conservative 1.25% release gate; its independently clocked
+video paths retain 9.10% DVI5X and 6.28% DVI margin. Seeds 8 and 7 failed sync,
+so seed 9 is retained as the measured standard default for this netlist.
+REZOMO seeds 3 and 4 failed DVI5X before seed 9 passed with margin.
+
+## 2026-08-21 chip-geometry checkpoint
+
+Standard-display-only routes after aligning PRESET overlays, OUTPUT DRY
+geometry, REZOMO FEEDBACK navigation, and the family value-chip inset:
+
+| Target | Source / seed | LUT4 / COMB | Free COMB | FF | BRAM | DVI5X / AUDIO / SYNC / DVI MHz | Result |
+|---|---|---|---:|---:|---:|---|---|
+| REZO | `d5dc1eda` / 9 | 20,527 / 24,123 | 165 | 6,907 | 22 | 379.08 / 71.07 / 60.99 / 77.78 | PASS; flashed slot 2 |
+| REZOMO | `84646703` / 9 | 20,595 / 23,863 | 425 | 7,105 | 22 | 420.34 / 63.23 / 65.84 / 75.92 | PASS; flashed slot 3 |
+| STREZO | `001b4d3e` / 8 | 20,066 / 23,330 | 958 | 6,926 | 21 | 395.73 / 70.85 / 63.98 / 75.49 | PASS; flashed slot 4 |
+
+REZOMO seed 8 failed DVI5X at 366.43 MHz. STREZO seed 11 failed DVI5X
+at 351.37 MHz on the final committed synthesis; seed 8 was rerouted from that
+exact JSON, passed the 1.25% margin gate, and was packaged without resynthesis.
+No circular target was invoked.
+
+## 2026-08-22 value-column alignment checkpoint
+
+The remaining native chip alignment changes were verified by the full
+REZO-family suite (`205 passed`) and built only for standard 1280x720 video.
+The final routes all clear the 1.25% timing-margin gate and were flashed in the
+stable slot assignment:
+
+| Target | Source / seed | LUT4 / COMB | Free COMB | FF | BRAM | DVI5X / AUDIO / SYNC / DVI MHz | Result |
+|---|---|---|---:|---:|---:|---|---|
+| REZO | `775de97b` / 2 | 20,485 / 24,083 | 205 | 6,907 | 22 | 380.37 / 73.03 / 62.17 / 79.21 | PASS; flashed slot 2 |
+| REZOMO | `775de97b` / 9 | 20,568 / 23,868 | 420 | 7,105 | 22 | 391.08 / 72.71 / 62.90 / 77.78 | PASS; flashed slot 3 |
+| STREZO | `775de97b` / 4 | 19,992 / 23,248 | 1,040 | 6,926 | 21 | 434.22 / 74.45 / 62.36 / 75.19 | PASS; flashed slot 4 |
+
+REZO seed 9 failed DVI and seed 6 failed DVI5X; seed 4 was stopped after a
+prolonged congestion search. STREZO seed 8 failed DVI5X and DVI. The retained
+seed-2 REZO and seed-4 STREZO configurations were packed directly from the
+same synthesized JSON and packaged without resynthesis. Archived bitstreams
+match those routed files exactly. No circular target was invoked.
+
+## 2026-08-22 STREZO MOTION alignment correction
+
+The BANDS/MOTION label and DEPTH-column correction at `7583d9bb` passes the
+STREZO and shared-family regression sets (`79 passed`). Standard STREZO seed 4
+uses 20,049 LUT4, 23,307 COMB (981 free), 6,926 FF, and 21 DP16KD. It passes
+the 1.25% gate at 384.32 / 72.85 / 66.34 / 76.23 MHz for DVI5X / AUDIO / SYNC /
+DVI. The verified archive `strezo-7583d9bb-r5.tar.gz` was flashed to slot 4.
+No circular target was invoked.
+
+## 2026-08-22 circular-viewport preview guide
+
+Implementation `97c7fe0c` replaces the native 508x508 square frame with a
+shared full-panel circular guide while leaving page geometry untouched. The
+retained renderer uses a two-DP16KD row-boundary lookup; a discarded direct
+squared-distance implementation failed REZO DVI at 54.16 MHz.
+
+| Target | Seed | LUT4 / COMB | Free COMB | FF | BRAM | DVI5X / AUDIO / SYNC / DVI MHz | Result |
+|---|---:|---|---:|---:|---:|---|---|
+| REZO standard | 5 | 20,492 / 24,072 | 216 | 6,907 | 24 | 401.45 / 71.67 / 62.19 / 81.04 | PASS; built, not flashed |
+| REZOMO standard | 8 | 20,582 / 23,862 | 426 | 7,105 | 24 | 445.04 / 73.03 / 63.18 / 77.35 | PASS; built, not flashed |
+| STREZO standard | 2 | 20,019 / 23,263 | 1,025 | 6,926 | 23 | 423.73 / 72.08 / 61.45 / 78.11 | PASS; built, not flashed |
+
+The final native display suite passes 79 tests. Only standard `1280x720p60`
+targets were invoked. REZOMO seed 8 and STREZO seed 2 were routed from their
+exact final synthesized JSON and packaged without resynthesis. No archive was
+flashed because the rack was powered down.
+
+## 2026-08-22 STREZO MOTION panel/row correction
+
+The photo-derived MOTION containment and vertical-centering correction at
+`0400fbf4` passes the STREZO and shared-family regression sets (`79 passed`).
+Standard STREZO seed 4 uses 19,998 LUT4, 23,264 COMB (1,024 free), 6,926 FF,
+and 21 DP16KD. It passes the 1.25% gate at 388.80 / 73.05 / 65.49 / 76.06 MHz
+for DVI5X / AUDIO / SYNC / DVI. The verified archive
+`strezo-0400fbf4-r5.tar.gz` was flashed to slot 4. No circular target was
+invoked.
+
+## 2026-08-22 STREZO OUTPUT side-chip correction
+
+The STREZO-only OUTPUT label/chip correction at `a7f4a56e` passes the STREZO
+and shared-family regression sets (`81 passed`). Standard STREZO seed 4 uses
+19,982 LUT4, 23,240 COMB (1,048 free), 6,926 FF, and 21 DP16KD. It passes the
+1.25% gate at 473.04 / 69.09 / 63.04 / 80.48 MHz for DVI5X / AUDIO / SYNC /
+DVI. The verified archive `strezo-a7f4a56e-r5.tar.gz` was flashed to slot 4.
+No circular target was invoked.
+
+## 2026-08-25 REZOMO CPU dynamic-text congestion reduction
+
+The renderer's 205 dynamic character updates now come from a compact operation
+ROM instead of a wide generated address/data mux. Pack-only utilization falls
+from 22,659 to 22,014 TRELLIS_COMB cells (645 cells recovered); FF usage falls
+from 8,212 to 8,206 and DP16KD usage increases from 31 to 32.
+
+| Seed | DVI5X / AUDIO / SYNC / DVI MHz | Result |
+|---:|---|---|
+| 4 | 477.78 / 72.21 / 61.32 / 78.12 | Nominal pass; rejected below 3% SYNC margin |
+| 5 | 439.37 / 74.02 / 61.67 / 76.01 | Nominal pass; rejected below 3% SYNC and DVI margins |
+| 6 | 446.03 / 71.90 / 61.55 / 82.80 | Clean build rejected at 2.58% SYNC margin |
+| 7 | 425.71 / 74.62 / 64.20 / 79.30 | PASS; retained default, 6.80% limiting DVI margin |
+
+Seed 7 was qualified directly from implementation commit `5ea78921`'s exact
+synthesized JSON and packaged without resynthesis. Archive
+`rezomo-cpu-5ea78921-r5.tar.gz` has SHA-256
+`ca18a8b1ad17caf23ed72a773aaa879ed6f983965a70984bccedc9f115b17296`;
+its packaged `top.bit` has SHA-256
+`9a044daef97305efd3d9b22b44c65af12b19583bedaf2b01c10462423253b9e3`.
+Only the standard `1280x720p60` target was used. The archive was flashed to
+slot 3 on 2026-08-25 (`Refresh: DONE`), and the user accepted video,
+interaction, and audio as good. No circular target was built or flashed.
+
+## 2026-08-25 STREZO CPU control-plane checkpoint
+
+STREZO now uses the same lean CPU control-plane boundary as REZO and REZOMO,
+with STREZO-specific CROSS, MOTION, linked-output-side, OPTIONS, and V4/V5
+persistence behavior retained in firmware. The standard target raises the
+release gate to 3 percent on every routed clock.
+
+Initial implementation commit `ac36e0ee` seed 8 reached 395.57 / 69.39 /
+68.18 / 76.28 MHz for DVI5X / AUDIO / SYNC / DVI, but was rejected at 2.73
+percent DVI margin. Controlled exact-netlist routes at seeds 9 and 16 also
+failed the 3 percent gate. The retained timing change registers the selected
+OUTPUT index and, for STREZO only, pipelines the native circular-guide BRAM
+bounds with its aligned x-coordinate. Two more decode-heavy variants were
+discarded after worsening routing congestion.
+
+| Source / seed | COMB | FF | BRAM | DVI5X / AUDIO / SYNC / DVI MHz | Result |
+|---|---:|---:|---:|---|---|
+| `b89fc0da` / 8 | 21,189 | 8,257 | 30 | 444.64 / 71.26 / 65.62 / 82.88 | PASS; flashed slot 4 |
+
+The exact archive `strezo-cpu-b89fc0da-r5.tar.gz` has SHA-256
+`8fccf1851528dd9bd8da66d2b7c6e794345d0739590be76b97feb16302a6edc5`.
+Its embedded bitstream matches the routed `top.bit` at SHA-256
+`406284c73c2f894abc455841f4d8cb91d661ecdaeffc4e0b290fb4a837d2770f`.
+The flash completed with `Refresh: DONE`. Only standard `1280x720p60` was
+built and flashed; no circular artifact was invoked.

@@ -127,6 +127,22 @@ class DVIPHY(wiring.Component):
 
     i: In(DVIPixel)
 
+    def __init__(self, *, split_load_strobes=False,
+                 local_phase_rings=False, serializer_lane_x=None):
+        super().__init__()
+        self.split_load_strobes = split_load_strobes
+        self.local_phase_rings = local_phase_rings
+        self.serializer_lane_x = serializer_lane_x
+        if split_load_strobes and local_phase_rings:
+            raise ValueError(
+                "split load strobes and local phase rings are exclusive")
+        if serializer_lane_x is not None and (
+                len(serializer_lane_x) != 4 or
+                not (local_phase_rings or split_load_strobes)):
+            raise ValueError(
+                "serializer lane locations require four local phase rings "
+                "or split load strobes")
+
     def elaborate(self, platform):
         m = Module()
 
@@ -170,30 +186,167 @@ class DVIPHY(wiring.Component):
         ]
 
         # Serialization logic
-        tmds_ch0_shift = Signal(10)
-        tmds_ch1_shift = Signal(10)
-        tmds_ch2_shift = Signal(10)
+        # These serializer data registers are transient: the first active
+        # ``shift5[0]`` phase replaces every bit before any stable video is
+        # expected.  Keeping them resettable makes the phase bit feed the LSR
+        # muxes of all 30 flops, creating a high-fanout 5x-clock path that is
+        # needlessly sensitive to placement.  Leave only the phase ring
+        # resettable and allow these registers to power up unspecified.
+        ff_bels = (
+            "SLICEA.FF0", "SLICEA.FF1", "SLICEB.FF0", "SLICEB.FF1",
+            "SLICEC.FF0", "SLICEC.FF1", "SLICED.FF0", "SLICED.FF1",
+        )
 
-        # 5-bit circular shift buffer
-        shift5 = Signal(5, reset=1)
+        def shift_register(name, lane):
+            if self.serializer_lane_x is None:
+                return Signal(10, reset_less=True, name=name)
+            x = self.serializer_lane_x[lane]
+            return [
+                Signal(reset_less=True, name=f"{name}_{bit}", attrs={
+                    "BEL": (
+                        f"X{x}/Y{3 if bit < 8 else 4}/"
+                        f"{ff_bels[bit if bit < 8 else bit - 8]}")
+                })
+                for bit in range(10)
+            ]
 
-        # Serialization in the 5x DVI clock domain
-        m.d.dvi5x += [
-            shift5.eq(Cat(shift5[4], shift5[0:4]))
+        tmds_ch0_shift = shift_register("tmds_ch0_shift", 0)
+        tmds_ch1_shift = shift_register("tmds_ch1_shift", 1)
+        tmds_ch2_shift = shift_register("tmds_ch2_shift", 2)
+        tmds_clk_shift = shift_register("tmds_clk_shift", 3)
+
+        # One phase ring normally defines the shared word boundary. Very dense
+        # products may instead use one identically reset ring per lane. That
+        # removes the extra strobe register and keeps each phase/load route
+        # local without relying on synthesis to preserve equivalent copies.
+        if self.local_phase_rings:
+            phase_rings = []
+            for lane in range(4):
+                phase_rings.append([
+                    Signal(reset=(bit == 0),
+                           name=f"shift5_{lane}_{bit}", attrs=(
+                               {"BEL":
+                                f"X{self.serializer_lane_x[lane]}/"
+                                "Y2/SLICEA.FF0"}
+                               if bit == 0 and
+                               self.serializer_lane_x is not None else {}))
+                    for bit in range(5)
+                ])
+        else:
+            phase_rings = [Signal(5, reset=1, name="shift5")]
+        shift5 = phase_rings[0]
+        load_strobes = [
+            Signal(reset_less=True, name=f"tmds_load{n}",
+                   attrs={"keep": True})
+            for n in range(
+                0 if self.local_phase_rings else
+                (8 if self.split_load_strobes else 4))
         ]
 
-        with m.If(shift5[0]):
-            m.d.dvi5x += [
-                tmds_ch0_shift.eq(s_tmds_ch0),
-                tmds_ch1_shift.eq(s_tmds_ch1),
-                tmds_ch2_shift.eq(s_tmds_ch2)
-            ]
-        with m.Else():
-            m.d.dvi5x += [
-                tmds_ch0_shift.eq(Cat(tmds_ch0_shift[2:10], Const(0, 2))),
-                tmds_ch1_shift.eq(Cat(tmds_ch1_shift[2:10], Const(0, 2))),
-                tmds_ch2_shift.eq(Cat(tmds_ch2_shift[2:10], Const(0, 2)))
-            ]
+        # Serialization in the 5x DVI clock domain
+        for phase in phase_rings:
+            if isinstance(phase, list):
+                m.d.dvi5x += [
+                    phase[0].eq(phase[4]),
+                    *(phase[bit].eq(phase[bit - 1])
+                      for bit in range(1, 5)),
+                ]
+            else:
+                m.d.dvi5x += phase.eq(Cat(phase[4], phase[0:4]))
+        for n, strobe in enumerate(load_strobes):
+            if self.serializer_lane_x is None:
+                m.d.dvi5x += strobe.eq(shift5[0])
+            else:
+                # A kept primitive prevents synthesis from merging equivalent
+                # registered strobes back into one high-fanout load select.
+                # Two strobes live beside each lane's lower/upper shift bank.
+                lane = n // 2 if self.split_load_strobes else n
+                m.submodules += Instance(
+                    "FD1S3AX",
+                    p_GSR="DISABLED",
+                    i_D=shift5[0],
+                    i_CK=ClockSignal("dvi5x"),
+                    o_Q=strobe,
+                    a_keep=True,
+                    a_BEL=(
+                        f"X{self.serializer_lane_x[lane]}/"
+                        f"Y{5 if n & 1 else 2}/SLICEA.FF0"
+                    ),
+                )
+
+        def serialize_lane(shift, load_lo, word, load_hi=None):
+            word = Value.cast(word)
+            if len(word) < 10:
+                word = Cat(word, Const(0, 10 - len(word)))
+            if isinstance(shift, list):
+                if load_hi is None:
+                    with m.If(load_lo):
+                        m.d.dvi5x += [
+                            shift[bit].eq(word[bit]) for bit in range(10)
+                        ]
+                    with m.Else():
+                        m.d.dvi5x += [
+                            shift[bit].eq(shift[bit + 2])
+                            for bit in range(8)
+                        ]
+                        m.d.dvi5x += [shift[8].eq(0), shift[9].eq(0)]
+                    return
+                with m.If(load_lo):
+                    m.d.dvi5x += [
+                        shift[bit].eq(word[bit]) for bit in range(5)
+                    ]
+                with m.Else():
+                    m.d.dvi5x += [
+                        shift[bit].eq(shift[bit + 2])
+                        for bit in range(5)
+                    ]
+                with m.If(load_hi):
+                    m.d.dvi5x += [
+                        shift[bit].eq(word[bit]) for bit in range(5, 10)
+                    ]
+                with m.Else():
+                    m.d.dvi5x += [
+                        shift[bit].eq(shift[bit + 2])
+                        for bit in range(5, 8)
+                    ]
+                    m.d.dvi5x += [shift[8].eq(0), shift[9].eq(0)]
+                return
+            if load_hi is None:
+                with m.If(load_lo):
+                    m.d.dvi5x += shift.eq(word)
+                with m.Else():
+                    m.d.dvi5x += shift.eq(Cat(
+                        shift[2:10], Const(0, 2)))
+                return
+            with m.If(load_lo):
+                m.d.dvi5x += shift[:5].eq(word[:5])
+            with m.Else():
+                m.d.dvi5x += shift[:5].eq(shift[2:7])
+            with m.If(load_hi):
+                m.d.dvi5x += shift[5:].eq(word[5:])
+            with m.Else():
+                m.d.dvi5x += shift[5:].eq(Cat(
+                    shift[7:10], Const(0, 2)))
+
+        if self.local_phase_rings:
+            serialize_lane(tmds_ch0_shift, phase_rings[0][0], s_tmds_ch0)
+            serialize_lane(tmds_ch1_shift, phase_rings[1][0], s_tmds_ch1)
+            serialize_lane(tmds_ch2_shift, phase_rings[2][0], s_tmds_ch2)
+            serialize_lane(tmds_clk_shift, phase_rings[3][0], 0b0000011111)
+        elif self.split_load_strobes:
+            serialize_lane(tmds_ch0_shift, load_strobes[0], s_tmds_ch0,
+                           load_strobes[1])
+            serialize_lane(tmds_ch1_shift, load_strobes[2], s_tmds_ch1,
+                           load_strobes[3])
+            serialize_lane(tmds_ch2_shift, load_strobes[4], s_tmds_ch2,
+                           load_strobes[5])
+            serialize_lane(tmds_clk_shift, load_strobes[6], 0b0000011111,
+                           load_strobes[7])
+        else:
+            serialize_lane(tmds_ch0_shift, load_strobes[0], s_tmds_ch0)
+            serialize_lane(tmds_ch1_shift, load_strobes[1], s_tmds_ch1)
+            serialize_lane(tmds_ch2_shift, load_strobes[2], s_tmds_ch2)
+            serialize_lane(tmds_clk_shift, load_strobes[3], 0b0000011111)
 
         if sim.is_hw(platform):
             dvi_pins = platform.request("dvi")
@@ -219,10 +372,13 @@ class DVIPHY(wiring.Component):
                     i_RST=ResetSignal("dvi5x"),
                     o_Q=dvi_pins.d2.o
                 ),
+                Instance("ODDRX1F",
+                    i_D0=tmds_clk_shift[0],
+                    i_D1=tmds_clk_shift[1],
+                    i_SCLK=ClockSignal("dvi5x"),
+                    i_RST=ResetSignal("dvi5x"),
+                    o_Q=dvi_pins.ck.o
+                ),
             ]
-
-        # Clock output
-        with m.If(~ResetSignal("dvi")):
-            m.d.comb += dvi_pins.ck.o.eq(ClockSignal("dvi"))
 
         return m

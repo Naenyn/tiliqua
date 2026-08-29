@@ -47,15 +47,19 @@ The clocked sample-and-hold/shift-register family is now planned as an
 alternate REZO bitstream. Shift, rotate, and random walk share enough state,
 indexing, clock conditioning, and UI concepts that the alternate build should
 start with one common control-rate transformation engine instead of forcing a
-minimal fragment into the 29 cells left here. Measure that new build from the
-optimized pre-BANDS commit as its baseline.
+minimal fragment into the release build.
+
+That alternate branch now has a formal BANK-only baseline at commit
+`8a27f1a7`: 19,508 packed cells, 4,780 free, with all clocks passing. FILTER's
+DSP and UI have been removed while its version-2 persistence positions remain
+reserved. Measure clocked additions against this baseline.
 
 ## Ranked feature list
 
 ### 1. Preset shapes — very low complexity
 
 Add fixed band vectors such as flat, smile, telephone, and vowel/formant-like
-curves. This extends the existing ALL/ODD/EVN/LOW/MID/HI/ZERO mechanism and has
+curves. This extends the existing ALL/ODD/EVEN/LOW/MID/HI/ZERO mechanism and has
 negligible DSP cost. A later user-preset implementation can coexist with these
 factory shapes.
 

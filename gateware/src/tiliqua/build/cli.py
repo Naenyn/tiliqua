@@ -21,6 +21,7 @@ from ..video import modeline
 from ..platform import *
 from ..tiliqua_soc import TiliquaSoc
 from .archive import ArchiveBuilder
+from .timing import insufficient_clocks, parse_timing_report
 from vendor.ila                  import AsyncSerialILAFrontend
 
 class CliAction(str, enum.Enum):
@@ -63,6 +64,8 @@ def top_level_cli(
 
     parser.add_argument('--skip-build', action='store_true',
                         help="Perform design elaboration but do not actually build the bitstream.")
+    parser.add_argument('--package-only', action='store_true',
+                        help="Package an existing top.bit without elaborating or building.")
     parser.add_argument('--fs-192khz', action='store_true',
                         help="Force usage of maximum CODEC sample rate (192kHz, default is 48kHz).")
 
@@ -109,6 +112,9 @@ def top_level_cli(
     name_default = os.path.normpath(sys.argv[0]).split(os.sep)[2].replace("_", "-").upper()
     parser.add_argument('--name', type=str, default=name_default,
                         help="Bitstream name to display in bootloader and bottom of screen.")
+    parser.add_argument('--artifact-name', type=str, default=None,
+                        help=("Output directory and archive stem. Defaults to --name; useful "
+                              "for keeping multiple builds of one bitstream isolated."))
     parser.add_argument('--brief', type=str, default=None,
                         help="Brief description to display in bootloader.")
     parser.add_argument("--hw",
@@ -173,8 +179,9 @@ def top_level_cli(
             dynamic_modeline=False,
             modeline=None)
 
+    artifact_name = args.artifact_name or args.name
     build_path = os.path.abspath(os.path.join(
-        "build", f"{args.name.lower()}-{args.hw.value}"))
+        "build", f"{artifact_name.lower()}-{args.hw.value}"))
     if not os.path.exists(build_path):
         os.makedirs(build_path)
 
@@ -225,7 +232,8 @@ def top_level_cli(
         name=args.name,
         tag=repo_tag,
         hw_rev=args.hw,
-        bitstream_help=bitstream_help
+        bitstream_help=bitstream_help,
+        artifact_name=artifact_name,
     )
 
     if hw_platform.clock_domain_generator == pll.TiliquaDomainGeneratorPLLExternal:
@@ -268,6 +276,12 @@ def top_level_cli(
     # or memory regions as needed.
     if archiver_callback:
         archiver_callback(archiver)
+
+    if args.package_only:
+        if not archiver.validate_existing_bitstream():
+            sys.exit(1)
+        archiver.with_bitstream().create()
+        return fragment
 
     if isinstance(fragment, TiliquaSoc):
         # Create firmware-only archive if --fw-only specified
@@ -320,7 +334,36 @@ def top_level_cli(
 
         print("Building bitstream for", hw_platform.name)
 
-        hw_platform.build(fragment, do_build=not args.skip_build, **build_flags)
+        build_result = hw_platform.build(
+            fragment, do_build=not args.skip_build, **build_flags)
+
+        if args.skip_build:
+            # ``Platform.build(..., do_build=False)`` returns an unextracted
+            # BuildPlan. Extract it explicitly so --skip-build really emits a
+            # fresh RTL/Yosys plan, and stop before the archiver can package a
+            # stale top.bit left by an earlier route.
+            build_result.extract(build_path)
+            return fragment
+
+        minimum_headroom = getattr(
+            fragment, "minimum_timing_headroom_percent", None)
+        if minimum_headroom is not None:
+            timing_path = os.path.join(build_path, "top.tim")
+            with open(timing_path) as timing_file:
+                timings = parse_timing_report(timing_file.read())
+            if not timings:
+                raise RuntimeError(
+                    f"no clock summaries found in timing report {timing_path}")
+            failures = insufficient_clocks(timings, minimum_headroom)
+            if failures:
+                details = ", ".join(
+                    f"{timing.clock}: {timing.actual_mhz:.2f}/"
+                    f"{timing.required_mhz:.2f} MHz "
+                    f"({timing.headroom_percent:.2f}% headroom)"
+                    for timing in failures)
+                raise RuntimeError(
+                    "post-route timing gate failed; "
+                    f"{minimum_headroom:.2f}% required: {details}")
 
         archiver.with_bitstream().create()
 
