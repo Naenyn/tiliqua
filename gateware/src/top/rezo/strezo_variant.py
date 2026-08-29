@@ -358,13 +358,19 @@ class RezoCore(RezoCoreConstants, wiring.Component):
             init=coefficient_init,
             attrs={"ram_style": "block"})
         cross_curve_rport = coefficient_mem.read_port()
+        effective_cross_feedback_raw = Signal(unsigned(16))
         effective_cross_feedback = Signal(unsigned(16))
         self._effective_cross_feedback = effective_cross_feedback
         m.d.comb += [
             cross_curve_rport.addr.eq(Cat(
                 self.cross_feedback, self.cross_curve, Const(1, 1))),
-            effective_cross_feedback.eq(cross_curve_rport.data[:16]),
+            effective_cross_feedback_raw.eq(cross_curve_rport.data[:16]),
         ]
+        # Break the block-RAM clock-to-Q path before CROSS fans out through the
+        # stereo mix, matrix gain, and topology-aware damping law. Controls are
+        # stable for hundreds of sync clocks per audio sample, so this extra
+        # control-rate cycle is inaudible and materially improves route timing.
+        m.d.sync += effective_cross_feedback.eq(effective_cross_feedback_raw)
 
         # Smooth UI/CV target parameters before the DSP consumes them.  The UI
         # can jump a target by a whole encoder detent; the filterbank should
@@ -760,17 +766,28 @@ class RezoCore(RezoCoreConstants, wiring.Component):
         filtered_next = Signal(mix_shape)
         feedback_drive = Signal(mix_shape)
         feedback_drive_r = Signal(mix_shape)
+        feedback_drive_q = Signal(mix_shape)
+        feedback_drive_q_r = Signal(mix_shape)
         m.submodules.feedback_shaper_l = feedback_shaper_l = FeedbackShaper(
             input_width=mix_shape.width)
         m.submodules.feedback_shaper_r = feedback_shaper_r = FeedbackShaper(
             input_width=mix_shape.width)
         m.d.comb += [
-            feedback_shaper_l.drive.eq(feedback_drive),
+            feedback_shaper_l.drive.eq(feedback_drive_q),
             feedback_shaper_l.knee.eq(self.limit_knee),
             feedback_shaper_l.ceiling.eq(self.limit_cap),
-            feedback_shaper_r.drive.eq(feedback_drive_r),
+            feedback_shaper_r.drive.eq(feedback_drive_q_r),
             feedback_shaper_r.knee.eq(self.limit_knee),
             feedback_shaper_r.ceiling.eq(self.limit_cap),
+        ]
+        # The routed matrix sum and full-bank accumulator are both wide
+        # combinational paths. Register their shared shaper boundary so that
+        # neither path has to traverse the shaper's magnitude compare in the
+        # same 60 MHz cycle. The output-routing schedule has ample slack for
+        # this extra continuously-pipelined stage.
+        m.d.sync += [
+            feedback_drive_q.eq(feedback_drive),
+            feedback_drive_q_r.eq(feedback_drive_r),
         ]
         clip_limited = feedback_shaper_l.sample
         clip_limited_r = feedback_shaper_r.sample
@@ -1013,7 +1030,7 @@ class RezoCore(RezoCoreConstants, wiring.Component):
                 (matrix_route_index < 16) &
                 (matrix_source == self.N_GROUPS - 1)),
             matrix_shape_capture.eq(
-                (state == state_output_limit_commit) &
+                (state == state_output_product_commit) &
                 (matrix_route_index >= 4) &
                 (matrix_route_index <= 16) &
                 (matrix_route_index[:2] == 0)),
@@ -1729,6 +1746,13 @@ class RezoCore(RezoCoreConstants, wiring.Component):
                     output_source_q.eq(output_source_signal),
                     state.eq(state_output_limit_commit),
                 ]
+                # The extra registered shaper boundary makes the full-bank
+                # result valid one state after route index zero completes.
+                with m.If(matrix_route_index == 1):
+                    m.d.sync += [
+                        feedback_sample.eq(clip_limited),
+                        feedback_sample_r.eq(clip_limited_r),
+                    ]
 
             with m.Case(state_output_limit_commit):
                 m.d.sync += [
@@ -1743,6 +1767,8 @@ class RezoCore(RezoCoreConstants, wiring.Component):
                         matrix_product_r >> dsp.mac.SQNative.f_bits)),
                     state.eq(state_output_product_commit),
                 ]
+            with m.Case(state_output_product_commit):
+                m.d.sync += output_acc_array[output_chan].eq(output_next)
                 # The shared shaper was fed the preceding destination's wide
                 # route sum in its commit state. Replace the temporary raw
                 # value before that destination reaches the final gain phase.
@@ -1752,17 +1778,6 @@ class RezoCore(RezoCoreConstants, wiring.Component):
                             matrix_shape_destination].eq(clip_limited),
                         matrix_feedback_array_r[
                             matrix_shape_destination].eq(clip_limited_r),
-                    ]
-
-            with m.Case(state_output_product_commit):
-                m.d.sync += output_acc_array[output_chan].eq(output_next)
-                # The full-bank accumulator has had two clocks to traverse the
-                # continuous shaper. Capture it before the same hardware is
-                # borrowed for per-destination matrix shaping.
-                with m.If(matrix_route_index == 0):
-                    m.d.sync += [
-                        feedback_sample.eq(clip_limited),
-                        feedback_sample_r.eq(clip_limited_r),
                     ]
                 with m.If(matrix_route_index < 15):
                     m.d.sync += matrix_coefficient_q.eq(
