@@ -860,8 +860,12 @@ impl State {
             DRIVE => ui_write(DRIVE_STATE, 0, self.drive()),
             RESONANCE => ui_write(RESONANCE_STATE, 0, self.resonance),
             FEEDBACK => ui_write(FEEDBACK_STATE, 0, self.feedback()),
-            KNEE => ui_write(KNEE_STATE, 0, self.knee),
-            CEILING => ui_write(CEILING_STATE, 0, self.ceiling),
+            KNEE | CEILING => {
+                // Either edit may move both values to preserve KNEE <=
+                // CEILING, so publish the pair in the same UI update.
+                ui_write(KNEE_STATE, 0, self.knee);
+                ui_write(CEILING_STATE, 0, self.ceiling);
+            }
             DAMP => ui_write(DAMP_STATE, 0, self.damp),
             MODE => {
                 ui_write(CLOCK_MODE_STATE, 0, self.clock_mode as u32);
