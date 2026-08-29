@@ -1968,7 +1968,8 @@ class RezoTileDisplay(wiring.Component):
     PALETTE = SEMANTIC_PALETTE
     PALETTE_ROLES = PALETTE_ROLES
     RGB_PALETTES = RGB_PALETTES
-    CHARS = STEREO_TILE_CHARS
+    UNITY_MARKER_CHAR = "|"
+    CHARS = STEREO_TILE_CHARS + UNITY_MARKER_CHAR
     CHAR_CODES = {ch: i for i, ch in enumerate(CHARS)}
 
     def __init__(self, h_active=1280, rotate_left=False):
@@ -2306,6 +2307,11 @@ class RezoTileDisplay(wiring.Component):
         put_native(7, "CROSS", 8, 36)
         put_native(4, "MID", 10, 34)
         put_native(4, "SIDE", 9, 36)
+        # Encode static unity ticks as a dedicated tile. The glyph pipeline
+        # routes this tile to the line palette instead of the text palette,
+        # matching INPUT's solid unity marker without adding pixel geometry.
+        put_native(4, self.UNITY_MARKER_CHAR, 25, 34)
+        put_native(4, self.UNITY_MARKER_CHAR, 25, 36)
         m.submodules.text_mem = text_mem = Memory(
             shape=unsigned(6), depth=len(text_init), init=text_init)
         text_rport = text_mem.read_port(domain="dvi")
@@ -2778,6 +2784,11 @@ class RezoTileDisplay(wiring.Component):
         # end-to-end text latency.
         glyph_init = []
         for ch in self.CHARS:
+            if ch == self.UNITY_MARKER_CHAR:
+                # One doubled font column at x=404..405, overlapping the
+                # final filled pixels at the exact 1.0x default endpoint.
+                glyph_init.extend((0b00100,) * 8)
+                continue
             glyph = FONT_5X7.get(ch, FONT_5X7[" "])
             glyph_init.extend((*glyph, 0))
         m.submodules.glyph_mem = glyph_mem = Memory(
@@ -2792,18 +2803,27 @@ class RezoTileDisplay(wiring.Component):
 
         glyph_col_q = Signal(unsigned(3))
         text_active_q = Signal()
+        unity_marker_char_q = Signal()
         m.d.dvi += [
             glyph_col_q.eq(glyph_col_pre_q),
             text_active_q.eq(text_active_pre_q),
+            unity_marker_char_q.eq(
+                text_rport.data == self.code(self.UNITY_MARKER_CHAR)),
         ]
 
         glyph_bit = Signal(unsigned(3))
         m.d.comb += glyph_bit.eq(4 - glyph_col_q)
 
-        text = Signal()
-        m.d.dvi += text.eq(
+        glyph_ink = Signal()
+        m.d.comb += glyph_ink.eq(
             text_active_q & (glyph_col_q < 5) &
             glyph_rport.data.bit_select(glyph_bit, 1))
+        text = Signal()
+        text_line_marker = Signal()
+        m.d.dvi += [
+            text.eq(glyph_ink & ~unity_marker_char_q),
+            text_line_marker.eq(glyph_ink & unity_marker_char_q),
+        ]
 
         border = ((Const(0)))
         arc_background = Const(0)
@@ -4209,12 +4229,6 @@ class RezoTileDisplay(wiring.Component):
         side_fill = output_page & self.rect(
             x, y, cross_track_x0, cross_y0,
             cross_track_x0 + side_gain_width, cross_y0 + 16)
-        mid_side_unity_x = native_cross_fader_endpoint(64, cross_track_x0)
-        mid_side_unity_marker = output_page & (
-            self.rect(x, y, mid_side_unity_x - 1, same_y0,
-                      mid_side_unity_x + 1, same_y0 + 16) |
-            self.rect(x, y, mid_side_unity_x - 1, cross_y0,
-                      mid_side_unity_x + 1, cross_y0 + 16))
         cross_select = cross_page & (
             ((selected_dvi_q == StrezoUISpec.TARGET_SAME_FEEDBACK) &
              self.rect(x, y, cross_track_x0 - 6, same_y0,
@@ -4339,6 +4353,7 @@ class RezoTileDisplay(wiring.Component):
 
         selected_q = Signal()
         text_q = Signal()
+        unity_marker_q = Signal()
         fill_q = Signal()
         line_q = Signal()
         mod_q = Signal()
@@ -4361,7 +4376,7 @@ class RezoTileDisplay(wiring.Component):
                 cursor_chip),
             geometry_mod_q0.eq(band_mod_fill | bank_control_mod_fill |
                                input_meter_q0 | motion_monitor_line |
-                               limit_soft_region | mid_side_unity_marker),
+                               limit_soft_region),
             geometry_panel_q0.eq(preset_chip | palette_chip | cross_curve_chip |
                                  save_default_chip |
                                  motion_value_chip |
@@ -4375,6 +4390,7 @@ class RezoTileDisplay(wiring.Component):
             selected_q.eq(selected | pager_current |
                           output_meter_hot_q0 | output_meter_clip_q0),
             text_q.eq(text),
+            unity_marker_q.eq(text_line_marker),
             fill_q.eq(geometry_fill_q0 |
                       input_fill_q0 | group_fill_q0 | output_fill_q0 |
                       output_meter_fill_q0),
@@ -4393,6 +4409,8 @@ class RezoTileDisplay(wiring.Component):
             m.d.comb += palette_role.eq(0)
         with m.Elif(text_q):
             m.d.comb += palette_role.eq(1)
+        with m.Elif(unity_marker_q):
+            m.d.comb += palette_role.eq(4)
         with m.Elif(mod_q):
             m.d.comb += palette_role.eq(3)
         with m.Elif(fill_q):
@@ -4408,8 +4426,9 @@ class RezoTileDisplay(wiring.Component):
 
         # Black is a renderer constant rather than a palette entry. The
         # eighth hardware color is now available for shaded content surfaces.
-        palette_visible = (selected_q | text_q | mod_q | fill_q | line_q |
-                           panel_q | background_q | surface_q)
+        palette_visible = (selected_q | text_q | unity_marker_q | mod_q |
+                           fill_q | line_q | panel_q | background_q |
+                           surface_q)
         palette_visible_q = Signal()
         m.d.dvi += palette_visible_q.eq(palette_visible)
 

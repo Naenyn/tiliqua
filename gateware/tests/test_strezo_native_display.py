@@ -357,26 +357,28 @@ def test_cross_feedback_tracks_use_nearly_the_full_chip_width():
 
 def test_output_mid_side_tracks_share_cross_geometry_and_page_local_targets():
     control = RezoTileDisplay.PALETTE["control"]
-    modulation = RezoTileDisplay.PALETTE["modulation"]
+    line = RezoTileDisplay.PALETTE["line"]
     selected = RezoTileDisplay.PALETTE["selected"]
     samples = _render_samples(
         page=4,
         mid_gain=64,
         side_gain=128,
         selected=StrezoUISpec.TARGET_MID_GAIN,
-        points=((230, 550), (234, 550), (404, 550), (405, 550),
-                (406, 550), (407, 550), (405, 582), (406, 582),
-                (577, 582), (578, 582)),
+        points=((230, 550), (234, 550), (403, 550), (404, 550),
+                (405, 550), (406, 550), (403, 582), (404, 582),
+                (405, 582), (406, 582), (577, 582), (578, 582)),
     )
     assert samples == [
         (selected, selected, selected),
         (control, control, control),
         (control, control, control),
-        (modulation, modulation, modulation),
-        (modulation, modulation, modulation),
+        (line, line, line),
+        (line, line, line),
         (0, 0, 0),
-        (modulation, modulation, modulation),
-        (modulation, modulation, modulation),
+        (control, control, control),
+        (line, line, line),
+        (line, line, line),
+        (control, control, control),
         (control, control, control),
         (0, 0, 0),
     ]
