@@ -9,6 +9,20 @@ STREZO can move from subtle stereo animation to unstable resonant feedback.
 Begin with modest RESONANCE, FEEDBACK, and CROSS settings and monitor at a safe
 level.
 
+## Hardware and connections
+
+STREZO uses all four Eurorack inputs and outputs:
+
+- **IN0..IN3** are independently assigned to LEFT, RIGHT, or CV.
+- LEFT and RIGHT inputs feed separate resonator state while sharing the visible
+  band, frequency, motion, and safety controls.
+- CV inputs modulate feedback, resonance, drive, or G1 through G4.
+- **OUT0..OUT3** each select a left or right source side and independently mix
+  G1 through G4 plus that side's dry input.
+
+HDMI video is required for editing the stereo routing and feedback matrices.
+Audio continues to run independently after startup.
+
 ## Basic controls
 
 1. Turn the encoder to move the selection outline.
@@ -24,9 +38,27 @@ step, so the encoder feels consistent throughout the REZO family.
 Switches and **SAVE DEFAULT** act immediately when clicked. Select the
 page-name chip beside **PAGE** to change pages.
 
-STREZO is supplied for both standard 1280x720 displays and the rotated 720x720
-circular display. The features and saved state are identical; only the screen
-composition changes.
+### Display versions
+
+STREZO is supplied for two displays:
+
+- **Standard:** `1280x720p60`, with the native 720x720 interface centered in
+  the widescreen raster.
+- **Circular:** `720x720p60r2`, with the same interface rotated for the
+  official panel mount.
+
+Features, audio behavior, and saved state are identical. Use the build intended
+for the connected display; the circular build is not a scaled widescreen mode.
+
+## Startup and saved state
+
+At startup STREZO loads the newest valid saved record from the active bitstream
+slot, or uses its compiled factory state when no valid record exists. State is
+applied before normal operation so routing never starts from a partial record.
+
+**SAVE DEFAULT** is explicit and slot-local. Ordinary editing does not write
+flash automatically. Because CROSS can restore a high-feedback patch, audition
+the complete saved setup at a safe monitoring level before committing it.
 
 ## Signal flow
 

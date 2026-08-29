@@ -10,6 +10,21 @@ core:
 This guide describes BANK completely first, then explains what changes in
 FILTER.
 
+## Hardware and connections
+
+REZO uses all four Eurorack inputs and outputs:
+
+- **IN0..IN3** are independently assigned to AUDIO or CV on the INPUT page.
+- AUDIO-role inputs are gain-controlled and mixed to the shared mono resonator
+  input.
+- CV-role inputs modulate continuous parameters or, in FILTER mode, feed the
+  modulation matrix.
+- **OUT0..OUT3** are independent mixes of G1 through G4 plus the dry mono input.
+
+HDMI video is required for editing. Audio continues to run independently once
+the bitstream has started, but the display is the only complete view of page,
+selection, routing, and save status.
+
 ## Basic controls
 
 REZO uses the encoder for both navigation and editing.
@@ -31,9 +46,28 @@ To change pages, select the page-name chip beside **PAGE**, click, and turn. On
 the main page, navigation proceeds PAGE, then PRESET, then MODE. Select MODE to
 switch between BANK and FILTER.
 
-REZO is supplied for both standard 1280x720 displays and the rotated 720x720
-circular display. The controls and saved state are identical; only the screen
-composition changes.
+### Display versions
+
+REZO is supplied for two displays:
+
+- **Standard:** `1280x720p60`, with the native 720x720 interface centered in
+  the widescreen raster.
+- **Circular:** `720x720p60r2`, with the same interface rotated for the
+  official panel mount.
+
+Controls, audio behavior, and saved state are identical. Use the build intended
+for the connected display; the circular build is not a scaled widescreen mode.
+
+## Startup and saved state
+
+At startup REZO checks the active bitstream slot for the newest valid saved
+record. Audio remains muted until that record—or the compiled factory state—has
+been applied completely. A missing or invalid record therefore returns to safe
+defaults rather than partially restoring a patch.
+
+**SAVE DEFAULT** is explicit and slot-local. Editing a control does not write
+flash automatically, and moving the bitstream to another slot does not move its
+saved record with it.
 
 ## Understanding the bands
 
@@ -312,3 +346,7 @@ and the unfiltered DRY input mix are all available.
 7. Switch to FILTER, choose LP, and adjust FREQ and SLOPE.
 8. Set IN1 to CV, then use it on the MATRIX page to modulate FREQ.
 9. When the complete setup is worth keeping, use OPTIONS > SAVE DEFAULT.
+
+When first exploring feedback, monitor at a conservative level and raise RES,
+FB, and DRIVE one at a time. The limiter controls contain the feedback path,
+but intentionally do not remove REZO's abrasive overload range.

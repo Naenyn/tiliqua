@@ -10,6 +10,20 @@ modes:
 REZOMO is the clock-oriented sibling of REZO. It does not include REZO's
 FILTER mode.
 
+## Hardware and connections
+
+REZOMO uses all four Eurorack inputs and outputs:
+
+- **IN0..IN3** can be AUDIO, continuous CV, or one of the discrete CLOCK roles.
+- AUDIO-role inputs are gain-controlled and mixed to the mono resonator input.
+- DAT, CLK, RST, and LCK assignments are made on the INPUT page and may be
+  placed on whichever physical jacks suit the patch.
+- **OUT0..OUT3** are independent mixes of G1 through G4 plus the dry mono input.
+
+HDMI video is required for editing and for seeing active clock-source status.
+The audio and clock engines continue to run without display interaction after
+startup.
+
 ## Basic controls
 
 REZOMO uses the encoder for navigation and editing.
@@ -31,9 +45,28 @@ Select the page-name chip beside **PAGE** to change pages. On the main page,
 navigation proceeds PAGE, then PRESET, then MODE. Select MODE to switch between
 BANK and CLOCK.
 
-REZOMO is supplied for both standard 1280x720 displays and the rotated 720x720
-circular display. The controls and saved state are identical; only the screen
-composition changes.
+### Display versions
+
+REZOMO is supplied for two displays:
+
+- **Standard:** `1280x720p60`, with the native 720x720 interface centered in
+  the widescreen raster.
+- **Circular:** `720x720p60r2`, with the same interface rotated for the
+  official panel mount.
+
+Controls, clock behavior, and saved state are identical. Use the build intended
+for the connected display; the circular build is not a scaled widescreen mode.
+
+## Startup and saved state
+
+At startup REZOMO loads the newest valid record from the active bitstream slot,
+or uses its compiled factory state if no valid record exists. Audio is unmuted
+only after that state has been applied completely.
+
+**SAVE DEFAULT** stores static controls and CLOCK configuration in the active
+slot. The evolving SHIFT, ROTATE, WALK, and TURING contents remain transient,
+so rebooting restarts modulation as a live process rather than recalling stale
+pattern memory.
 
 ## Understanding the bands
 
@@ -362,6 +395,10 @@ The external clock uses separate high and low thresholds. Holding a gate high
 produces one accepted edge; it must return low before another edge can occur.
 This hysteresis prevents noise near the threshold from producing repeated
 captures.
+
+Clock and reset inputs are interpreted after their assigned jack roles. If an
+expected clock produces no motion, verify the jack is set to CV, assigned CLK,
+and selected by SOURCE before changing the audio routing.
 
 ## Practical starting patches
 
