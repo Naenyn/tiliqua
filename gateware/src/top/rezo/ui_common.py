@@ -49,6 +49,7 @@ NATIVE_PAGE_HEADER_CHIP_Y1 = 216
 NATIVE_PAGE_HEADER_SELECT_Y0 = 180
 NATIVE_PAGE_HEADER_SELECT_Y1 = 218
 NATIVE_VALUE_CHIP_TEXT_INSET = 16
+NATIVE_OPTIONS_LABEL_RIGHT = 20
 # Backwards-compatible aliases for the INPUT renderer. INPUT is the canonical
 # family content panel; every other native page now uses the same bounds.
 NATIVE_INPUT_PANEL_Y0 = NATIVE_CONTENT_PANEL_Y0
@@ -396,12 +397,18 @@ def put_native_support_page_labels(put, *, output_label_col=9,
         put(4, f"OUT{output}", output_label_col, row + output_offset)
 
     put_native_page_heading(put, 5, "STATE AND DISPLAY")
-    put(5, "PALETTE", 13, 17 + options_offset)
+    put(5, "PALETTE", NATIVE_OPTIONS_LABEL_RIGHT - len("PALETTE"),
+        17 + options_offset)
     if row_dry:
-        put(5, "ROW DRY", 10, 21 + options_offset)
-        put(5, "SAVE DEFAULT", 8, 25 + options_offset)
+        put(5, "ROW DRY", NATIVE_OPTIONS_LABEL_RIGHT - len("ROW DRY"),
+            21 + options_offset)
+        put(5, "SAVE DEFAULT",
+            NATIVE_OPTIONS_LABEL_RIGHT - len("SAVE DEFAULT"),
+            25 + options_offset)
     else:
-        put(5, "SAVE DEFAULT", 8, 21 + options_offset)
+        put(5, "SAVE DEFAULT",
+            NATIVE_OPTIONS_LABEL_RIGHT - len("SAVE DEFAULT"),
+            21 + options_offset)
 
     put_native_page_heading(put, 6, "PRESET")
     put(6, "ENABLE", 8, 16 + bands_offset)

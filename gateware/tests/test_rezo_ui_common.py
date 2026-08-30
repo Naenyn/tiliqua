@@ -32,6 +32,7 @@ from top.rezo.ui_common import (
     NATIVE_OUTPUT_ROW_CENTERS,
     NATIVE_OUTPUT_ROW_SELECT_X0,
     NATIVE_OUTPUT_TEXT_ROWS,
+    NATIVE_OPTIONS_LABEL_RIGHT,
     NATIVE_PAGE_HEADING_ROW,
     NATIVE_PAGE_HEADER_CHIP_Y0,
     NATIVE_PAGE_HEADER_CHIP_Y1,
@@ -198,7 +199,19 @@ def test_shared_support_labels_cover_every_common_page():
     calls = []
     put_native_support_page_labels(
         lambda *args: calls.append(args), row_dry=True)
-    assert (5, "ROW DRY", 10, 21) in calls
+    option_labels = {
+        text: x
+        for page, text, x, _row in calls
+        if page == 5 and text in ("PALETTE", "ROW DRY", "SAVE DEFAULT")
+    }
+    assert option_labels == {
+        "PALETTE": 13,
+        "ROW DRY": 13,
+        "SAVE DEFAULT": 8,
+    }
+    assert {
+        x + len(text) for text, x in option_labels.items()
+    } == {NATIVE_OPTIONS_LABEL_RIGHT}
     assert (5, "SAVE DEFAULT", 8, 25) in calls
 
 
