@@ -67,8 +67,8 @@ The audio mixes excite independent left and right copies of the same ten
 resonators.
 
 ```text
-LEFT inputs  -> ten left resonators  -> G1..G4 -> output routing
-RIGHT inputs -> ten right resonators -> G1..G4 -> output routing
+LEFT inputs  -> ten left resonators  -> G1..G4 -> MID/SIDE -> output routing
+RIGHT inputs -> ten right resonators -> G1..G4 -> MID/SIDE -> output routing
                          ^                 |
                          +-- SAME/CROSS ---+
 ```
@@ -113,10 +113,16 @@ The display distinguishes saved positions from CV-modulated effective values.
 The ten switches select which enabled resonators contribute to the feedback
 tap. The BANK page's FEEDBACK control sets its overall amount.
 
-- **KNEE** sets the level where soft limiting begins.
-- **CEILING** sets the final feedback-loop limit.
+- **KNEE** sets the level where soft limiting begins. Below it, the return is
+  unchanged; above it, progressively stronger compression bends the signal
+  toward CEILING.
+- **CEILING** sets the hard final feedback-loop limit. Its fader colors the
+  span from KNEE to CEILING to show the active soft-limiting region.
 - **DAMPING** selects OFF, LIGHT, MED, HEAVY, or MAX resonance restraint as
   feedback increases.
+
+KNEE and CEILING may meet for hard limiting with no soft region. Raising KNEE
+past CEILING raises CEILING too; lowering CEILING past KNEE lowers KNEE too.
 
 These controls make feedback easier to manage, but they intentionally do not
 remove the possibility of instability at extreme settings.
@@ -127,6 +133,14 @@ Each jack can be assigned as **LEFT**, **RIGHT**, or **CV**.
 
 For a LEFT or RIGHT audio input, **VALUE** sets its gain and the signal joins
 the corresponding stereo-side input mix.
+
+The curved **L IN R** meters in the bottom arc show those completed left and
+right input mixes after all VALUE gains and summing, immediately before DRIVE
+and feedback enter the filter banks. Each meter grows outward from the center.
+The fixed marker is nominal 0 dB (5 V peak); the short outer section is ADC
+headroom up to 8.192 V peak. A clip lamp at the outer tip indicates that the
+unclamped sum exceeded the input bus, even though the signal sent onward was
+safely clamped.
 
 For a CV input:
 
@@ -158,6 +172,22 @@ different views of the stereo filterbank.
 
 The **L** or **R** chip on each output row selects which stereo side supplies
 all five sends on that row. DRY adds the corresponding unfiltered input path.
+
+The shared **MID** and **SIDE** controls below the matrix reshape only the wet
+G1-G4 signals after the feedback taps and before output routing. DRY bypasses
+this stage, so the original stereo input can always be mixed back unchanged.
+Both controls run from 0 to 128, with 64 as exact unity. The fixed tick on
+each fader marks that 1.0x position:
+
+- **MID** changes the common center component. Raise it to make the newly
+  shared stereo center more pronounced; lower it to leave more difference
+  information.
+- **SIDE** changes the left/right difference. Lower it to narrow the wet image;
+  raise it to widen the wet image.
+
+MID 64 / SIDE 0 produces centered mono wet output. MID 0 / SIDE 64 removes
+common center content. Values above 64 provide up to 2x gain in the selected
+component and may reach the output limit sooner.
 
 ## BANDS page
 
@@ -224,21 +254,24 @@ is intentionally capable of unstable and abrasive results.
 
 ## OPTIONS page
 
-Navigation follows the visible top-to-bottom order: PAGE, PALETTE, SAVE, then
-CROSS CURVE.
+Navigation follows the visible top-to-bottom order: PAGE, PALETTE, ROW DRY,
+SAVE DEFAULT, then CROSS CURVE.
 
 ### STATE AND DISPLAY
 
 - **PALETTE** selects LCD, AMBER, CYAN, GREEN, or VIOLET.
+- **ROW DRY** chooses whether an OUTPUT row edit changes DRY along with G1-G4.
+  ON adjusts all five sends; OFF adjusts only the four wet group sends and
+  leaves DRY untouched.
 - **SAVE DEFAULT** stores the complete STREZO state in the current bitstream
   slot. The button reports SAVING, SAVED, ERROR, or NO SLOT.
 
 ### ADVANCED: CROSS CURVE
 
 - **LINEAR** maps the CROSS fader directly to the feedback coefficient.
-- **LOG** rises earlier at low fader positions, then gives progressively finer
-  control as it approaches full scale. Both curves retain exact zero and
-  maximum endpoints.
+- **FINE** rises later, expanding the stable low and middle range while keeping
+  the strongest cross-coupling in the final part of the fader. Both curves
+  retain exact zero and maximum endpoints.
 
 The curve changes only the response of the CROSS control. It does not change
 SAME or rewrite the saved CROSS position.
@@ -247,8 +280,9 @@ SAME or rewrite the saved CROSS position.
 
 SAVE DEFAULT stores band levels, frequencies, enables, groups, input roles and
 depths, output sends, feedback safety settings, CROSS layout and matrix, SAME
-and CROSS positions, CROSS curve, motion settings, palette, and the selected
-page state needed to restore the patch. Changes are not saved automatically.
+and CROSS positions, CROSS curve, MID/SIDE gains, motion settings, palette, the
+ROW DRY preference, and the selected page state needed to restore the patch.
+Changes are not saved automatically.
 
 ## A practical first patch
 
@@ -259,7 +293,7 @@ page state needed to restore the patch. Changes are not saved automatically.
    different outputs.
 4. On CROSS, begin with GLOBAL, SAME at maximum, and CROSS at zero.
 5. Raise FEEDBACK modestly, then increase CROSS slowly while monitoring level.
-6. Compare LINEAR and LOG under OPTIONS > ADVANCED.
+6. Compare LINEAR and FINE under OPTIONS > ADVANCED.
 7. Add TRIANGLE motion at low DEPTH.
 8. Save the complete setup only after it behaves safely with the intended
    inputs and monitoring level.

@@ -7,8 +7,13 @@ from top.rezo.strezo_variant import (
     NATIVE_OUTPUT_METER_LABEL_COLS,
     NATIVE_OUTPUT_SIDE_CHIP_X0,
     NATIVE_OUTPUT_SIDE_CHIP_X1,
+    NATIVE_STEREO_INPUT_FILL_LEFT_X0,
+    NATIVE_STEREO_INPUT_FILL_LEFT_X1,
+    NATIVE_STEREO_INPUT_FILL_RIGHT_X0,
+    NATIVE_STEREO_INPUT_FILL_RIGHT_X1,
     RezoCore,
     RezoTileDisplay,
+    native_stereo_input_bus_meter_offset,
     native_output_meter_bounds,
     output_meter_db_value,
 )
@@ -16,6 +21,7 @@ from top.rezo.ui_specs import StrezoUISpec
 from top.rezo.ui_common import (
     NATIVE_FEEDBACK_CEILING_Y0,
     NATIVE_FEEDBACK_KNEE_Y0,
+    INPUT_BUS_NOMINAL_METER_VALUE,
 )
 
 
@@ -24,12 +30,14 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
                     band_enables=(), feedback_sends=(), same_feedback=0,
                     cross_feedback=0, cross_layout=RezoCore.CROSS_LAYOUT_GLOBAL,
                     cross_curve=RezoCore.CROSS_CURVE_LINEAR,
+                    mid_gain=64, side_gain=64,
                     drive=0, resonance=0, feedback=0,
                     limit_knee=32, limit_cap=112, selected=0,
                     matrix_values=(), motion_source=0, motion_rate=12,
                     motion_phase=28, motion_depth=0, motion_monitor=0,
                     input_meters=(), output_sides=(), output_meters=(),
-                    output_clips=()):
+                    output_clips=(), input_bus_meters=(),
+                    input_bus_clips=(), row_dry_include=1):
     """Render settled pixels from STREZO's upright native canvas."""
     dut = RezoTileDisplay(
         h_active=h_active,
@@ -56,6 +64,8 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
         ctx.set(dut.cross_feedback, cross_feedback)
         ctx.set(dut.cross_layout, cross_layout)
         ctx.set(dut.cross_curve, cross_curve)
+        ctx.set(dut.mid_gain, mid_gain)
+        ctx.set(dut.side_gain, side_gain)
         ctx.set(dut.drive, drive)
         ctx.set(dut.effective_drive, drive)
         ctx.set(dut.resonance, resonance)
@@ -65,6 +75,7 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
         ctx.set(dut.limit_knee, limit_knee)
         ctx.set(dut.limit_cap, limit_cap)
         ctx.set(dut.selected, selected)
+        ctx.set(dut.row_dry_include, row_dry_include)
         ctx.set(dut.motion_source, motion_source)
         ctx.set(dut.motion_rate, motion_rate)
         ctx.set(dut.motion_phase, motion_phase)
@@ -78,6 +89,10 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
             ctx.set(dut.output_meters[index], value)
         for index, value in enumerate(output_clips):
             ctx.set(dut.output_clips[index], value)
+        for index, value in enumerate(input_bus_meters):
+            ctx.set(dut.input_bus_meters[index], value)
+        for index, value in enumerate(input_bus_clips):
+            ctx.set(dut.input_bus_clips[index], value)
         for index, value in enumerate(matrix_values):
             ctx.set(dut.output_send_write_addr, index)
             ctx.set(dut.output_send_write_data, value)
@@ -100,6 +115,18 @@ def test_output_meter_uses_calibrated_daw_scale():
             (0, 1, 4, 16, 65, 129, 257, 513, 1023)] == [
         0, 0, 12, 25, 38, 44, 50, 57, 63,
     ]
+
+
+def test_stereo_input_meter_maps_both_half_arcs_exactly():
+    assert native_stereo_input_bus_meter_offset(0) == 0
+    assert native_stereo_input_bus_meter_offset(63) == 165
+    assert (NATIVE_STEREO_INPUT_FILL_LEFT_X1 -
+            native_stereo_input_bus_meter_offset(63) ==
+            NATIVE_STEREO_INPUT_FILL_LEFT_X0)
+    assert (NATIVE_STEREO_INPUT_FILL_RIGHT_X0 +
+            native_stereo_input_bus_meter_offset(63) ==
+            NATIVE_STEREO_INPUT_FILL_RIGHT_X1)
+    assert 0 < INPUT_BUS_NOMINAL_METER_VALUE < 63
 
 
 def test_output_meter_pairs_and_labels_are_centered_in_side_arcs():
@@ -205,6 +232,26 @@ def test_curved_output_meters_are_persistent_and_independent():
         (palette["control"],) * 3,
         (palette["selected"],) * 3,
         (palette["panel"],) * 3,
+        (palette["modulation"],) * 3,
+    ]
+
+
+def test_stereo_input_bus_meters_grow_outward_with_markers_and_clips():
+    palette = RezoTileDisplay.PALETTE
+    assert _render_samples(
+        page=7,
+        input_bus_meters=(63, 63),
+        input_bus_clips=(1, 0),
+        points=((188, 633), (195, 637), (201, 641), (250, 663),
+                (470, 663), (518, 641), (525, 637), (532, 633)),
+    ) == [
+        (palette["modulation"],) * 3,
+        (palette["selected"],) * 3,
+        (palette["line"],) * 3,
+        (palette["control"],) * 3,
+        (palette["control"],) * 3,
+        (palette["line"],) * 3,
+        (palette["selected"],) * 3,
         (palette["selected"],) * 3,
     ]
 
@@ -292,11 +339,54 @@ def test_cross_layout_chip_has_symmetric_horizontal_padding():
 
 
 def test_cross_curve_text_has_the_shared_one_cell_left_inset():
-    chip = (336, 468, 488, 508)
+    chip = (336, 500, 488, 540)
     bounds = _render_text_bounds(
         chip, page=5, cross_curve=RezoCore.CROSS_CURVE_LINEAR)
     assert 352 <= bounds[0] <= 354
     assert bounds[0] - chip[0] in (16, 17, 18)
+
+
+def test_options_rows_are_ordered_and_contained_by_the_surface():
+    palette = RezoTileDisplay.PALETTE
+    bounds = _render_text_bounds(
+        (336, 308, 472, 348), page=5, row_dry_include=0)
+    assert 352 <= bounds[0] <= 354
+    assert _render_samples(
+        page=5,
+        selected=StrezoUISpec.TARGET_ROW_DRY,
+        points=((332, 304), (130, 543), (130, 544)),
+    ) == [
+        (palette["selected"],) * 3,
+        (palette["surface"],) * 3,
+        (palette["blank"],) * 3,
+    ]
+
+
+def test_groups_bank_outline_surrounds_the_full_grid():
+    selected = RezoTileDisplay.PALETTE["selected"]
+    surface = RezoTileDisplay.PALETTE["surface"]
+    assert _render_samples(
+        page=3,
+        selected=StrezoUISpec.TARGET_GROUP_BASE,
+        points=((216, 290), (216, 306)),
+    ) == [
+        (selected, selected, selected),
+        (surface, surface, surface),
+    ]
+
+
+def test_groups_surface_has_one_extra_row_of_bottom_padding():
+    surface = RezoTileDisplay.PALETTE["surface"]
+    blank = RezoTileDisplay.PALETTE["blank"]
+    assert _render_samples(
+        page=3,
+        points=((130, 479), (130, 480), (130, 495), (130, 496)),
+    ) == [
+        (surface, surface, surface),
+        (surface, surface, surface),
+        (surface, surface, surface),
+        (blank, blank, blank),
+    ]
 
 
 def test_main_preset_selection_uses_the_shared_header_outline():
@@ -352,6 +442,35 @@ def test_cross_feedback_tracks_use_nearly_the_full_chip_width():
     ]
 
 
+def test_output_mid_side_tracks_share_cross_geometry_and_page_local_targets():
+    control = RezoTileDisplay.PALETTE["control"]
+    line = RezoTileDisplay.PALETTE["line"]
+    selected = RezoTileDisplay.PALETTE["selected"]
+    samples = _render_samples(
+        page=4,
+        mid_gain=64,
+        side_gain=128,
+        selected=StrezoUISpec.TARGET_MID_GAIN,
+        points=((230, 550), (234, 550), (403, 550), (404, 550),
+                (405, 550), (406, 550), (403, 582), (404, 582),
+                (405, 582), (406, 582), (577, 582), (578, 582)),
+    )
+    assert samples == [
+        (selected, selected, selected),
+        (control, control, control),
+        (control, control, control),
+        (line, line, line),
+        (line, line, line),
+        (0, 0, 0),
+        (control, control, control),
+        (line, line, line),
+        (line, line, line),
+        (control, control, control),
+        (control, control, control),
+        (0, 0, 0),
+    ]
+
+
 def test_bank_control_maxima_fill_the_compact_tracks():
     control = RezoTileDisplay.PALETTE["control"]
     line = RezoTileDisplay.PALETTE["line"]
@@ -391,6 +510,24 @@ def test_feedback_safety_maxima_fill_the_compact_tracks():
         (panel, panel, panel), (surface, surface, surface),
         (control, control, control), (panel, panel, panel),
         (panel, panel, panel), (surface, surface, surface),
+    ]
+
+
+def test_feedback_ceiling_colors_the_soft_region_from_knee_to_cap():
+    control = RezoTileDisplay.PALETTE["control"]
+    modulation = RezoTileDisplay.PALETTE["modulation"]
+    panel = RezoTileDisplay.PALETTE["panel"]
+    assert _render_samples(
+        page=1,
+        limit_knee=32,
+        limit_cap=112,
+        points=((300, NATIVE_FEEDBACK_CEILING_Y0 - 8),
+                (400, NATIVE_FEEDBACK_CEILING_Y0 - 8),
+                (540, NATIVE_FEEDBACK_CEILING_Y0 - 8)),
+    ) == [
+        (control, control, control),
+        (modulation, modulation, modulation),
+        (panel, panel, panel),
     ]
 
 

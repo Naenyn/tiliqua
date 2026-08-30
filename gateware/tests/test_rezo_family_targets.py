@@ -40,6 +40,7 @@ COMMON_UI_TARGETS = {
     ("firmware_dir", "ui_spec", "product_targets"),
     (
         ("cpu_fw", RezoUISpec, {
+            "TARGET_ROW_DRY": "ROW_DRY",
             "TARGET_MODE": "MODE",
             "TARGET_FILTER_TYPE": "FILTER_TYPE",
             "TARGET_FILTER_CUTOFF": "CUTOFF",
@@ -48,6 +49,7 @@ COMMON_UI_TARGETS = {
             "TARGET_FILTER_CV_BASE": "FILTER_MATRIX",
         }),
         ("rezomo_cpu_fw", RezomoUISpec, {
+            "TARGET_ROW_DRY": "ROW_DRY",
             "TARGET_MODE": "MODE",
             "TARGET_SHIFT_DIRECTION": "SHIFT_DIRECTION",
             "TARGET_CLOCK_ALGORITHM": "CLOCK_ALGORITHM",
@@ -61,6 +63,7 @@ COMMON_UI_TARGETS = {
             "TARGET_DATA_SOURCE": "DATA_SOURCE",
         }),
         ("strezo_cpu_fw", StrezoUISpec, {
+            "TARGET_ROW_DRY": "ROW_DRY",
             "TARGET_CROSS_LAYOUT": "CROSS_LAYOUT",
             "TARGET_MOTION_SOURCE": "MOTION_SOURCE",
             "TARGET_MOTION_RATE": "MOTION_RATE",
@@ -88,6 +91,19 @@ def test_renderer_ui_specs_match_firmware_targets(
 
     for spec_name, rust_name in (COMMON_UI_TARGETS | product_targets).items():
         assert getattr(ui_spec, spec_name) == rust_targets[rust_name]
+
+
+@pytest.mark.parametrize(("firmware_dir", "options"), (
+    ("cpu_fw", "[0, 90, 122, 91]"),
+    ("rezomo_cpu_fw", "[0, 90, 122, 91]"),
+    ("strezo_cpu_fw", "[0, 90, 126, 91, 1]"),
+))
+def test_row_dry_precedes_save_in_options_navigation(firmware_dir, options):
+    main_rs = (
+        Path(__file__).parents[1] / "src" / "top" / "rezo" /
+        firmware_dir / "src" / "main.rs"
+    ).read_text()
+    assert f"const OPTIONS_PAGE: &[u8] = &{options};" in main_rs
 
 
 def test_family_exposes_complete_product_display_matrix():
@@ -125,11 +141,11 @@ def test_family_variants_are_selected_before_elaboration():
     assert TARGETS["rezomo_round"].module == "rezomo_cpu"
     assert TARGETS["strezo"].module == "strezo_cpu"
     assert TARGETS["strezo_round"].module == "strezo_cpu"
-    assert TARGETS["rezo"].default_seed == 5
+    assert TARGETS["rezo"].default_seed == 9
     assert TARGETS["rezo_round"].default_seed == 2
     assert TARGETS["rezomo"].default_seed == 12
     assert TARGETS["rezomo_round"].default_seed == 12
-    assert TARGETS["strezo"].default_seed == 7
+    assert TARGETS["strezo"].default_seed == 8
     assert TARGETS["strezo_round"].default_seed == 7
 
 

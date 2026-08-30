@@ -63,6 +63,7 @@ def test_rezomo_command_port_updates_clock_and_routing_state():
         await command(34, 0, 247)
         await command(39, 0, 4)
         await command(9, 7, 16)
+        await command(30, 1, 0)
         assert ctx.get(ui.clock_mode) == 1
         assert ctx.get(ui.clock_algorithm) == 3
         assert ctx.get(ui.turing_change_index) == 5
@@ -71,6 +72,7 @@ def test_rezomo_command_port_updates_clock_and_routing_state():
         assert ctx.get(ui.walk_chance_index) == 4
         assert ctx.get(ui.output_sends[7]) == 16
         assert ctx.get(ui.output_routes[1]) == 0b00100
+        assert ctx.get(ui.row_dry_include) == 0
 
     sim = Simulator(m)
     sim.add_clock(1e-6)

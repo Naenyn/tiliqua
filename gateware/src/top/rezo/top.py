@@ -58,11 +58,17 @@ try:
         FONT_5X7, PALETTE_ROLES, RGB_PALETTES, SEMANTIC_PALETTE,
         TILE_CHARS,
     )
+    from .feedback import (
+        FeedbackShaper, feedback_damping, feedback_gain_from_control,
+        resonance_control,
+    )
     from .persistence_common import SPIFlashTransfer
     from .ui_specs import RezomoUISpec
     from .ui_common import (
         BASE_TARGET_NAMES, COMMON_PAGE_TITLES, DAMP_NAMES, LAYOUT_NAMES,
-        NAV_NAMES, PALETTE_NAMES, SAVE_NAMES, format_frequency_name,
+        NAV_NAMES, PALETTE_NAMES, ROW_DRY_NAMES, SAVE_NAMES,
+        format_frequency_name,
+        INPUT_BUS_NOMINAL_MAGNITUDE, INPUT_BUS_NOMINAL_METER_VALUE,
         NATIVE_FEEDBACK_AMOUNT_Y0, NATIVE_FEEDBACK_CEILING_Y0,
         NATIVE_FEEDBACK_TRACK_X0, NATIVE_FEEDBACK_TRACK_X1,
         NATIVE_FEEDBACK_DAMPING_CHIP_X0, NATIVE_FEEDBACK_DAMPING_CHIP_X1,
@@ -76,12 +82,16 @@ try:
         NATIVE_PAGE_HEADER_CHIP_Y1, NATIVE_PAGE_HEADER_SELECT_Y0,
         NATIVE_PAGE_HEADER_SELECT_Y1,
         NATIVE_INPUT_FILL_X0, NATIVE_INPUT_FILL_X1,
+        NATIVE_INPUT_BUS_FILL_X0, NATIVE_INPUT_BUS_FILL_X1,
+        NATIVE_INPUT_BUS_TRACK_X0, NATIVE_INPUT_BUS_TRACK_X1,
         NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
         NATIVE_MAIN_FILL_X0, NATIVE_MAIN_FILL_X1,
         NATIVE_MAIN_CONTROL_TEXT_ROWS, NATIVE_MAIN_CONTROL_Y0S,
         NATIVE_OUTPUT_COL_CENTERS, NATIVE_OUTPUT_ROW_CENTERS,
         NATIVE_OUTPUT_TEXT_ROWS,
+        input_bus_meter_db_value,
         native_clock_row_geometry, native_group_geometry,
+        native_input_bus_meter_endpoint,
         native_input_row_geometry,
         native_input_depth_endpoint, native_input_gain_endpoint,
         native_input_meter_endpoint, native_input_unity_x,
@@ -98,11 +108,17 @@ except ImportError:  # top_level_cli executes this file directly.
         FONT_5X7, PALETTE_ROLES, RGB_PALETTES, SEMANTIC_PALETTE,
         TILE_CHARS,
     )
+    from feedback import (
+        FeedbackShaper, feedback_damping, feedback_gain_from_control,
+        resonance_control,
+    )
     from persistence_common import SPIFlashTransfer
     from ui_specs import RezomoUISpec
     from ui_common import (
         BASE_TARGET_NAMES, COMMON_PAGE_TITLES, DAMP_NAMES, LAYOUT_NAMES,
-        NAV_NAMES, PALETTE_NAMES, SAVE_NAMES, format_frequency_name,
+        NAV_NAMES, PALETTE_NAMES, ROW_DRY_NAMES, SAVE_NAMES,
+        format_frequency_name,
+        INPUT_BUS_NOMINAL_MAGNITUDE, INPUT_BUS_NOMINAL_METER_VALUE,
         NATIVE_FEEDBACK_AMOUNT_Y0, NATIVE_FEEDBACK_CEILING_Y0,
         NATIVE_FEEDBACK_TRACK_X0, NATIVE_FEEDBACK_TRACK_X1,
         NATIVE_FEEDBACK_DAMPING_CHIP_X0, NATIVE_FEEDBACK_DAMPING_CHIP_X1,
@@ -116,12 +132,16 @@ except ImportError:  # top_level_cli executes this file directly.
         NATIVE_PAGE_HEADER_CHIP_Y1, NATIVE_PAGE_HEADER_SELECT_Y0,
         NATIVE_PAGE_HEADER_SELECT_Y1,
         NATIVE_INPUT_FILL_X0, NATIVE_INPUT_FILL_X1,
+        NATIVE_INPUT_BUS_FILL_X0, NATIVE_INPUT_BUS_FILL_X1,
+        NATIVE_INPUT_BUS_TRACK_X0, NATIVE_INPUT_BUS_TRACK_X1,
         NATIVE_INPUT_PANEL_Y0, NATIVE_INPUT_PANEL_Y1,
         NATIVE_MAIN_FILL_X0, NATIVE_MAIN_FILL_X1,
         NATIVE_MAIN_CONTROL_TEXT_ROWS, NATIVE_MAIN_CONTROL_Y0S,
         NATIVE_OUTPUT_COL_CENTERS, NATIVE_OUTPUT_ROW_CENTERS,
         NATIVE_OUTPUT_TEXT_ROWS,
+        input_bus_meter_db_value,
         native_clock_row_geometry, native_group_geometry,
+        native_input_bus_meter_endpoint,
         native_input_row_geometry,
         native_input_depth_endpoint, native_input_gain_endpoint,
         native_input_meter_endpoint, native_input_unity_x,
@@ -180,11 +200,11 @@ class RezoCore(wiring.Component):
     INPUT_MAX = 65535
     INPUT_UNITY_POS = 52428
     PARAM_SLEW_STEP = 64
-    # Proven input conditioner from the last hardware-clean DSP path. Keep it
-    # independent of the user-facing feedback safety controls: its job is only
-    # to prevent a hot Eurorack input from making an SVF state chatter.
+    # Keep this conditioner independent of the user-facing feedback controls.
+    # A 4:1 slope above the knee retains hard state protection while making the
+    # upper half of DRIVE materially more expressive than the old 8:1 slope.
     INPUT_LIMIT_KNEE = 12288
-    INPUT_LIMIT_SHIFT = 3  # 8:1 above the knee
+    INPUT_LIMIT_SHIFT = 2  # 4:1 above the knee
     INPUT_MODE_AUDIO = 0
     INPUT_MODE_CV = 1
     CV_TARGET_FEEDBACK = 0
@@ -328,6 +348,10 @@ class RezoCore(wiring.Component):
         # peak envelope; CV inputs report the raw, pre-DEPTH bipolar sample.
         self.input_meters = [Signal(signed(16), name=f"input_meter{n}")
                              for n in range(4)]
+        # Combined external input bus after all AUDIO-mode VALUE gains and
+        # immediately before DRIVE/feedback. This telemetry never feeds DSP.
+        self.input_bus_sample = Signal(ASQ, name="input_bus_sample")
+        self.input_bus_clip = Signal(name="input_bus_clip")
         self.clock_mode = Signal(init=0)
         self.clock_algorithm = Signal(unsigned(2),
                                       init=self.CLOCK_ALGORITHM_SHIFT)
@@ -443,8 +467,7 @@ class RezoCore(wiring.Component):
             effective_resonance_raw.eq(smooth_resonance + resonance_cv_term),
             effective_feedback_raw.eq(smooth_feedback + feedback_cv_term),
             effective_drive_raw.eq(self.DRIVE_FLOOR + smooth_drive + drive_cv_term),
-            feedback_gain.eq(Mux(effective_feedback > 31744, 31744,
-                                 effective_feedback)),
+            feedback_gain.eq(feedback_gain_from_control(effective_feedback)),
         ]
         with m.If(effective_resonance_raw < 0):
             m.d.comb += effective_resonance.eq(0)
@@ -480,37 +503,22 @@ class RezoCore(wiring.Component):
                 ]
         feedback_sample = Signal(ASQ)
 
-        # Shared values.  Convert the UI values into ASQ-ish fractions.  The
-        # SVF uses inverse-Q: lower values are more resonant.  Keep the safer
-        # inverse-Q floor from the stable hardware tests, then raise it when
-        # feedback is high. This prevents max-Q and max-feedback from combining
-        # into a self-sustaining noisy latch-up state.
+        # REZOMO keeps a gentler feedback-dependent reduction than REZO so
+        # resonant tails can remain part of its rhythmic memory. The mapping
+        # reduces requested resonance rather than flooring inverse-Q, keeping
+        # every DAMP mode responsive across most of the RES slider.
         resonance_ctl = Signal(ASQ)
-        res_ctl = Signal(signed(17))
         feedback_damp = Signal(unsigned(16))
-        resonance_floor_raw = Signal(signed(17))
-        resonance_floor = Signal(signed(17))
-        with m.Switch(self.damp_mode):
-            with m.Case(0):
-                m.d.comb += feedback_damp.eq(0)
-            with m.Case(1):
-                m.d.comb += feedback_damp.eq(effective_feedback >> 4)
-            with m.Case(2):
-                m.d.comb += feedback_damp.eq(effective_feedback >> 3)
-            with m.Case(3):
-                m.d.comb += feedback_damp.eq(effective_feedback >> 2)
-            with m.Default():
-                m.d.comb += feedback_damp.eq((effective_feedback >> 2) + (effective_feedback >> 3))
         m.d.comb += [
-            res_ctl.eq(16384 - (effective_resonance >> 1)),
-            resonance_floor_raw.eq(4096 + feedback_damp),
-            resonance_floor.eq(Mux(resonance_floor_raw > 12288, 12288, resonance_floor_raw)),
-            resonance_ctl.eq(Mux(res_ctl < resonance_floor, resonance_floor, res_ctl)),
+            feedback_damp.eq(feedback_damping(
+                effective_feedback, self.damp_mode, "rezomo")),
+            resonance_ctl.eq(resonance_control(
+                effective_resonance, feedback_damp)),
         ]
 
         # Feedback is smoothed and scheduled through the shared multiplier.
-        # Full-scale UI feedback is capped just below the hardware-tested cliff
-        # so the final encoder tick stays in the "hot but not runaway" region.
+        # A 31/32 scale uses every UI position while keeping the full-scale
+        # endpoint just below the hardware-tested runaway cliff.
         x = Signal(dsp.mac.SQNative)
         # Keep the input-plus-feedback sum wide until after saturation. A
         # 16-bit intermediate can wrap before a limiter has a chance to act.
@@ -666,19 +674,14 @@ class RezoCore(wiring.Component):
         main_next = Signal(mix_shape)
         filtered_next = Signal(mix_shape)
         feedback_drive = Signal(mix_shape)
-        limit_cap_safe = Signal(unsigned(16))
-        clip_drive = Signal(mix_shape)
-        clip_negative = Signal()
-        clip_negative_q = Signal()
-        clip_mag = Signal(unsigned(16))
-        clip_mag_q = Signal(unsigned(16))
-        clip_excess = Signal(unsigned(16))
-        clip_excess_q = Signal(unsigned(16))
-        clip_square = Signal(unsigned(32))
-        clip_square_q = Signal(unsigned(32))
-        clip_shaped_mag = Signal(unsigned(17))
-        clip_output_mag = Signal(unsigned(16))
-        clip_limited = Signal(ASQ)
+        m.submodules.feedback_shaper = feedback_shaper = FeedbackShaper(
+            input_width=mix_shape.width)
+        m.d.comb += [
+            feedback_shaper.drive.eq(feedback_drive),
+            feedback_shaper.knee.eq(self.limit_knee),
+            feedback_shaper.ceiling.eq(self.limit_cap),
+        ]
+        clip_limited = feedback_shaper.sample
         bank_input_soft = Signal(mix_shape)
         bank_input_limited = Signal(ASQ)
         output_limited = Signal(ASQ)
@@ -909,8 +912,6 @@ class RezoCore(wiring.Component):
                 mac_z.as_value().as_signed() >> dsp.mac.SQNative.f_bits),
             x_drive.eq(drive_term_q +
                        feedback_term_q.as_value().as_signed()),
-            limit_cap_safe.eq(Mux(self.limit_cap > 32767, 32767,
-                                  self.limit_cap)),
             enabled_term.eq(Mux(band_enable_array[band], term_q, 0)),
             main_next.eq(main_acc + enabled_term),
             filtered_next.eq(main_next - dry_sample.as_value().as_signed()),
@@ -1080,42 +1081,10 @@ class RezoCore(wiring.Component):
             m.d.comb += level_cur.eq(-16384)
         with m.Else():
             m.d.comb += level_cur.eq(level_with_cv)
-        # Smooth-knee quadratic saturation belongs in the feedback loop. The
-        # direct bank input must remain linear when feedback is zero; applying
-        # this curve there pre-distorts every wet signal while DRY stays clean.
-        # Below KNEE the feedback tap is exactly linear. Above it, subtract
-        # excess^2 / 65536; CEIL remains the final emergency rail.
-        m.d.comb += [
-            clip_drive.eq(feedback_drive),
-            clip_excess.eq(Mux(
-                clip_mag > self.limit_knee,
-                clip_mag - self.limit_knee, 0)),
-            clip_square.eq(clip_excess_q * clip_excess_q),
-            clip_shaped_mag.eq(Mux(
-                clip_mag_q > self.limit_knee,
-                clip_mag_q - (clip_square_q >> 16),
-                clip_mag_q)),
-            clip_output_mag.eq(Mux(
-                clip_shaped_mag > limit_cap_safe,
-                limit_cap_safe, clip_shaped_mag)),
-        ]
-        with m.If(clip_drive >= 32768):
-            m.d.comb += [clip_negative.eq(0), clip_mag.eq(32768)]
-        with m.Elif(clip_drive <= -32768):
-            m.d.comb += [clip_negative.eq(1), clip_mag.eq(32768)]
-        with m.Elif(clip_drive < 0):
-            m.d.comb += [clip_negative.eq(1), clip_mag.eq(-clip_drive)]
-        with m.Else():
-            m.d.comb += [clip_negative.eq(0), clip_mag.eq(clip_drive)]
-        with m.If(clip_negative_q):
-            m.d.comb += clip_limited.as_value().eq(-clip_output_mag)
-        with m.Else():
-            m.d.comb += clip_limited.as_value().eq(clip_output_mag)
-
         # The feedback saturator above shapes the delayed wet signal. This is
         # a separate, deliberately simple conditioner on the signal entering
-        # every resonator. It restores the transfer curve used by the last
-        # hardware-clean build while retaining the wider pre-limit sum.
+        # every resonator. Its 4:1 over-knee slope keeps the sum bounded while
+        # leaving useful character across the upper DRIVE range.
         with m.If(x_drive > self.INPUT_LIMIT_KNEE):
             m.d.comb += bank_input_soft.eq(
                 self.INPUT_LIMIT_KNEE +
@@ -1141,15 +1110,6 @@ class RezoCore(wiring.Component):
         # it cannot wrap before this final rail clamp.
         limit_to_asq(bank_input_soft, bank_input_limited)
 
-        # Pipeline magnitude, square, and clamp/sign across three short stages.
-        # The feedback sum is stable for many routing cycles; x gets explicit
-        # settling states below before clip_limited is captured.
-        m.d.sync += [
-            clip_negative_q.eq(clip_negative),
-            clip_mag_q.eq(clip_mag),
-            clip_excess_q.eq(clip_excess),
-            clip_square_q.eq(clip_square),
-        ]
         out_valid = Signal()
         out_ready = Signal()
         output_q = [Signal(ASQ, name=f"output_q{n}") for n in range(4)]
@@ -1886,6 +1846,10 @@ class RezoCore(wiring.Component):
             with m.Case(state_input_limit_commit):
                 m.d.sync += [
                             input_mix_sample.eq(input_mix_limited),
+                            self.input_bus_sample.eq(input_mix_limited),
+                            self.input_bus_clip.eq(
+                                (input_mix_acc > 32767) |
+                                (input_mix_acc < -32768)),
                             resonance.eq(resonance_ctl),
                             mac_a_q.as_value().eq(
                                 input_mix_limited.as_value().as_signed()),
@@ -2144,6 +2108,8 @@ class RezoTileDisplay(wiring.Component):
             "cv_targets": In(data.ArrayLayout(unsigned(4), 4)),
             "cv_depths": In(data.ArrayLayout(signed(8), 4)),
             "input_meters": In(data.ArrayLayout(signed(6), 4)),
+            "input_bus_meter": In(unsigned(6)),
+            "input_bus_clip": In(1),
             "output_meters": In(data.ArrayLayout(unsigned(6), 4)),
             "output_clips": In(data.ArrayLayout(unsigned(1), 4)),
             "output_send_write_addr": In(unsigned(5)),
@@ -2162,6 +2128,7 @@ class RezoTileDisplay(wiring.Component):
             "page": In(unsigned(3)),
             "preset": In(unsigned(3)),
             "palette": In(unsigned(3)),
+            "row_dry_include": In(1),
             "save_default_available": In(1),
             "save_default_busy": In(1),
             "save_default_status": In(unsigned(2)),
@@ -2388,6 +2355,7 @@ class RezoTileDisplay(wiring.Component):
         for text_page in range(8):
             put(text_page, "OUT", 3, 15)
             put(text_page, "OUT", 39, 15)
+            put(text_page, "IN", 21, 40)
             for label, col in zip(
                     "1234", NATIVE_OUTPUT_METER_LABEL_COLS):
                 put(text_page, label, col, 29)
@@ -2404,7 +2372,8 @@ class RezoTileDisplay(wiring.Component):
         put_native_support_page_labels(
             put,
             content_row_offsets={1: -1, 3: -1, 4: -3, 5: -1, 6: -1},
-            feedback_amount_row_offset=1)
+            feedback_amount_row_offset=1,
+            row_dry=True)
 
         # CLOCK is REZOMO-specific, but follows the same native row grid
         # as the shared pages.  Every possible control occupies one row
@@ -2456,6 +2425,7 @@ class RezoTileDisplay(wiring.Component):
         turing_target_sync = Signal()
         turing_start_sync = Signal(range(RezoCore.N_BANDS))
         palette_sync = Signal(unsigned(3))
+        row_dry_sync = Signal()
         damp_mode_sync = Signal(unsigned(3))
         save_available_sync = Signal()
         save_busy_sync = Signal()
@@ -2494,6 +2464,7 @@ class RezoTileDisplay(wiring.Component):
             FFSynchronizer(self.turing_target, turing_target_sync),
             FFSynchronizer(self.turing_start, turing_start_sync),
             FFSynchronizer(self.palette, palette_sync),
+            FFSynchronizer(self.row_dry_include, row_dry_sync),
             FFSynchronizer(self.damp_mode, damp_mode_sync),
             FFSynchronizer(self.save_default_available, save_available_sync),
             FFSynchronizer(self.save_default_busy, save_busy_sync),
@@ -2735,11 +2706,12 @@ class RezoTileDisplay(wiring.Component):
             SRC_BPM,
             SRC_CLOCK_LABEL,
             SRC_CLOCK_VALUE,
-        ) = range(21)
+            SRC_ROW_DRY,
+        ) = range(22)
 
         # [14:0] destination, [19:15] source, [23:20] argument,
         # [27:24] character position.
-        text_operation_init = [0] * 205
+        text_operation_init = [0] * 212
 
         def set_text_operation(index, address, source, *, argument=0, pos=0):
             assert 0 <= address < len(text_init)
@@ -2792,7 +2764,7 @@ class RezoTileDisplay(wiring.Component):
                 SRC_PALETTE, pos=pos)
         for pos in range(7):
             set_text_operation(
-                52 + pos, writer_cell(5, 20, 22 + pos, 19, 18 + pos),
+                52 + pos, writer_cell(5, 24, 22 + pos, 19, 18 + pos),
                 SRC_SAVE, pos=pos)
             set_text_operation(
                 59 + pos,
@@ -2850,6 +2822,10 @@ class RezoTileDisplay(wiring.Component):
                     writer_cell(2, compact_input_text_rows[n][2], 13 + pos,
                                 13 + n * 6 + 4, 8 + pos),
                     SRC_DEPTH_LABEL, argument=n, pos=pos)
+        for pos in range(7):
+            set_text_operation(
+                205 + pos, writer_cell(5, 20, 22 + pos),
+                SRC_ROW_DRY, pos=pos)
 
         m.submodules.text_operation_mem = text_operation_mem = Memory(
             shape=unsigned(28), depth=len(text_operation_init),
@@ -3005,6 +2981,11 @@ class RezoTileDisplay(wiring.Component):
                 m.d.comb += micro_writer_char.eq(Mux(
                     Array(input_modes_sync)[micro_argument],
                     dynamic_characters("DEPTH")[micro_pos], 0))
+            with m.Case(SRC_ROW_DRY):
+                m.d.comb += micro_writer_char.eq(Mux(
+                    row_dry_sync,
+                    dynamic_characters(ROW_DRY_NAMES[1])[micro_pos],
+                    dynamic_characters(ROW_DRY_NAMES[0])[micro_pos]))
             with m.Case(SRC_ALGORITHM):
                 m.d.comb += [
                     micro_clock_value_rport.addr.eq(
@@ -3213,6 +3194,11 @@ class RezoTileDisplay(wiring.Component):
         output_meter_fill_q0 = Const(0)
         output_meter_hot_q0 = Const(0)
         output_meter_clip_q0 = Const(0)
+        input_bus_meter_panel_q0 = Const(0)
+        input_bus_meter_fill_q0 = Const(0)
+        input_bus_meter_hot_q0 = Const(0)
+        input_bus_meter_clip_q0 = Const(0)
+        input_bus_meter_zero_db_q0 = Const(0)
         circle_inside, _ = native_viewport_regions(
             m, x, text_y_pre, inner_radius=250)
         native_safe_square = (
@@ -3280,9 +3266,17 @@ class RezoTileDisplay(wiring.Component):
             shape=unsigned(40), depth=len(meter_curve_init),
             init=meter_curve_init, attrs={"ram_style": "block"})
         meter_curve_rport = output_meter_curve_mem.read_port(domain="dvi")
+        bottom_curve_rport = output_meter_curve_mem.read_port(domain="dvi")
         meter_curve_data = Signal(unsigned(40))
-        m.d.comb += meter_curve_rport.addr.eq(ui_y[:10])
-        m.d.dvi += meter_curve_data.eq(meter_curve_rport.data)
+        bottom_curve_data = Signal(unsigned(40))
+        m.d.comb += [
+            meter_curve_rport.addr.eq(ui_y[:10]),
+            bottom_curve_rport.addr.eq(ui_x[:10]),
+        ]
+        m.d.dvi += [
+            meter_curve_data.eq(meter_curve_rport.data),
+            bottom_curve_data.eq(bottom_curve_rport.data),
+        ]
 
         meter_lane_valid = Signal()
         meter_curve_x = Signal(unsigned(10))
@@ -3365,6 +3359,87 @@ class RezoTileDisplay(wiring.Component):
             output_meter_hot_q0.eq(output_meter_hot),
             output_meter_clip_q0.eq(output_meter_clip),
         ]
+
+        # The otherwise-empty bottom arc shows the mono external-input bus
+        # after VALUE summing/clamping and before DRIVE or feedback. The outer
+        # output-meter annulus is transposed through circle symmetry.
+        bottom_curve_y = Signal(unsigned(10))
+        bottom_bound_lo = Signal(unsigned(10))
+        bottom_bound_hi = Signal(unsigned(10))
+        bottom_lane_valid = Signal()
+        m.d.comb += [
+            bottom_curve_y.eq(719 - y),
+            bottom_bound_lo.eq(bottom_curve_data[0:10]),
+            bottom_bound_hi.eq(bottom_curve_data[10:20]),
+            bottom_lane_valid.eq(
+                active & (y >= 614) &
+                (x >= NATIVE_INPUT_BUS_TRACK_X0) &
+                (x < NATIVE_INPUT_BUS_TRACK_X1) &
+                (bottom_curve_y >= bottom_bound_lo) &
+                (bottom_curve_y < bottom_bound_hi)),
+        ]
+        bottom_x_q = Signal.like(x)
+        bottom_curve_y_q = Signal.like(bottom_curve_y)
+        bottom_bound_lo_q = Signal.like(bottom_bound_lo)
+        bottom_bound_hi_q = Signal.like(bottom_bound_hi)
+        bottom_value_q = Signal.like(self.input_bus_meter)
+        bottom_clip_q = Signal()
+        bottom_lane_valid_q = Signal()
+        m.d.dvi += [
+            bottom_x_q.eq(x),
+            bottom_curve_y_q.eq(bottom_curve_y),
+            bottom_bound_lo_q.eq(bottom_bound_lo),
+            bottom_bound_hi_q.eq(bottom_bound_hi),
+            bottom_value_q.eq(self.input_bus_meter),
+            bottom_clip_q.eq(self.input_bus_clip),
+            bottom_lane_valid_q.eq(bottom_lane_valid),
+        ]
+        bottom_endpoint = Signal(unsigned(10))
+        m.d.comb += bottom_endpoint.eq(
+            native_input_bus_meter_endpoint(bottom_value_q))
+        input_bus_meter_shape = bottom_lane_valid_q & \
+            (bottom_x_q >= NATIVE_INPUT_BUS_TRACK_X0) & \
+            (bottom_x_q < NATIVE_INPUT_BUS_TRACK_X1) & \
+            (bottom_curve_y_q >= bottom_bound_lo_q) & \
+            (bottom_curve_y_q < bottom_bound_hi_q)
+        input_bus_meter_interior = \
+            (bottom_x_q >= NATIVE_INPUT_BUS_TRACK_X0 + 2) & \
+            (bottom_x_q < NATIVE_INPUT_BUS_TRACK_X1 - 2) & \
+            (bottom_curve_y_q >= bottom_bound_lo_q + 2) & \
+            (bottom_curve_y_q < bottom_bound_hi_q - 2)
+        input_bus_meter_panel = (
+            input_bus_meter_shape & ~input_bus_meter_interior)
+        input_bus_meter_fill = bottom_lane_valid_q & \
+            (bottom_x_q >= NATIVE_INPUT_BUS_FILL_X0) & \
+            (bottom_x_q < bottom_endpoint) & \
+            (bottom_curve_y_q >= bottom_bound_lo_q + 4) & \
+            (bottom_curve_y_q < bottom_bound_hi_q - 4)
+        nominal_input_x = native_input_bus_meter_endpoint(
+            INPUT_BUS_NOMINAL_METER_VALUE)
+        input_bus_meter_hot = input_bus_meter_fill & (
+            bottom_x_q >= nominal_input_x)
+        input_bus_meter_zero_db = bottom_lane_valid_q & \
+            (bottom_x_q >= nominal_input_x - 1) & \
+            (bottom_x_q < nominal_input_x + 2) & \
+            (bottom_curve_y_q >= bottom_bound_lo_q + 2) & \
+            (bottom_curve_y_q < bottom_bound_hi_q - 2)
+        input_bus_meter_clip = bottom_lane_valid_q & bottom_clip_q & \
+            (bottom_x_q >= NATIVE_INPUT_BUS_FILL_X1 - 4) & \
+            (bottom_x_q < NATIVE_INPUT_BUS_FILL_X1) & \
+            (bottom_curve_y_q >= bottom_bound_lo_q + 4) & \
+            (bottom_curve_y_q < bottom_bound_hi_q - 4)
+        input_bus_meter_panel_q0 = Signal()
+        input_bus_meter_fill_q0 = Signal()
+        input_bus_meter_hot_q0 = Signal()
+        input_bus_meter_clip_q0 = Signal()
+        input_bus_meter_zero_db_q0 = Signal()
+        m.d.dvi += [
+            input_bus_meter_panel_q0.eq(input_bus_meter_panel),
+            input_bus_meter_fill_q0.eq(input_bus_meter_fill),
+            input_bus_meter_hot_q0.eq(input_bus_meter_hot),
+            input_bus_meter_clip_q0.eq(input_bus_meter_clip),
+            input_bus_meter_zero_db_q0.eq(input_bus_meter_zero_db),
+        ]
         title_panel = active & self.rect(
             x, y,
             (112),
@@ -3396,7 +3471,7 @@ class RezoTileDisplay(wiring.Component):
         surface_row_y0s = Array(Const(row, 6) for row in (
             14, 14, 13, 14, 14, 14, 14, 14))
         surface_row_y1s = Array(Const(row, 6) for row in (
-            35, 31, 38, 30, 32, 23, 26, 34))
+            35, 31, 38, 30, 32, 27, 26, 34))
         m.d.comb += [
             surface_row_y0.eq(surface_row_y0s[text_page_q]),
             surface_row_y1.eq(surface_row_y1s[text_page_q]),
@@ -3435,15 +3510,21 @@ class RezoTileDisplay(wiring.Component):
                 (288), t=3)
         save_default_chip = advanced_page & self.rect(
             x, y, (native_value_chip_x0(22)),
-            (308),
+            (372),
             (472),
-            (348))
+            (412))
         save_default_select = advanced_page & (
             selected_dvi_q == RezomoUISpec.TARGET_SAVE_DEFAULT) & self.outline(
                 x, y, ((native_value_chip_x0(22) - 4)),
-                (304),
+                (368),
                 (476),
-                (352), t=3)
+                (416), t=3)
+        row_dry_chip = advanced_page & self.rect(
+            x, y, native_value_chip_x0(22), 308, 472, 348)
+        row_dry_select = advanced_page & (
+            selected_dvi_q == RezomoUISpec.TARGET_ROW_DRY) & self.outline(
+                x, y, native_value_chip_x0(22) - 4,
+                304, 476, 352, t=3)
         damp_chip = tune_page & self.rect(
             x, y, ((NATIVE_FEEDBACK_DAMPING_CHIP_X0)),
             ((NATIVE_FEEDBACK_DAMPING_CHIP_Y0 + tune_y_shift)),
@@ -4445,6 +4526,12 @@ class RezoTileDisplay(wiring.Component):
             (compact_fader_threshold <= self.limit_cap) &
             (y >= NATIVE_FEEDBACK_CEILING_Y0 + tune_y_shift) &
             (y < NATIVE_FEEDBACK_CEILING_Y0 + 16 + tune_y_shift))
+        limit_soft_region = (
+            tune_page & compact_fader_x_valid &
+            (compact_fader_threshold >= self.limit_knee) &
+            (compact_fader_threshold <= self.limit_cap) &
+            (y >= NATIVE_FEEDBACK_CEILING_Y0 + tune_y_shift) &
+            (y < NATIVE_FEEDBACK_CEILING_Y0 + 16 + tune_y_shift))
         res_select = ((bank_page & (selected_dvi_q == RezomoUISpec.TARGET_RESONANCE)) |
                       (tune_page & (selected_dvi_q == RezomoUISpec.TARGET_LIMIT_CAP))) & (
             (bank_page & self.outline(
@@ -4485,7 +4572,8 @@ class RezoTileDisplay(wiring.Component):
             clock_selected_q.eq(clock_select | mode_select),
             input_selected_q.eq(input_select_q0),
             routing_selected_q.eq(group_select_q0 | output_select_q0),
-            advanced_selected_q.eq(palette_select | save_default_select),
+            advanced_selected_q.eq(
+                palette_select | save_default_select | row_dry_select),
             bands_selected_q.eq(layout_select | band_select_q0),
             page_selected_q.eq(page_select),
         ]
@@ -4515,26 +4603,35 @@ class RezoTileDisplay(wiring.Component):
                 band_zero_q0 | bank_control_mod_marker | border |
                 cursor_chip),
             geometry_mod_q0.eq(band_mod_fill | bank_control_mod_fill |
-                               input_meter_q0),
+                               input_meter_q0 | limit_soft_region),
             geometry_panel_q0.eq(preset_chip | mode_chip | clock_chip |
                                  palette_chip |
-                                 save_default_chip | damp_chip | layout_chip |
+                                 save_default_chip | row_dry_chip |
+                                 damp_chip | layout_chip |
                                  side_page_chip |
                                  band_slot_q0 |
                                  meter_panel | output_meter_panel_q0),
         ]
         m.d.dvi += [
-            selected_q.eq(selected | pager_current |
-                          output_meter_hot_q0 | output_meter_clip_q0),
+            selected_q.eq(
+                selected | pager_current |
+                (output_meter_hot_q0 & ~output_meter_clip_q0) |
+                (input_bus_meter_hot_q0 &
+                 ~input_bus_meter_zero_db_q0 &
+                 ~input_bus_meter_clip_q0)),
             text_q.eq(text),
             fill_q.eq(geometry_fill_q0 |
                       input_fill_q0 | group_fill_q0 | output_fill_q0 |
-                      output_meter_fill_q0),
+                      output_meter_fill_q0 |
+                      (input_bus_meter_fill_q0 &
+                       ~input_bus_meter_zero_db_q0)),
             line_q.eq(geometry_line_q0 | input_line_q0 |
-                      group_ghost | pager_line),
-            mod_q.eq(geometry_mod_q0),
+                      group_ghost | pager_line |
+                      input_bus_meter_zero_db_q0),
+            mod_q.eq(geometry_mod_q0 | output_meter_clip_q0 |
+                     input_bus_meter_clip_q0),
             panel_q.eq(geometry_panel_q0 | input_panel_q0 | group_cell_q0 |
-                       output_cell_q0),
+                       output_cell_q0 | input_bus_meter_panel_q0),
             background_q.eq((arc_background)),
             active_q.eq(active),
             surface_q.eq(content_surface),
@@ -4755,6 +4852,10 @@ class RezoBeamTop(Elaboratable):
         output_clip_holds = [
             Signal(unsigned(6), name=f"output_clip_hold{n}")
             for n in range(4)]
+        input_bus_meter_value = Signal(unsigned(6),
+                                       name="input_bus_meter_value")
+        input_bus_clip_hold = Signal(unsigned(6),
+                                     name="input_bus_clip_hold")
         output_meter_decay = Signal(unsigned(11))
         output_frame_accepted = rezo.o.valid & rezo.o.ready
         output_db_init = [
@@ -4763,19 +4864,48 @@ class RezoBeamTop(Elaboratable):
             shape=unsigned(6), depth=len(output_db_init),
             init=output_db_init, attrs={"ram_style": "block"})
         output_db_rport = output_db_mem.read_port()
+        input_bus_db_init = [
+            input_bus_meter_db_value(magnitude) for magnitude in range(1024)]
+        m.submodules.input_bus_db_mem = input_bus_db_mem = Memory(
+            shape=unsigned(6), depth=len(input_bus_db_init),
+            init=input_bus_db_init, attrs={"ram_style": "block"})
+        input_bus_db_rport = input_bus_db_mem.read_port()
         output_magnitudes = [
             Signal(unsigned(10), name=f"output_magnitude{n}")
             for n in range(4)]
         output_meter_scan = Signal(unsigned(2))
         output_meter_scan_q = Signal(unsigned(2))
+        input_bus_magnitude_full = Signal(unsigned(16))
+        input_bus_magnitude = Signal(unsigned(10))
         m.d.comb += output_db_rport.addr.eq(
             Array(output_magnitudes)[output_meter_scan])
+        m.d.comb += [
+            input_bus_magnitude_full.eq(Mux(
+                rezo.input_bus_sample.as_value()[-1],
+                (~rezo.input_bus_sample.as_value().as_unsigned()) + 1,
+                rezo.input_bus_sample.as_value().as_unsigned())),
+            input_bus_db_rport.addr.eq(input_bus_magnitude),
+        ]
         m.d.sync += [
             output_meter_scan.eq(output_meter_scan + 1),
             output_meter_scan_q.eq(output_meter_scan),
         ]
         with m.If(output_frame_accepted):
-            m.d.sync += output_meter_decay.eq(output_meter_decay + 1)
+            m.d.sync += [
+                output_meter_decay.eq(output_meter_decay + 1),
+                input_bus_magnitude.eq(Mux(
+                    input_bus_magnitude_full[15], 1023,
+                    input_bus_magnitude_full[5:15])),
+            ]
+            with m.If((output_meter_decay == 0x7ff) &
+                      (input_bus_meter_value != 0)):
+                m.d.sync += input_bus_meter_value.eq(
+                    input_bus_meter_value - 1)
+            with m.If(rezo.input_bus_clip):
+                m.d.sync += input_bus_clip_hold.eq(45)
+            with m.Elif((output_meter_decay == 0x7ff) &
+                        (input_bus_clip_hold != 0)):
+                m.d.sync += input_bus_clip_hold.eq(input_bus_clip_hold - 1)
             for n in range(4):
                 output_magnitude_full = Signal(
                     unsigned(16), name=f"output_magnitude_full{n}")
@@ -4808,6 +4938,8 @@ class RezoBeamTop(Elaboratable):
                     with m.If(output_db_rport.data > output_meter_values[n]):
                         m.d.sync += output_meter_values[n].eq(
                             output_db_rport.data)
+        with m.If(input_bus_db_rport.data > input_bus_meter_value):
+            m.d.sync += input_bus_meter_value.eq(input_bus_db_rport.data)
 
         m.submodules.dvi_tgen = dvi_tgen = dvi.DVITimingGen()
         for member in dvi_tgen.timings.signature.members:
@@ -4928,6 +5060,8 @@ class RezoBeamTop(Elaboratable):
             FFSynchronizer(i=ui.turing_start,
                            o=display.turing_start, o_domain="dvi"),
             FFSynchronizer(i=ui.palette, o=display.palette, o_domain="dvi"),
+            FFSynchronizer(i=ui.row_dry_include,
+                           o=display.row_dry_include, o_domain="dvi"),
             FFSynchronizer(i=ui.save_default_available,
                            o=display.save_default_available, o_domain="dvi"),
             FFSynchronizer(i=ui.save_default_busy,
@@ -4935,6 +5069,10 @@ class RezoBeamTop(Elaboratable):
             FFSynchronizer(i=ui.save_default_status,
                            o=display.save_default_status, o_domain="dvi"),
             FFSynchronizer(i=ui.editing, o=display.editing, o_domain="dvi"),
+            FFSynchronizer(i=input_bus_meter_value,
+                           o=display.input_bus_meter, o_domain="dvi"),
+            FFSynchronizer(i=input_bus_clip_hold != 0,
+                           o=display.input_bus_clip, o_domain="dvi"),
         ]
         m.d.comb += [
             display.frequency_layout.eq(ui.frequency_layout),

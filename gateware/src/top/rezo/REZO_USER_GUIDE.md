@@ -193,6 +193,11 @@ For a CV input:
 
 Group CV changes the effective levels of every band assigned to that group.
 
+The bottom-arc **IN** meter shows the combined mono AUDIO mix after all VALUE
+gains and immediately before DRIVE and feedback are added. Its 0 dB marker is
+the nominal ±5 V modular level; the remaining arc is headroom to the ADC's
+±8.192 V full scale. The cyan end cap is held briefly when the input sum clips.
+
 ### GROUPS page
 
 The GROUPS page assigns each band to G1, G2, G3, G4, or combinations of those
@@ -216,6 +221,8 @@ Each output has independent, unipolar send levels from **GRP1**, **GRP2**,
 - Use different combinations to create four related filterbank outputs.
 - DRY adds the unfiltered mono AUDIO-input mix.
 - A send at zero contributes nothing; its maximum setting is unity gain.
+- Selecting an OUT row header adjusts all four wet group sends together.
+  **OPTIONS > ROW DRY** chooses whether that row gesture also adjusts DRY.
 
 The BANK and FILTER output-send settings are stored separately.
 
@@ -229,10 +236,18 @@ is already raised.
 
 The three safety controls shape and constrain the returning signal:
 
-- **KNEE** sets the level where soft limiting begins.
-- **CEIL** sets the maximum allowed feedback-loop level.
+- **KNEE** sets the level where soft limiting begins. Below it, the return is
+  unchanged; above it, progressively stronger compression bends the signal
+  toward CEIL.
+- **CEIL** sets the hard maximum allowed feedback-loop level. Its fader colors
+  the span from KNEE to CEIL to show the active soft-limiting region.
 - **DAMP** controls how strongly increasing feedback restrains resonance.
   Higher settings are more conservative.
+
+KNEE and CEIL may meet, which removes the colored soft region and behaves as a
+hard limit. Raising KNEE past CEIL raises CEIL with it; lowering CEIL past KNEE
+lowers KNEE. This keeps the controls valid without creating a blocked encoder
+range.
 
 Start with modest FB and RES settings, especially when several bands feed the
 loop. KNEE and CEIL reduce runaway behavior, but they do not make every extreme
@@ -247,6 +262,12 @@ sound-safety range. Reduce DRIVE, RES, or FB to return to normal operation.
 
 Choose among LCD, AMBER, CYAN, GREEN, and VIOLET display palettes.
 
+#### ROW DRY
+
+Choose **INCLUDE** to adjust DRY with an OUT row header, or **EXCLUDE** to
+leave DRY unchanged while the four wet group sends move together. Individual
+DRY cells remain editable in either setting.
+
 #### SAVE DEFAULT
 
 Click **SAVE DEFAULT** once to store the complete REZO state for the current
@@ -254,7 +275,8 @@ bitstream slot. The button reports SAVING, SAVED, ERROR, or NO SLOT.
 
 Saving includes both modes, band frequencies and enables, input assignments,
 group membership, feedback settings, output sends, filter modulation, and the
-palette. Changes are not saved automatically.
+palette. The ROW DRY preference is also retained. Changes are not saved
+automatically.
 
 ## FILTER mode
 

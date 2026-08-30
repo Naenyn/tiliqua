@@ -2,7 +2,74 @@ import math
 
 from amaranth.sim import Simulator
 
-from top.rezo.strezo_variant import RezoCore
+from top.rezo.strezo_variant import RezoCore, mid_side_reference
+
+
+def test_stereo_input_bus_telemetry_is_pre_drive_and_clips_per_side():
+    dut = RezoCore(fs=192_000)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+    captured = {}
+
+    async def send(ctx, samples):
+        for channel, sample in enumerate(samples):
+            ctx.set(dut.i.payload[channel].as_value(), sample)
+        ctx.set(dut.i.valid, 1)
+        await ctx.tick().until(dut.i.ready == 1)
+        ctx.set(dut.i.valid, 0)
+        ctx.set(dut.o.ready, 1)
+        await ctx.tick().until(dut.o.valid == 1)
+        ctx.set(dut.o.ready, 0)
+
+    async def bench(ctx):
+        ctx.set(dut.drive, 0)
+        await send(ctx, (12_000, -9_000, 0, 0))
+        captured["clean_left"] = ctx.get(
+            dut.input_bus_samples[0].as_value())
+        captured["clean_right"] = ctx.get(
+            dut.input_bus_samples[1].as_value())
+        captured["clean_clips"] = tuple(
+            ctx.get(clip) for clip in dut.input_bus_clips)
+
+        # Raise the existing independent LEFT/RIGHT inputs above unity. This
+        # overloads both buses without relying on another input's gain slew.
+        ctx.set(dut.input_gains[0], 65_535)
+        ctx.set(dut.input_gains[1], 65_535)
+        for _ in range(256):
+            await send(ctx, (24_000, -24_000, 0, 0))
+        captured["hot_left"] = ctx.get(
+            dut.input_bus_samples[0].as_value())
+        captured["hot_right"] = ctx.get(
+            dut.input_bus_samples[1].as_value())
+        captured["hot_clips"] = tuple(
+            ctx.get(clip) for clip in dut.input_bus_clips)
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    assert 11_990 <= captured["clean_left"] <= 12_000
+    assert -9_000 <= captured["clean_right"] <= -8_990
+    assert captured["clean_clips"] == (0, 0)
+    assert captured["hot_left"] == 32_767
+    assert captured["hot_right"] == -32_768
+    assert captured["hot_clips"] == (1, 1)
+
+
+def test_mid_side_transform_has_exact_unity_and_component_semantics():
+    width = 20
+    vectors = (
+        (12_000, 4_000, 64, 64),
+        (12_000, 4_000, 64, 0),
+        (12_000, 4_000, 0, 64),
+        (12_000, 4_000, 128, 64),
+        (12_000, 4_000, 64, 128),
+        (500_000, 500_000, 128, 128),
+        (-500_000, -500_000, 128, 128),
+    )
+
+    assert [mid_side_reference(*vector, width) for vector in vectors] == [
+        12_000, 8_000, 4_000, 20_000, 16_000, 262_142, -262_144,
+    ]
 
 
 def test_core_meets_192khz_sample_cycle_budget():
@@ -13,6 +80,9 @@ def test_core_meets_192khz_sample_cycle_budget():
 
     async def bench(ctx):
         ctx.set(dut.o.ready, 1)
+        # Exercise the longer non-unity path; unity deliberately bypasses the
+        # eight-clock shared group transform.
+        ctx.set(dut.mid_gain, 128)
         ctx.set(dut.i.payload[0].as_value(), 1000)
         ctx.set(dut.i.valid, 1)
         await ctx.tick().until(dut.i.ready == 1)
@@ -244,28 +314,80 @@ def test_cross_feedback_moves_only_the_feedback_path_between_channels():
         (left_outputs[-16:], feedback_probes[-16:])
 
 
+def _render_mid_side_pair(mid_gain, side_gain, right_polarity):
+    dut = RezoCore(fs=192_000)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+    outputs = []
+
+    async def send(ctx, left, right):
+        ctx.set(dut.i.payload[0].as_value(), left)
+        ctx.set(dut.i.payload[1].as_value(), right)
+        ctx.set(dut.i.payload[2].as_value(), 0)
+        ctx.set(dut.i.payload[3].as_value(), 0)
+        ctx.set(dut.i.valid, 1)
+        await ctx.tick().until(dut.i.ready == 1)
+        ctx.set(dut.i.valid, 0)
+        ctx.set(dut.o.ready, 1)
+        return await ctx.tick().sample(
+            dut.o.payload[0].as_value(), dut.o.payload[1].as_value()
+        ).until(dut.o.valid == 1)
+
+    async def bench(ctx):
+        for level in dut.levels:
+            ctx.set(level, 8_192)
+        ctx.set(dut.mid_gain, mid_gain)
+        ctx.set(dut.side_gain, side_gain)
+        for n in range(48):
+            value = int(10_000 * math.sin(n * 0.21))
+            pair = await send(ctx, value, right_polarity * value)
+            if n >= 16:
+                outputs.append(pair)
+
+    sim.add_testbench(bench)
+    sim.run()
+    return outputs
+
+
+def test_mid_side_controls_remove_center_or_difference_from_wet_outputs():
+    centered = _render_mid_side_pair(64, 64, 1)
+    center_removed = _render_mid_side_pair(0, 64, 1)
+    sided = _render_mid_side_pair(64, 64, -1)
+    side_removed = _render_mid_side_pair(64, 0, -1)
+
+    energy = lambda samples: sum(abs(left) + abs(right)
+                                 for left, right in samples)
+    assert energy(centered) > 10_000
+    assert energy(sided) > 10_000
+    assert energy(center_removed) < energy(centered) // 100
+    # Independent fixed-point L/R rounding leaves a very small common-mode
+    # residue when cancelling an anti-phase signal; require at least 98% removal.
+    assert energy(side_removed) < energy(sided) // 50
+
+
 def test_cross_curve_lookup_preserves_endpoints_and_shapes_midrange():
     """All curves retain instability at full scale but redistribute travel."""
     curves = (
         RezoCore.CROSS_CURVE_LINEAR,
-        RezoCore.CROSS_CURVE_LOG,
+        RezoCore.CROSS_CURVE_FINE,
     )
     for curve in curves:
         values = [RezoCore.cross_curve_coefficient(curve, raw)
                   for raw in range(RezoCore.CROSS_DEPTH_MAX + 1)]
         assert values[0] == 0
-        assert values[-1] == RezoCore.CROSS_DEPTH_MAX
+        assert values[-1] == RezoCore.CROSS_COEFFICIENT_MAX
         assert values == sorted(values)
+        assert len(set(values)) == RezoCore.CROSS_DEPTH_MAX + 1
 
     midpoint = RezoCore.CROSS_DEPTH_MAX // 2
-    linear, log = (
+    linear, fine = (
         RezoCore.cross_curve_coefficient(curve, midpoint)
         for curve in (RezoCore.CROSS_CURVE_LINEAR,
-                      RezoCore.CROSS_CURVE_LOG)
+                      RezoCore.CROSS_CURVE_FINE)
     )
-    assert log > linear
-    assert RezoCore.cross_curve_coefficient(RezoCore.CROSS_CURVE_LOG, 32) == 62
-    assert RezoCore.cross_curve_coefficient(RezoCore.CROSS_CURVE_LOG, 64) == 93
+    assert fine < linear
+    assert RezoCore.cross_curve_coefficient(RezoCore.CROSS_CURVE_FINE, 32) == 2048
+    assert RezoCore.cross_curve_coefficient(RezoCore.CROSS_CURVE_FINE, 64) == 8192
 
     dut = RezoCore(fs=192_000)
     sim = Simulator(dut)
@@ -324,6 +446,52 @@ def test_group_cross_matrix_routes_source_group_to_selected_destination():
     assert any(values[1] != 0 for values in routed_terms[4:])
     assert all(values[0] == values[2] == values[3] == 0
                for values in routed_terms)
+
+
+def _matrix_feedback_peak(knee, ceiling):
+    """Measure routed feedback after the destination shaper and final gain."""
+    dut = RezoCore(fs=192_000)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+    routed = []
+
+    async def send(ctx, sample):
+        ctx.set(dut.i.payload[0].as_value(), sample)
+        for channel in range(1, 4):
+            ctx.set(dut.i.payload[channel].as_value(), 0)
+        ctx.set(dut.i.valid, 1)
+        await ctx.tick().until(dut.i.ready == 1)
+        ctx.set(dut.i.valid, 0)
+        ctx.set(dut.o.ready, 1)
+        await ctx.tick().until(dut.o.valid == 1)
+        routed.extend(abs(ctx.get(term.as_value()))
+                      for term in dut._matrix_feedback_term_r)
+
+    async def bench(ctx):
+        for level in dut.levels:
+            ctx.set(level, 16_383)
+        ctx.set(dut.feedback, 32_768)
+        ctx.set(dut.same_feedback, 0)
+        ctx.set(dut.cross_feedback, dut.CROSS_DEPTH_MAX)
+        ctx.set(dut.cross_layout, RezoCore.CROSS_LAYOUT_USER)
+        for coefficient in dut.cross_matrix:
+            ctx.set(coefficient, 16)
+        ctx.set(dut.limit_knee, knee)
+        ctx.set(dut.limit_cap, ceiling)
+        for n in range(192):
+            sample = ((n * 7919) & 0xffff) - 32768
+            await send(ctx, sample)
+
+    sim.add_testbench(bench)
+    sim.run()
+    return max(routed[96 * dut.N_GROUPS:])
+
+
+def test_knee_and_ceiling_shape_non_global_matrix_feedback():
+    """Matrix CROSS must obey the same safety controls as GLOBAL CROSS."""
+    constrained = _matrix_feedback_peak(knee=4096, ceiling=8192)
+    open_range = _matrix_feedback_peak(knee=24576, ceiling=32767)
+    assert constrained < open_range, (constrained, open_range)
 
 
 def _render_cross_feedback(layout, depth):
@@ -457,11 +625,11 @@ def test_damp_modes_have_distinct_feedback_dependent_decay_coefficients():
     sim.run()
 
     assert observed == [
-        (0, 4096),
-        (2048, 6144),
-        (4096, 8192),
-        (8192, 12288),
-        (12288, 16384),
+        (0, 0),
+        (2048, 1024),
+        (4096, 2048),
+        (8192, 4096),
+        (12288, 6144),
     ]
 
 

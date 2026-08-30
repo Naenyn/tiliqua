@@ -157,6 +157,7 @@ class RezoFirmwareUIState:
         self.page = Signal(3)
         self.preset = Signal(3)
         self.palette = Signal(3)
+        self.row_dry_include = Signal(init=1)
         self.editing = Signal()
 
         self.save_default_available = Signal()
@@ -294,12 +295,14 @@ class RezoUIControlPeripheral(Component):
                 with m.If((index < 10) & command.element.w_stb):
                     m.d.sync += Array(self.ui.levels)[index].eq(value)
             with m.Case(30):
-                with m.If(command.element.w_stb):
+                with m.If(command.element.w_stb & (index == 0)):
                     m.d.sync += [
                         self.ui.save_default_available.eq(value[0]),
                         self.ui.save_default_busy.eq(value[1]),
                         self.ui.save_default_status.eq(value[2:4]),
                     ]
+                with m.Elif(command.element.w_stb & (index == 1)):
+                    m.d.sync += self.ui.row_dry_include.eq(value[0])
             with m.Case(31):
                 with m.If(command.element.w_stb):
                     m.d.sync += self.ui.startup_done.eq(value[0])
@@ -371,6 +374,7 @@ class RezomoFirmwareUIState:
         self.page = Signal(3)
         self.preset = Signal(3)
         self.palette = Signal(3)
+        self.row_dry_include = Signal(init=1)
         self.editing = Signal()
         self.save_default_available = Signal()
         self.save_default_busy = Signal()
@@ -469,12 +473,14 @@ class RezomoUIControlPeripheral(Component):
                         )[value[:3]]),
                     ]
             with m.Case(30):
-                with m.If(strobe):
+                with m.If(strobe & (index == 0)):
                     m.d.sync += [
                         self.ui.save_default_available.eq(value[0]),
                         self.ui.save_default_busy.eq(value[1]),
                         self.ui.save_default_status.eq(value[2:4]),
                     ]
+                with m.Elif(strobe & (index == 1)):
+                    m.d.sync += self.ui.row_dry_include.eq(value[0])
 
         for output in range(4):
             base = output * 5
@@ -548,6 +554,8 @@ class StrezoFirmwareUIState:
             for n in range(20)]
         self.output_sides = [Signal(init=n & 1, name=f"fw_output_side{n}")
                              for n in range(4)]
+        self.mid_gain = Signal(8, init=64)
+        self.side_gain = Signal(8, init=64)
         self.output_routes = [Signal(5, name=f"fw_output_route{n}")
                               for n in range(4)]
 
@@ -555,6 +563,7 @@ class StrezoFirmwareUIState:
         self.page = Signal(3)
         self.preset = Signal(3)
         self.palette = Signal(3)
+        self.row_dry_include = Signal(init=1)
         self.editing = Signal()
         self.save_default_available = Signal()
         self.save_default_busy = Signal()
@@ -636,18 +645,22 @@ class StrezoUIControlPeripheral(Component):
                 33: (self.ui.motion_rate, 8),
                 34: (self.ui.motion_phase, 8),
                 35: (self.ui.motion_depth, 8),
+                38: (self.ui.mid_gain, 8),
+                39: (self.ui.side_gain, 8),
             }
             for command_kind, (signal, width) in scalar.items():
                 with m.Case(command_kind):
                     with m.If(strobe):
                         m.d.sync += signal.eq(value[:width])
             with m.Case(30):
-                with m.If(strobe):
+                with m.If(strobe & (index == 0)):
                     m.d.sync += [
                         self.ui.save_default_available.eq(value[0]),
                         self.ui.save_default_busy.eq(value[1]),
                         self.ui.save_default_status.eq(value[2:4]),
                     ]
+                with m.Elif(strobe & (index == 1)):
+                    m.d.sync += self.ui.row_dry_include.eq(value[0])
 
         for output in range(4):
             base = output * 5

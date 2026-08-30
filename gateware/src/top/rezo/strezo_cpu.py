@@ -16,7 +16,7 @@ class StrezoCpuTop(RezoBeamTop):
     nextpnr_opts = (
         "--timing-allow-fail "
         "--placer-heap-timingweight 20 "
-        f"--seed {family_seed('TILIQUA_STREZO_CPU_SEED', '7')}")
+        f"--seed {family_seed('TILIQUA_STREZO_CPU_SEED', '8')}")
     minimum_timing_headroom_percent = 3.0
 
 

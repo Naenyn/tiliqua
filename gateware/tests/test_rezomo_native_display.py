@@ -21,7 +21,9 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
                     turing_start=0,
                     band_enables=(), feedback_sends=(), input_gains=(),
                     input_modes=(), cv_targets=(), selected=0,
-                    output_meters=(), output_clips=()):
+                    output_meters=(), output_clips=(),
+                    input_bus_meter=0, input_bus_clip=0,
+                    row_dry_include=1):
     """Render settled pixels from the native REZOMO coordinate space."""
     dut = RezoTileDisplay(
         h_active=h_active,
@@ -51,6 +53,9 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
         ctx.set(dut.turing_target, turing_target)
         ctx.set(dut.turing_start, turing_start)
         ctx.set(dut.selected, selected)
+        ctx.set(dut.input_bus_meter, input_bus_meter)
+        ctx.set(dut.input_bus_clip, input_bus_clip)
+        ctx.set(dut.row_dry_include, row_dry_include)
         for index, value in enumerate(band_enables):
             ctx.set(dut.band_enables[index], value)
         for index, value in enumerate(feedback_sends):
@@ -67,8 +72,8 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
             ctx.set(dut.output_clips[index], value)
         ctx.set(dut.de, 1)
         # Dynamic labels refresh through the sync-domain tile writer. Let one
-        # complete 185-entry pass settle before inspecting their glyph pixels.
-        for _ in range(600):
+        # complete dynamic-label pass settle before inspecting glyph pixels.
+        for _ in range(900):
             await ctx.tick("dvi")
         samples.extend(await sample_native_rgb(
             ctx, dut, points, rotate_left=rotate_left))
@@ -286,10 +291,37 @@ def test_page_selection_outline_fits_the_page_chip():
 
 
 def test_clipping_lamp_sits_on_meter_top_edge_below_out_label():
-    selected = RezoTileDisplay.PALETTE["selected"]
+    modulation = RezoTileDisplay.PALETTE["modulation"]
     assert _render_samples(
         output_meters=(63, 0, 0, 0), output_clips=(1, 0, 0, 0),
         points=((60, 261),),
+    ) == [(modulation, modulation, modulation)]
+
+
+def test_bottom_arc_input_bus_meter_marks_nominal_and_clipping():
+    palette = RezoTileDisplay.PALETTE
+    pixels = _render_samples(
+        points=((360, 671), (500, 650), (510, 645), (530, 632)),
+        input_bus_meter=63,
+        input_bus_clip=1,
+    )
+    assert pixels == [
+        (palette["panel"],) * 3,
+        (palette["line"],) * 3,
+        (palette["selected"],) * 3,
+        (palette["modulation"],) * 3,
+    ]
+
+
+def test_row_dry_option_value_and_selection_use_third_options_row():
+    bounds, = _render_text_bounds(
+        (336, 308, 472, 348), page=5, row_dry_include=0)
+    assert 352 <= bounds[0] <= 354
+    selected = RezoTileDisplay.PALETTE["selected"]
+    assert _render_samples(
+        page=5,
+        selected=RezomoUISpec.TARGET_ROW_DRY,
+        points=((332, 304),),
     ) == [(selected, selected, selected)]
 
 

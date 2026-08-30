@@ -3,8 +3,9 @@
 
 use panic_halt as _;
 use rezo_cpu_fw::{
-    add, adds, clamp_control, flash_erase, flash_program, flash_read, gray_encode, pack_bits,
-    progressive_edit_level, read8, read32, read_u16, read_u32, record_crc, step_coarse_byte,
+    add, adds, clamp_control, edit_feedback_ceiling, edit_feedback_knee, flash_erase,
+    flash_program, flash_read, gray_encode, normalize_feedback_limits, pack_bits,
+    progressive_edit_level, read32, read8, read_u16, read_u32, record_crc, step_coarse_byte,
     step_group_index, step_target, unpack_bits, write_u16, write_u32, write_ui_command,
     ENCODER_BUTTON, ENCODER_STEP, FLASH_SLOT, GROUP_INDEX_DEFAULTS,
 };
@@ -47,14 +48,18 @@ const MOTION_PHASE_STATE: u32 = 34;
 const MOTION_DEPTH_STATE: u32 = 35;
 const OUTPUT_SIDE: u32 = 36;
 const CROSS_MATRIX: u32 = 37;
+const MID_GAIN_STATE: u32 = 38;
+const SIDE_GAIN_STATE: u32 = 39;
 
 const BOOT_SLOT_TIMEOUT_POLLS: u32 = 1_000_000;
-const STATE_WORDS: usize = 38;
+const STATE_WORDS: usize = 40;
+const V6_STATE_WORDS: usize = 39;
+const V5_STATE_WORDS: usize = 38;
 const LEGACY_STATE_WORDS: usize = 36;
 const HEADER_BYTES: usize = 16;
 const RECORD_BYTES: usize = HEADER_BYTES + STATE_WORDS * 2;
 const MAGIC: u32 = 0x5a525453;
-const VERSION: u16 = 5;
+const VERSION: u16 = 7;
 
 const PAGE: u8 = 0;
 const PRESET: u8 = 1;
@@ -86,15 +91,18 @@ const CROSS_ROW: u8 = 118;
 const CROSS_COL: u8 = 122;
 const OUTPUT_DRY_COL: u8 = CROSS_LAYOUT;
 const SAME_FEEDBACK: u8 = 126;
+const ROW_DRY: u8 = 126;
 const CROSS_CURVE: u8 = MOTION_DEPTH;
+const MID_GAIN: u8 = SAME_FEEDBACK;
+const SIDE_GAIN: u8 = CROSS_FEEDBACK;
 
 const MAIN_PAGE: &[u8] = &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
 const FEEDBACK_PAGE: &[u8] = &[0, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 14, 15, 16, 17];
 const GROUP_PAGE: &[u8] = &[0, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39];
-const OPTIONS_PAGE: &[u8] = &[0, 90, 91, 1];
+const OPTIONS_PAGE: &[u8] = &[0, 90, 126, 91, 1];
 const OUTPUT_PAGE: &[u8] = &[
     0, 122, 123, 124, 125, 60, 118, 114, 40, 41, 42, 43, 44, 119, 115, 45, 46, 47, 48, 49, 120,
-    116, 50, 51, 52, 53, 54, 121, 117, 55, 56, 57, 58, 59,
+    116, 50, 51, 52, 53, 54, 121, 117, 55, 56, 57, 58, 59, MID_GAIN, SIDE_GAIN,
 ];
 const BANDS_TRIANGLE: &[u8] = &[
     0, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111,
@@ -135,6 +143,7 @@ struct State {
     selected: u8,
     preset: u8,
     palette: u8,
+    row_dry_include: bool,
     editing: bool,
     drive: u32,
     resonance: u32,
@@ -165,6 +174,8 @@ struct State {
     feedback_sends: [u32; 10],
     output_sends: [u32; 20],
     output_sides: [u32; 4],
+    mid_gain: u32,
+    side_gain: u32,
     cross_matrix: [u32; 16],
 }
 
@@ -175,6 +186,7 @@ impl State {
             selected: 0,
             preset: 0,
             palette: 0,
+            row_dry_include: true,
             editing: false,
             drive: 0x2000,
             resonance: 0x2000,
@@ -205,6 +217,8 @@ impl State {
             feedback_sends: [1; 10],
             output_sends: OUTPUT_DEFAULTS,
             output_sides: [0, 1, 0, 1],
+            mid_gain: 64,
+            side_gain: 64,
             cross_matrix: [16, 0, 0, 0, 0, 16, 0, 0, 0, 0, 16, 0, 0, 0, 0, 16],
         }
     }
@@ -352,7 +366,7 @@ impl State {
     }
 
     fn edit_output_row(&mut self, row: usize, d: i32) {
-        for col in 0..5 {
+        for col in 0..4 + self.row_dry_include as usize {
             let n = row * 5 + col;
             self.output_sends[n] = add(self.output_sends[n], d, 0, 16);
         }
@@ -382,15 +396,24 @@ impl State {
             PAGE => self.change_page(direction),
             PRESET if self.page == 0 => self.preset = (self.preset as i32 + d).rem_euclid(7) as u8,
             CROSS_CURVE if self.page == 5 => self.cross_curve ^= 1,
+            ROW_DRY if self.page == 5 => self.row_dry_include = !self.row_dry_include,
             MOTION_DEPTH if self.page == 6 => self.motion_depth = add(self.motion_depth, d, 0, 128),
             DRIVE => self.drive = clamp_control(self.drive, d, 0, 0x5fff),
             RESONANCE => self.resonance = clamp_control(self.resonance, d, 0, 0x8000),
             FEEDBACK => self.feedback = clamp_control(self.feedback, d, 0, 0x8000),
-            KNEE => self.knee = clamp_control(self.knee, d, 0x1000, 0x8000),
-            CEILING => self.ceiling = clamp_control(self.ceiling, d, 0x1000, 0x8000),
+            KNEE => (self.knee, self.ceiling) = edit_feedback_knee(self.knee, self.ceiling, d),
+            CEILING => {
+                (self.knee, self.ceiling) = edit_feedback_ceiling(self.knee, self.ceiling, d)
+            }
             DAMP => self.damp = (self.damp as i32 + d).clamp(0, 4) as u32,
-            CROSS_FEEDBACK => self.cross_feedback = add(self.cross_feedback, d, 0, 128),
-            SAME_FEEDBACK => self.same_reduction = add(self.same_reduction, -d, 0, 128),
+            MID_GAIN if self.page == 4 => self.mid_gain = add(self.mid_gain, d, 0, 128),
+            SIDE_GAIN if self.page == 4 => self.side_gain = add(self.side_gain, d, 0, 128),
+            CROSS_FEEDBACK if self.page == 7 => {
+                self.cross_feedback = add(self.cross_feedback, d, 0, 128)
+            }
+            SAME_FEEDBACK if self.page == 7 => {
+                self.same_reduction = add(self.same_reduction, -d, 0, 128)
+            }
             CROSS_LAYOUT if self.page == 7 => {
                 self.cross_layout_preview =
                     (self.cross_layout_preview as i32 + d).rem_euclid(6) as u32
@@ -457,6 +480,7 @@ impl State {
             self.selected,
             DRIVE | RESONANCE | FEEDBACK | KNEE | CEILING | MOTION_RATE | MOTION_PHASE
         ) || (BAND..BAND + 10).contains(&self.selected)
+            || (self.page == 4 && matches!(self.selected, MID_GAIN | SIDE_GAIN))
             || (FREQUENCY..FREQUENCY + 10).contains(&self.selected)
             || ((INPUT..INPUT + 12).contains(&self.selected) && {
                 let field = (self.selected - INPUT) as usize;
@@ -537,6 +561,21 @@ impl State {
         pack_bits(&mut words, &mut bit, self.motion_depth, 8);
         pack_bits(&mut words, &mut bit, self.same_reduction >> 5, 3);
         pack_bits(&mut words, &mut bit, self.cross_feedback >> 5, 3);
+        for value in [
+            self.drive,
+            self.resonance,
+            self.feedback,
+            self.knee,
+            self.ceiling,
+        ] {
+            pack_bits(&mut words, &mut bit, (value >> 6) & 3, 2);
+        }
+        // Store the inverse so pre-ROW-DRY records (reserved bit zero) retain
+        // the original include-DRY row-edit behavior.
+        pack_bits(&mut words, &mut bit, !self.row_dry_include as u32, 1);
+        pack_bits(&mut words, &mut bit, 0, 5);
+        pack_bits(&mut words, &mut bit, self.mid_gain, 8);
+        pack_bits(&mut words, &mut bit, self.side_gain, 8);
         debug_assert_eq!(bit, STATE_WORDS * 16);
         words
     }
@@ -607,6 +646,16 @@ impl State {
         self.motion_depth = unpack_bits(words, &mut bit, 8);
         self.same_reduction |= unpack_bits(words, &mut bit, 3) << 5;
         self.cross_feedback |= unpack_bits(words, &mut bit, 3) << 5;
+        self.drive |= unpack_bits(words, &mut bit, 2) << 6;
+        self.resonance |= unpack_bits(words, &mut bit, 2) << 6;
+        self.feedback |= unpack_bits(words, &mut bit, 2) << 6;
+        self.knee |= unpack_bits(words, &mut bit, 2) << 6;
+        self.ceiling |= unpack_bits(words, &mut bit, 2) << 6;
+        self.row_dry_include = unpack_bits(words, &mut bit, 1) == 0;
+        let _reserved = unpack_bits(words, &mut bit, 5);
+        self.mid_gain = unpack_bits(words, &mut bit, 8).min(128);
+        self.side_gain = unpack_bits(words, &mut bit, 8).min(128);
+        (self.knee, self.ceiling) = normalize_feedback_limits(self.knee, self.ceiling);
         debug_assert_eq!(bit, STATE_WORDS * 16);
     }
 
@@ -661,6 +710,8 @@ impl State {
             (MOTION_RATE_STATE, self.motion_rate),
             (MOTION_PHASE_STATE, self.motion_phase),
             (MOTION_DEPTH_STATE, self.motion_depth),
+            (MID_GAIN_STATE, self.mid_gain),
+            (SIDE_GAIN_STATE, self.side_gain),
         ] {
             ui_write(kind, 0, value);
         }
@@ -669,6 +720,7 @@ impl State {
             0,
             save_available as u32 | ((save_busy as u32) << 1) | (save_status << 2),
         );
+        ui_write(SAVE_STATE, 1, self.row_dry_include as u32);
         ui_write(STARTUP_STATE, 0, startup as u32);
     }
 }
@@ -687,6 +739,8 @@ unsafe fn scan_sector(
     let version = read_u16(record, 4);
     let declared = read_u16(record, 6) as usize;
     if !((version == VERSION && declared == STATE_WORDS)
+        || (version == 6 && declared == V6_STATE_WORDS)
+        || (version == 5 && declared == V5_STATE_WORDS)
         || (version == 4 && declared == LEGACY_STATE_WORDS))
     {
         return None;
@@ -704,6 +758,10 @@ unsafe fn scan_sector(
     if declared == LEGACY_STATE_WORDS {
         words[36] = 0x7030;
         words[37] = 0x0080;
+    }
+    if declared < STATE_WORDS {
+        // V6 and earlier predate M/S output gains; preserve exact unity.
+        words[39] = 0x4040;
     }
     Some(read_u32(record, 8))
 }

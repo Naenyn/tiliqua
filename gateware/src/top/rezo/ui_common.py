@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: CERN-OHL-S-2.0
 """Shared REZO-family page geometry and small rendering expressions."""
 
-from math import isqrt
+from math import isqrt, log10
 
 from amaranth import Mux, Signal, unsigned
 from amaranth.lib.memory import Memory
@@ -21,6 +21,7 @@ PALETTE_NAMES = (
 )
 DAMP_NAMES = ("OFF  ", "LIGHT", "MED  ", "HEAVY", "MAX  ")
 SAVE_NAMES = ("SAVE   ", "SAVING ", "SAVED  ", "ERROR  ", "NO SLOT")
+ROW_DRY_NAMES = ("EXCLUDE", "INCLUDE")
 
 
 def format_frequency_name(frequency):
@@ -80,6 +81,32 @@ NATIVE_OUTPUT_ROW_CENTERS = tuple(row * 16 + 6
 NATIVE_OUTPUT_COL_CENTERS = (
     16 * 16 + 14, 20 * 16 + 14, 24 * 16 + 14,
     28 * 16 + 14, 32 * 16 + 22)
+NATIVE_INPUT_BUS_TRACK_X0 = 183
+NATIVE_INPUT_BUS_TRACK_X1 = 537
+NATIVE_INPUT_BUS_FILL_X0 = 187
+NATIVE_INPUT_BUS_FILL_X1 = 533
+INPUT_BUS_FULL_SCALE_VOLTS = 8.192
+INPUT_BUS_NOMINAL_VOLTS = 5.0
+
+
+def input_bus_meter_db_value(magnitude):
+    """Map the common mono input bus onto -48..0 dBFS."""
+    if magnitude == 0:
+        return 0
+    dbfs = 20 * log10(magnitude / 1023)
+    return max(0, min(63, round((dbfs + 48) * 63 / 48)))
+
+
+INPUT_BUS_NOMINAL_MAGNITUDE = round(
+    1023 * INPUT_BUS_NOMINAL_VOLTS / INPUT_BUS_FULL_SCALE_VOLTS)
+INPUT_BUS_NOMINAL_METER_VALUE = input_bus_meter_db_value(
+    INPUT_BUS_NOMINAL_MAGNITUDE)
+
+
+def native_input_bus_meter_endpoint(value):
+    """Map the calibrated 0..63 input-bus meter across the bottom arc."""
+    return (NATIVE_INPUT_BUS_FILL_X0 + (value << 2) + value +
+            (value >> 1))
 NATIVE_MAIN_CONTROL_TEXT_ROWS = (28, 30, 32, 34, 36)
 NATIVE_MAIN_CONTROL_Y0S = (448, 480, 512, 544, 576)
 
@@ -327,7 +354,8 @@ def put_native_page_heading(put, page, text, x0=8):
 
 def put_native_support_page_labels(put, *, output_label_col=9,
                                    content_row_offsets=None,
-                                   feedback_amount_row_offset=0):
+                                   feedback_amount_row_offset=0,
+                                   row_dry=False):
     """Place the common FEEDBACK through BANDS native static labels.
 
     Product-specific additions such as STREZO's OPTIONS ADVANCED section and
@@ -369,7 +397,11 @@ def put_native_support_page_labels(put, *, output_label_col=9,
 
     put_native_page_heading(put, 5, "STATE AND DISPLAY")
     put(5, "PALETTE", 13, 17 + options_offset)
-    put(5, "SAVE DEFAULT", 8, 21 + options_offset)
+    if row_dry:
+        put(5, "ROW DRY", 10, 21 + options_offset)
+        put(5, "SAVE DEFAULT", 8, 25 + options_offset)
+    else:
+        put(5, "SAVE DEFAULT", 8, 21 + options_offset)
 
     put_native_page_heading(put, 6, "PRESET")
     put(6, "ENABLE", 8, 16 + bands_offset)

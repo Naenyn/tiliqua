@@ -177,6 +177,11 @@ For an ordinary CV input:
 Group CV changes the effective levels of every enabled band assigned to that
 group.
 
+The bottom-arc **IN** meter shows the combined mono AUDIO mix after all VALUE
+gains and immediately before DRIVE and feedback are added. Its 0 dB marker is
+the nominal ±5 V modular level; the remaining arc is headroom to the ADC's
+±8.192 V full scale. The cyan end cap is held briefly when the input sum clips.
+
 The same page also assigns the discrete CLOCK roles **DAT**, **CLK**, **RST**,
 and **LCK**. Those roles are described under CLOCK mode.
 
@@ -203,6 +208,8 @@ Each output has independent unipolar sends from **GRP1**, **GRP2**, **GRP3**,
 - Use different group combinations for four related filterbank outputs.
 - DRY adds the unfiltered mono AUDIO-input mix.
 - A maximum send is unity gain; a zero send contributes nothing.
+- Selecting an OUT row header adjusts all four wet group sends together.
+  **OPTIONS > ROW DRY** chooses whether that row gesture also adjusts DRY.
 
 BANK and CLOCK use the same group and output routing.
 
@@ -211,10 +218,16 @@ BANK and CLOCK use the same group and output routing.
 The ten band switches select which enabled resonators feed the shared feedback
 loop. The main page's FB control sets the overall return amount.
 
-- **KNEE** sets where soft limiting begins.
-- **CEIL** sets the maximum feedback-loop level.
+- **KNEE** sets where soft limiting begins. Below it, the return is unchanged;
+  above it, progressively stronger compression bends the signal toward CEIL.
+- **CEIL** sets the hard maximum feedback-loop level. Its fader colors the
+  span from KNEE to CEIL to show the active soft-limiting region.
 - **DAMP** makes increasing feedback restrain resonance. Higher values are
   more conservative.
+
+KNEE and CEIL may meet for hard limiting with no soft region. Raising KNEE
+past CEIL raises CEIL too; lowering CEIL past KNEE lowers KNEE too. This keeps
+the pair valid while allowing either control to lead an edit.
 
 These controls reduce runaway behavior but do not make every extreme RES/FB
 combination quiet.
@@ -225,6 +238,12 @@ combination quiet.
 
 Choose LCD, AMBER, CYAN, GREEN, or VIOLET.
 
+#### ROW DRY
+
+Choose **INCLUDE** to adjust DRY with an OUT row header, or **EXCLUDE** to
+leave DRY unchanged while the four wet group sends move together. Individual
+DRY cells remain editable in either setting.
+
 #### SAVE DEFAULT
 
 Click **SAVE DEFAULT** to store the complete static REZOMO setup for the
@@ -233,8 +252,8 @@ Changes are not saved automatically.
 
 The save includes natural band levels, frequencies, enables, groups, feedback,
 input assignments and depths, output sends, palette, the selected BANK/CLOCK
-mode, and every CLOCK parameter. Dynamic CLOCK-generated band modulation is
-intentionally not saved.
+mode, every CLOCK parameter, and the ROW DRY preference. Dynamic
+CLOCK-generated band modulation is intentionally not saved.
 
 ## CLOCK mode
 

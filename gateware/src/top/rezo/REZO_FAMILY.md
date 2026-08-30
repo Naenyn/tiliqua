@@ -26,9 +26,9 @@ accidentally as a standard artifact through `--skip-build`.
 `TILIQUA_REZO_FAMILY_SEED=<n>` overrides a target's qualified default placement
 seed. The older `TILIQUA_REZO_SEED=<n>` override remains compatible when the
 family-specific variable is unset.
-The qualified defaults are seed 9 for REZO standard, seed 2 for REZO circular,
-seed 8 for REZOMO standard, seed 4 for REZOMO circular, seed 11 for STREZO
-standard, and seed 1 for STREZO circular.
+The qualified defaults are seed 5 for REZO standard, seed 2 for REZO circular,
+seed 12 for both REZOMO displays, seed 8 for STREZO standard, and seed 7 for
+STREZO circular.
 
 REZO circular also selects the native `yosys` executable because its documented
 staged mapping recipe is placement-hostile under the PDM environment's pinned

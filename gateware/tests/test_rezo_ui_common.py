@@ -195,6 +195,12 @@ def test_shared_support_labels_cover_every_common_page():
     assert (5, "SAVE DEFAULT", 8, 21) in calls
     assert (6, "SET FREQ", 8, 22) in calls
 
+    calls = []
+    put_native_support_page_labels(
+        lambda *args: calls.append(args), row_dry=True)
+    assert (5, "ROW DRY", 10, 21) in calls
+    assert (5, "SAVE DEFAULT", 8, 25) in calls
+
 
 def test_shared_input_page_reserves_depth_for_dynamic_cv_only_labels():
     calls = []

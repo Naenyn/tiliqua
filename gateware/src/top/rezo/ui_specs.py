@@ -35,7 +35,8 @@ class RezoUISpec:
     TARGET_OUTPUT_ROW_BASE = 113
     TARGET_OUTPUT_COL_BASE = 117
     TARGET_OUTPUT_DRY_COL = 121
-    N_TARGETS = 122
+    TARGET_ROW_DRY = 122
+    N_TARGETS = 123
 
 
 class RezomoUISpec:
@@ -74,7 +75,8 @@ class RezomoUISpec:
     TARGET_OUTPUT_ROW_BASE = 113
     TARGET_OUTPUT_COL_BASE = 117
     TARGET_OUTPUT_DRY_COL = 121
-    N_TARGETS = 122
+    TARGET_ROW_DRY = 122
+    N_TARGETS = 123
 
 
 class StrezoUISpec:
@@ -111,4 +113,9 @@ class StrezoUISpec:
     TARGET_OUTPUT_DRY_COL = TARGET_CROSS_LAYOUT
     TARGET_SAME_FEEDBACK = 126
     TARGET_CROSS_CURVE = TARGET_MOTION_DEPTH
+    # OUTPUT, CROSS, and OPTIONS are disjoint pages, so page-local controls
+    # can reuse the otherwise exhausted seven-bit target space.
+    TARGET_MID_GAIN = TARGET_SAME_FEEDBACK
+    TARGET_SIDE_GAIN = TARGET_CROSS_FEEDBACK
+    TARGET_ROW_DRY = TARGET_SAME_FEEDBACK
     N_TARGETS = 127

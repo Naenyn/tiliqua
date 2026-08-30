@@ -7,8 +7,9 @@ all audio, CV, video, LED, and bounded flash-transaction paths.
 ## Ownership boundary
 
 Firmware owns encoder navigation and editing, all user-visible parameter
-state, startup restore, SAVE DEFAULT, V4-to-V5 migration, BANDS motion state,
-stereo output-side selection, and the complete CROSS interaction model.
+state, startup restore, SAVE DEFAULT, V4-to-V7 migration, BANDS motion state,
+stereo output-side selection, wet-path MID/SIDE gains, and the complete CROSS
+interaction model.
 Gateware retains the linked-stereo resonator DSP, CROSS coefficient and motion
 processing, CV application, scanline renderer, telemetry, LEDs, and final
 display address mapping.
@@ -25,10 +26,11 @@ The target uses the lean VexiiRiscv `rezo_control` integration with a 20 KiB
 dual-read-port program ROM and 2 KiB data RAM. Its only peripherals are the
 encoder, write-only UI command port, and slot-bounded persistence flash window.
 
-The firmware record is bit-compatible with CPU-less STREZO V5: 38 16-bit
-words under STREZO's `STRZ` journal magic. V4 36-word records load with the
-established motion defaults appended. Startup fails open to defaults if boot
-slot discovery or flash access times out.
+The current V7 firmware record contains 40 16-bit words under STREZO's `STRZ`
+journal magic. It accepts V6 39-word, V5 38-word, and V4 36-word records;
+legacy records receive the established motion/routing defaults plus exact-unity
+MID 64 / SIDE 64. Startup fails open to defaults if boot-slot discovery or
+flash access times out.
 
 ## Display targets
 
@@ -81,7 +83,8 @@ no circular artifact was produced during this checkpoint.
 3. Verify BANDS layout, enables, frequencies, and OFF/TRIANGLE/RANDOM motion.
 4. Verify each output row, column, cell, and left/right side selector.
 5. Verify all CROSS factory layouts, factory-to-USER copying, matrix cell/row/
-   column edits, same-side feedback, cross feedback, and LINEAR/LOG curve.
+   column edits, MID/SIDE wet-output gains, same-side feedback, cross feedback,
+   and LINEAR/FINE curve.
 6. Save a non-default palette, motion configuration, output side, and USER
    matrix; reboot and confirm automatic restore.
 7. Stress resonance, feedback, cross feedback, and drive, then reduce them and

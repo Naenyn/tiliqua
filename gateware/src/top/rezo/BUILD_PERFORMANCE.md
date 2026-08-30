@@ -670,3 +670,28 @@ Its embedded bitstream matches the routed `top.bit` at SHA-256
 `406284c73c2f894abc455841f4d8cb91d661ecdaeffc4e0b290fb4a837d2770f`.
 The flash completed with `Refresh: DONE`. Only standard `1280x720p60` was
 built and flashed; no circular artifact was invoked.
+
+## 2026-08-29 feedback-character and STREZO MID/SIDE candidate
+
+The shared feedback UI now shows the KNEE-to-CEILING soft region directly on
+the CEILING fader, and firmware couples the two values only when an edit would
+cross them. STREZO additionally changes its CROSS alternate curve from LOG to
+FINE and adds 0--2x MID and SIDE gains to the wet G1--G4 path. Unity is an
+exact bypass and DRY plus the feedback taps remain outside the spatial stage.
+
+Two STREZO M/S datapaths were rejected before qualification. A combinational
+per-output form used 20 DSPs and 22,792 COMB but reached only 49.88 MHz SYNC.
+The first shared-group form passed timing at seed 7 but packed to 23,536 COMB.
+The retained form transforms each wet stereo group in place through two shared
+DSPs and a shared limiter pair, and restores the registered output MAC source.
+
+| Target | Seed | LUT4 / COMB | Free COMB | FF | BRAM | DSP | DVI5X / AUDIO / SYNC / DVI MHz | Result |
+|---|---:|---|---:|---:|---:|---:|---|---|
+| REZO standard | 5 | 19,060 / 22,130 | 2,158 | 8,328 | 36 | 7 | 414.08 / 71.68 / 64.94 / 80.97 | PASS |
+| REZOMO standard | 12 | 19,267 / 21,945 | 2,343 | 8,434 | 38 | 7 | 446.63 / 71.99 / 64.20 / 82.45 | PASS |
+| STREZO standard | 8 | 20,246 / 23,066 | 1,222 | 8,737 | 35 | 18 | 432.34 / 71.33 / 65.10 / 85.53 | PASS |
+
+The standard archives are `rezo-feedback-candidate-f9890ea2-r5.tar.gz`,
+`rezomo-feedback-candidate-f9890ea2-r5.tar.gz`, and
+`strezo-feedback-ms-candidate2-f9890ea2-r5.tar.gz`. They were built from the
+dirty precommit working tree solely for timing qualification; none was flashed.
