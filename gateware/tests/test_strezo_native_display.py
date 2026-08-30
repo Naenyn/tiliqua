@@ -179,10 +179,10 @@ def test_every_page_uses_themed_arcs_beyond_the_safe_square():
 
 def test_pager_tracks_strezo_navigation_order_and_reflows_neighbors():
     palette = RezoTileDisplay.PALETTE
-    # BANDS is the second firmware-navigation page. Its enlarged box occupies
+    # INPUT is the second firmware-navigation page. Its enlarged box occupies
     # x=321..339, leaving one pixel before the following outlined box.
     assert _render_samples(
-        page=6,
+        page=2,
         points=((330, 86), (340, 86), (341, 86), (330, 96)),
     ) == [
         (palette["selected"],) * 3,

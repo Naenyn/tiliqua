@@ -430,15 +430,15 @@ def test_compact_pager_tracks_firmware_navigation_order_and_mode_count():
         samples.append(ctx.get(dut.r))
 
     async def bench(ctx):
-        # BANK order is 0,6,2,3,4,1,5. Page 6 therefore selects box 1;
+        # BANK order is 0,2,6,3,1,4,5. Page 2 therefore selects box 1;
         # surrounding boxes move outward to make room for its larger box.
-        ctx.set(dut.page, 6)
+        ctx.set(dut.page, 2)
         await sample(ctx, 336, 86)
         await sample(ctx, 346, 86)
         await sample(ctx, 347, 86)
         await sample(ctx, 336, 96)  # enlarged box's added bottom row
 
-        # FILTER adds page 7 as position 3 and moves page 5 to position 7.
+        # FILTER adds MATRIX as position 3 and keeps OPTIONS last.
         ctx.set(dut.filter_mode, 1)
         ctx.set(dut.page, 5)
         await sample(ctx, 402, 86)
@@ -475,7 +475,7 @@ def test_compact_pager_keeps_one_pixel_gaps_during_raster_scan():
 
     async def bench(ctx):
         await scan(ctx, 0)
-        await scan(ctx, 6)
+        await scan(ctx, 2)
 
     sim.add_testbench(bench)
     sim.run()
@@ -496,7 +496,7 @@ def test_compact_pager_keeps_one_pixel_gaps_during_raster_scan():
         assert min(index for index in line_pixels if index > end) - end == 2
         selected_runs.append((start, end))
 
-    # Page 6 is the second firmware-navigation position.
+    # INPUT is the second firmware-navigation position.
     assert selected_runs[1][0] - selected_runs[0][0] == 12
 
 

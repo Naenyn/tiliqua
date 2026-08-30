@@ -59,7 +59,7 @@ TARGETS = {
         bitstream_name="REZOMO",
         artifact_name="REZOMO",
         modeline="1280x720p60",
-        default_seed=12,
+        default_seed=3,
     ),
     "rezomo_round": BuildTarget(
         key="rezomo_round",

@@ -106,6 +106,28 @@ def test_row_dry_precedes_save_in_options_navigation(firmware_dir, options):
     assert f"const OPTIONS_PAGE: &[u8] = &{options};" in main_rs
 
 
+@pytest.mark.parametrize(("firmware_dir", "page_orders"), (
+    ("cpu_fw", (
+        "const BANK: &[u8] = &[0, 2, 6, 3, 1, 4, 5];",
+        "const FILTER: &[u8] = &[0, 2, 6, 7, 3, 1, 4, 5];",
+    )),
+    ("rezomo_cpu_fw", (
+        "const BANK: &[u8] = &[0, 2, 6, 3, 1, 4, 5];",
+        "const CLOCK: &[u8] = &[0, 2, 6, 7, 3, 1, 4, 5];",
+    )),
+    ("strezo_cpu_fw", (
+        "const ORDER: &[u8] = &[0, 2, 6, 3, 1, 7, 4, 5];",
+    )),
+))
+def test_firmware_pages_follow_sound_design_order(firmware_dir, page_orders):
+    main_rs = (
+        Path(__file__).parents[1] / "src" / "top" / "rezo" /
+        firmware_dir / "src" / "main.rs"
+    ).read_text()
+    for page_order in page_orders:
+        assert page_order in main_rs
+
+
 def test_family_exposes_complete_product_display_matrix():
     assert {
         (target.product, target.display)
@@ -143,7 +165,7 @@ def test_family_variants_are_selected_before_elaboration():
     assert TARGETS["strezo_round"].module == "strezo_cpu"
     assert TARGETS["rezo"].default_seed == 9
     assert TARGETS["rezo_round"].default_seed == 2
-    assert TARGETS["rezomo"].default_seed == 12
+    assert TARGETS["rezomo"].default_seed == 3
     assert TARGETS["rezomo_round"].default_seed == 12
     assert TARGETS["strezo"].default_seed == 8
     assert TARGETS["strezo_round"].default_seed == 7

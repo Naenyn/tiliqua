@@ -45,6 +45,10 @@ Select the page-name chip beside **PAGE** to change pages. On the main page,
 navigation proceeds PAGE, then PRESET, then MODE. Select MODE to switch between
 BANK and CLOCK.
 
+BANK pages follow the sound-design path **BANK, INPUT, BANDS, GROUPS,
+FEEDBACK, OUTPUT, OPTIONS**. CLOCK mode inserts **CLOCK** between BANDS and
+GROUPS.
+
 ### Display versions
 
 REZOMO is supplied for two displays:

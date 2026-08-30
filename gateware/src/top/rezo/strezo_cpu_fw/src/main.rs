@@ -286,7 +286,7 @@ impl State {
     }
 
     fn change_page(&mut self, direction: i8) {
-        const ORDER: &[u8] = &[0, 6, 2, 3, 4, 1, 7, 5];
+        const ORDER: &[u8] = &[0, 2, 6, 3, 1, 7, 4, 5];
         let p = ORDER.iter().position(|x| *x == self.page).unwrap_or(0);
         let p = if direction > 0 {
             (p + 1) % ORDER.len()

@@ -46,6 +46,9 @@ To change pages, select the page-name chip beside **PAGE**, click, and turn. On
 the main page, navigation proceeds PAGE, then PRESET, then MODE. Select MODE to
 switch between BANK and FILTER.
 
+BANK pages follow the sound-design path **MAIN, INPUT, BANDS, GROUPS,
+FEEDBACK, OUTPUT, OPTIONS**. FILTER inserts **MATRIX** between BANDS and GROUPS.
+
 ### Display versions
 
 REZO is supplied for two displays:

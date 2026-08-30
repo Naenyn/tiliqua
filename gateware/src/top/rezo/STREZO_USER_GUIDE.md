@@ -38,6 +38,9 @@ step, so the encoder feels consistent throughout the REZO family.
 Switches and **SAVE DEFAULT** act immediately when clicked. Select the
 page-name chip beside **PAGE** to change pages.
 
+Pages follow the sound-design path **BANK, INPUT, BANDS, GROUPS, FEEDBACK,
+CROSS, OUTPUT, OPTIONS**.
+
 ### Display versions
 
 STREZO is supplied for two displays:

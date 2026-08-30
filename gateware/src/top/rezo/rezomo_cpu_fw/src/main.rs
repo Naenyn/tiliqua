@@ -424,8 +424,8 @@ impl State {
     }
 
     fn change_page(&mut self, direction: i8) {
-        const BANK: &[u8] = &[0, 6, 2, 3, 4, 1, 5];
-        const CLOCK: &[u8] = &[0, 7, 6, 2, 3, 4, 1, 5];
+        const BANK: &[u8] = &[0, 2, 6, 3, 1, 4, 5];
+        const CLOCK: &[u8] = &[0, 2, 6, 7, 3, 1, 4, 5];
         let order = if self.clock_mode { CLOCK } else { BANK };
         let p = order.iter().position(|x| *x == self.page).unwrap_or(0);
         let p = if direction > 0 {

@@ -2175,25 +2175,23 @@ class RezoTileDisplay(wiring.Component):
             (x >= 106) & (x < 614) & (y >= 106) & (y < 614))
         arc_background = active & circle_inside & ~native_safe_square
 
-        # Firmware navigates pages in a deliberately non-numeric order.
-        # Translate the raw page ID so the indicator advances one box for
-        # each encoder step. BANK exposes seven positions; FILTER adds its
-        # modulation-matrix page for an eighth.
+        # Follow the sound-design order used by firmware: MAIN, INPUT, BANDS,
+        # optional MATRIX, GROUPS, FEEDBACK, OUTPUT, OPTIONS.
         pager_position = Signal(unsigned(3))
         with m.Switch(self.page):
-            with m.Case(6):
-                m.d.comb += pager_position.eq(1)
             with m.Case(2):
+                m.d.comb += pager_position.eq(1)
+            with m.Case(6):
                 m.d.comb += pager_position.eq(2)
             with m.Case(7):
                 m.d.comb += pager_position.eq(3)
             with m.Case(3):
                 m.d.comb += pager_position.eq(Mux(
                     self.filter_mode, 4, 3))
-            with m.Case(4):
+            with m.Case(1):
                 m.d.comb += pager_position.eq(Mux(
                     self.filter_mode, 5, 4))
-            with m.Case(1):
+            with m.Case(4):
                 m.d.comb += pager_position.eq(Mux(
                     self.filter_mode, 6, 5))
             with m.Case(5):

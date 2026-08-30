@@ -3205,20 +3205,21 @@ class RezoTileDisplay(wiring.Component):
             (x >= 106) & (x < 614) & (y >= 106) & (y < 614))
         arc_background = active & circle_inside & ~native_safe_square
 
-        # REZOMO inserts CLOCK after MAIN only while clock mode is active.
+        # Follow the sound-design order used by firmware: MAIN, INPUT, BANDS,
+        # optional CLOCK, GROUPS, FEEDBACK, OUTPUT, OPTIONS.
         pager_position = Signal(unsigned(3))
         with m.Switch(self.page):
-            with m.Case(7):
+            with m.Case(2):
                 m.d.comb += pager_position.eq(1)
             with m.Case(6):
-                m.d.comb += pager_position.eq(Mux(self.clock_mode, 2, 1))
-            with m.Case(2):
-                m.d.comb += pager_position.eq(Mux(self.clock_mode, 3, 2))
+                m.d.comb += pager_position.eq(2)
+            with m.Case(7):
+                m.d.comb += pager_position.eq(3)
             with m.Case(3):
                 m.d.comb += pager_position.eq(Mux(self.clock_mode, 4, 3))
-            with m.Case(4):
-                m.d.comb += pager_position.eq(Mux(self.clock_mode, 5, 4))
             with m.Case(1):
+                m.d.comb += pager_position.eq(Mux(self.clock_mode, 5, 4))
+            with m.Case(4):
                 m.d.comb += pager_position.eq(Mux(self.clock_mode, 6, 5))
             with m.Case(5):
                 m.d.comb += pager_position.eq(Mux(self.clock_mode, 7, 6))

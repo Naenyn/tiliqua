@@ -163,6 +163,26 @@ def test_groups_bank_outline_surrounds_the_full_grid():
     ]
 
 
+def test_pager_tracks_rezomo_sound_design_order():
+    palette = RezoTileDisplay.PALETTE
+    # INPUT is position 1 in both modes. CLOCK is inserted at position 3
+    # between BANDS and GROUPS only while CLOCK mode is active.
+    assert _render_samples(
+        page=2,
+        points=((336, 86), (346, 86), (347, 86), (336, 96)),
+    ) == [
+        (palette["selected"],) * 3,
+        (palette["background"],) * 3,
+        (palette["line"],) * 3,
+        (palette["selected"],) * 3,
+    ]
+    assert _render_samples(
+        page=7,
+        clock_mode=1,
+        points=((354, 86),),
+    ) == [(palette["selected"],) * 3]
+
+
 def test_clock_editor_uses_native_stacked_control_rows():
     points = (
         (310, 260),  # algorithm value padding
