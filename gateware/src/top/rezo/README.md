@@ -7,7 +7,7 @@ ten-band resonant filterbank:
 |---|---|---|
 | **REZO** | Mono filterbank and shaped-filter processor | Manual BANK mode plus generated LP, HP, BP, and notch FILTER responses |
 | **REZOMO** | Clock-oriented mono filterbank | BANK plus SHIFT, ROTATE, WALK, and TURING modulation algorithms |
-| **STREZO** | Linked-stereo filterbank | Independent left/right resonator state, frequency motion, and SAME/CROSS feedback routing |
+| **STREZO** | Linked-stereo filterbank | Independent left/right resonator state, frequency motion, SAME/CROSS feedback routing, and wet-path MID/SIDE shaping |
 
 Each product is available for standard `1280x720p60` HDMI and for the official
 rotated `720x720p60r2` circular display. Both outputs render the same upright
@@ -21,6 +21,25 @@ Operator documentation:
 - [REZOMO user guide](REZOMO_USER_GUIDE.md)
 - [STREZO user guide](STREZO_USER_GUIDE.md)
 
+## Common interface
+
+The family uses the same signal-flow page order wherever a page applies:
+
+```text
+BANK -> INPUT -> BANDS -> [CLOCK] -> GROUPS -> FEEDBACK -> [CROSS]
+     -> OUTPUT -> OPTIONS
+```
+
+REZO's FILTER mode inserts MATRIX between BANDS and GROUPS. REZOMO inserts
+CLOCK only while CLOCK mode is selected, and STREZO inserts CROSS.
+
+All three products provide post-gain input-bus metering in the lower arc and
+final-output metering in the outer arcs. Meter headroom and held clip lamps use
+the active palette, so they remain distinguishable in every theme. OUTPUT row
+headers edit a complete output at once, while column headers edit one source
+across all four outputs. The **ROW DRY** option decides whether a row edit also
+changes DRY; it does not affect individual cells or column edits.
+
 ## Architecture
 
 All six production targets are CPU-backed designs. Gateware owns the audio
@@ -31,7 +50,8 @@ flash-backed **SAVE DEFAULT** behavior.
 The family is organized in layers:
 
 ```text
-rezo.py / *_round.py             six build entry points
+rezo.py / rezomo.py / strezo.py
+*_round.py                       six build entry points
         |
         v
 targets.py                       product, display, modeline, seed, artifact name
@@ -45,7 +65,8 @@ targets.py                       product, display, modeline, seed, artifact name
         |
         v
 cpu_control.py + ui_specs.py     shared MMIO and declarative UI contracts
-*_cpu_fw/src/main.rs             product-owned navigation and state schema
+cpu_fw, rezomo_cpu_fw,
+strezo_cpu_fw/src/main.rs        product-owned navigation and state schema
 ```
 
 Shared modules hold behavior that is genuinely common: target construction,
@@ -65,9 +86,17 @@ and [BUILD_PERFORMANCE.md](BUILD_PERFORMANCE.md).
 
 ## Build prerequisites
 
-Use the repository's documented Tiliqua toolchain and install the `gateware`
-PDM environment. Commands below run from the `gateware` directory and build for
-Tiliqua hardware revision 5 by default. The release configuration uses the
+Use the repository's
+[Tiliqua installation instructions](../../../docs/install.rst), including the
+Rust CPU-bitstream prerequisites. Initialize the repository submodules, then
+install the Python environment from `gateware/`:
+
+```bash
+pdm install
+```
+
+The remaining commands below also run from `gateware/`. They build for
+Tiliqua hardware revision 5 by default, and the release configuration uses a
 192 kHz audio sample rate.
 
 Before a release build, start from a committed, clean source tree. Archive

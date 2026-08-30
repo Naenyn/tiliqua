@@ -41,6 +41,14 @@ page-name chip beside **PAGE** to change pages.
 Pages follow the sound-design path **BANK, INPUT, BANDS, GROUPS, FEEDBACK,
 CROSS, OUTPUT, OPTIONS**.
 
+### Reading the meters
+
+The four curved **OUT** meters show the final signals sent to OUT0 through
+OUT3. Their upper segment changes to the palette's selection color as the
+signal approaches full scale. A held cap in the modulation/accent color marks
+clipping; in the NEON palette that clip color is cyan. The two lower-arc input
+meters are described on the INPUT page.
+
 ### Display versions
 
 STREZO is supplied for two displays:
@@ -135,7 +143,8 @@ remove the possibility of instability at extreme settings.
 Each jack can be assigned as **LEFT**, **RIGHT**, or **CV**.
 
 For a LEFT or RIGHT audio input, **VALUE** sets its gain and the signal joins
-the corresponding stereo-side input mix.
+the corresponding stereo-side input mix. The activity line on VALUE shows that
+jack after its gain.
 
 The curved **L IN R** meters in the bottom arc show those completed left and
 right input mixes after all VALUE gains and summing, immediately before DRIVE
@@ -143,7 +152,8 @@ and feedback enter the filter banks. Each meter grows outward from the center.
 The fixed marker is nominal 0 dB (5 V peak); the short outer section is ADC
 headroom up to 8.192 V peak. A clip lamp at the outer tip indicates that the
 unclamped sum exceeded the input bus, even though the signal sent onward was
-safely clamped.
+safely clamped. Clip lamps use the palette's modulation/accent color (cyan in
+NEON).
 
 For a CV input:
 
@@ -175,6 +185,11 @@ different views of the stereo filterbank.
 
 The **L** or **R** chip on each output row selects which stereo side supplies
 all five sends on that row. DRY adds the corresponding unfiltered input path.
+
+Selecting an OUT row header adjusts all four wet group sends together;
+**OPTIONS > ROW DRY** chooses whether DRY follows that row edit. Selecting a
+G1-G4 or DRY column header adjusts that source across all four outputs. ROW DRY
+does not change column-header behavior.
 
 The shared **MID** and **SIDE** controls below the matrix reshape only the wet
 G1-G4 signals after the feedback taps and before output routing. DRY bypasses
@@ -246,6 +261,10 @@ Selecting a factory layout loads its routing pattern. Editing an individual
 matrix cell changes the layout to USER. Matrix cells range from no send to full
 send and fill their frames completely at maximum.
 
+The **FROM** row headers adjust all four destinations for one source group.
+The **TO** column headers adjust one destination from all four source groups.
+Either whole-row or whole-column edit changes the layout to USER.
+
 ### SAME and CROSS
 
 - **SAME** controls the feedback returned to the same stereo side.
@@ -262,10 +281,10 @@ SAVE DEFAULT, then CROSS CURVE.
 
 ### STATE AND DISPLAY
 
-- **PALETTE** selects LCD, AMBER, CYAN, GREEN, or VIOLET.
+- **PALETTE** selects LCD, AMBER, CYAN, GREEN, VIOLET, EMBER, NEON, or AZURE.
 - **ROW DRY** chooses whether an OUTPUT row edit changes DRY along with G1-G4.
-  ON adjusts all five sends; OFF adjusts only the four wet group sends and
-  leaves DRY untouched.
+  INCLUDE adjusts all five sends; EXCLUDE adjusts only the four wet group
+  sends and leaves DRY untouched.
 - **SAVE DEFAULT** stores the complete STREZO state in the current bitstream
   slot. The button reports SAVING, SAVED, ERROR, or NO SLOT.
 

@@ -49,6 +49,14 @@ BANK pages follow the sound-design path **BANK, INPUT, BANDS, GROUPS,
 FEEDBACK, OUTPUT, OPTIONS**. CLOCK mode inserts **CLOCK** between BANDS and
 GROUPS.
 
+### Reading the meters
+
+The four curved **OUT** meters show the final signals sent to OUT0 through
+OUT3. Their upper segment changes to the palette's selection color as the
+signal approaches full scale. A held cap in the modulation/accent color marks
+clipping; in the NEON palette that clip color is cyan. The lower-arc input-bus
+meter is described on the INPUT page.
+
 ### Display versions
 
 REZOMO is supplied for two displays:
@@ -122,15 +130,15 @@ cancel or reinforce one another because their responses overlap.
 Selecting a band displays its center frequency beside **FREQ:**. A disabled
 band retains a dim frame but cannot be adjusted here.
 
-#### DRIVE, RES, and FB
+#### DRIVE, RESONANCE, and FEEDBACK
 
 - **DRIVE** controls how strongly the input excites the resonators.
-- **RES** controls resonance and ringing around each center frequency.
-- **FB** returns the selected feedback-band mix to the resonator input.
+- **RESONANCE** controls resonance and ringing around each center frequency.
+- **FEEDBACK** returns the selected feedback-band mix to the resonator input.
 
-High RES and FB settings interact strongly. Begin with modest values and raise
-them carefully. The display distinguishes a control's saved position from its
-CV-modulated effective value.
+High RESONANCE and FEEDBACK settings interact strongly. Begin with modest
+values and raise them carefully. The display distinguishes a control's saved
+position from its CV-modulated effective value.
 
 ### BANDS page
 
@@ -170,6 +178,7 @@ For an AUDIO input:
 - **MODE** selects AUDIO.
 - **VALUE** sets its input gain.
 - The signal joins the mono input mix feeding the resonators.
+- The activity line shows that jack after VALUE gain.
 
 For an ordinary CV input:
 
@@ -184,7 +193,8 @@ group.
 The bottom-arc **IN** meter shows the combined mono AUDIO mix after all VALUE
 gains and immediately before DRIVE and feedback are added. Its 0 dB marker is
 the nominal ±5 V modular level; the remaining arc is headroom to the ADC's
-±8.192 V full scale. The cyan end cap is held briefly when the input sum clips.
+±8.192 V full scale. A cap is held briefly when the input sum clips. It uses
+the palette's modulation/accent color, which is cyan in NEON.
 
 The same page also assigns the discrete CLOCK roles **DAT**, **CLK**, **RST**,
 and **LCK**. Those roles are described under CLOCK mode.
@@ -214,33 +224,35 @@ Each output has independent unipolar sends from **GRP1**, **GRP2**, **GRP3**,
 - A maximum send is unity gain; a zero send contributes nothing.
 - Selecting an OUT row header adjusts all four wet group sends together.
   **OPTIONS > ROW DRY** chooses whether that row gesture also adjusts DRY.
+- Selecting a GRP or DRY column header adjusts that source across all four
+  outputs. ROW DRY does not change column-header behavior.
 
 BANK and CLOCK use the same group and output routing.
 
 ### FEEDBACK page
 
 The ten band switches select which enabled resonators feed the shared feedback
-loop. The main page's FB control sets the overall return amount.
+loop. The BANK page's FEEDBACK control sets the overall return amount.
 
 - **KNEE** sets where soft limiting begins. Below it, the return is unchanged;
   above it, progressively stronger compression bends the signal toward CEIL.
 - **CEIL** sets the hard maximum feedback-loop level. Its fader colors the
   span from KNEE to CEIL to show the active soft-limiting region.
-- **DAMP** makes increasing feedback restrain resonance. Higher values are
+- **DAMPING** makes increasing feedback restrain resonance. Higher values are
   more conservative.
 
 KNEE and CEIL may meet for hard limiting with no soft region. Raising KNEE
 past CEIL raises CEIL too; lowering CEIL past KNEE lowers KNEE too. This keeps
 the pair valid while allowing either control to lead an edit.
 
-These controls reduce runaway behavior but do not make every extreme RES/FB
-combination quiet.
+These controls reduce runaway behavior but do not make every extreme
+RESONANCE/FEEDBACK combination quiet.
 
 ### OPTIONS page
 
 #### PALETTE
 
-Choose LCD, AMBER, CYAN, GREEN, or VIOLET.
+Choose LCD, AMBER, CYAN, GREEN, VIOLET, EMBER, NEON, or AZURE.
 
 #### ROW DRY
 
@@ -266,8 +278,8 @@ modulation value to each enabled band's natural BANK level. The natural level
 marker remains visible while modulation moves around it.
 
 The CLOCK main page intentionally matches BANK: PRESET, the ten band controls,
-DRIVE, RES, and FB all edit the underlying BANK sound. Disabled bands are
-skipped by the clock algorithms.
+DRIVE, RESONANCE, and FEEDBACK all edit the underlying BANK sound. Disabled
+bands are skipped by the clock algorithms.
 
 The following CLOCK page selects the clock algorithm and its settings.
 
@@ -438,7 +450,7 @@ and selected by SOURCE before changing the audio routing.
 1. Leave CLK and DAT unpatched.
 2. Select SOURCE AUTO INT and set BPM.
 3. Select SHIFT with DATA AUTO RAND, or select WALK.
-4. Raise RES moderately and distribute groups across the outputs.
+4. Raise RESONANCE moderately and distribute groups across the outputs.
 
 ### Locked evolving loop
 

@@ -17,8 +17,8 @@ REZO uses all four Eurorack inputs and outputs:
 - **IN0..IN3** are independently assigned to AUDIO or CV on the INPUT page.
 - AUDIO-role inputs are gain-controlled and mixed to the shared mono resonator
   input.
-- CV-role inputs modulate continuous parameters or, in FILTER mode, feed the
-  modulation matrix.
+- In BANK, CV-role inputs modulate continuous parameters. In FILTER, IN1
+  through IN3 used as CV feed the modulation matrix.
 - **OUT0..OUT3** are independent mixes of G1 through G4 plus the dry mono input.
 
 HDMI video is required for editing. Audio continues to run independently once
@@ -46,8 +46,16 @@ To change pages, select the page-name chip beside **PAGE**, click, and turn. On
 the main page, navigation proceeds PAGE, then PRESET, then MODE. Select MODE to
 switch between BANK and FILTER.
 
-BANK pages follow the sound-design path **MAIN, INPUT, BANDS, GROUPS,
+BANK pages follow the sound-design path **BANK, INPUT, BANDS, GROUPS,
 FEEDBACK, OUTPUT, OPTIONS**. FILTER inserts **MATRIX** between BANDS and GROUPS.
+
+### Reading the meters
+
+The four curved **OUT** meters show the final signals sent to OUT0 through
+OUT3. Their upper segment changes to the palette's selection color as the
+signal approaches full scale. A held cap in the modulation/accent color marks
+clipping; in the NEON palette that clip color is cyan. The lower-arc input-bus
+meter is described on the INPUT page.
 
 ### Display versions
 
@@ -125,14 +133,13 @@ each other in useful ways because the resonators overlap.
 Selecting a band displays its center frequency beside **FREQ:**. A disabled
 band keeps a dim frame but cannot be adjusted from this page.
 
-#### DRIVE, RES, and FB
+#### DRIVE, RESONANCE, and FEEDBACK
 
 - **DRIVE** controls how strongly the input excites the resonators. More drive
   can make the bank denser and more aggressive.
-- **RES** controls resonance. Higher settings emphasize each center frequency
-  more strongly and allow longer ringing.
-- **FB** controls the amount of the selected band mix returned to the input of
-  the resonators. Increase it carefully; high resonance and feedback interact.
+- **RESONANCE** emphasizes each center frequency and allows longer ringing.
+- **FEEDBACK** controls the amount of the selected band mix returned to the
+  resonator input. Increase it carefully; high resonance and feedback interact.
 
 The display distinguishes a control's saved/base position from modulation when
 CV changes its effective value.
@@ -182,9 +189,8 @@ For an AUDIO input:
 - **MODE** selects AUDIO.
 - **VALUE** sets its input gain.
 - The signal joins the mono input mix feeding the resonators.
-- The activity line is bounded by the VALUE lane. A bright mark at its right
-  edge is held briefly when the input mix reaches full scale, making overloads
-  visible without allowing the meter to spill into adjacent UI elements.
+- The activity line shows that jack after VALUE gain. A mark at the right edge
+  is held briefly if that individual post-gain signal reaches full scale.
 
 For a CV input:
 
@@ -199,7 +205,8 @@ Group CV changes the effective levels of every band assigned to that group.
 The bottom-arc **IN** meter shows the combined mono AUDIO mix after all VALUE
 gains and immediately before DRIVE and feedback are added. Its 0 dB marker is
 the nominal ±5 V modular level; the remaining arc is headroom to the ADC's
-±8.192 V full scale. The cyan end cap is held briefly when the input sum clips.
+±8.192 V full scale. A cap is held briefly when the input sum clips. It uses
+the palette's modulation/accent color, which is cyan in NEON.
 
 ### GROUPS page
 
@@ -226,6 +233,8 @@ Each output has independent, unipolar send levels from **GRP1**, **GRP2**,
 - A send at zero contributes nothing; its maximum setting is unity gain.
 - Selecting an OUT row header adjusts all four wet group sends together.
   **OPTIONS > ROW DRY** chooses whether that row gesture also adjusts DRY.
+- Selecting a GRP or DRY column header adjusts that source across all four
+  outputs. ROW DRY does not change column-header behavior.
 
 The BANK and FILTER output-send settings are stored separately.
 
@@ -244,7 +253,7 @@ The three safety controls shape and constrain the returning signal:
   toward CEIL.
 - **CEIL** sets the hard maximum allowed feedback-loop level. Its fader colors
   the span from KNEE to CEIL to show the active soft-limiting region.
-- **DAMP** controls how strongly increasing feedback restrains resonance.
+- **DAMPING** controls how strongly increasing feedback restrains resonance.
   Higher settings are more conservative.
 
 KNEE and CEIL may meet, which removes the colored soft region and behaves as a
@@ -252,18 +261,20 @@ hard limit. Raising KNEE past CEIL raises CEIL with it; lowering CEIL past KNEE
 lowers KNEE. This keeps the controls valid without creating a blocked encoder
 range.
 
-Start with modest FB and RES settings, especially when several bands feed the
-loop. KNEE and CEIL reduce runaway behavior, but they do not make every extreme
-setting quiet. With DRIVE, RES, and FB all near maximum—especially with a low
-KNEE, high CEIL, and light DAMP—the output can become harsh, digitally clipped,
-and noisy. This is an intentional overload region rather than an additional
-sound-safety range. Reduce DRIVE, RES, or FB to return to normal operation.
+Start with modest FEEDBACK and RESONANCE settings, especially when several
+bands feed the loop. KNEE and CEIL reduce runaway behavior, but they do not
+make every extreme setting quiet. With DRIVE, RESONANCE, and FEEDBACK all near
+maximum—especially with a low KNEE, high CEIL, and light DAMPING—the output can
+become harsh, digitally clipped, and noisy. This is an intentional overload
+region rather than an additional sound-safety range. Reduce DRIVE, RESONANCE,
+or FEEDBACK to return to normal operation.
 
 ### OPTIONS page
 
 #### PALETTE
 
-Choose among LCD, AMBER, CYAN, GREEN, and VIOLET display palettes.
+Choose among LCD, AMBER, CYAN, GREEN, VIOLET, EMBER, NEON, and AZURE display
+palettes.
 
 #### ROW DRY
 
@@ -318,7 +329,7 @@ FILTER has an independent feedback amount that defaults to zero.
 - **WIDTH** sets the size of the BP or NOT region. It is shown only for those
   two types.
 - **DRIVE** is a FILTER-specific drive setting; BANK retains its own drive.
-- **RES** is the shared resonance setting.
+- **RESONANCE** is the shared resonance setting.
 
 The ten columns visualize the generated gains. They are not the manually saved
 BANK band levels.
@@ -364,7 +375,8 @@ and the unfiltered DRY input mix are all available.
 
 1. Connect audio to IN0 and begin in BANK mode.
 2. Load the OCTAVE layout and the ALL shape preset.
-3. Lower several band levels, then raise RES until the bands become distinct.
+3. Lower several band levels, then raise RESONANCE until the bands become
+   distinct.
 4. Assign low, middle, and high bands to different groups.
 5. Mix those groups differently across OUT0 through OUT3.
 6. Add a CV input, target a group, and set a small bipolar depth.
@@ -372,6 +384,6 @@ and the unfiltered DRY input mix are all available.
 8. Set IN1 to CV, then use it on the MATRIX page to modulate FREQ.
 9. When the complete setup is worth keeping, use OPTIONS > SAVE DEFAULT.
 
-When first exploring feedback, monitor at a conservative level and raise RES,
-FB, and DRIVE one at a time. The limiter controls contain the feedback path,
-but intentionally do not remove REZO's abrasive overload range.
+When first exploring feedback, monitor at a conservative level and raise
+RESONANCE, FEEDBACK, and DRIVE one at a time. The limiter controls contain the
+feedback path, but intentionally do not remove REZO's abrasive overload range.
