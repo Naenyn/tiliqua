@@ -89,7 +89,7 @@ TARGETS = {
         bitstream_name="STREZO",
         artifact_name="STREZO-ROUND",
         modeline="720x720p60r2",
-        default_seed=7,
+        default_seed=8,
     ),
 }
 

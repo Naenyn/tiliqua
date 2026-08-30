@@ -168,7 +168,7 @@ def test_family_variants_are_selected_before_elaboration():
     assert TARGETS["rezomo"].default_seed == 3
     assert TARGETS["rezomo_round"].default_seed == 12
     assert TARGETS["strezo"].default_seed == 8
-    assert TARGETS["strezo_round"].default_seed == 7
+    assert TARGETS["strezo_round"].default_seed == 8
 
 
 def test_family_target_lookup_rejects_ambiguous_names():
