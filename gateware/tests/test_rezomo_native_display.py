@@ -126,6 +126,15 @@ def test_native_canvas_uses_unoutlined_circular_chrome_on_standard_video():
     ]
 
 
+def test_main_bank_band_heading_matches_feedback_heading_row():
+    region = (125, 224, 525, 272)
+    main, = _render_text_bounds(
+        region, page=0, selected=RezomoUISpec.TARGET_BAND_BASE)
+    feedback, = _render_text_bounds(
+        region, page=1, selected=RezomoUISpec.TARGET_FEEDBACK_SEND_BASE)
+    assert (main[1], main[3]) == (feedback[1], feedback[3])
+
+
 def test_outer_arcs_surround_the_508_pixel_safe_square():
     # The centered content square stays black while the surrounding circular
     # canvas carries the darker themed chrome.

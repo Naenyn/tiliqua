@@ -2363,8 +2363,8 @@ class RezoTileDisplay(wiring.Component):
         # 508px grid. CLOCK remains REZOMO-specific below.
         put_native_page_heading(put, 0, "PRESET")
         put_native_page_heading(put, 0, "MODE", 24)
-        put(0, "BANDS", 8, 14)
-        put(0, "FREQ:", 23, 14)
+        put(0, "BANDS", 8, 15)
+        put(0, "FREQ:", 23, 15)
         put(0, "DRIVE", 12, compact_main_control_text_rows[0])
         put(0, "RESONANCE", 8, compact_main_control_text_rows[1])
         put(0, "FEEDBACK", 9, compact_main_control_text_rows[2])

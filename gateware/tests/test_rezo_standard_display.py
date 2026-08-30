@@ -59,7 +59,7 @@ def test_output_meter_pairs_and_labels_are_centered_in_side_arcs():
 
 def _render_text_bounds(*regions, page=0, palette=0, input_modes=(),
                         cv_targets=(), save_default_available=0,
-                        filter_mode=0, row_dry_include=1):
+                        filter_mode=0, row_dry_include=1, selected=0):
     """Return visible glyph bounds inside native compact value chips."""
     dut = RezoTileDisplay(
         h_active=1280, rotate_left=False)
@@ -70,6 +70,7 @@ def _render_text_bounds(*regions, page=0, palette=0, input_modes=(),
 
     async def bench(ctx):
         ctx.set(dut.page, page)
+        ctx.set(dut.selected, selected)
         ctx.set(dut.filter_mode, filter_mode)
         ctx.set(dut.palette, palette)
         ctx.set(dut.save_default_available, save_default_available)
@@ -113,6 +114,15 @@ def _render_text_bounds(*regions, page=0, palette=0, input_modes=(),
             max(x for x, _ in lit) + 1, max(y for _, y in lit) + 1,
         ))
     return bounds
+
+
+def test_main_bank_band_heading_matches_feedback_heading_row():
+    region = (125, 224, 525, 272)
+    main, = _render_text_bounds(
+        region, page=0, selected=RezoUISpec.TARGET_BAND_BASE)
+    feedback, = _render_text_bounds(
+        region, page=1, selected=RezoUISpec.TARGET_FEEDBACK_SEND_BASE)
+    assert (main[1], main[3]) == (feedback[1], feedback[3])
 
 
 def test_standard_hdmi_compact_preview_is_native_size_and_unrotated():

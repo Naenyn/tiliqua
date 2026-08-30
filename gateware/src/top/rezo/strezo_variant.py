@@ -2319,8 +2319,8 @@ class RezoTileDisplay(wiring.Component):
                 put_native(text_page, label, col, 29)
 
         put_native_page_heading(put_native, 0, "PRESET")
-        put_native(0, "BANDS", 8, 14)
-        put_native(0, "FREQ:", 23, 14)
+        put_native(0, "BANDS", 8, 15)
+        put_native(0, "FREQ:", 23, 15)
         put_native(0, "DRIVE", 12, compact_main_control_text_rows[0])
         put_native(0, "RESONANCE", 8, compact_main_control_text_rows[1])
         put_native(0, "FEEDBACK", 9, compact_main_control_text_rows[2])

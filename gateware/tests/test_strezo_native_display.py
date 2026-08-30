@@ -168,6 +168,15 @@ def test_native_canvas_uses_unoutlined_circular_chrome():
     ]
 
 
+def test_main_bank_band_heading_matches_feedback_heading_row():
+    region = (125, 224, 525, 272)
+    main = _render_text_bounds(
+        region, page=0, selected=StrezoUISpec.TARGET_BAND_BASE)
+    feedback = _render_text_bounds(
+        region, page=1, selected=StrezoUISpec.TARGET_FEEDBACK_SEND_BASE)
+    assert (main[1], main[3]) == (feedback[1], feedback[3])
+
+
 def test_every_page_uses_themed_arcs_beyond_the_safe_square():
     points = ((100, 300), (620, 300), (300, 100), (300, 620))
     background = RezoTileDisplay.PALETTE["background"]
