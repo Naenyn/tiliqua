@@ -2,8 +2,12 @@ from amaranth import Module
 from amaranth.sim import Simulator
 
 from top.rezo.rezo_variant import (
+    INPUT_BUS_NOMINAL_MAGNITUDE, INPUT_BUS_NOMINAL_METER_VALUE,
+    NATIVE_INPUT_BUS_FILL_X0, NATIVE_INPUT_BUS_FILL_X1,
     NATIVE_OUTPUT_METER_LABEL_COLS,
-    RezoCore, RezoTileDisplay, output_meter_db_value,
+    RezoCore, RezoTileDisplay, input_bus_meter_db_value,
+    output_meter_db_value,
+    native_input_bus_meter_endpoint,
     native_output_meter_bounds,
 )
 from top.rezo.ui_specs import RezoUISpec
@@ -15,6 +19,22 @@ def test_output_meter_uses_calibrated_daw_scale():
             (0, 1, 4, 16, 65, 129, 257, 513, 1023)] == [
         0, 0, 12, 25, 38, 44, 50, 57, 63,
     ]
+
+
+def test_input_bus_meter_uses_the_complete_bottom_arc_span():
+    assert [native_input_bus_meter_endpoint(value)
+            for value in (0, 32, 57, 63)] == [187, 363, 500, 533]
+    assert native_input_bus_meter_endpoint(0) == NATIVE_INPUT_BUS_FILL_X0
+    assert native_input_bus_meter_endpoint(63) == NATIVE_INPUT_BUS_FILL_X1
+
+
+def test_input_bus_meter_floors_connected_source_idle_noise():
+    assert [input_bus_meter_db_value(magnitude)
+            for magnitude in (0, 3, 4, 5, 32, 1023)] == [0, 0, 0, 2, 24, 63]
+    assert INPUT_BUS_NOMINAL_MAGNITUDE == 624
+    assert INPUT_BUS_NOMINAL_METER_VALUE == 57
+    assert native_input_bus_meter_endpoint(
+        INPUT_BUS_NOMINAL_METER_VALUE) == 500
 
 
 def test_output_meter_pairs_and_labels_are_centered_in_side_arcs():
@@ -39,7 +59,7 @@ def test_output_meter_pairs_and_labels_are_centered_in_side_arcs():
 
 def _render_text_bounds(*regions, page=0, palette=0, input_modes=(),
                         cv_targets=(), save_default_available=0,
-                        filter_mode=0):
+                        filter_mode=0, row_dry_include=1):
     """Return visible glyph bounds inside native compact value chips."""
     dut = RezoTileDisplay(
         h_active=1280, rotate_left=False)
@@ -53,13 +73,14 @@ def _render_text_bounds(*regions, page=0, palette=0, input_modes=(),
         ctx.set(dut.filter_mode, filter_mode)
         ctx.set(dut.palette, palette)
         ctx.set(dut.save_default_available, save_default_available)
+        ctx.set(dut.row_dry_include, row_dry_include)
         for index, value in enumerate(input_modes):
             ctx.set(dut.input_modes[index], value)
         for index, value in enumerate(cv_targets):
             ctx.set(dut.cv_targets[index], value)
         ctx.set(dut.de, 1)
         # Let the sync-domain dynamic-label writer finish a complete pass.
-        for _ in range(400):
+        for _ in range(450):
             await ctx.tick("dvi")
         for x0, y0, x1, y1 in regions:
             points = []
@@ -158,7 +179,11 @@ def test_compact_input_and_options_values_use_fixed_left_origins():
         assert 320 <= bounds[0] <= 322
         assert bounds[2] <= chip[2]
 
-    options_chips = ((336, 244, 456, 284), (336, 308, 472, 348))
+    options_chips = (
+        (336, 244, 456, 284),
+        (336, 308, 472, 348),
+        (336, 372, 472, 412),
+    )
     options_bounds = _render_text_bounds(
         *options_chips, page=5, palette=3, save_default_available=1)
     for bounds, chip in zip(options_bounds, options_chips):
@@ -319,7 +344,7 @@ def test_compact_header_controls_are_tight():
 
 
 def test_compact_options_surface_has_balanced_vertical_padding():
-    """OPTIONS keeps one 20px inset above and below its two value chips."""
+    """OPTIONS keeps one 20px inset above and below its value chips."""
     dut = RezoTileDisplay(
         h_active=720, rotate_left=False)
     sim = Simulator(dut)
@@ -337,8 +362,8 @@ def test_compact_options_surface_has_balanced_vertical_padding():
 
     async def bench(ctx):
         ctx.set(dut.page, 5)
-        await sample(ctx, 367)  # 20px below the SAVE DEFAULT chip
-        await sample(ctx, 368)  # first row beyond the fitted surface
+        await sample(ctx, 431)  # 20px below the ROW DRY chip
+        await sample(ctx, 432)  # first row beyond the fitted surface
 
     sim.add_testbench(bench)
     sim.run()
@@ -591,11 +616,11 @@ def test_compact_output_meters_are_persistent_and_independent():
     assert samples == [
         palette["background"],
         palette["control"], palette["control"], palette["selected"],
-        palette["panel"], palette["selected"],
+        palette["panel"], palette["modulation"],
     ]
 
 
-def test_compact_curved_header_and_footer_leave_footer_empty():
+def test_compact_curved_header_and_footer_host_input_bus_identity():
     dut = RezoTileDisplay(
         h_active=720, rotate_left=False)
     sim = Simulator(dut)
@@ -616,7 +641,7 @@ def test_compact_curved_header_and_footer_leave_footer_empty():
         await sample(ctx, 360, 112)  # black centre begins below compact cap
         await sample(ctx, 360, 200)  # black gap below the header cap
         await sample(ctx, 17 * 16, 656)  # former version-text position
-        await sample(ctx, 360, 640)  # footer background
+        await sample(ctx, 360, 640)  # persistent bottom-arc IN label
 
     sim.add_testbench(bench)
     sim.run()
@@ -624,7 +649,49 @@ def test_compact_curved_header_and_footer_leave_footer_empty():
     palette = RezoTileDisplay.PALETTE
     assert samples == [
         palette["background"], palette["blank"], palette["blank"],
-        palette["background"], palette["background"],
+        palette["background"], palette["text"],
+    ]
+
+
+def test_compact_input_bus_meter_fills_and_clips_in_bottom_arc():
+    dut = RezoTileDisplay(h_active=720, rotate_left=False)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6, domain="sync")
+    sim.add_clock(1e-6, domain="dvi")
+    samples = []
+
+    async def sample(ctx, native_x, native_y):
+        ctx.set(dut.x, native_x)
+        ctx.set(dut.y, native_y)
+        ctx.set(dut.de, 1)
+        for _ in range(12):
+            await ctx.tick("dvi")
+        samples.append(ctx.get(dut.r))
+
+    async def bench(ctx):
+        # Empty interior and persistent curved outline.
+        await sample(ctx, 360, 682)
+        await sample(ctx, 360, 671)
+        # Nominal 0 dB (5 V peak) leaves visible headroom to the right.
+        await sample(ctx, 500, 650)
+        # Mid-scale reaches the centre; the upper six dB use the hot role.
+        ctx.set(dut.input_bus_meter, 32)
+        await sample(ctx, 360, 682)
+        ctx.set(dut.input_bus_meter, 63)
+        await sample(ctx, 510, 645)
+        # The held clip cap occupies the full-scale end of the curved lane.
+        ctx.set(dut.input_bus_clip, 1)
+        await sample(ctx, 530, 632)
+        await sample(ctx, 538, 618)
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    palette = RezoTileDisplay.PALETTE
+    assert samples == [
+        palette["background"], palette["panel"], palette["line"],
+        palette["control"], palette["selected"],
+        palette["modulation"], palette["background"],
     ]
 
 
@@ -913,7 +980,7 @@ def test_compact_input_meter_clamps_and_marks_clipping_inside_value_lane():
     palette = RezoTileDisplay.PALETTE
     assert samples == [
         palette["modulation"], palette["surface"],
-        palette["text"], palette["surface"],
+        palette["modulation"], palette["surface"],
     ]
 
 

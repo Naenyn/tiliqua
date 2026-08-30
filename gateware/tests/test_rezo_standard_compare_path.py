@@ -5,6 +5,51 @@ from amaranth.sim import Simulator
 from top.rezo.rezo_variant import RezoCore
 
 
+def test_input_bus_telemetry_reports_pre_drive_mix_and_sum_clipping():
+    dut = RezoCore(fs=192_000)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+    captured = {}
+
+    async def send(ctx, samples):
+        for channel, sample in enumerate(samples):
+            ctx.set(dut.i.payload[channel].as_value(), sample)
+        ctx.set(dut.i.valid, 1)
+        await ctx.tick().until(dut.i.ready == 1)
+        ctx.set(dut.i.valid, 0)
+        ctx.set(dut.o.ready, 1)
+        await ctx.tick().until(dut.o.valid == 1)
+
+    async def bench(ctx):
+        # The default routing exposes only IN0 at unity. DRIVE must not alter
+        # the display tap because the tap is immediately before that stage.
+        ctx.set(dut.drive, 0)
+        await send(ctx, (12_000, 0, 0, 0))
+        captured["clean_sample"] = ctx.get(
+            dut.input_bus_sample.as_value())
+        captured["clean_clip"] = ctx.get(dut.input_bus_clip)
+
+        # Bring the remaining inputs toward unity and overload the sum.
+        # Telemetry must show the clamped bus and separately retain the fact
+        # that its unclamped sum exceeded it.
+        for channel in range(1, 4):
+            ctx.set(dut.input_modes[channel], dut.INPUT_MODE_AUDIO)
+            ctx.set(dut.input_gains[channel], dut.INPUT_UNITY_POS)
+        for _ in range(192):
+            await send(ctx, (24_000, 24_000, 24_000, 24_000))
+        captured["hot_sample"] = ctx.get(
+            dut.input_bus_sample.as_value())
+        captured["hot_clip"] = ctx.get(dut.input_bus_clip)
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    assert 11_990 <= captured["clean_sample"] <= 12_000
+    assert captured["clean_clip"] == 0
+    assert captured["hot_sample"] == 32_767
+    assert captured["hot_clip"] == 1
+
+
 def test_extreme_resonance_feedback_and_drive_recovers_after_controls_retreat():
     """Saturated SVF state must not wrap into a persistent full-scale orbit."""
     dut = RezoCore(fs=192_000)

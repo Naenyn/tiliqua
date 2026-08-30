@@ -18,9 +18,9 @@ class RezoCpuTop(RezoBeamTop):
     # and rejects both failures and marginal routes before packaging.
     nextpnr_opts = (
         "--timing-allow-fail "
-        f"--seed {family_seed('TILIQUA_REZO_CPU_SEED', '5')}")
-    # Seed 5 is qualified for the aligned pager renderer. Retain the 3% gate so
-    # marginal routes are rejected rather than silently packaged.
+        f"--seed {family_seed('TILIQUA_REZO_CPU_SEED', '9')}")
+    # Seed 9 is qualified for the bottom-arc input-bus meter. Retain the 3%
+    # gate so marginal routes are rejected rather than silently packaged.
     minimum_timing_headroom_percent = 3.0
 
 

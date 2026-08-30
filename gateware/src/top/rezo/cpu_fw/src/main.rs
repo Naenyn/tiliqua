@@ -42,6 +42,7 @@ const LAYOUT_PREVIEW_STATE: u32 = 27;
 const FREQUENCY_PREVIEW_STATE: u32 = 28;
 const LEVEL_STATE: u32 = 29;
 const SAVE_STATE: u32 = 30;
+const ROW_DRY_STATE: u32 = SAVE_STATE;
 const STARTUP_STATE: u32 = 31;
 
 // Persistence is optional at runtime: a missing slot identity or a wedged SPI
@@ -83,6 +84,7 @@ const SAVE: u8 = 91;
 const LAYOUT: u8 = 92;
 const ENABLE: u8 = 93;
 const FREQUENCY: u8 = 103;
+const ROW_DRY: u8 = 122;
 
 const MAIN_BANK: &[u8] = &[0, 1, 60, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
 const MAIN_FILTER_NARROW: &[u8] = &[0, 61, 60, 62, 63, 12, 13];
@@ -97,7 +99,7 @@ const OUTPUT_FILTER: &[u8] = &[
     0, 117, 118, 119, 120, 113, 40, 41, 42, 43, 114, 45, 46, 47, 48, 115, 50, 51, 52, 53, 116, 55,
     56, 57, 58,
 ];
-const OPTIONS_PAGE: &[u8] = &[0, 90, 91];
+const OPTIONS_PAGE: &[u8] = &[0, 90, 122, 91];
 const BANDS_PAGE: &[u8] = &[
     0, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111,
     112,
@@ -199,6 +201,7 @@ struct State {
     selected: u8,
     preset: u8,
     palette: u8,
+    row_dry_include: bool,
     editing: bool,
     bank_drive: u32,
     filter_drive: u32,
@@ -237,6 +240,7 @@ impl State {
             selected: 0,
             preset: 0,
             palette: 0,
+            row_dry_include: true,
             editing: false,
             bank_drive: 0x2000,
             filter_drive: 0x2000,
@@ -322,7 +326,7 @@ impl State {
         } else {
             &mut self.bank_output_sends
         };
-        let columns = if self.filter_mode { 4 } else { 5 };
+        let columns = 4 + ((!self.filter_mode && self.row_dry_include) as usize);
         for column in 0..columns {
             let n = row * 5 + column;
             sends[n] = add(sends[n], delta, 0, 16);
@@ -470,6 +474,7 @@ impl State {
             SLOPE => self.slope = add(self.slope, d * 256, 0, 0x8000),
             WIDTH => self.width = add(self.width, d * 256, 0, 0x8000),
             PALETTE => self.palette = (self.palette as i32 + d).rem_euclid(8) as u8,
+            ROW_DRY => self.row_dry_include = !self.row_dry_include,
             LAYOUT => self.layout_preview = (self.layout_preview as i32 + d).rem_euclid(4) as u32,
             t if (BAND..BAND + 10).contains(&t) => {
                 let n = (t - BAND) as usize;
@@ -612,7 +617,10 @@ impl State {
         ] {
             pack_bits(&mut words, &mut bit, (value >> 6) & 3, 2);
         }
-        pack_bits(&mut words, &mut bit, 0, 12);
+        // Inverse encoding preserves INCLUDE when loading existing records,
+        // whose reserved bits are zero.
+        pack_bits(&mut words, &mut bit, !self.row_dry_include as u32, 1);
+        pack_bits(&mut words, &mut bit, 0, 11);
         debug_assert_eq!(bit, STATE_WORDS * 16);
         words
     }
@@ -705,7 +713,8 @@ impl State {
         self.cutoff |= unpack_bits(words, &mut bit, 2) << 6;
         self.slope |= unpack_bits(words, &mut bit, 2) << 6;
         self.width |= unpack_bits(words, &mut bit, 2) << 6;
-        let _reserved = unpack_bits(words, &mut bit, 12);
+        self.row_dry_include = unpack_bits(words, &mut bit, 1) == 0;
+        let _reserved = unpack_bits(words, &mut bit, 11);
         (self.knee, self.ceiling) = normalize_feedback_limits(self.knee, self.ceiling);
         // Older V2 records could retain a dormant USER vector while naming a
         // factory layout. The CPU-less UI materializes that factory vector on
@@ -772,6 +781,7 @@ impl State {
             SLOPE => ui_write(SLOPE_STATE, 0, self.slope),
             WIDTH => ui_write(WIDTH_STATE, 0, self.width),
             PALETTE => ui_write(PALETTE_STATE, 0, self.palette as u32),
+            ROW_DRY => ui_write(ROW_DRY_STATE, 1, self.row_dry_include as u32),
             LAYOUT => ui_write(LAYOUT_PREVIEW_STATE, 0, self.layout_preview),
             t if (BAND..BAND + 10).contains(&t) => {
                 let n = (t - BAND) as usize;
@@ -803,7 +813,7 @@ impl State {
             }
             t if (113..117).contains(&t) => {
                 let row = (t - 113) as usize;
-                let columns = if self.filter_mode { 4 } else { 5 };
+                let columns = 4 + ((!self.filter_mode && self.row_dry_include) as usize);
                 for column in 0..columns {
                     self.write_output(row * 5 + column);
                 }
@@ -859,6 +869,7 @@ impl State {
         ui_write(SELECTED_STATE, 0, self.selected as u32);
         ui_write(PRESET_STATE, 0, self.preset as u32);
         ui_write(PALETTE_STATE, 0, self.palette as u32);
+        ui_write(ROW_DRY_STATE, 1, self.row_dry_include as u32);
         ui_write(EDITING_STATE, 0, self.editing as u32);
         ui_write(DRIVE_STATE, 0, self.drive());
         ui_write(RESONANCE_STATE, 0, self.resonance);

@@ -60,7 +60,9 @@ try:
     from .ui_specs import StrezoUISpec
     from .ui_common import (
         BASE_TARGET_NAMES, COMMON_PAGE_TITLES, DAMP_NAMES, LAYOUT_NAMES,
-        NAV_NAMES, PALETTE_NAMES, SAVE_NAMES, format_frequency_name,
+        NAV_NAMES, PALETTE_NAMES, ROW_DRY_NAMES, SAVE_NAMES,
+        format_frequency_name,
+        INPUT_BUS_NOMINAL_METER_VALUE, input_bus_meter_db_value,
         NATIVE_FEEDBACK_AMOUNT_Y0, NATIVE_FEEDBACK_CEILING_Y0,
         NATIVE_FEEDBACK_FILL_X0, NATIVE_FEEDBACK_FILL_X1,
         NATIVE_FEEDBACK_TRACK_X0, NATIVE_FEEDBACK_TRACK_X1,
@@ -106,7 +108,9 @@ except ImportError:  # top_level_cli executes this file directly.
     from ui_specs import StrezoUISpec
     from ui_common import (
         BASE_TARGET_NAMES, COMMON_PAGE_TITLES, DAMP_NAMES, LAYOUT_NAMES,
-        NAV_NAMES, PALETTE_NAMES, SAVE_NAMES, format_frequency_name,
+        NAV_NAMES, PALETTE_NAMES, ROW_DRY_NAMES, SAVE_NAMES,
+        format_frequency_name,
+        INPUT_BUS_NOMINAL_METER_VALUE, input_bus_meter_db_value,
         NATIVE_FEEDBACK_AMOUNT_Y0, NATIVE_FEEDBACK_CEILING_Y0,
         NATIVE_FEEDBACK_FILL_X0, NATIVE_FEEDBACK_FILL_X1,
         NATIVE_FEEDBACK_TRACK_X0, NATIVE_FEEDBACK_TRACK_X1,
@@ -167,6 +171,23 @@ def output_meter_db_value(magnitude):
 
 NATIVE_OUTPUT_METER_RADII = (335, 311, 303, 279)
 NATIVE_OUTPUT_METER_LABEL_COLS = (3, 5, 39, 41)
+
+# Two curved input-bus meters share the bottom annulus. Each begins beside the
+# center label and grows outward toward its corresponding stereo side.
+NATIVE_STEREO_INPUT_TRACK_LEFT_X0 = 183
+NATIVE_STEREO_INPUT_TRACK_LEFT_X1 = 356
+NATIVE_STEREO_INPUT_TRACK_RIGHT_X0 = 364
+NATIVE_STEREO_INPUT_TRACK_RIGHT_X1 = 537
+NATIVE_STEREO_INPUT_FILL_LEFT_X0 = 187
+NATIVE_STEREO_INPUT_FILL_LEFT_X1 = 352
+NATIVE_STEREO_INPUT_FILL_RIGHT_X0 = 368
+NATIVE_STEREO_INPUT_FILL_RIGHT_X1 = 533
+
+
+def native_stereo_input_bus_meter_offset(value):
+    """Map a calibrated 0..63 meter value across either stereo half-arc."""
+    # 2 + 1/2 + 1/8 + 1/32 maps code 63 to the exact 165-pixel fill span.
+    return (value << 1) + (value >> 1) + (value >> 3) + (value >> 5)
 
 
 def native_output_meter_bounds(y):
@@ -314,6 +335,14 @@ class RezoCore(RezoCoreConstants, wiring.Component):
         # explicit and lets the display choose its own compact scale.
         self.input_meters = [Signal(signed(16), name=f"input_meter{n}")
                              for n in range(4)]
+        # Independent left/right external-input buses after all AUDIO-mode
+        # VALUE gains and summing, immediately before DRIVE and feedback.
+        # These display-only taps never feed the DSP path.
+        self.input_bus_samples = [
+            Signal(ASQ, name=f"input_bus_sample{side}")
+            for side in range(2)]
+        self.input_bus_clips = [
+            Signal(name=f"input_bus_clip{side}") for side in range(2)]
         self.bank_groups = [Signal(unsigned(4), init=1 << min(n // 3, 3), name=f"bank_group{n}")
                             for n in range(self.N_BANDS)]
         self.feedback_sends = [Signal(init=1, name=f"feedback_send{n}")
@@ -1573,6 +1602,14 @@ class RezoCore(RezoCoreConstants, wiring.Component):
                 m.d.sync += [
                             input_mix_sample.eq(input_mix_limited),
                             input_mix_sample_r.eq(input_mix_limited_r),
+                            self.input_bus_samples[0].eq(input_mix_limited),
+                            self.input_bus_samples[1].eq(input_mix_limited_r),
+                            self.input_bus_clips[0].eq(
+                                (input_mix_acc > 32767) |
+                                (input_mix_acc < -32768)),
+                            self.input_bus_clips[1].eq(
+                                (input_mix_acc_r > 32767) |
+                                (input_mix_acc_r < -32768)),
                             resonance.eq(
                                 16384 - (resonance_reduced_q >> 1)),
                             mac_a_q.as_value().eq(
@@ -2007,6 +2044,8 @@ class RezoTileDisplay(wiring.Component):
             "cv_targets": In(data.ArrayLayout(unsigned(3), 4)),
             "cv_depths": In(data.ArrayLayout(signed(8), 4)),
             "input_meters": In(data.ArrayLayout(signed(6), 4)),
+            "input_bus_meters": In(data.ArrayLayout(unsigned(6), 2)),
+            "input_bus_clips": In(data.ArrayLayout(unsigned(1), 2)),
             "output_meters": In(data.ArrayLayout(unsigned(6), 4)),
             "output_clips": In(data.ArrayLayout(unsigned(1), 4)),
             "output_send_write_addr": In(unsigned(5)),
@@ -2026,6 +2065,7 @@ class RezoTileDisplay(wiring.Component):
             "page": In(unsigned(3)),
             "preset": In(unsigned(3)),
             "palette": In(unsigned(3)),
+            "row_dry_include": In(1),
             "save_default_available": In(1),
             "save_default_busy": In(1),
             "save_default_status": In(unsigned(2)),
@@ -2273,6 +2313,7 @@ class RezoTileDisplay(wiring.Component):
         for text_page in range(8):
             put_native(text_page, "OUT", 3, 15)
             put_native(text_page, "OUT", 39, 15)
+            put_native(text_page, "L IN R", 19, 40)
             for label, col in zip(
                     "1234", NATIVE_OUTPUT_METER_LABEL_COLS):
                 put_native(text_page, label, col, 29)
@@ -2287,9 +2328,12 @@ class RezoTileDisplay(wiring.Component):
         put_native_support_page_labels(
             put_native, output_label_col=8,
             content_row_offsets={1: -1, 3: -1, 4: -3, 5: -1, 6: -1},
-            feedback_amount_row_offset=1)
-        put_native(5, "ADVANCED", 8, 26)
-        put_native(5, "CROSS CURVE", 9, 30)
+            feedback_amount_row_offset=1, row_dry=True)
+        # INCLUDE and EXCLUDE share this suffix; only their first two
+        # characters need dynamic tile updates.
+        put_native(5, "CLUDE", 24, 20)
+        put_native(5, "ADVANCED", 8, 28)
+        put_native(5, "CROSS CURVE", 9, 32)
 
         put_native(6, "MOTION", 8, 27)
         for label, row in (("LFO SHAPE", 29), ("RATE HZ", 31),
@@ -2338,6 +2382,7 @@ class RezoTileDisplay(wiring.Component):
         selected_sync = Signal.like(selected_dvi_q)
         editing_sync = Signal()
         palette_sync = Signal(unsigned(3))
+        row_dry_sync = Signal()
         damp_mode_sync = Signal(unsigned(3))
         save_available_sync = Signal()
         save_busy_sync = Signal()
@@ -2363,6 +2408,7 @@ class RezoTileDisplay(wiring.Component):
             FFSynchronizer(selected_dvi_q, selected_sync),
             FFSynchronizer(self.editing, editing_sync),
             FFSynchronizer(self.palette, palette_sync),
+            FFSynchronizer(self.row_dry_include, row_dry_sync),
             FFSynchronizer(self.damp_mode, damp_mode_sync),
             FFSynchronizer(self.save_default_available, save_available_sync),
             FFSynchronizer(self.save_default_busy, save_busy_sync),
@@ -2410,7 +2456,7 @@ class RezoTileDisplay(wiring.Component):
             m.d.comb += bands_selected_band.eq(
                 selected_sync - StrezoUISpec.TARGET_BAND_ENABLE_BASE)
 
-        update_index = Signal(range(127))
+        update_index = Signal(range(129))
         update_active = Signal(init=1)
         refresh_counter = Signal(range(4_000_000))
         writer_address = Signal(unsigned(15))
@@ -2526,6 +2572,9 @@ class RezoTileDisplay(wiring.Component):
         palette_chars = [Array(Const(self.code(name[pos]), 6)
                                for name in palette_names)
                          for pos in range(6)]
+        row_dry_chars = [Array(Const(self.code(name[pos]), 6)
+                               for name in ROW_DRY_NAMES)
+                         for pos in range(2)]
         damp_names = DAMP_NAMES
         damp_chars = [Array(Const(self.code(name[pos]), 6)
                             for name in damp_names)
@@ -2606,7 +2655,7 @@ class RezoTileDisplay(wiring.Component):
         # DP16KD instead of synthesizing a 96-way, 15-bit address mux.  The
         # first four NAV/EDIT cells follow the active page and remain the only
         # dynamically calculated destinations.
-        writer_address_init = [0] * 128
+        writer_address_init = [0] * 129
         def writer_cell(page, x0, y0, offset=0):
             return (page * page_cells + y0 * text_row_stride + x0 + offset)
 
@@ -2631,7 +2680,7 @@ class RezoTileDisplay(wiring.Component):
         for pos in range(6):
             writer_address_init[46 + pos] = writer_cell(5, 22, 16, pos)
         for pos in range(7):
-            writer_address_init[52 + pos] = writer_cell(5, 22, 20, pos)
+            writer_address_init[52 + pos] = writer_cell(5, 22, 24, pos)
             # Every BANDS layout value uses the same fixed left origin.
             writer_address_init[59 + pos] = writer_cell(
                 6, 16, NATIVE_PAGE_HEADING_ROW, pos)
@@ -2652,11 +2701,13 @@ class RezoTileDisplay(wiring.Component):
             writer_address_init[95 + pos] = writer_cell(
                 6, NATIVE_MOTION_VALUE_TEXT_COL, 33, pos)
         for pos in range(8):
-            writer_address_init[99 + pos] = writer_cell(5, 22, 30, pos)
+            writer_address_init[99 + pos] = writer_cell(5, 22, 32, pos)
         for n, (_, _, depth_row) in enumerate(compact_input_text_rows):
             for pos in range(5):
                 writer_address_init[107 + n * 5 + pos] = writer_cell(
                     2, 13, depth_row, pos)
+        for pos in range(2):
+            writer_address_init[127 + pos] = writer_cell(5, 22, 20, pos)
         m.submodules.writer_address_mem = writer_address_mem = Memory(
             shape=unsigned(15), depth=len(writer_address_init),
             init=writer_address_init, attrs={"ram_style": "block"})
@@ -2754,8 +2805,12 @@ class RezoTileDisplay(wiring.Component):
                         m.d.comb += writer_char.eq(Mux(
                             input_modes_sync[n] == RezoCore.INPUT_MODE_CV,
                             Const(self.code("DEPTH"[pos]), 6), 0))
+            for pos in range(2):
+                with m.Case(127 + pos):
+                    m.d.comb += writer_char.eq(
+                        row_dry_chars[pos][row_dry_sync])
         with m.If(update_active):
-            with m.If(update_index == 126):
+            with m.If(update_index == 128):
                 m.d.sync += [update_active.eq(0), refresh_counter.eq(0)]
             with m.Else():
                 m.d.sync += update_index.eq(update_index + 1)
@@ -2833,6 +2888,11 @@ class RezoTileDisplay(wiring.Component):
         output_meter_fill_q0 = Const(0)
         output_meter_hot_q0 = Const(0)
         output_meter_clip_q0 = Const(0)
+        input_bus_meter_panel_q0 = Const(0)
+        input_bus_meter_fill_q0 = Const(0)
+        input_bus_meter_hot_q0 = Const(0)
+        input_bus_meter_clip_q0 = Const(0)
+        input_bus_meter_zero_db_q0 = Const(0)
         circle_inside, _ = native_viewport_regions(
             m, x, text_y_pre, inner_radius=250)
         native_safe_square = (
@@ -2902,19 +2962,40 @@ class RezoTileDisplay(wiring.Component):
             init=meter_curve_init, attrs={"ram_style": "block"})
         meter_curve_rport = output_meter_curve_mem.read_port(domain="dvi")
         meter_curve_data = Signal(unsigned(40))
-        m.d.comb += meter_curve_rport.addr.eq(ui_y[:10])
+        # Side OUT meters and the rotated bottom IN meters never occupy the
+        # same scanline. Select the curve-ROM axis before the registered pixel
+        # coordinates arrive, allowing all six meters to share one read port
+        # and one annulus pipeline.
+        m.d.comb += meter_curve_rport.addr.eq(Mux(
+            ui_y >= 614, ui_x[:10], ui_y[:10]))
         m.d.dvi += meter_curve_data.eq(meter_curve_rport.data)
 
+        meter_bottom = Signal()
+        meter_bottom_left = Signal()
+        meter_axis = Signal(unsigned(8))
         meter_lane_valid = Signal()
         meter_curve_x = Signal(unsigned(10))
         meter_bound_lo = Signal(unsigned(10))
         meter_bound_hi = Signal(unsigned(10))
         meter_value = Signal(unsigned(6))
         meter_clip = Signal()
-        # Meter pixels only exist in the far side arcs (x < 106 or
-        # x >= 614), so x[9] is an exact and much shallower left/right
-        # selector than a full ``x < 360`` comparison on every lane.
-        m.d.comb += meter_curve_x.eq(Mux(x[9], 719 - x, x))
+        m.d.comb += [
+            meter_bottom_left.eq(
+                (x >= NATIVE_STEREO_INPUT_TRACK_LEFT_X0) &
+                (x < NATIVE_STEREO_INPUT_TRACK_LEFT_X1)),
+            meter_bottom.eq(
+                (y >= 614) &
+                (meter_bottom_left |
+                 ((x >= NATIVE_STEREO_INPUT_TRACK_RIGHT_X0) &
+                  (x < NATIVE_STEREO_INPUT_TRACK_RIGHT_X1)))),
+            # Fold both bottom halves onto one 0..172 center-to-edge axis.
+            meter_axis.eq(Mux(
+                meter_bottom_left,
+                NATIVE_STEREO_INPUT_TRACK_LEFT_X1 - 1 - x,
+                x - NATIVE_STEREO_INPUT_TRACK_RIGHT_X0)),
+            meter_curve_x.eq(Mux(
+                meter_bottom, 719 - y, Mux(x[9], 719 - x, x))),
+        ]
         with m.If((meter_curve_x >= meter_curve_data[0:10]) &
                   (meter_curve_x < meter_curve_data[10:20])):
             m.d.comb += [
@@ -2922,12 +3003,20 @@ class RezoTileDisplay(wiring.Component):
                 meter_bound_lo.eq(meter_curve_data[0:10]),
                 meter_bound_hi.eq(meter_curve_data[10:20]),
                 meter_value.eq(Mux(
-                    x[9], self.output_meters[3],
-                    self.output_meters[0])),
+                    meter_bottom,
+                    Mux(meter_bottom_left, self.input_bus_meters[0],
+                        self.input_bus_meters[1]),
+                    Mux(x[9], self.output_meters[3],
+                        self.output_meters[0]))),
                 meter_clip.eq(Mux(
-                    x[9], self.output_clips[3],
-                    self.output_clips[0]))]
+                    meter_bottom,
+                    Mux(meter_bottom_left, self.input_bus_clips[0],
+                        self.input_bus_clips[1]),
+                    Mux(x[9], self.output_clips[3],
+                        self.output_clips[0]))),
+            ]
         with m.Elif(
+                ~meter_bottom &
                 (meter_curve_x >= meter_curve_data[20:30]) &
                 (meter_curve_x < meter_curve_data[30:40])):
             m.d.comb += [
@@ -2939,55 +3028,97 @@ class RezoTileDisplay(wiring.Component):
                     self.output_meters[1])),
                 meter_clip.eq(Mux(
                     x[9], self.output_clips[2],
-                    self.output_clips[1]))]
+                    self.output_clips[1])),
+            ]
 
         meter_x_q = Signal.like(x)
         meter_y_q = Signal.like(y)
+        meter_axis_q = Signal.like(meter_axis)
         meter_bound_lo_q = Signal.like(meter_bound_lo)
         meter_bound_hi_q = Signal.like(meter_bound_hi)
         meter_value_q = Signal.like(meter_value)
         meter_clip_q = Signal()
+        meter_bottom_q = Signal()
         meter_lane_valid_q = Signal()
         m.d.dvi += [
             meter_x_q.eq(meter_curve_x),
             meter_y_q.eq(y),
+            meter_axis_q.eq(meter_axis),
             meter_bound_lo_q.eq(meter_bound_lo),
             meter_bound_hi_q.eq(meter_bound_hi),
             meter_value_q.eq(meter_value),
             meter_clip_q.eq(meter_clip),
+            meter_bottom_q.eq(meter_bottom),
             meter_lane_valid_q.eq(meter_lane_valid),
         ]
         meter_top = Signal(unsigned(10))
-        m.d.comb += meter_top.eq(
-            460 - ((meter_value_q << 1) + meter_value_q))
-        meter_shape = meter_lane_valid_q & (meter_y_q >= 260) & \
-            (meter_y_q < 462) & (meter_x_q >= meter_bound_lo_q) & \
-            (meter_x_q < meter_bound_hi_q)
-        meter_interior = (meter_y_q >= 262) & (meter_y_q < 460) & \
-            (meter_x_q >= meter_bound_lo_q + 2) & \
+        input_meter_offset = Signal(unsigned(9))
+        m.d.comb += [
+            meter_top.eq(460 - ((meter_value_q << 1) + meter_value_q)),
+            input_meter_offset.eq(
+                native_stereo_input_bus_meter_offset(meter_value_q)),
+        ]
+        meter_shape = meter_lane_valid_q & Mux(
+            meter_bottom_q, Const(1),
+            (meter_y_q >= 260) & (meter_y_q < 462))
+        radial_interior = (meter_x_q >= meter_bound_lo_q + 2) & \
             (meter_x_q < meter_bound_hi_q - 2)
-        output_meter_panel = meter_shape & ~meter_interior
-        output_meter_fill = meter_lane_valid_q & (meter_y_q >= 264) & \
-            (meter_y_q >= meter_top) & (meter_y_q < 458) & \
-            (meter_x_q >= meter_bound_lo_q + 4) & \
+        meter_interior = radial_interior & Mux(
+            meter_bottom_q,
+            (meter_axis_q >= 2) & (meter_axis_q < 171),
+            (meter_y_q >= 262) & (meter_y_q < 460))
+        meter_panel = meter_shape & ~meter_interior
+        radial_fill = (meter_x_q >= meter_bound_lo_q + 4) & \
             (meter_x_q < meter_bound_hi_q - 4)
-        output_meter_hot = output_meter_fill & (meter_y_q < 290)
-        # 260..263 is an aligned four-line span. Decode the shared upper
-        # bits directly instead of building two full-width comparators.
-        meter_clip_row = meter_y_q[2:] == (260 >> 2)
-        output_meter_clip = meter_lane_valid_q & meter_clip_q & \
-            meter_clip_row & \
-            (meter_x_q >= meter_bound_lo_q + 4) & \
-            (meter_x_q < meter_bound_hi_q - 4)
+        meter_fill = meter_lane_valid_q & radial_fill & Mux(
+            meter_bottom_q,
+            (meter_axis_q >= 4) &
+            (meter_axis_q < 4 + input_meter_offset),
+            (meter_y_q >= 264) & (meter_y_q >= meter_top) &
+            (meter_y_q < 458))
+        nominal_input_axis = 4 + native_stereo_input_bus_meter_offset(
+            INPUT_BUS_NOMINAL_METER_VALUE)
+        meter_hot = meter_fill & Mux(
+            meter_bottom_q,
+            meter_axis_q >= nominal_input_axis,
+            meter_y_q < 290)
+        input_bus_meter_zero_db = meter_bottom_q & meter_lane_valid_q & \
+            radial_interior & \
+            (meter_axis_q >= nominal_input_axis - 1) & \
+            (meter_axis_q < nominal_input_axis + 2)
+        # OUT clips occupy their four-line top cap; IN clips occupy the four
+        # pixels at the outward end of the folded axis.
+        meter_clip_shape = meter_lane_valid_q & meter_clip_q & radial_fill & \
+            Mux(meter_bottom_q,
+                (meter_axis_q >= 165) & (meter_axis_q < 169),
+                meter_y_q[2:] == (260 >> 2))
+        output_meter_panel = ~meter_bottom_q & meter_panel
+        output_meter_fill = ~meter_bottom_q & meter_fill
+        output_meter_hot = ~meter_bottom_q & meter_hot
+        output_meter_clip = ~meter_bottom_q & meter_clip_shape
+        input_bus_meter_panel = meter_bottom_q & meter_panel
+        input_bus_meter_fill = meter_bottom_q & meter_fill
+        input_bus_meter_hot = meter_bottom_q & meter_hot
+        input_bus_meter_clip = meter_bottom_q & meter_clip_shape
         output_meter_panel_q0 = Signal()
         output_meter_fill_q0 = Signal()
         output_meter_hot_q0 = Signal()
         output_meter_clip_q0 = Signal()
+        input_bus_meter_panel_q0 = Signal()
+        input_bus_meter_fill_q0 = Signal()
+        input_bus_meter_hot_q0 = Signal()
+        input_bus_meter_clip_q0 = Signal()
+        input_bus_meter_zero_db_q0 = Signal()
         m.d.dvi += [
             output_meter_panel_q0.eq(output_meter_panel),
             output_meter_fill_q0.eq(output_meter_fill),
             output_meter_hot_q0.eq(output_meter_hot),
             output_meter_clip_q0.eq(output_meter_clip),
+            input_bus_meter_panel_q0.eq(input_bus_meter_panel),
+            input_bus_meter_fill_q0.eq(input_bus_meter_fill),
+            input_bus_meter_hot_q0.eq(input_bus_meter_hot),
+            input_bus_meter_clip_q0.eq(input_bus_meter_clip),
+            input_bus_meter_zero_db_q0.eq(input_bus_meter_zero_db),
         ]
         title_panel = active & self.rect(
             x, y,
@@ -3024,7 +3155,7 @@ class RezoTileDisplay(wiring.Component):
         surface_row_y0s = Array(Const(row, 6) for row in (
             14, 14, 13, 14, 14, 14, 14, 14))
         surface_row_y1s = Array(Const(row, 6) for row in (
-            35, 31, 38, 30, 32, 34, 37, 38))
+            35, 31, 38, 31, 32, 34, 37, 38))
         m.d.comb += [
             surface_row_y0.eq(surface_row_y0s[text_page_q]),
             surface_row_y1.eq(surface_row_y1s[text_page_q]),
@@ -3073,11 +3204,22 @@ class RezoTileDisplay(wiring.Component):
                 (288), t=3)
         save_default_chip = advanced_page & self.rect(
             x, y, (native_value_chip_x0(22)),
+            (372),
+            (472),
+            (412))
+        save_default_select = advanced_page & (
+            selected_dvi_q == StrezoUISpec.TARGET_SAVE_DEFAULT) & self.outline(
+                x, y, ((native_value_chip_x0(22) - 4)),
+                (368),
+                (476),
+                (416), t=3)
+        row_dry_chip = advanced_page & self.rect(
+            x, y, (native_value_chip_x0(22)),
             (308),
             (472),
             (348))
-        save_default_select = advanced_page & (
-            selected_dvi_q == StrezoUISpec.TARGET_SAVE_DEFAULT) & self.outline(
+        row_dry_select = advanced_page & (
+            selected_dvi_q == StrezoUISpec.TARGET_ROW_DRY) & self.outline(
                 x, y, ((native_value_chip_x0(22) - 4)),
                 (304),
                 (476),
@@ -3274,15 +3416,15 @@ class RezoTileDisplay(wiring.Component):
                 t=3)
         cross_curve_chip = advanced_page & self.rect(
             x, y, ((native_value_chip_x0(22))),
-            (468),
+            (500),
             (488),
-            (508))
+            (540))
         cross_curve_select = advanced_page & (
             selected_dvi_q == StrezoUISpec.TARGET_CROSS_CURVE) & self.outline(
                 x, y, ((native_value_chip_x0(22) - 4)),
-                (464),
+                (496),
                 (492),
-                (512), t=3)
+                (544), t=3)
 
         preset_chip = Signal()
         preset_select = Signal()
@@ -3756,9 +3898,9 @@ class RezoTileDisplay(wiring.Component):
             group_page & group_selected_valid & self.outline(
                 x, y,
                 group_selected_x - ((5)),
-                (306),
+                (290),
                 group_selected_x + ((23)),
-                (486), t=3))
+                (470), t=3))
         group_band = Signal(range(RezoCore.N_BANDS))
         group_row = Signal(unsigned(2))
         group_band_active = Signal()
@@ -4340,7 +4482,8 @@ class RezoTileDisplay(wiring.Component):
                                   output_side_select | cross_header_select_q0 |
                                   mid_side_select),
             advanced_selected_q.eq(
-                palette_select | cross_curve_select | save_default_select),
+                palette_select | row_dry_select |
+                cross_curve_select | save_default_select),
             bands_selected_q.eq(layout_select | band_select_q0 |
                                 motion_chip_select | motion_depth_select),
             cross_selected_q.eq(cross_layout_select | cross_select),
@@ -4377,8 +4520,8 @@ class RezoTileDisplay(wiring.Component):
             geometry_mod_q0.eq(band_mod_fill | bank_control_mod_fill |
                                input_meter_q0 | motion_monitor_line |
                                limit_soft_region),
-            geometry_panel_q0.eq(preset_chip | palette_chip | cross_curve_chip |
-                                 save_default_chip |
+            geometry_panel_q0.eq(preset_chip | palette_chip | row_dry_chip |
+                                 cross_curve_chip | save_default_chip |
                                  motion_value_chip |
                                  damp_chip | layout_chip |
                                  side_page_chip |
@@ -4387,18 +4530,27 @@ class RezoTileDisplay(wiring.Component):
                                  output_meter_panel_q0),
         ]
         m.d.dvi += [
-            selected_q.eq(selected | pager_current |
-                          output_meter_hot_q0 | output_meter_clip_q0),
+            selected_q.eq(
+                selected | pager_current |
+                (output_meter_hot_q0 & ~output_meter_clip_q0) |
+                (input_bus_meter_hot_q0 &
+                 ~input_bus_meter_zero_db_q0 &
+                 ~input_bus_meter_clip_q0)),
             text_q.eq(text),
             unity_marker_q.eq(text_line_marker),
             fill_q.eq(geometry_fill_q0 |
                       input_fill_q0 | group_fill_q0 | output_fill_q0 |
-                      output_meter_fill_q0),
+                      output_meter_fill_q0 |
+                      (input_bus_meter_fill_q0 &
+                       ~input_bus_meter_zero_db_q0)),
             line_q.eq(geometry_line_q0 | input_line_q0 |
-                      group_ghost_q0 | pager_line),
-            mod_q.eq(geometry_mod_q0),
+                      group_ghost_q0 | pager_line |
+                      input_bus_meter_zero_db_q0),
+            mod_q.eq(geometry_mod_q0 | output_meter_clip_q0 |
+                     input_bus_meter_clip_q0),
             panel_q.eq(geometry_panel_q0 | input_panel_q0 | group_cell_q0 |
-                       output_cell_q0 | cross_layout_chip),
+                       output_cell_q0 | cross_layout_chip |
+                       input_bus_meter_panel_q0),
             background_q.eq((arc_background)),
             active_q.eq(active),
             surface_q.eq(content_surface),
@@ -4631,6 +4783,12 @@ class RezoBeamTop(Elaboratable):
         output_clip_holds = [
             Signal(unsigned(6), name=f"output_clip_hold{n}")
             for n in range(4)]
+        input_bus_meter_values = [
+            Signal(unsigned(6), name=f"input_bus_meter_value{side}")
+            for side in range(2)]
+        input_bus_clip_holds = [
+            Signal(unsigned(6), name=f"input_bus_clip_hold{side}")
+            for side in range(2)]
         output_meter_decay = Signal(unsigned(11))
         output_frame_accepted = rezo.o.valid & rezo.o.ready
         output_db_init = [
@@ -4639,19 +4797,57 @@ class RezoBeamTop(Elaboratable):
             shape=unsigned(6), depth=len(output_db_init),
             init=output_db_init, attrs={"ram_style": "block"})
         output_db_rport = output_db_mem.read_port()
+        # The stereo input view uses the same -48..0 dBFS calibration and
+        # electrical-idle floor as REZO/REZOMO. One BRAM is time-multiplexed
+        # between the two sides.
+        input_bus_db_init = [
+            input_bus_meter_db_value(magnitude) for magnitude in range(1024)]
+        m.submodules.input_bus_db_mem = input_bus_db_mem = Memory(
+            shape=unsigned(6), depth=len(input_bus_db_init),
+            init=input_bus_db_init, attrs={"ram_style": "block"})
+        input_bus_db_rport = input_bus_db_mem.read_port()
         output_magnitudes = [
             Signal(unsigned(10), name=f"output_magnitude{n}")
             for n in range(4)]
+        input_bus_magnitudes = [
+            Signal(unsigned(10), name=f"input_bus_magnitude{side}")
+            for side in range(2)]
         output_meter_scan = Signal(unsigned(2))
         output_meter_scan_q = Signal(unsigned(2))
+        input_bus_meter_scan = Signal()
+        input_bus_meter_scan_q = Signal()
         m.d.comb += output_db_rport.addr.eq(
             Array(output_magnitudes)[output_meter_scan])
+        m.d.comb += input_bus_db_rport.addr.eq(
+            Array(input_bus_magnitudes)[input_bus_meter_scan])
         m.d.sync += [
             output_meter_scan.eq(output_meter_scan + 1),
             output_meter_scan_q.eq(output_meter_scan),
+            input_bus_meter_scan.eq(~input_bus_meter_scan),
+            input_bus_meter_scan_q.eq(input_bus_meter_scan),
         ]
         with m.If(output_frame_accepted):
             m.d.sync += output_meter_decay.eq(output_meter_decay + 1)
+            for side in range(2):
+                input_bus_magnitude_full = Signal(
+                    unsigned(16), name=f"input_bus_magnitude_full{side}")
+                m.d.comb += input_bus_magnitude_full.eq(Mux(
+                    rezo.input_bus_samples[side].as_value()[-1],
+                    (~rezo.input_bus_samples[side].as_value().as_unsigned()) + 1,
+                    rezo.input_bus_samples[side].as_value().as_unsigned()))
+                m.d.sync += input_bus_magnitudes[side].eq(Mux(
+                    input_bus_magnitude_full[15], 1023,
+                    input_bus_magnitude_full[5:15]))
+                with m.If((output_meter_decay == 0x7ff) &
+                          (input_bus_meter_values[side] != 0)):
+                    m.d.sync += input_bus_meter_values[side].eq(
+                        input_bus_meter_values[side] - 1)
+                with m.If(rezo.input_bus_clips[side]):
+                    m.d.sync += input_bus_clip_holds[side].eq(45)
+                with m.Elif((output_meter_decay == 0x7ff) &
+                            (input_bus_clip_holds[side] != 0)):
+                    m.d.sync += input_bus_clip_holds[side].eq(
+                        input_bus_clip_holds[side] - 1)
             for n in range(4):
                 output_magnitude_full = Signal(
                     unsigned(16), name=f"output_magnitude_full{n}")
@@ -4684,6 +4880,14 @@ class RezoBeamTop(Elaboratable):
                     with m.If(output_db_rport.data > output_meter_values[n]):
                         m.d.sync += output_meter_values[n].eq(
                             output_db_rport.data)
+        with m.Switch(input_bus_meter_scan_q):
+            for side in range(2):
+                with m.Case(side):
+                    with m.If(
+                            input_bus_db_rport.data >
+                            input_bus_meter_values[side]):
+                        m.d.sync += input_bus_meter_values[side].eq(
+                            input_bus_db_rport.data)
 
         m.submodules.dvi_tgen = dvi_tgen = dvi.DVITimingGen()
         for member in dvi_tgen.timings.signature.members:
@@ -4815,6 +5019,8 @@ class RezoBeamTop(Elaboratable):
             FFSynchronizer(i=ui.page, o=display.page, o_domain="dvi"),
             FFSynchronizer(i=ui.preset, o=display.preset, o_domain="dvi"),
             FFSynchronizer(i=ui.palette, o=display.palette, o_domain="dvi"),
+            FFSynchronizer(i=ui.row_dry_include,
+                           o=display.row_dry_include, o_domain="dvi"),
             FFSynchronizer(i=ui.save_default_available,
                            o=display.save_default_available, o_domain="dvi"),
             FFSynchronizer(i=ui.save_default_busy,
@@ -4856,6 +5062,13 @@ class RezoBeamTop(Elaboratable):
             m.submodules += FFSynchronizer(
                 i=output_clip_holds[n] != 0, o=display.output_clips[n],
                 o_domain="dvi")
+        for side in range(2):
+            m.submodules += FFSynchronizer(
+                i=input_bus_meter_values[side],
+                o=display.input_bus_meters[side], o_domain="dvi")
+            m.submodules += FFSynchronizer(
+                i=input_bus_clip_holds[side] != 0,
+                o=display.input_bus_clips[side], o_domain="dvi")
         for n in range(RezoCore.N_BANDS):
             m.submodules += FFSynchronizer(
                 i=ui.bank_groups[n], o=display.bank_groups[n], o_domain="dvi")

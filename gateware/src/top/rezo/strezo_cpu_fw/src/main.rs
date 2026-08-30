@@ -91,6 +91,7 @@ const CROSS_ROW: u8 = 118;
 const CROSS_COL: u8 = 122;
 const OUTPUT_DRY_COL: u8 = CROSS_LAYOUT;
 const SAME_FEEDBACK: u8 = 126;
+const ROW_DRY: u8 = 126;
 const CROSS_CURVE: u8 = MOTION_DEPTH;
 const MID_GAIN: u8 = SAME_FEEDBACK;
 const SIDE_GAIN: u8 = CROSS_FEEDBACK;
@@ -98,7 +99,7 @@ const SIDE_GAIN: u8 = CROSS_FEEDBACK;
 const MAIN_PAGE: &[u8] = &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
 const FEEDBACK_PAGE: &[u8] = &[0, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 14, 15, 16, 17];
 const GROUP_PAGE: &[u8] = &[0, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39];
-const OPTIONS_PAGE: &[u8] = &[0, 90, 91, 1];
+const OPTIONS_PAGE: &[u8] = &[0, 90, 126, 91, 1];
 const OUTPUT_PAGE: &[u8] = &[
     0, 122, 123, 124, 125, 60, 118, 114, 40, 41, 42, 43, 44, 119, 115, 45, 46, 47, 48, 49, 120,
     116, 50, 51, 52, 53, 54, 121, 117, 55, 56, 57, 58, 59, MID_GAIN, SIDE_GAIN,
@@ -142,6 +143,7 @@ struct State {
     selected: u8,
     preset: u8,
     palette: u8,
+    row_dry_include: bool,
     editing: bool,
     drive: u32,
     resonance: u32,
@@ -184,6 +186,7 @@ impl State {
             selected: 0,
             preset: 0,
             palette: 0,
+            row_dry_include: true,
             editing: false,
             drive: 0x2000,
             resonance: 0x2000,
@@ -363,7 +366,7 @@ impl State {
     }
 
     fn edit_output_row(&mut self, row: usize, d: i32) {
-        for col in 0..5 {
+        for col in 0..4 + self.row_dry_include as usize {
             let n = row * 5 + col;
             self.output_sends[n] = add(self.output_sends[n], d, 0, 16);
         }
@@ -393,6 +396,7 @@ impl State {
             PAGE => self.change_page(direction),
             PRESET if self.page == 0 => self.preset = (self.preset as i32 + d).rem_euclid(7) as u8,
             CROSS_CURVE if self.page == 5 => self.cross_curve ^= 1,
+            ROW_DRY if self.page == 5 => self.row_dry_include = !self.row_dry_include,
             MOTION_DEPTH if self.page == 6 => self.motion_depth = add(self.motion_depth, d, 0, 128),
             DRIVE => self.drive = clamp_control(self.drive, d, 0, 0x5fff),
             RESONANCE => self.resonance = clamp_control(self.resonance, d, 0, 0x8000),
@@ -566,7 +570,10 @@ impl State {
         ] {
             pack_bits(&mut words, &mut bit, (value >> 6) & 3, 2);
         }
-        pack_bits(&mut words, &mut bit, 0, 6);
+        // Store the inverse so pre-ROW-DRY records (reserved bit zero) retain
+        // the original include-DRY row-edit behavior.
+        pack_bits(&mut words, &mut bit, !self.row_dry_include as u32, 1);
+        pack_bits(&mut words, &mut bit, 0, 5);
         pack_bits(&mut words, &mut bit, self.mid_gain, 8);
         pack_bits(&mut words, &mut bit, self.side_gain, 8);
         debug_assert_eq!(bit, STATE_WORDS * 16);
@@ -644,7 +651,8 @@ impl State {
         self.feedback |= unpack_bits(words, &mut bit, 2) << 6;
         self.knee |= unpack_bits(words, &mut bit, 2) << 6;
         self.ceiling |= unpack_bits(words, &mut bit, 2) << 6;
-        let _reserved = unpack_bits(words, &mut bit, 6);
+        self.row_dry_include = unpack_bits(words, &mut bit, 1) == 0;
+        let _reserved = unpack_bits(words, &mut bit, 5);
         self.mid_gain = unpack_bits(words, &mut bit, 8).min(128);
         self.side_gain = unpack_bits(words, &mut bit, 8).min(128);
         (self.knee, self.ceiling) = normalize_feedback_limits(self.knee, self.ceiling);
@@ -712,6 +720,7 @@ impl State {
             0,
             save_available as u32 | ((save_busy as u32) << 1) | (save_status << 2),
         );
+        ui_write(SAVE_STATE, 1, self.row_dry_include as u32);
         ui_write(STARTUP_STATE, 0, startup as u32);
     }
 }

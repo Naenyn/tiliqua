@@ -5,6 +5,56 @@ from amaranth.sim import Simulator
 from top.rezo.strezo_variant import RezoCore, mid_side_reference
 
 
+def test_stereo_input_bus_telemetry_is_pre_drive_and_clips_per_side():
+    dut = RezoCore(fs=192_000)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+    captured = {}
+
+    async def send(ctx, samples):
+        for channel, sample in enumerate(samples):
+            ctx.set(dut.i.payload[channel].as_value(), sample)
+        ctx.set(dut.i.valid, 1)
+        await ctx.tick().until(dut.i.ready == 1)
+        ctx.set(dut.i.valid, 0)
+        ctx.set(dut.o.ready, 1)
+        await ctx.tick().until(dut.o.valid == 1)
+        ctx.set(dut.o.ready, 0)
+
+    async def bench(ctx):
+        ctx.set(dut.drive, 0)
+        await send(ctx, (12_000, -9_000, 0, 0))
+        captured["clean_left"] = ctx.get(
+            dut.input_bus_samples[0].as_value())
+        captured["clean_right"] = ctx.get(
+            dut.input_bus_samples[1].as_value())
+        captured["clean_clips"] = tuple(
+            ctx.get(clip) for clip in dut.input_bus_clips)
+
+        # Raise the existing independent LEFT/RIGHT inputs above unity. This
+        # overloads both buses without relying on another input's gain slew.
+        ctx.set(dut.input_gains[0], 65_535)
+        ctx.set(dut.input_gains[1], 65_535)
+        for _ in range(256):
+            await send(ctx, (24_000, -24_000, 0, 0))
+        captured["hot_left"] = ctx.get(
+            dut.input_bus_samples[0].as_value())
+        captured["hot_right"] = ctx.get(
+            dut.input_bus_samples[1].as_value())
+        captured["hot_clips"] = tuple(
+            ctx.get(clip) for clip in dut.input_bus_clips)
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    assert 11_990 <= captured["clean_left"] <= 12_000
+    assert -9_000 <= captured["clean_right"] <= -8_990
+    assert captured["clean_clips"] == (0, 0)
+    assert captured["hot_left"] == 32_767
+    assert captured["hot_right"] == -32_768
+    assert captured["hot_clips"] == (1, 1)
+
+
 def test_mid_side_transform_has_exact_unity_and_component_semantics():
     width = 20
     vectors = (

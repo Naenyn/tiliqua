@@ -134,6 +134,14 @@ Each jack can be assigned as **LEFT**, **RIGHT**, or **CV**.
 For a LEFT or RIGHT audio input, **VALUE** sets its gain and the signal joins
 the corresponding stereo-side input mix.
 
+The curved **L IN R** meters in the bottom arc show those completed left and
+right input mixes after all VALUE gains and summing, immediately before DRIVE
+and feedback enter the filter banks. Each meter grows outward from the center.
+The fixed marker is nominal 0 dB (5 V peak); the short outer section is ADC
+headroom up to 8.192 V peak. A clip lamp at the outer tip indicates that the
+unclamped sum exceeded the input bus, even though the signal sent onward was
+safely clamped.
+
 For a CV input:
 
 - **VALUE** selects FB, RES, DRV, or group G1 through G4.
@@ -246,12 +254,15 @@ is intentionally capable of unstable and abrasive results.
 
 ## OPTIONS page
 
-Navigation follows the visible top-to-bottom order: PAGE, PALETTE, SAVE, then
-CROSS CURVE.
+Navigation follows the visible top-to-bottom order: PAGE, PALETTE, ROW DRY,
+SAVE DEFAULT, then CROSS CURVE.
 
 ### STATE AND DISPLAY
 
 - **PALETTE** selects LCD, AMBER, CYAN, GREEN, or VIOLET.
+- **ROW DRY** chooses whether an OUTPUT row edit changes DRY along with G1-G4.
+  ON adjusts all five sends; OFF adjusts only the four wet group sends and
+  leaves DRY untouched.
 - **SAVE DEFAULT** stores the complete STREZO state in the current bitstream
   slot. The button reports SAVING, SAVED, ERROR, or NO SLOT.
 
@@ -269,9 +280,9 @@ SAME or rewrite the saved CROSS position.
 
 SAVE DEFAULT stores band levels, frequencies, enables, groups, input roles and
 depths, output sends, feedback safety settings, CROSS layout and matrix, SAME
-and CROSS positions, CROSS curve, MID/SIDE gains, motion settings, palette, and
-the selected page state needed to restore the patch. Changes are not saved
-automatically.
+and CROSS positions, CROSS curve, MID/SIDE gains, motion settings, palette, the
+ROW DRY preference, and the selected page state needed to restore the patch.
+Changes are not saved automatically.
 
 ## A practical first patch
 

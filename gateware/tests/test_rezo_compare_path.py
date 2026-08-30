@@ -3,6 +3,45 @@ from amaranth.sim import Simulator
 from top.rezo.top import RezoCore
 
 
+def test_rezomo_input_bus_telemetry_reports_pre_drive_mix_and_sum_clipping():
+    dut = RezoCore(fs=192_000)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+    captured = {}
+
+    async def send(ctx, samples):
+        for channel, sample in enumerate(samples):
+            ctx.set(dut.i.payload[channel].as_value(), sample)
+        ctx.set(dut.i.valid, 1)
+        await ctx.tick().until(dut.i.ready == 1)
+        ctx.set(dut.i.valid, 0)
+        ctx.set(dut.o.ready, 1)
+        await ctx.tick().until(dut.o.valid == 1)
+        ctx.set(dut.o.ready, 0)
+
+    async def bench(ctx):
+        ctx.set(dut.drive, 0)
+        await send(ctx, (12_000, 0, 0, 0))
+        captured["clean_sample"] = ctx.get(dut.input_bus_sample.as_value())
+        captured["clean_clip"] = ctx.get(dut.input_bus_clip)
+
+        for channel in range(1, 4):
+            ctx.set(dut.input_modes[channel], dut.INPUT_MODE_AUDIO)
+            ctx.set(dut.input_gains[channel], dut.INPUT_UNITY_POS)
+        for _ in range(192):
+            await send(ctx, (24_000, 24_000, 24_000, 24_000))
+        captured["hot_sample"] = ctx.get(dut.input_bus_sample.as_value())
+        captured["hot_clip"] = ctx.get(dut.input_bus_clip)
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    assert 11_990 <= captured["clean_sample"] <= 12_000
+    assert captured["clean_clip"] == 0
+    assert captured["hot_sample"] == 32_767
+    assert captured["hot_clip"] == 1
+
+
 def test_clocked_shift_register_directions_hysteresis_roles_and_reset():
     """CLOCK captures DATA exactly once per rising edge and shifts as selected."""
     dut = RezoCore(fs=192_000)

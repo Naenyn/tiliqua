@@ -177,6 +177,11 @@ For an ordinary CV input:
 Group CV changes the effective levels of every enabled band assigned to that
 group.
 
+The bottom-arc **IN** meter shows the combined mono AUDIO mix after all VALUE
+gains and immediately before DRIVE and feedback are added. Its 0 dB marker is
+the nominal ±5 V modular level; the remaining arc is headroom to the ADC's
+±8.192 V full scale. The cyan end cap is held briefly when the input sum clips.
+
 The same page also assigns the discrete CLOCK roles **DAT**, **CLK**, **RST**,
 and **LCK**. Those roles are described under CLOCK mode.
 
@@ -203,6 +208,8 @@ Each output has independent unipolar sends from **GRP1**, **GRP2**, **GRP3**,
 - Use different group combinations for four related filterbank outputs.
 - DRY adds the unfiltered mono AUDIO-input mix.
 - A maximum send is unity gain; a zero send contributes nothing.
+- Selecting an OUT row header adjusts all four wet group sends together.
+  **OPTIONS > ROW DRY** chooses whether that row gesture also adjusts DRY.
 
 BANK and CLOCK use the same group and output routing.
 
@@ -231,6 +238,12 @@ combination quiet.
 
 Choose LCD, AMBER, CYAN, GREEN, or VIOLET.
 
+#### ROW DRY
+
+Choose **INCLUDE** to adjust DRY with an OUT row header, or **EXCLUDE** to
+leave DRY unchanged while the four wet group sends move together. Individual
+DRY cells remain editable in either setting.
+
 #### SAVE DEFAULT
 
 Click **SAVE DEFAULT** to store the complete static REZOMO setup for the
@@ -239,8 +252,8 @@ Changes are not saved automatically.
 
 The save includes natural band levels, frequencies, enables, groups, feedback,
 input assignments and depths, output sends, palette, the selected BANK/CLOCK
-mode, and every CLOCK parameter. Dynamic CLOCK-generated band modulation is
-intentionally not saved.
+mode, every CLOCK parameter, and the ROW DRY preference. Dynamic
+CLOCK-generated band modulation is intentionally not saved.
 
 ## CLOCK mode
 
