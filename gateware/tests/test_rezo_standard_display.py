@@ -863,6 +863,33 @@ def test_compact_group_rails_share_native_label_centers():
     ], samples
 
 
+def test_compact_groups_surface_has_one_extra_row_of_bottom_padding():
+    dut = RezoTileDisplay(h_active=720, rotate_left=False)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6, domain="sync")
+    sim.add_clock(1e-6, domain="dvi")
+    samples = []
+
+    async def bench(ctx):
+        ctx.set(dut.page, 3)
+        ctx.set(dut.de, 1)
+        for native_y in (479, 480, 495, 496):
+            ctx.set(dut.x, 130)
+            ctx.set(dut.y, native_y)
+            for _ in range(12):
+                await ctx.tick("dvi")
+            samples.append(ctx.get(dut.r))
+
+    sim.add_testbench(bench)
+    sim.run()
+
+    palette = RezoTileDisplay.PALETTE
+    assert samples == [
+        palette["surface"], palette["surface"],
+        palette["surface"], palette["blank"],
+    ], samples
+
+
 def test_compact_feedback_sources_and_safety_share_centered_geometry():
     """FEEDBACK sources center as a group and safety values share one edge."""
     dut = RezoTileDisplay(

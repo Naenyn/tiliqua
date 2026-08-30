@@ -2494,7 +2494,7 @@ class RezoTileDisplay(wiring.Component):
         surface_row_y0s = Array(Const(row, 6) for row in (
             14, 14, 13, 14, 14, 14, 14, 14, 14))
         surface_row_y1s = Array(Const(row, 6) for row in (
-            35, 31, 38, 30, 32, 27, 26, 39, 35))
+            35, 31, 38, 31, 32, 27, 26, 39, 35))
         m.d.comb += [
             surface_row_y0.eq(surface_row_y0s[text_page_q]),
             surface_row_y1.eq(surface_row_y1s[text_page_q]),

@@ -136,6 +136,33 @@ def test_outer_arcs_surround_the_508_pixel_safe_square():
     ] * len(points)
 
 
+def test_groups_surface_has_one_extra_row_of_bottom_padding():
+    surface = RezoTileDisplay.PALETTE["surface"]
+    blank = RezoTileDisplay.PALETTE["blank"]
+    assert _render_samples(
+        page=3,
+        points=((130, 479), (130, 480), (130, 495), (130, 496)),
+    ) == [
+        (surface, surface, surface),
+        (surface, surface, surface),
+        (surface, surface, surface),
+        (blank, blank, blank),
+    ]
+
+
+def test_groups_bank_outline_surrounds_the_full_grid():
+    selected = RezoTileDisplay.PALETTE["selected"]
+    surface = RezoTileDisplay.PALETTE["surface"]
+    assert _render_samples(
+        page=3,
+        selected=RezomoUISpec.TARGET_GROUP_BASE,
+        points=((216, 290), (216, 306)),
+    ) == [
+        (selected, selected, selected),
+        (surface, surface, surface),
+    ]
+
+
 def test_clock_editor_uses_native_stacked_control_rows():
     points = (
         (310, 260),  # algorithm value padding

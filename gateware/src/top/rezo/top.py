@@ -3471,7 +3471,7 @@ class RezoTileDisplay(wiring.Component):
         surface_row_y0s = Array(Const(row, 6) for row in (
             14, 14, 13, 14, 14, 14, 14, 14))
         surface_row_y1s = Array(Const(row, 6) for row in (
-            35, 31, 38, 30, 32, 27, 26, 34))
+            35, 31, 38, 31, 32, 27, 26, 34))
         m.d.comb += [
             surface_row_y0.eq(surface_row_y0s[text_page_q]),
             surface_row_y1.eq(surface_row_y1s[text_page_q]),
@@ -4198,9 +4198,9 @@ class RezoTileDisplay(wiring.Component):
             group_page & group_selected_valid & self.outline(
                 x, y,
                 group_selected_x - ((5)),
-                (306),
+                (290),
                 group_selected_x + ((23)),
-                (486), t=3))
+                (470), t=3))
         group_band = Signal(range(RezoCore.N_BANDS))
         group_row = Signal(unsigned(2))
         group_band_active = Signal()
