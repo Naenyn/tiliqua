@@ -182,7 +182,9 @@ int_params!(HueParams<u8>         { step: 1, min: 0, max: 15 });
 int_params!(HideParams<u8>        { step: 1, min: 2, max: 16, format: IntFormat::Scaled { divisor: 2, precision: 1, suffix: "s" } });
 int_params!(TriggerLvlParams<i16> { step: 500, min: -16000, max: 16000, format: IntFormat::Scaled { divisor: 4000, precision: 2, suffix: "V" } });
 int_params!(PosParams<i16>       { step: 1, min: -40, max: 40, format: IntFormat::Scaled { divisor: 4, precision: 2, suffix: "d" } });
-int_params!(ScrollParams<u8>      { step: 1, min: 0, max: 125 });
+// MODULE_DOCSTRING currently contains 33 lines and draw_help displays 28.
+// Five is therefore the last scroll position with a full, non-blank viewport.
+int_params!(ScrollParams<u8>      { step: 1, min: 0, max: 5 });
 
 button_params!(OneShotButtonParams { mode: ButtonMode::OneShot });
 

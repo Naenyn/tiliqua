@@ -10,7 +10,7 @@ from amaranth_future import fixed
 
 from .. import dsp
 from . import PSQ, PSQ_BASE_FBITS, psq_from_volts
-from .scope_capture import MAX_CAPTURE_COLS, ColumnCapture
+from .scope_capture import MAX_CAPTURE_COLS, ENVELOPE_WORD_BITS, ColumnCapture
 
 
 class _SampleTap(wiring.Component):
@@ -121,7 +121,7 @@ class DigitalScopePeripheral(wiring.Component):
             "swap_done": In(1),
             "flush_valid": Out(1),
             "flush_col": Out(range(MAX_CAPTURE_COLS)),
-            "flush_word": Out(unsigned(128)),
+            "flush_word": Out(unsigned(ENVELOPE_WORD_BITS)),
             "sweep_done": Out(1),
             "plot_x_lo_o": Out(signed(16)),
             "progressive_o": Out(1),

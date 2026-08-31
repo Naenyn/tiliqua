@@ -64,7 +64,8 @@ class TiliquaSoc(Component):
     def __init__(self, *, firmware_bin_path, ui_name, ui_tag, platform_class, clock_settings,
                  touch=False, finalize_csr_bridge=True, poke_outputs=False, mainram_size=0x4000,
                  fw_location=None, fw_offset=None, cpu_variant="tiliqua_rv32im",
-                 extra_cpu_regions=[], fb_overlay=None, enable_persist=True):
+                 extra_cpu_regions=[], fb_overlay=None, enable_persist=True,
+                 enable_uart=True, enable_dtr=True):
 
         super().__init__({})
 
@@ -77,6 +78,8 @@ class TiliquaSoc(Component):
         self.touch = touch
         self.clock_settings = clock_settings
         self.enable_persist = enable_persist
+        self.enable_uart = enable_uart
+        self.enable_dtr = enable_dtr
 
         self.platform_class = platform_class
 
@@ -166,11 +169,12 @@ class TiliquaSoc(Component):
         # csr decoder
         self.csr_decoder = csr.Decoder(addr_width=28, data_width=8)
 
-        # uart0
-        uart_baud_rate = 115200
-        divisor = int(self.clock_settings.frequencies.sync // uart_baud_rate)
-        self.uart0 = uart.Peripheral(divisor=divisor)
-        self.csr_decoder.add(self.uart0.bus, addr=self.uart0_base, name="uart0")
+        # uart0 (optional for designs with no diagnostics/logging)
+        if self.enable_uart:
+            uart_baud_rate = 115200
+            divisor = int(self.clock_settings.frequencies.sync // uart_baud_rate)
+            self.uart0 = uart.Peripheral(divisor=divisor)
+            self.csr_decoder.add(self.uart0.bus, addr=self.uart0_base, name="uart0")
 
         # timer0
         self.timer0 = timer.Peripheral(width=32)
@@ -212,9 +216,10 @@ class TiliquaSoc(Component):
                 pmod=self.pmod0, poke_outputs=poke_outputs)
         self.csr_decoder.add(self.pmod0_periph.bus, addr=self.pmod0_periph_base, name="pmod0_periph")
 
-        # die temperature
-        self.dtr0 = dtr.Peripheral()
-        self.csr_decoder.add(self.dtr0.bus, addr=self.dtr0_base, name="dtr0")
+        # die temperature (optional when firmware does not expose telemetry)
+        if self.enable_dtr:
+            self.dtr0 = dtr.Peripheral()
+            self.csr_decoder.add(self.dtr0.bus, addr=self.dtr0_base, name="dtr0")
 
         # framebuffer palette interface
         self.palette_periph = palette.Peripheral()
@@ -233,10 +238,17 @@ class TiliquaSoc(Component):
         self.csr_decoder.add(
                 self.framebuffer_periph.bus, addr=self.fb_periph_base, name="framebuffer_periph")
 
-        # Video persistance DMA effect
-        self.persist_periph = persist.Peripheral(
-            bus_dma=self.psram_periph)
-        self.csr_decoder.add(self.persist_periph.bus, addr=self.persist_periph_base, name="persist_periph")
+        # Video persistence DMA effect. Designs that bypass persistence omit
+        # the peripheral entirely rather than leaving a disabled DMA engine and
+        # CSR bank for synthesis to partially prune.
+        if self.enable_persist:
+            self.persist_periph = persist.Peripheral(
+                bus_dma=self.psram_periph)
+            self.csr_decoder.add(
+                self.persist_periph.bus,
+                addr=self.persist_periph_base,
+                name="persist_periph",
+            )
 
         # Pixel plotting, blending, rotation backend (no CSR interface)
         self.framebuffer_plotter = plot.FramebufferPlotter(
@@ -305,11 +317,12 @@ class TiliquaSoc(Component):
         m.submodules.csr_decoder = self.csr_decoder
 
         # uart0
-        m.submodules.uart0 = self.uart0
-        if sim.is_hw(platform):
-            uart0_provider = UARTProvider()
-            m.submodules.uart0_provider = uart0_provider
-            wiring.connect(m, self.uart0.pins, uart0_provider.pins)
+        if self.enable_uart:
+            m.submodules.uart0 = self.uart0
+            if sim.is_hw(platform):
+                uart0_provider = UARTProvider()
+                m.submodules.uart0_provider = uart0_provider
+                wiring.connect(m, self.uart0.pins, uart0_provider.pins)
 
         # timer0
         m.submodules.timer0 = self.timer0
@@ -351,7 +364,8 @@ class TiliquaSoc(Component):
         m.submodules.framebuffer_periph = self.framebuffer_periph
 
         # video periph / persist
-        m.submodules.persist_periph = self.persist_periph
+        if self.enable_persist:
+            m.submodules.persist_periph = self.persist_periph
 
         # hardware-accelerated pixel plotting
         m.submodules.pixel_plot = self.pixel_plot
@@ -376,16 +390,12 @@ class TiliquaSoc(Component):
             wiring.connect(m, wiring.flipped(self.fb.fbp), self.framebuffer_plotter.fbp)
             if self.enable_persist:
                 wiring.connect(m, wiring.flipped(self.fb.fbp), self.persist_periph.fbp)
-            else:
-                m.d.comb += self.persist_periph.fbp.enable.eq(0)
         else:
             # Modeline is dynamic and comes from framebuffer peripheral CSRs
             wiring.connect(m, self.framebuffer_periph.fbp, self.fb.fbp)
             wiring.connect(m, self.framebuffer_periph.fbp, self.framebuffer_plotter.fbp)
             if self.enable_persist:
                 wiring.connect(m, self.framebuffer_periph.fbp, self.persist_periph.fbp)
-            else:
-                m.d.comb += self.persist_periph.fbp.enable.eq(0)
 
         # audio interface
         m.submodules.pmod0 = self.pmod0
@@ -400,7 +410,8 @@ class TiliquaSoc(Component):
             wiring.connect(m, self.pmod0.pins, pmod0_provider.pins)
 
             # die temperature
-            m.submodules.dtr0 = self.dtr0
+            if self.enable_dtr:
+                m.submodules.dtr0 = self.dtr0
 
             # generate our domain clocks/resets
             m.submodules.car = car = platform.clock_domain_generator(self.clock_settings)

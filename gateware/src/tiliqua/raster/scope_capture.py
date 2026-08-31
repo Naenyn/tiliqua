@@ -14,6 +14,15 @@ from . import PSQ, PSQ_BASE_FBITS
 MAX_CAPTURE_COLS = 1280
 RAMP_END = fixed.Const(0.985, shape=PSQ)
 
+# A displayed trace coordinate never needs the full signed 16-bit range used by
+# the capture arithmetic.  The widest supported rotated display spans only
+# +/-640 logical pixels, so 12 signed bits leave ample headroom while allowing
+# each four-channel envelope column to fit in 100 bits instead of 128.  On ECP5
+# this reduces each 1280-column sweep bank from 12 to 9 DP16KD blocks.
+ENVELOPE_COORD_BITS = 12
+ENVELOPE_CHANNEL_BITS = 1 + 2 * ENVELOPE_COORD_BITS
+ENVELOPE_WORD_BITS = 4 * ENVELOPE_CHANNEL_BITS
+
 # Bridge only genuine display discontinuities across a column boundary.  The
 # previous one-pixel threshold widened every ordinary slope and turned codec
 # settling at square/saw transitions into visible hooks and rounded shoulders.
@@ -33,20 +42,38 @@ YSCALE_LUT = (
 
 
 def envelope_word(ch_ymin, ch_ymax):
-    # Channel ``ch`` occupies bits [32*ch : 32*ch+32], with ymin in the low
-    # 16 bits and ymax in the high 16 bits.  This must match the unpacking in
-    # ColumnRenderer.
-    return Cat(
-        ch_ymin[0], ch_ymax[0],
-        ch_ymin[1], ch_ymax[1],
-        ch_ymin[2], ch_ymax[2],
-        ch_ymin[3], ch_ymax[3],
-    )
+    coord_min = -(1 << (ENVELOPE_COORD_BITS - 1))
+    coord_max = (1 << (ENVELOPE_COORD_BITS - 1)) - 1
+
+    def packed_coord(value):
+        # Slice the result explicitly: mixing signed bounds with an unsigned
+        # value slice otherwise makes Amaranth widen this Mux by one bit.
+        return Mux(
+            value < coord_min,
+            Const(coord_min, signed(ENVELOPE_COORD_BITS)),
+            Mux(
+                value > coord_max,
+                Const(coord_max, signed(ENVELOPE_COORD_BITS)),
+                value[:ENVELOPE_COORD_BITS],
+            ),
+        )[:ENVELOPE_COORD_BITS]
+
+    # Each channel is {valid, ymin[11:0], ymax[11:0]}.  An explicit valid bit
+    # avoids spending coordinate encodings on the old 16-bit sentinel.
+    chunks = []
+    for ch in range(4):
+        chunks.append(Cat(
+            ch_ymax[ch] >= ch_ymin[ch],
+            packed_coord(ch_ymin[ch]),
+            packed_coord(ch_ymax[ch]),
+        ))
+    packed = Cat(*chunks)
+    assert len(packed) == ENVELOPE_WORD_BITS
+    return packed
 
 
-# Per-column "no data captured" sentinel: every channel has ymin=0, ymax=-1, so
-# the renderer's (ymax >= ymin) test fails and the column is erased but not drawn.
-ENVELOPE_SENTINEL = 0xFFFF0000_FFFF0000_FFFF0000_FFFF0000
+# Per-column "no data captured" sentinel: all per-channel valid bits are clear.
+ENVELOPE_SENTINEL = 0
 
 
 class ColumnCapture(wiring.Component):
@@ -85,7 +112,7 @@ class ColumnCapture(wiring.Component):
             # Finished-column stream (1-cycle pulse, not back-pressured).
             "flush_valid": Out(1),
             "flush_col": Out(range(MAX_CAPTURE_COLS)),
-            "flush_word": Out(unsigned(128)),
+            "flush_word": Out(unsigned(ENVELOPE_WORD_BITS)),
             "max_col": Out(range(MAX_CAPTURE_COLS)),
         })
 
@@ -240,9 +267,7 @@ class ColumnCapture(wiring.Component):
             ]
 
         flush_col = Signal(range(MAX_CAPTURE_COLS))
-        flush_word = Signal(unsigned(128))
         do_flush = Signal()
-        m.d.comb += flush_word.eq(envelope_word(flush_ymin, flush_ymax))
 
         active_prev = Signal()
         active_rise = Signal()
@@ -357,18 +382,35 @@ class ColumnCapture(wiring.Component):
                 flush_col.eq(latched_col),
             ]
 
-        with m.If(do_flush & (flush_col > max_col)):
-            m.d.sync += max_col.eq(flush_col)
-
-        # Register the completed-column stream before it reaches the 128-bit
-        # sweep RAM. Keep sweep_done in the same stage so the final write and
-        # bank-swap request remain aligned.
+        # Register the full-width envelope before compacting it.  This keeps
+        # the bridge/min-max selection and the signed saturation comparisons
+        # in separate cycles; both stages can still accept one column per
+        # clock. Keep sweep_done in the same pipeline as the final column so
+        # the last write and bank-swap request remain aligned.
+        packed_ymin = Array(Signal(signed(16)) for _ in range(self.n_channels))
+        packed_ymax = Array(Signal(signed(16)) for _ in range(self.n_channels))
+        flush_pending = Signal()
+        flush_col_pending = Signal(range(MAX_CAPTURE_COLS))
+        sweep_done_pending = Signal()
         m.d.sync += [
-            self.flush_valid.eq(do_flush),
-            self.flush_col.eq(flush_col),
-            self.flush_word.eq(flush_word),
-            self.sweep_done.eq(sweep_end),
+            flush_pending.eq(do_flush),
+            flush_col_pending.eq(flush_col),
+            sweep_done_pending.eq(sweep_end),
+            self.flush_valid.eq(flush_pending),
+            self.flush_col.eq(flush_col_pending),
+            self.flush_word.eq(envelope_word(packed_ymin, packed_ymax)),
+            self.sweep_done.eq(sweep_done_pending),
         ]
+        with m.If(do_flush):
+            for ch in range(self.n_channels):
+                m.d.sync += [
+                    packed_ymin[ch].eq(flush_ymin[ch]),
+                    packed_ymax[ch].eq(flush_ymax[ch]),
+                ]
+        # Update progress from the registered column rather than extending the
+        # plot-bound/column-selection path through another comparison and mux.
+        with m.If(flush_pending & (flush_col_pending > max_col)):
+            m.d.sync += max_col.eq(flush_col_pending)
         m.d.comb += self.max_col.eq(max_col)
 
         return m

@@ -75,6 +75,8 @@ class ScopeSoc(TiliquaSoc):
         super().__init__(finalize_csr_bridge=False,
                          fb_overlay=self.overlay_periph.overlay,
                          enable_persist=False,
+                         enable_uart=False,
+                         enable_dtr=False,
                          **kwargs)
 
         # Firmware bitmap scratch in PSRAM (blockram is only 16 KiB).
@@ -153,31 +155,19 @@ class ScopeSoc(TiliquaSoc):
 
         dsp.connect_peek(m, pmod0.o_cal, plot_fifo.i)
 
-        fs = self.clock_settings.audio_clock.fs()
-        m.submodules.up_split4 = up_split4 = dsp.Split(n_channels=4, source=plot_fifo.o, shape=PSQ)
-        m.submodules.up_merge4 = up_merge4 = dsp.Merge(n_channels=4, shape=PSQ)
-        for ch in range(4):
-            # Register the FIFO output before the discontinuity detector's
-            # wide window arithmetic. This is an elastic stage, so it adds one
-            # sync clock of latency without reducing sample throughput.
-            edge_input = dsp.StreamBuffer(shape=PSQ)
-            # The codec can settle for a few samples around a discontinuity.
-            # Reconstruct only neighborhoods whose step dwarfs the local slope;
-            # smooth sine/ramp samples pass through exactly.
-            edge = dsp.DiscontinuityReconstruct(shape=PSQ)
-            # Interpolate smooth slopes so individual codec samples do not
-            # become visible stair steps at fast timebases, while retaining a
-            # sample-and-hold transition for detected square/saw edges.
-            r = dsp.EdgeAwareResample(n_up=self.n_upsample, shape=PSQ)
-            setattr(m.submodules, f"edge_input{ch}", edge_input)
-            setattr(m.submodules, f"edge_reconstruct{ch}", edge)
-            setattr(m.submodules, f"resample{ch}", r)
-            wiring.connect(m, up_split4.o[ch], edge_input.i)
-            wiring.connect(m, edge_input.o, edge.i)
-            wiring.connect(m, edge.o, r.i)
-            wiring.connect(m, r.o, up_merge4.i[ch])
-
-        wiring.connect(m, up_merge4.o, self.scope_periph.i)
+        # The four input channels share reconstruction/interpolation arithmetic.
+        # Their history and interpolation state remain independent, and both
+        # blocks emit channel-aligned bundles. At 192 kHz there are ~312 sync
+        # clocks per input frame; the serialized path needs fewer than 50.
+        m.submodules.edge_reconstruct = edge = \
+            dsp.MultichannelDiscontinuityReconstruct(
+                n_channels=4, shape=PSQ)
+        m.submodules.resample = resample = \
+            dsp.MultichannelEdgeAwareResample(
+                n_channels=4, n_up=self.n_upsample, shape=PSQ)
+        wiring.connect(m, plot_fifo.o, edge.i)
+        wiring.connect(m, edge.o, resample.i)
+        wiring.connect(m, resample.o, self.scope_periph.i)
 
         return m
 

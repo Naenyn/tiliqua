@@ -8,7 +8,7 @@ from amaranth import *
 from amaranth.lib import memory, wiring
 from amaranth.lib.wiring import In, Out
 
-from .scope_capture import MAX_CAPTURE_COLS, ENVELOPE_SENTINEL
+from .scope_capture import MAX_CAPTURE_COLS, ENVELOPE_SENTINEL, ENVELOPE_WORD_BITS
 
 
 class CompletedSweepBuffer(wiring.Component):
@@ -30,14 +30,14 @@ class CompletedSweepBuffer(wiring.Component):
             "ncols": In(range(MAX_CAPTURE_COLS + 1)),
             "flush_valid": In(1),
             "flush_col": In(range(MAX_CAPTURE_COLS)),
-            "flush_word": In(unsigned(128)),
+            "flush_word": In(unsigned(ENVELOPE_WORD_BITS)),
             "sweep_done": In(1),
             "capture_active": Out(1),
             "capture_clear": Out(1),
             "col_valid": Out(1),
             "col_ready": In(1),
             "col": Out(range(MAX_CAPTURE_COLS)),
-            "word": Out(unsigned(128)),
+            "word": Out(unsigned(ENVELOPE_WORD_BITS)),
             "rendering": Out(1),
             "render_done": Out(1),
         })
@@ -47,7 +47,7 @@ class CompletedSweepBuffer(wiring.Component):
 
         sweep_mem = memory.Memory(
             data=memory.MemoryData(
-                shape=unsigned(128),
+                shape=unsigned(ENVELOPE_WORD_BITS),
                 depth=MAX_CAPTURE_COLS,
                 init=[ENVELOPE_SENTINEL] * MAX_CAPTURE_COLS,
             )
@@ -59,7 +59,7 @@ class CompletedSweepBuffer(wiring.Component):
         clear_col = Signal(range(MAX_CAPTURE_COLS))
         render_col = Signal(range(MAX_CAPTURE_COLS))
         render_ncols = Signal(range(MAX_CAPTURE_COLS + 1))
-        render_word = Signal(unsigned(128))
+        render_word = Signal(unsigned(ENVELOPE_WORD_BITS))
 
         with m.FSM(name="sweep_buffer"):
             with m.State("DISABLED"):

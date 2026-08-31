@@ -11,7 +11,13 @@ from amaranth.lib.wiring import In, Out
 
 from ..config_cdc import ConfigCDC
 from ..video.types import Pixel, Rotation, ScanPixel
-from .scope_capture import MAX_CAPTURE_COLS, ENVELOPE_SENTINEL
+from .scope_capture import (
+    MAX_CAPTURE_COLS,
+    ENVELOPE_CHANNEL_BITS,
+    ENVELOPE_COORD_BITS,
+    ENVELOPE_SENTINEL,
+    ENVELOPE_WORD_BITS,
+)
 
 
 class ScopeTraceOverlay(wiring.Component):
@@ -33,7 +39,7 @@ class ScopeTraceOverlay(wiring.Component):
             "enable": In(1),
             "flush_valid": In(1),
             "flush_col": In(range(MAX_CAPTURE_COLS)),
-            "flush_word": In(unsigned(128)),
+            "flush_word": In(unsigned(ENVELOPE_WORD_BITS)),
             "sweep_done": In(1),
             "progressive": In(1),
             "capture_max_col": In(range(MAX_CAPTURE_COLS)),
@@ -59,7 +65,7 @@ class ScopeTraceOverlay(wiring.Component):
         for bank in range(2):
             mem = memory.Memory(
                 data=memory.MemoryData(
-                    shape=unsigned(128),
+                    shape=unsigned(ENVELOPE_WORD_BITS),
                     depth=MAX_CAPTURE_COLS,
                     init=[ENVELOPE_SENTINEL] * MAX_CAPTURE_COLS,
                 )
@@ -295,8 +301,8 @@ class ScopeTraceOverlay(wiring.Component):
 
         # Register the bank mux immediately after BRAM. ECP5 block RAM has a
         # substantial clock-to-output delay, so comparisons need their own
-        # cycle rather than sharing it with the 128-bit bank selection.
-        front_word = Signal(128)
+        # cycle rather than sharing it with the wide bank selection.
+        front_word = Signal(ENVELOPE_WORD_BITS)
         scan_compare = Signal(ScanPixel)
         logical_y_compare = Signal(signed(16))
         in_plot_compare = Signal()
@@ -317,10 +323,14 @@ class ScopeTraceOverlay(wiring.Component):
 
         channel_hits = Signal(self.n_channels)
         for ch in range(self.n_channels):
-            lo = 32 * ch
-            ymin = front_word[lo:lo + 16].as_signed()
-            ymax = front_word[lo + 16:lo + 32].as_signed()
-            channel_hit = enable_dvi & in_plot_compare & (ymax >= ymin) & \
+            lo = ENVELOPE_CHANNEL_BITS * ch
+            valid = front_word[lo]
+            ymin = front_word[
+                lo + 1:lo + 1 + ENVELOPE_COORD_BITS].as_signed()
+            ymax = front_word[
+                lo + 1 + ENVELOPE_COORD_BITS:
+                lo + 1 + 2 * ENVELOPE_COORD_BITS].as_signed()
+            channel_hit = enable_dvi & in_plot_compare & valid & \
                 (logical_y_compare >= ymin) & \
                 (logical_y_compare <= Mux(ymax > ymin, ymax, ymin + 1)) & \
                 (intensity_dvi[ch] > 0)

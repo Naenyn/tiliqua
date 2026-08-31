@@ -29,15 +29,6 @@ impl core::fmt::Debug for SPIFLASH_CTRL {
 }
 #[doc = "spiflash_ctrl"]
 pub mod spiflash_ctrl;
-#[doc = "uart0"]
-pub type UART0 = crate::Periph<uart0::RegisterBlock, 0xf000_0200>;
-impl core::fmt::Debug for UART0 {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-        f.debug_struct("UART0").finish()
-    }
-}
-#[doc = "uart0"]
-pub mod uart0;
 #[doc = "timer0"]
 pub type TIMER0 = crate::Periph<timer0::RegisterBlock, 0xf000_0300>;
 impl core::fmt::Debug for TIMER0 {
@@ -83,24 +74,6 @@ impl core::fmt::Debug for PMOD0_PERIPH {
 }
 #[doc = "pmod0_periph"]
 pub mod pmod0_periph;
-#[doc = "dtr0"]
-pub type DTR0 = crate::Periph<dtr0::RegisterBlock, 0xf000_0800>;
-impl core::fmt::Debug for DTR0 {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-        f.debug_struct("DTR0").finish()
-    }
-}
-#[doc = "dtr0"]
-pub mod dtr0;
-#[doc = "persist_periph"]
-pub type PERSIST_PERIPH = crate::Periph<persist_periph::RegisterBlock, 0xf000_0900>;
-impl core::fmt::Debug for PERSIST_PERIPH {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-        f.debug_struct("PERSIST_PERIPH").finish()
-    }
-}
-#[doc = "persist_periph"]
-pub mod persist_periph;
 #[doc = "palette_periph"]
 pub type PALETTE_PERIPH = crate::Periph<palette_periph::RegisterBlock, 0xf000_0a00>;
 impl core::fmt::Debug for PALETTE_PERIPH {
@@ -180,8 +153,6 @@ static mut DEVICE_PERIPHERALS: bool = false;
 pub struct Peripherals {
     #[doc = "spiflash_ctrl"]
     pub SPIFLASH_CTRL: SPIFLASH_CTRL,
-    #[doc = "uart0"]
-    pub UART0: UART0,
     #[doc = "timer0"]
     pub TIMER0: TIMER0,
     #[doc = "i2c0"]
@@ -192,10 +163,6 @@ pub struct Peripherals {
     pub ENCODER0: ENCODER0,
     #[doc = "pmod0_periph"]
     pub PMOD0_PERIPH: PMOD0_PERIPH,
-    #[doc = "dtr0"]
-    pub DTR0: DTR0,
-    #[doc = "persist_periph"]
-    pub PERSIST_PERIPH: PERSIST_PERIPH,
     #[doc = "palette_periph"]
     pub PALETTE_PERIPH: PALETTE_PERIPH,
     #[doc = "framebuffer_periph"]
@@ -235,14 +202,11 @@ impl Peripherals {
         DEVICE_PERIPHERALS = true;
         Peripherals {
             SPIFLASH_CTRL: SPIFLASH_CTRL::steal(),
-            UART0: UART0::steal(),
             TIMER0: TIMER0::steal(),
             I2C0: I2C0::steal(),
             I2C1: I2C1::steal(),
             ENCODER0: ENCODER0::steal(),
             PMOD0_PERIPH: PMOD0_PERIPH::steal(),
-            DTR0: DTR0::steal(),
-            PERSIST_PERIPH: PERSIST_PERIPH::steal(),
             PALETTE_PERIPH: PALETTE_PERIPH::steal(),
             FRAMEBUFFER_PERIPH: FRAMEBUFFER_PERIPH::steal(),
             PSRAM_CSR: PSRAM_CSR::steal(),

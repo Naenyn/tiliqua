@@ -5,7 +5,7 @@
 import math
 
 from amaranth import *
-from amaranth.lib import stream, wiring
+from amaranth.lib import data, stream, wiring
 from amaranth.lib.wiring import In, Out
 
 from . import ASQ
@@ -455,5 +455,285 @@ class DiscontinuityReconstruct(wiring.Component):
                 m.d.sync += pending.eq(1)
         with m.Elif(pending & self.o.ready):
             m.d.sync += pending.eq(0)
+
+        return m
+
+
+class MultichannelDiscontinuityReconstruct(wiring.Component):
+
+    """Time-multiplexed multichannel variant of DiscontinuityReconstruct.
+
+    History remains independent for every channel, while the endpoint/slope
+    arithmetic is shared and evaluated one channel per sync clock. Audio-rate
+    input bundles provide far more idle clocks than this requires, and the
+    output remains a channel-aligned bundle.
+    """
+
+    def __init__(self, *, n_channels, shape=ASQ, min_step=0.02):
+        assert n_channels >= 1
+        self.n_channels = n_channels
+        self.shape = shape
+        self.min_step = int(min_step * (1 << shape.f_bits))
+        layout = data.ArrayLayout(shape, n_channels)
+        super().__init__({
+            "i": In(stream.Signature(layout)),
+            "o": Out(stream.Signature(layout)),
+        })
+
+    def elaborate(self, platform):
+        m = Module()
+
+        n_channels = self.n_channels
+        width = self.shape.width
+        history = [
+            [Signal(signed(width), name=f"history{ch}_{n}") for n in range(16)]
+            for ch in range(n_channels)
+        ]
+        incoming = Array(Signal(signed(width), name=f"incoming{ch}")
+                         for ch in range(n_channels))
+        result = Array(Signal(signed(width), name=f"result{ch}")
+                       for ch in range(n_channels))
+        channel = Signal(range(n_channels))
+        fill = Signal(range(17))
+        processing = Signal()
+        pending = Signal()
+
+        def history_at(index):
+            return Array(history[ch][index] for ch in range(n_channels))[channel]
+
+        def extended(value):
+            return Cat(value, value[-1]).as_signed()
+
+        left = extended(history_at(0))
+        left_next = extended(history_at(1))
+        center = extended(history_at(8))
+        right_prev = extended(history_at(15))
+        right = extended(incoming[channel])
+
+        left_delta = Signal(signed(width + 2))
+        right_delta = Signal(signed(width + 2))
+        step_delta = Signal(signed(width + 2))
+        center_left_delta = Signal(signed(width + 2))
+        center_right_delta = Signal(signed(width + 2))
+        left_motion = Signal(unsigned(width + 2))
+        right_motion = Signal(unsigned(width + 2))
+        step = Signal(unsigned(width + 2))
+        center_left = Signal(unsigned(width + 2))
+        center_right = Signal(unsigned(width + 2))
+        reconstruct = Signal()
+
+        m.d.comb += [
+            left_delta.eq(left_next - left),
+            right_delta.eq(right - right_prev),
+            step_delta.eq(right - left),
+            center_left_delta.eq(center - left),
+            center_right_delta.eq(center - right),
+            left_motion.eq(Mux(left_delta < 0, -left_delta, left_delta)),
+            right_motion.eq(Mux(right_delta < 0, -right_delta, right_delta)),
+            step.eq(Mux(step_delta < 0, -step_delta, step_delta)),
+            center_left.eq(Mux(center_left_delta < 0,
+                               -center_left_delta, center_left_delta)),
+            center_right.eq(Mux(center_right_delta < 0,
+                                -center_right_delta, center_right_delta)),
+            reconstruct.eq(
+                (step >= self.min_step) &
+                ((left_motion << 5) < step) &
+                ((right_motion << 5) < step)
+            ),
+            self.i.ready.eq(~processing & ~pending),
+            self.o.valid.eq(pending),
+        ]
+        for ch in range(n_channels):
+            m.d.comb += self.o.payload[ch].as_value().eq(result[ch])
+
+        with m.If(self.i.valid & self.i.ready):
+            for ch in range(n_channels):
+                m.d.sync += incoming[ch].eq(self.i.payload[ch].as_value())
+            m.d.sync += [
+                channel.eq(0),
+                processing.eq(1),
+            ]
+
+        with m.If(processing):
+            with m.If(fill == 16):
+                m.d.sync += result[channel].eq(
+                    Mux(reconstruct,
+                        Mux(center_left <= center_right, left, right),
+                        center)
+                )
+            with m.If(channel == n_channels - 1):
+                for ch in range(n_channels):
+                    for n in range(15):
+                        m.d.sync += history[ch][n].eq(history[ch][n + 1])
+                    m.d.sync += history[ch][15].eq(incoming[ch])
+                m.d.sync += processing.eq(0)
+                with m.If(fill < 16):
+                    m.d.sync += fill.eq(fill + 1)
+                with m.Else():
+                    m.d.sync += pending.eq(1)
+            with m.Else():
+                m.d.sync += channel.eq(channel + 1)
+
+        with m.If(pending & self.o.ready):
+            m.d.sync += pending.eq(0)
+
+        return m
+
+
+class MultichannelEdgeAwareResample(wiring.Component):
+
+    """Time-multiplexed, channel-aligned EdgeAwareResample.
+
+    The hard-edge decision and interpolation adder are shared across channels.
+    State is retained independently, and an output bundle is asserted only
+    after all channel values for that interpolation phase are ready.
+    """
+
+    def __init__(self, *, n_channels, n_up, shape=ASQ, min_step=0.05):
+        assert n_channels >= 1
+        assert n_up >= 2 and (n_up & (n_up - 1)) == 0
+        self.n_channels = n_channels
+        self.n_up = n_up
+        self.shape = shape
+        self.min_step = int(min_step * (1 << shape.f_bits))
+        layout = data.ArrayLayout(shape, n_channels)
+        super().__init__({
+            "i": In(stream.Signature(layout)),
+            "o": Out(stream.Signature(layout)),
+        })
+
+    def elaborate(self, platform):
+        m = Module()
+
+        n_channels = self.n_channels
+        n_up = self.n_up
+        shift = int(math.log2(n_up))
+        width = self.shape.width
+        incoming = Array(Signal(signed(width), name=f"incoming{ch}")
+                         for ch in range(n_channels))
+        prev_prev = Array(Signal(signed(width), name=f"prev_prev{ch}")
+                          for ch in range(n_channels))
+        prev = Array(Signal(signed(width), name=f"prev{ch}")
+                     for ch in range(n_channels))
+        target = Array(Signal(signed(width), name=f"target{ch}")
+                       for ch in range(n_channels))
+        current = Array(Signal(signed(width + 1), name=f"current{ch}")
+                        for ch in range(n_channels))
+        emitted = Array(Signal(signed(width), name=f"emitted{ch}")
+                        for ch in range(n_channels))
+        step_by_ch = Array(Signal(signed(width + 1), name=f"step{ch}")
+                           for ch in range(n_channels))
+        edge_segment = Array(Signal(name=f"edge_segment{ch}")
+                             for ch in range(n_channels))
+
+        have_prev = Signal()
+        have_prev_delta = Signal()
+        setup_active = Signal()
+        update_active = Signal()
+        output_valid = Signal()
+        channel = Signal(range(n_channels))
+        phase = Signal(range(n_up + 1))
+
+        def extended(value):
+            return Cat(value, value[-1]).as_signed()
+
+        delta = Signal(signed(width + 1))
+        prev_delta = Signal(signed(width + 1))
+        delta_magnitude = Signal(unsigned(width + 1))
+        prev_delta_magnitude = Signal(unsigned(width + 1))
+        interpolated = Signal(signed(width + 1))
+        next_value = Signal(signed(width + 1))
+        hard_edge = Signal()
+        m.d.comb += [
+            delta.eq(extended(incoming[channel]) - extended(prev[channel])),
+            prev_delta.eq(
+                extended(prev[channel]) - extended(prev_prev[channel])),
+            delta_magnitude.eq(Mux(delta < 0, -delta, delta)),
+            prev_delta_magnitude.eq(
+                Mux(prev_delta < 0, -prev_delta, prev_delta)),
+            hard_edge.eq(
+                have_prev_delta &
+                (delta_magnitude >= self.min_step) &
+                ((delta_magnitude >> 3) > prev_delta_magnitude)
+            ),
+            interpolated.eq(extended(prev[channel]) + (delta >> shift)),
+            next_value.eq(current[channel] + step_by_ch[channel]),
+            self.i.ready.eq(~setup_active & ~update_active & ~output_valid),
+            self.o.valid.eq(output_valid),
+        ]
+        for ch in range(n_channels):
+            m.d.comb += self.o.payload[ch].as_value().eq(emitted[ch])
+
+        with m.If(self.i.valid & self.i.ready):
+            with m.If(~have_prev):
+                for ch in range(n_channels):
+                    m.d.sync += prev[ch].eq(self.i.payload[ch].as_value())
+                m.d.sync += have_prev.eq(1)
+            with m.Else():
+                for ch in range(n_channels):
+                    m.d.sync += incoming[ch].eq(self.i.payload[ch].as_value())
+                m.d.sync += [
+                    channel.eq(0),
+                    setup_active.eq(1),
+                ]
+
+        with m.If(setup_active):
+            m.d.sync += [
+                target[channel].eq(incoming[channel]),
+                current[channel].eq(interpolated),
+                emitted[channel].eq(
+                    Mux(hard_edge, prev[channel], interpolated)),
+                step_by_ch[channel].eq(delta >> shift),
+                edge_segment[channel].eq(hard_edge),
+            ]
+            with m.If(channel == n_channels - 1):
+                m.d.sync += [
+                    setup_active.eq(0),
+                    output_valid.eq(1),
+                    phase.eq(1),
+                ]
+            with m.Else():
+                m.d.sync += channel.eq(channel + 1)
+
+        with m.If(output_valid & self.o.ready):
+            with m.If(phase == n_up):
+                for ch in range(n_channels):
+                    m.d.sync += [
+                        prev_prev[ch].eq(prev[ch]),
+                        prev[ch].eq(target[ch]),
+                    ]
+                m.d.sync += [
+                    have_prev_delta.eq(1),
+                    output_valid.eq(0),
+                ]
+            with m.Elif(phase == n_up - 1):
+                for ch in range(n_channels):
+                    m.d.sync += [
+                        current[ch].eq(extended(target[ch])),
+                        emitted[ch].eq(target[ch]),
+                        edge_segment[ch].eq(0),
+                    ]
+                m.d.sync += phase.eq(phase + 1)
+            with m.Else():
+                m.d.sync += [
+                    output_valid.eq(0),
+                    update_active.eq(1),
+                    channel.eq(0),
+                ]
+
+        with m.If(update_active):
+            m.d.sync += [
+                current[channel].eq(next_value),
+                emitted[channel].eq(
+                    Mux(edge_segment[channel], prev[channel], next_value)),
+            ]
+            with m.If(channel == n_channels - 1):
+                m.d.sync += [
+                    update_active.eq(0),
+                    output_valid.eq(1),
+                    phase.eq(phase + 1),
+                ]
+            with m.Else():
+                m.d.sync += channel.eq(channel + 1)
 
         return m

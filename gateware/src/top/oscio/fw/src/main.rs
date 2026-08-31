@@ -2,7 +2,6 @@
 #![no_main]
 
 use critical_section::Mutex;
-use log::info;
 use riscv_rt::entry;
 use irq::handler;
 use core::cell::RefCell;
@@ -120,15 +119,6 @@ where
 {
     let size = display.size();
     clear_region(display, Rectangle::new(Point::new(0, 0), size));
-}
-
-/// Rectangle occupied by the scrolling help text and its scroll indicators.
-/// The connector diagram above it is static and deliberately excluded.
-fn help_text_region(h_active: u32, v_active: u32) -> Rectangle {
-    let x = (h_active / 2).saturating_sub(280);
-    let text_y = (v_active / 2).saturating_sub(150);
-    let y = text_y.saturating_sub(14);
-    Rectangle::new(Point::new(x as i32, y as i32), Size::new(560, 380))
 }
 
 struct OverlayUiPort<'a> {
@@ -284,17 +274,12 @@ fn timer0_handler(app: &Mutex<RefCell<App>>) {
 fn main() -> ! {
     let peripherals = pac::Peripherals::take().unwrap();
     let sysclk = pac::clock::sysclk();
-    let serial = Serial0::new(peripherals.UART0);
     let mut timer = Timer0::new(peripherals.TIMER0, sysclk);
     let spiflash = SPIFlash0::new(
         peripherals.SPIFLASH_CTRL,
         SPIFLASH_BASE,
         SPIFLASH_SZ_BYTES
     );
-
-    tiliqua_fw::handlers::logger_init(serial);
-
-    info!("Hello from Tiliqua OSCIO!");
 
     let bootinfo = unsafe { bootinfo::BootInfo::from_addr(BOOTINFO_BASE) }.unwrap();
     let modeline = bootinfo.modeline.maybe_override_fixed(
@@ -326,6 +311,9 @@ fn main() -> ! {
     };
     // Boot straight into the scope; ignore a saved Help-page selection.
     opts.tracker.page.value = Page::Chan12;
+    // Older builds allowed the persisted help position to reach 125. Keep an
+    // existing option store from restoring a now-invalid blank viewport.
+    opts.help.scroll.value = opts.help.scroll.value.min(5);
 
     let mut last_palette = opts.display.palette.value;
     let mut last_hide = opts.menu.hide.value;
@@ -406,10 +394,6 @@ fn main() -> ! {
 
             if on_help_page != was_help_page {
                 clear_framebuffer(&mut display);
-            } else if help_scrolled {
-                // Keep the static connector diagram; only refresh the text
-                // viewport whose contents actually change when scrolling.
-                clear_region(&mut display, help_text_region(h_active, v_active));
             }
 
             if opts.display.palette.value != last_palette || first {
@@ -475,10 +459,23 @@ fn main() -> ! {
                 )
                 .ok();
             } else if help_scrolled {
+                let help_x = (h_active / 2).saturating_sub(280);
+                let help_y = (v_active / 2).saturating_sub(150);
+                // Erase only pixels belonging to the previous text view. A
+                // full 560x380 clear costs 212,800 writes and is especially
+                // expensive when rotation maps rows to reverse-strided PSRAM.
+                draw::erase_help(
+                    &mut display,
+                    help_x,
+                    help_y,
+                    last_help_scroll,
+                    MODULE_DOCSTRING,
+                )
+                .ok();
                 draw::draw_help(
                     &mut display,
-                    (h_active / 2).saturating_sub(280),
-                    (v_active / 2).saturating_sub(150),
+                    help_x,
+                    help_y,
                     opts.help.scroll.value,
                     MODULE_DOCSTRING,
                     opts.menu.ui_hue.value,

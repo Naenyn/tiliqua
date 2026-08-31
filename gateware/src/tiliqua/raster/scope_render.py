@@ -7,7 +7,13 @@ from amaranth.lib import stream, wiring
 from amaranth.lib.wiring import In, Out
 
 from .line import LineCmd, LineStripCmd
-from .scope_capture import MAX_CAPTURE_COLS, ENVELOPE_SENTINEL, VERTICAL_DY_THRESH
+from .scope_capture import (
+    MAX_CAPTURE_COLS,
+    ENVELOPE_CHANNEL_BITS,
+    ENVELOPE_COORD_BITS,
+    ENVELOPE_WORD_BITS,
+    VERTICAL_DY_THRESH,
+)
 
 
 class ColumnRenderer(wiring.Component):
@@ -41,14 +47,14 @@ class ColumnRenderer(wiring.Component):
             "col_valid": In(1),
             "col_ready": Out(1),
             "col": In(range(MAX_CAPTURE_COLS)),
-            "word": In(unsigned(128)),
+            "word": In(unsigned(ENVELOPE_WORD_BITS)),
             # Shown-envelope RAM (read + write).
             "s_en": Out(1),
             "s_addr": Out(range(MAX_CAPTURE_COLS)),
-            "s_data": In(unsigned(128)),
+            "s_data": In(unsigned(ENVELOPE_WORD_BITS)),
             "sw_en": Out(1),
             "sw_addr": Out(range(MAX_CAPTURE_COLS)),
-            "sw_data": Out(unsigned(128)),
+            "sw_data": Out(unsigned(ENVELOPE_WORD_BITS)),
             "line_o": Out(stream.Signature(LineCmd)).array(n_channels),
             "busy": Out(1),
             "dbg_state": Out(unsigned(3)),
@@ -61,11 +67,14 @@ class ColumnRenderer(wiring.Component):
         m = Module()
 
         render_col = Signal(range(MAX_CAPTURE_COLS))
-        new_word = Signal(unsigned(128))
-        shown_word = Signal(unsigned(128))
-        prev_shown_word = Signal(unsigned(128))
+        new_word = Signal(unsigned(ENVELOPE_WORD_BITS))
+        shown_word = Signal(unsigned(ENVELOPE_WORD_BITS))
+        prev_shown_word = Signal(unsigned(ENVELOPE_WORD_BITS))
         have_prev_shown = Signal()
 
+        new_valid = Array(Signal() for _ in range(self.n_channels))
+        shown_valid = Array(Signal() for _ in range(self.n_channels))
+        prev_valid = Array(Signal() for _ in range(self.n_channels))
         new_ymin = Array(Signal(signed(16)) for _ in range(self.n_channels))
         new_ymax = Array(Signal(signed(16)) for _ in range(self.n_channels))
         shown_ymin = Array(Signal(signed(16)) for _ in range(self.n_channels))
@@ -75,14 +84,26 @@ class ColumnRenderer(wiring.Component):
         horiz_corner = Array(Signal() for _ in range(self.n_channels))
         horiz_y = Array(Signal(signed(11)) for _ in range(self.n_channels))
         for ch in range(self.n_channels):
-            lo = 32 * ch
+            lo = ENVELOPE_CHANNEL_BITS * ch
             m.d.comb += [
-                new_ymin[ch].eq(new_word[lo:lo+16].as_signed()),
-                new_ymax[ch].eq(new_word[lo+16:lo+32].as_signed()),
-                shown_ymin[ch].eq(shown_word[lo:lo+16].as_signed()),
-                shown_ymax[ch].eq(shown_word[lo+16:lo+32].as_signed()),
-                prev_ymin[ch].eq(prev_shown_word[lo:lo+16].as_signed()),
-                prev_ymax[ch].eq(prev_shown_word[lo+16:lo+32].as_signed()),
+                new_valid[ch].eq(new_word[lo]),
+                shown_valid[ch].eq(shown_word[lo]),
+                prev_valid[ch].eq(prev_shown_word[lo]),
+                new_ymin[ch].eq(new_word[
+                    lo + 1:lo + 1 + ENVELOPE_COORD_BITS].as_signed()),
+                new_ymax[ch].eq(new_word[
+                    lo + 1 + ENVELOPE_COORD_BITS:
+                    lo + 1 + 2 * ENVELOPE_COORD_BITS].as_signed()),
+                shown_ymin[ch].eq(shown_word[
+                    lo + 1:lo + 1 + ENVELOPE_COORD_BITS].as_signed()),
+                shown_ymax[ch].eq(shown_word[
+                    lo + 1 + ENVELOPE_COORD_BITS:
+                    lo + 1 + 2 * ENVELOPE_COORD_BITS].as_signed()),
+                prev_ymin[ch].eq(prev_shown_word[
+                    lo + 1:lo + 1 + ENVELOPE_COORD_BITS].as_signed()),
+                prev_ymax[ch].eq(prev_shown_word[
+                    lo + 1 + ENVELOPE_COORD_BITS:
+                    lo + 1 + 2 * ENVELOPE_COORD_BITS].as_signed()),
             ]
             prev_span = Signal(signed(17), name=f"prev_span{ch}")
             flat_new = Signal(name=f"flat_new{ch}")
@@ -91,7 +112,9 @@ class ColumnRenderer(wiring.Component):
                 flat_new.eq(new_ymin[ch] == new_ymax[ch]),
                 horiz_corner[ch].eq(
                     have_prev_shown &
+                    prev_valid[ch] &
                     self.visible[ch] &
+                    new_valid[ch] &
                     (self.intensity[ch] > 0) &
                     flat_new &
                     (prev_span >= VERTICAL_DY_THRESH) &
@@ -133,13 +156,13 @@ class ColumnRenderer(wiring.Component):
                     ]
 
         # Validity tests.  A channel was drawn last frame iff its shown span is
-        # not the sentinel (shown_hi >= shown_lo); it should be drawn this frame
-        # iff it is visible, has intensity and a valid envelope.
+        # has its valid bit set; it should be drawn this frame iff it is visible,
+        # has intensity and a valid envelope.
         erase_valid = Signal()
         draw_valid = Signal()
         m.d.comb += [
-            erase_valid.eq(cur_shown_hi >= cur_shown_lo),
-            draw_valid.eq(cur_vis & (cur_inten > 0) & (cur_new_hi >= cur_new_lo)),
+            erase_valid.eq(shown_valid[draw_ch]),
+            draw_valid.eq(cur_vis & (cur_inten > 0) & new_valid[draw_ch]),
         ]
 
         # The draw clamps a flat envelope (ymax==ymin) up to a 1px-tall segment.
@@ -187,14 +210,18 @@ class ColumnRenderer(wiring.Component):
 
         # Updated shown word: keep channels we drew, sentinel for the rest, so
         # next frame only erases what is really on screen.
-        sentinel_chunk = Const(ENVELOPE_SENTINEL, unsigned(128))[0:32]
+        sentinel_chunk = Const(0, unsigned(ENVELOPE_CHANNEL_BITS))
         ch_target = []
         shown_chunks = []
         for ch in range(self.n_channels):
-            lo = 32 * ch
+            lo = ENVELOPE_CHANNEL_BITS * ch
             drew = self.visible[ch] & (self.intensity[ch] > 0) & \
-                (new_ymax[ch] >= new_ymin[ch])
-            target = Mux(drew, new_word[lo:lo+32], sentinel_chunk)
+                new_valid[ch]
+            target = Mux(
+                drew,
+                new_word[lo:lo + ENVELOPE_CHANNEL_BITS],
+                sentinel_chunk,
+            )
             ch_target.append(target)
             shown_chunks.append(target)
         m.d.comb += self.sw_data.eq(Cat(*shown_chunks))
@@ -204,7 +231,10 @@ class ColumnRenderer(wiring.Component):
             for ch in range(self.n_channels):
                 with m.Case(ch):
                     m.d.comb += ch_unchanged.eq(
-                        shown_word[32 * ch:32 * ch + 32] == ch_target[ch]
+                        shown_word[
+                            ENVELOPE_CHANNEL_BITS * ch:
+                            ENVELOPE_CHANNEL_BITS * (ch + 1)
+                        ] == ch_target[ch]
                     )
 
         # Fast path: every channel already matches its target on screen.

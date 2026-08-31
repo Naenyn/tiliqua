@@ -349,12 +349,15 @@ class RasterTests(unittest.TestCase):
 class ColumnCaptureTests(unittest.TestCase):
 
     def _unpack_ch0(self, word):
-        ymin = word & 0xffff
-        ymax = (word >> 16) & 0xffff
-        if ymin >= 0x8000:
-            ymin -= 0x10000
-        if ymax >= 0x8000:
-            ymax -= 0x10000
+        bits = scope_capture.ENVELOPE_COORD_BITS
+        mask = (1 << bits) - 1
+        self.assertEqual(word & 1, 1)
+        ymin = (word >> 1) & mask
+        ymax = (word >> (1 + bits)) & mask
+        if ymin >= (1 << (bits - 1)):
+            ymin -= 1 << bits
+        if ymax >= (1 << (bits - 1)):
+            ymax -= 1 << bits
         return ymin, ymax
 
     def test_pen_lift_flush_is_not_bridged(self):
@@ -374,6 +377,7 @@ class ColumnCaptureTests(unittest.TestCase):
             ctx.set(dut.sample_valid, 1)
             await ctx.tick()
             ctx.set(dut.sample_valid, 0)
+            await ctx.tick()
             await ctx.tick()
             await ctx.tick()
             flush = ctx.get(dut.flush_valid)

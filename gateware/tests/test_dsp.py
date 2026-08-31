@@ -330,6 +330,92 @@ class DSPTests(unittest.TestCase):
 
         self.assertEqual(outputs, expected)
 
+    def test_multichannel_reconstruct_preserves_aligned_smooth_signals(self):
+        m = Module()
+        m.submodules.dut = dut = dsp.MultichannelDiscontinuityReconstruct(
+            n_channels=4, shape=ASQ)
+        frames = [
+            [0.5 * math.sin(2 * math.pi * n / period)
+             for period in (48, 56, 64, 72)]
+            for n in range(80)
+        ]
+        expected = [
+            [fixed.Const(frame[ch], shape=ASQ).as_value().value
+             for ch in range(4)]
+            for frame in frames[8:-8]
+        ]
+        outputs = []
+
+        async def stimulus(ctx):
+            for frame in frames:
+                await stream.put(
+                    ctx,
+                    dut.i,
+                    [fixed.Const(value, shape=ASQ) for value in frame],
+                )
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            while len(outputs) < len(expected):
+                if ctx.get(dut.o.valid & dut.o.ready):
+                    outputs.append([
+                        ctx.get(dut.o.payload[ch]).as_value().value
+                        for ch in range(4)
+                    ])
+                await ctx.tick()
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        self.assertEqual(outputs, expected)
+
+    def test_multichannel_edge_aware_resample_keeps_channels_aligned(self):
+        m = Module()
+        m.submodules.dut = dut = dsp.MultichannelEdgeAwareResample(
+            n_channels=4, n_up=8, shape=ASQ)
+        frames = [
+            [-0.4, -0.5, 0.2, 0.0],
+            [-0.3, -0.5, 0.1, 0.1],
+            [-0.2, -0.5, 0.0, 0.2],
+            [-0.1,  0.5, -0.1, 0.3],
+            [ 0.0,  0.5, -0.2, 0.4],
+        ]
+        outputs = []
+
+        async def stimulus(ctx):
+            for frame in frames:
+                await stream.put(
+                    ctx,
+                    dut.i,
+                    [fixed.Const(value, shape=ASQ) for value in frame],
+                )
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            while len(outputs) < 32:
+                if ctx.get(dut.o.valid & dut.o.ready):
+                    outputs.append([
+                        ctx.get(dut.o.payload[ch]).as_float()
+                        for ch in range(4)
+                    ])
+                await ctx.tick()
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        self.assertEqual(len(outputs), 32)
+        self.assertTrue(all(a[0] <= b[0]
+                            for a, b in zip(outputs, outputs[1:])), outputs)
+        hard_edge = [frame[1] for frame in outputs[16:24]]
+        self.assertEqual(hard_edge[:7], [-0.5] * 7)
+        self.assertEqual(hard_edge[7], 0.5)
+
     @parameterized.expand([
         ["mux_mac", mac.MuxMAC],
         ["ring_mac", mac.RingMAC],
