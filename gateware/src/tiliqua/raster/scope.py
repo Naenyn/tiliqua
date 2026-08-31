@@ -214,6 +214,7 @@ class ScopePeripheral(wiring.Component):
         m.d.comb += trig.falling.eq(0)
         m.submodules.ramp = ramp = dsp.Ramp(shape=PSQ)
         timebase = Signal(shape=dsp.Ramp.TIMEBASE_SQ)
+        m.d.comb += ramp.end.eq(fixed.Const(0.985, shape=PSQ))
         # Audio => Trigger
         dsp.connect_remap(m, irep2.o[0], trig.i, lambda o, i: [
             i.payload.sample.eq(o.payload),

@@ -24,7 +24,9 @@ the current edit, while pressing reopens it in navigation mode.
 CHANNEL 1-2 and CHANNEL 3-4 set each trace's vertical offset, volts per
 division, and visibility.
 
-OSCIO sets time per division, trigger mode, trigger source, and trigger level.
+OSCIO sets time per division, trigger mode, trigger source, trigger level, and
+acquisition style. Clean suppresses short codec settling artifacts around hard
+edges; Raw preserves the calibrated input samples without that reconstruction.
 Rising and falling modes lock the sweep to the selected trigger channel. Free
 mode continuously retriggers.
 
@@ -151,7 +153,7 @@ class ScopeSoc(TiliquaSoc):
         wiring.connect(m, pmod0.o_cal, pmod0.i_cal)
 
         m.submodules.plot_fifo = plot_fifo = dsp.SyncFIFOBuffered(
-            shape=data.ArrayLayout(PSQ, 4), depth=256)
+            shape=data.ArrayLayout(dsp.ASQ, 4), depth=256)
 
         dsp.connect_peek(m, pmod0.o_cal, plot_fifo.i)
 
@@ -161,13 +163,18 @@ class ScopeSoc(TiliquaSoc):
         # clocks per input frame; the serialized path needs fewer than 50.
         m.submodules.edge_reconstruct = edge = \
             dsp.MultichannelDiscontinuityReconstruct(
-                n_channels=4, shape=PSQ)
+                n_channels=4, shape=dsp.ASQ)
         m.submodules.resample = resample = \
             dsp.MultichannelEdgeAwareResample(
-                n_channels=4, n_up=self.n_upsample, shape=PSQ)
+                n_channels=4, n_up=self.n_upsample, shape=dsp.ASQ)
+        m.submodules.plot_convert = plot_convert = \
+            dsp.MultichannelFixedPointConvert(
+                n_channels=4, input_shape=dsp.ASQ, output_shape=PSQ)
+        m.d.comb += edge.enable.eq(self.scope_periph.clean_o)
         wiring.connect(m, plot_fifo.o, edge.i)
         wiring.connect(m, edge.o, resample.i)
-        wiring.connect(m, resample.o, self.scope_periph.i)
+        wiring.connect(m, resample.o, plot_convert.i)
+        wiring.connect(m, plot_convert.o, self.scope_periph.i)
 
         return m
 

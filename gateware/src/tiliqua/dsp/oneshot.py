@@ -90,28 +90,33 @@ class Ramp(wiring.Component):
 
     TIMEBASE_SQ = fixed.SQ(8, 24)
 
-    def __init__(self, shape=ASQ, shift=6):
+    def __init__(self, shape=ASQ, shift=6, *, timebase_shape=None):
         self.shape = shape
         self.shift = shift
+        self.timebase_shape = timebase_shape or self.TIMEBASE_SQ
         super().__init__({
             "i": In(stream.Signature(data.StructLayout({
                 "trigger":  unsigned(1),
-                "td":       self.TIMEBASE_SQ, # time delta
+                "td":       self.timebase_shape, # time delta
             }))),
+            # The default users tie this to approximately +1. OSCilloscope
+            # capture can stop earlier so no sample time is spent beyond the
+            # visible viewport.
+            "end": In(shape),
             "o": Out(stream.Signature(shape)),
         })
 
     def elaborate(self, platform):
         m = Module()
 
-        s = Signal(self.TIMEBASE_SQ)
+        s = Signal(self.timebase_shape)
         at_top = Signal()
 
         m.d.comb += [
             self.o.valid.eq(self.i.valid),
             self.i.ready.eq(self.o.ready),
             self.o.payload.eq(s >> self.shift),
-            at_top.eq(self.o.payload > fixed.Const(0.985, shape=self.shape)),
+            at_top.eq(self.o.payload >= self.end),
         ]
 
         with m.If(self.i.valid & self.o.ready):

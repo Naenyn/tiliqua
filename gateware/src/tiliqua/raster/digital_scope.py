@@ -13,6 +13,16 @@ from . import PSQ, PSQ_BASE_FBITS, psq_from_volts
 from .scope_capture import MAX_CAPTURE_COLS, ENVELOPE_WORD_BITS, ColumnCapture
 
 
+# Preserve the ramp's eight integer bits while adding four fractional bits for
+# 16x finer slow-timebase increments. ``Ramp`` keeps its accumulator scaled by
+# 2**6 and therefore restarts at an internal value of -64; Q4.28 cannot
+# represent that value and wrapped the restart to zero, preventing a complete
+# left-to-right capture sweep. The CSR remains 32 bits because only the
+# positive increment is written by firmware; it is zero-extended into this
+# wider internal accumulator shape.
+SCOPE_TIMEBASE_SQ = fixed.SQ(8, 28)
+
+
 class _SampleTap(wiring.Component):
 
     """Always-ready sink so ``connect_peek`` taps keep the merge outputs flowing."""
@@ -83,6 +93,10 @@ class DigitalScopePeripheral(wiring.Component):
 
     class DisplayMode(csr.Register, access="w"):
         progressive: csr.Field(csr.action.W, unsigned(1))
+        clean: csr.Field(csr.action.W, unsigned(1))
+
+    class RampEnd(csr.Register, access="w"):
+        value: csr.Field(csr.action.W, unsigned(16))
 
     def __init__(self, n_channels=4, fs=48000):
 
@@ -110,6 +124,7 @@ class DigitalScopePeripheral(wiring.Component):
         self._plot_y_hi       = regs.add("plot_y_hi",     self.PlotBound(),      offset=0x44)
         self._channel_en      = regs.add("channel_en",    self.ChannelEnable(),  offset=0x54)
         self._display_mode    = regs.add("display_mode",   self.DisplayMode(),     offset=0x74)
+        self._ramp_end        = regs.add("ramp_end",       self.RampEnd(),          offset=0x78)
 
         self._bridge = csr.Bridge(regs.as_memory_map())
         super().__init__({
@@ -125,6 +140,7 @@ class DigitalScopePeripheral(wiring.Component):
             "sweep_done": Out(1),
             "plot_x_lo_o": Out(signed(16)),
             "progressive_o": Out(1),
+            "clean_o": Out(1),
             "capture_max_col_o": Out(range(MAX_CAPTURE_COLS)),
             "capture_progress_valid_o": Out(1),
             "hue_o": Out(unsigned(4)).array(self.n_channels),
@@ -148,6 +164,7 @@ class DigitalScopePeripheral(wiring.Component):
         intensity = Array(Signal(unsigned(4)) for _ in range(self.n_channels))
         visible = Array(Signal() for _ in range(self.n_channels))
         progressive = Signal()
+        clean = Signal(init=1)
         capture_progress_valid = Signal()
 
         plot_x_lo = Signal(signed(16))
@@ -176,8 +193,11 @@ class DigitalScopePeripheral(wiring.Component):
         m.submodules.trig = trig = dsp.Trigger(
             shape=PSQ, hysteresis=0.016 / 8.192)
         m.d.comb += trig.falling.eq(trigger_falling)
-        m.submodules.ramp = ramp = dsp.Ramp(shape=PSQ)
-        timebase = Signal(shape=dsp.Ramp.TIMEBASE_SQ)
+        m.submodules.ramp = ramp = dsp.Ramp(
+            shape=PSQ, timebase_shape=SCOPE_TIMEBASE_SQ)
+        timebase = Signal(shape=SCOPE_TIMEBASE_SQ)
+        ramp_end = Signal(shape=PSQ, init=0.985)
+        m.d.comb += ramp.end.eq(ramp_end)
 
         # NORM trigger path (classic hold-at-top scope):
         #   - Mid-sweep crossings are ignored; only a fresh edge while the ramp
@@ -189,7 +209,7 @@ class DigitalScopePeripheral(wiring.Component):
         ramp_fire = Signal()
 
         m.d.comb += [
-            ramp_at_top.eq(ramp.o.payload > fixed.Const(0.985, shape=PSQ)),
+            ramp_at_top.eq(ramp.o.payload >= ramp_end),
             trig_seen.eq(trig.o.payload & trig.i.valid & trig.o.ready),
             norm_fire.eq(trig_seen & ramp_at_top & ~trigger_always),
             # The buffer controller briefly drops capture_active while a
@@ -246,6 +266,7 @@ class DigitalScopePeripheral(wiring.Component):
             capture.x_offset.eq(x_offset),
             capture.sample_valid.eq(ch0_merge4.o.valid),
             capture.ramp.eq(ch0_merge4.o.payload[0]),
+            capture.ramp_end.eq(ramp_end),
             capture.audio[0].eq(ch0_merge4.o.payload[1]),
             capture.audio[1].eq(ch_merges[1].o.payload[1]),
             capture.audio[2].eq(ch_merges[2].o.payload[1]),
@@ -256,6 +277,7 @@ class DigitalScopePeripheral(wiring.Component):
             self.sweep_done.eq(capture.sweep_done),
             self.plot_x_lo_o.eq(plot_x_lo),
             self.progressive_o.eq(progressive),
+            self.clean_o.eq(clean),
             self.capture_max_col_o.eq(capture.max_col),
             self.capture_progress_valid_o.eq(capture_progress_valid),
         ]
@@ -293,6 +315,12 @@ class DigitalScopePeripheral(wiring.Component):
 
         with m.If(self._display_mode.f.progressive.w_stb):
             m.d.sync += progressive.eq(self._display_mode.f.progressive.w_data)
+        with m.If(self._display_mode.f.clean.w_stb):
+            m.d.sync += clean.eq(self._display_mode.f.clean.w_data)
+
+        with m.If(self._ramp_end.f.value.w_stb):
+            m.d.sync += ramp_end.as_value().eq(
+                self._ramp_end.f.value.w_data.as_signed())
 
         with m.If(self._xscale.f.xscale.w_stb):
             m.d.sync += scale_x.eq(self._xscale.f.xscale.w_data)

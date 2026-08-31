@@ -1,5 +1,5 @@
 pub const UI_NAME: &str = "OSCIO";
-pub const UI_TAG: &str = "97cf4e4f";
+pub const UI_TAG: &str = "d22c8c3b";
 pub const HW_REV_MAJOR: u32 = 5;
 pub const USE_EXTERNAL_PLL: bool = true;
 pub const CLOCK_SYNC_HZ: u32 = 60000000;
@@ -41,7 +41,9 @@ the current edit, while pressing reopens it in navigation mode.
 CHANNEL 1-2 and CHANNEL 3-4 set each trace's vertical offset, volts per
 division, and visibility.
 
-OSCIO sets time per division, trigger mode, trigger source, and trigger level.
+OSCIO sets time per division, trigger mode, trigger source, trigger level, and
+acquisition style. Clean suppresses short codec settling artifacts around hard
+edges; Raw preserves the calibrated input samples without that reconstruction.
 Rising and falling modes lock the sweep to the selected trigger channel. Free
 mode continuously retriggers.
 

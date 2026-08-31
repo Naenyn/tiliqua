@@ -348,6 +348,38 @@ class RasterTests(unittest.TestCase):
 
 class ColumnCaptureTests(unittest.TestCase):
 
+    def test_vertical_scale_lut_tracks_grid_voltage(self):
+        """Every V/div choice should map its nominal voltage to one grid division."""
+        from tiliqua.raster import PSQ, PSQ_BASE_FBITS, psq_from_volts
+
+        counts_per_volt = (
+            psq_from_volts(1.0).as_value().value <<
+            (PSQ_BASE_FBITS - PSQ.f_bits)
+        )
+        pixels_per_div = counts_per_volt >> 6
+        volts_per_div = (0.1, 0.25, 0.5, 1.0, 2.5, 5.0)
+
+        self.assertEqual(counts_per_volt, 4000)
+        self.assertEqual(pixels_per_div, 62)
+        for v_div, (mul, shift) in zip(
+                volts_per_div, scope_capture.YSCALE_LUT):
+            actual_pixels_per_volt = counts_per_volt * mul / (1 << shift)
+            target_pixels_per_volt = pixels_per_div / v_div
+            relative_error = abs(
+                actual_pixels_per_volt / target_pixels_per_volt - 1.0)
+            self.assertLess(
+                relative_error, 0.002,
+                f"{v_div} V/div scale error is {relative_error:.3%}")
+
+            # Coordinate conversion rounds rather than flooring signed values:
+            # one nominal division must have equal magnitude in both polarities.
+            sample = int(counts_per_volt * v_div)
+            bias = 1 << (shift - 1)
+            positive_y = ((-sample * mul) + bias) >> shift
+            negative_y = ((sample * mul) + bias) >> shift
+            self.assertEqual(positive_y, -pixels_per_div)
+            self.assertEqual(negative_y, pixels_per_div)
+
     def _unpack_ch0(self, word):
         bits = scope_capture.ENVELOPE_COORD_BITS
         mask = (1 << bits) - 1
@@ -359,6 +391,75 @@ class ColumnCaptureTests(unittest.TestCase):
         if ymax >= (1 << (bits - 1)):
             ymax -= 1 << bits
         return ymin, ymax
+
+    def test_column_capture_maps_nominal_division_symmetrically(self):
+        """Exercise the RTL path: +/- one V/div must land at +/- one grid step."""
+        from amaranth_future import fixed
+        from tiliqua.raster import PSQ
+
+        m = Module()
+        dut = scope_capture.ColumnCapture()
+        m.submodules.dut = dut
+
+        async def testbench(ctx):
+            ctx.set(dut.active, 1)
+            ctx.set(dut.plot_x_lo, -600)
+            ctx.set(dut.plot_x_hi, 600)
+            ctx.set(dut.scale_x, 5)
+            ctx.set(dut.x_offset, 0)
+            ctx.set(dut.y_offset[0], 0)
+            ctx.set(dut.visible[0], 1)
+            for ch in range(1, 4):
+                ctx.set(dut.visible[ch], 0)
+
+            async def push(ramp, volts):
+                flushes = []
+                ctx.set(dut.ramp, fixed.Const(ramp, shape=PSQ))
+                ctx.set(dut.audio[0], fixed.Const(volts / 8.192, shape=PSQ))
+                ctx.set(dut.sample_valid, 1)
+                await ctx.tick()
+                ctx.set(dut.sample_valid, 0)
+                for _ in range(10):
+                    if ctx.get(dut.flush_valid):
+                        flushes.append(ctx.get(dut.flush_word))
+                    await ctx.tick()
+                return flushes
+
+            volts_per_div = (0.1, 0.25, 0.5, 1.0, 2.5, 5.0)
+            for scale, volts in enumerate(volts_per_div):
+                ctx.set(dut.scale_y[0], scale)
+                ctx.set(dut.clear, 1)
+                await ctx.tick()
+                ctx.set(dut.clear, 0)
+                await ctx.tick()
+
+                # A top-to-low ramp transition arms a clean sweep. The next
+                # two positions occupy different columns, flushing the first.
+                await push(0.99, 0.0)
+                await push(0.00, 0.0)
+                await push(0.01, 0.0)
+                zero = await push(0.02, 0.0)
+                self.assertTrue(zero)
+                self.assertEqual(self._unpack_ch0(zero[-1]), (0, 0))
+
+                await push(0.99, 0.0)
+                await push(0.00, 0.0)
+                await push(0.01, volts)
+                positive = await push(0.02, volts)
+                self.assertTrue(positive)
+                self.assertEqual(self._unpack_ch0(positive[-1]), (-62, -62))
+
+                await push(0.99, 0.0)
+                await push(0.00, 0.0)
+                await push(0.01, -volts)
+                negative = await push(0.02, -volts)
+                self.assertTrue(negative)
+                self.assertEqual(self._unpack_ch0(negative[-1]), (62, 62))
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()
 
     def test_pen_lift_flush_is_not_bridged(self):
         """Sweep wrap must not treat end-of-sweep Y as a steep edge into the new sweep."""
@@ -372,18 +473,23 @@ class ColumnCaptureTests(unittest.TestCase):
         plot_x_lo = 100
 
         async def sample(ctx, ramp_val, audio_val):
+            flush = 0
+            word = 0
+            col = 0
+            pen = 0
             ctx.set(dut.ramp, fixed.Const(ramp_val, shape=PSQ))
             ctx.set(dut.audio[0], fixed.Const(audio_val, shape=PSQ))
             ctx.set(dut.sample_valid, 1)
             await ctx.tick()
             ctx.set(dut.sample_valid, 0)
-            await ctx.tick()
-            await ctx.tick()
-            await ctx.tick()
-            flush = ctx.get(dut.flush_valid)
-            word = ctx.get(dut.flush_word) if flush else 0
-            col = ctx.get(dut.flush_col) if flush else 0
-            pen = ctx.get(dut.sweep_done)
+            for _ in range(10):
+                if ctx.get(dut.flush_valid):
+                    flush = 1
+                    word = ctx.get(dut.flush_word)
+                    col = ctx.get(dut.flush_col)
+                if ctx.get(dut.sweep_done):
+                    pen = 1
+                await ctx.tick()
             return flush, col, word, pen
 
         async def testbench(ctx):

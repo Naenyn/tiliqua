@@ -140,6 +140,15 @@ pub enum TriggerChannel {
     Ch4,
 }
 
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
+pub enum AcquisitionMode {
+    #[default]
+    #[strum(serialize = "clean")]
+    Clean,
+    #[strum(serialize = "raw")]
+    Raw,
+}
+
 impl TriggerChannel {
     pub fn hw_index(self) -> u8 {
         match self {
@@ -275,6 +284,8 @@ pub struct ScopeOpts {
     pub trigger_ch: EnumOption<TriggerChannel>,
     #[option]
     pub trig_lvl: IntOption<TriggerLvlParams>,
+    #[option]
+    pub acquisition: EnumOption<AcquisitionMode>,
 }
 
 #[derive(Options, Clone)]

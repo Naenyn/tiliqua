@@ -36,8 +36,17 @@ YSCALE_LUT = (
     (127, 11),  # 1: 0.25 V/div
     (127, 12),  # 2: 0.5 V/div
     (127, 13),  # 3: 1.0 V/div
-    (205, 15),  # 4: 2.5 V/div
+    (203, 15),  # 4: 2.5 V/div
     (203, 16),  # 5: 5.0 V/div
+)
+
+# The table above documents the original ratio directly, but the serialized
+# scaler uses one common Q16 denominator.  Every LUT denominator is a power of
+# two no larger than 2**16, so this conversion is exact.  Besides simplifying
+# rounding, a fixed shift removes the variable barrel shifter from the path
+# following the shared DSP multiplier.
+YSCALE_COEFF_Q16 = tuple(
+    mul << (16 - rshift) for mul, rshift in YSCALE_LUT
 )
 
 
@@ -106,6 +115,7 @@ class ColumnCapture(wiring.Component):
             "y_offset": In(signed(16)).array(n_channels),
             "sample_valid": In(1),
             "ramp": In(PSQ),
+            "ramp_end": In(PSQ, init=0.985),
             "audio": In(PSQ).array(n_channels),
             "visible": In(1).array(n_channels),
             "sweep_done": Out(1),
@@ -120,78 +130,107 @@ class ColumnCapture(wiring.Component):
         m = Module()
 
         raw_x = Signal(signed(16))
-        raw_y = Array(Signal(signed(16), name=f"raw_y{i}") for i in range(self.n_channels))
         scaled_x = Signal(signed(16))
         in_x = Signal(signed(16))
         in_y = Array(Signal(signed(16), name=f"in_y{i}") for i in range(self.n_channels))
-        scaled_valid = Signal()
         scaled_active = Signal()
         scaled_at_end = Signal()
         sample_valid = Signal()
         sample_active = Signal()
         sample_at_end = Signal()
-        y_mul = Array(Signal(8, name=f"y_mul{i}") for i in range(self.n_channels))
-        y_rshift = Array(Signal(5, name=f"y_rshift{i}") for i in range(self.n_channels))
-        y_rshift_scaled = Array(Signal(5, name=f"y_rshift_scaled{i}")
+        audio_base_width = PSQ.i_bits + PSQ_BASE_FBITS
+        # One extra sample bit safely represents ``-PSQ_MIN``.  Q16 scale
+        # coefficients require at most 15 signed bits (max 10176), keeping the
+        # shared multiplication within one ECP5 18x18 DSP block.
+        negated_width = audio_base_width + 1
+        coefficient_width = 15
+        product_width = negated_width + coefficient_width
+        latched_audio = Array(Signal(signed(audio_base_width), name=f"latched_audio{i}")
+                              for i in range(self.n_channels))
+        latched_scale_y = Array(Signal(unsigned(3), name=f"latched_scale_y{i}")
                                 for i in range(self.n_channels))
-        y_offset_scaled = Array(Signal(signed(16), name=f"y_offset_scaled{i}")
-                                for i in range(self.n_channels))
-        yprod = Array(Signal(signed(26), name=f"yprod{i}")
-                      for i in range(self.n_channels))
-        yprod_scaled = Array(Signal(signed(26), name=f"yprod_scaled{i}")
-                             for i in range(self.n_channels))
+        latched_y_offset = Array(Signal(signed(16), name=f"latched_y_offset{i}")
+                                 for i in range(self.n_channels))
+        scale_channel = Signal(range(self.n_channels))
+        product_channel = Signal(range(self.n_channels))
+        scaling = Signal()
+        product_valid = Signal()
+        y_coefficient = Signal(signed(coefficient_width))
+        negated_audio = Signal(signed(negated_width))
+        yprod = Signal(signed(product_width))
+        product_pipe = Signal(signed(product_width))
+        offset_pipe = Signal(signed(16))
+        rounded_product = Signal(signed(product_width - 16 + 1))
+        scaled_y = Signal(signed(16))
 
         m.d.comb += raw_x.eq(
             (self.ramp.reshape(PSQ_BASE_FBITS).as_value() >> self.scale_x) +
             self.x_offset
         )
-        for ch in range(self.n_channels):
-            with m.Switch(self.scale_y[ch]):
-                for idx, (mul, rshift) in enumerate(YSCALE_LUT):
-                    with m.Case(idx):
-                        m.d.comb += [
-                            y_mul[ch].eq(mul),
-                            y_rshift[ch].eq(rshift),
-                        ]
-                with m.Default():
-                    m.d.comb += [
-                        y_mul[ch].eq(YSCALE_LUT[3][0]),
-                        y_rshift[ch].eq(YSCALE_LUT[3][1]),
-                    ]
-            av = self.audio[ch].reshape(PSQ_BASE_FBITS).as_value()
-            m.d.comb += [
-                yprod[ch].eq(-av * y_mul[ch]),
-                raw_y[ch].eq(
-                    (yprod_scaled[ch] >> y_rshift_scaled[ch]) +
-                    y_offset_scaled[ch]),
-            ]
+        with m.Switch(latched_scale_y[scale_channel]):
+            for idx, coefficient in enumerate(YSCALE_COEFF_Q16):
+                with m.Case(idx):
+                    m.d.comb += y_coefficient.eq(coefficient)
+            with m.Default():
+                m.d.comb += y_coefficient.eq(YSCALE_COEFF_Q16[3])
+        m.d.comb += [
+            negated_audio.eq(-latched_audio[scale_channel]),
+            yprod.eq(negated_audio * y_coefficient),
+            # (product + 0x8000) >> 16, expressed as an upper-word
+            # increment so synthesis does not build a full-width adder.
+            rounded_product.eq(
+                (product_pipe >> 16) + product_pipe[15]),
+            scaled_y.eq(rounded_product + offset_pipe),
+        ]
 
-        # Split sample scaling at the multiplier output, then register the
-        # shifted/offset coordinate before envelope accumulation. Audio samples
-        # arrive much more slowly than sync, so neither stage reduces throughput.
-        m.d.sync += scaled_valid.eq(self.sample_valid)
-        with m.If(self.sample_valid):
+        # Four input channels arrive as a bundle only once every ~39 sync clocks
+        # at the maximum 1.536 MHz plotting rate. Serialize their coordinate
+        # conversion through one multiplier instead of instantiating four DSPs.
+        # The completed bundle remains aligned and is consumed atomically.
+        m.d.sync += [
+            sample_valid.eq(0),
+            product_valid.eq(0),
+        ]
+        with m.If(self.sample_valid & ~scaling):
             m.d.sync += [
                 scaled_x.eq(raw_x),
                 scaled_active.eq(self.active),
-                scaled_at_end.eq(self.ramp > RAMP_END),
+                scaled_at_end.eq(self.ramp >= self.ramp_end),
+                scale_channel.eq(0),
+                scaling.eq(1),
             ]
             for ch in range(self.n_channels):
                 m.d.sync += [
-                    yprod_scaled[ch].eq(yprod[ch]),
-                    y_rshift_scaled[ch].eq(y_rshift[ch]),
-                    y_offset_scaled[ch].eq(self.y_offset[ch]),
+                    latched_audio[ch].eq(
+                        self.audio[ch].reshape(PSQ_BASE_FBITS).as_value()),
+                    latched_scale_y[ch].eq(self.scale_y[ch]),
+                    latched_y_offset[ch].eq(self.y_offset[ch]),
                 ]
-
-        m.d.sync += sample_valid.eq(scaled_valid)
-        with m.If(scaled_valid):
+        with m.Elif(scaling):
+            # Register the DSP output before rounding and offset addition.  The
+            # old single-cycle path missed 60 MHz after routing because it
+            # combined channel muxing, negation, multiplication, a variable
+            # shift, and both additions.
             m.d.sync += [
-                in_x.eq(scaled_x),
-                sample_active.eq(scaled_active),
-                sample_at_end.eq(scaled_at_end),
+                product_pipe.eq(yprod),
+                offset_pipe.eq(latched_y_offset[scale_channel]),
+                product_channel.eq(scale_channel),
+                product_valid.eq(1),
             ]
-            for ch in range(self.n_channels):
-                m.d.sync += in_y[ch].eq(raw_y[ch])
+            with m.If(scale_channel == self.n_channels - 1):
+                m.d.sync += scaling.eq(0)
+            with m.Else():
+                m.d.sync += scale_channel.eq(scale_channel + 1)
+
+        with m.If(product_valid):
+            m.d.sync += in_y[product_channel].eq(scaled_y)
+            with m.If(product_channel == self.n_channels - 1):
+                m.d.sync += [
+                    in_x.eq(scaled_x),
+                    sample_active.eq(scaled_active),
+                    sample_at_end.eq(scaled_at_end),
+                    sample_valid.eq(1),
+                ]
 
         latched_col = Signal(range(MAX_CAPTURE_COLS))
         max_col = Signal(range(MAX_CAPTURE_COLS))

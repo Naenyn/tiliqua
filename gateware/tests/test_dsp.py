@@ -372,6 +372,189 @@ class DSPTests(unittest.TestCase):
 
         self.assertEqual(outputs, expected)
 
+    def test_multichannel_reconstruct_raw_mode_preserves_every_sample(self):
+        m = Module()
+        m.submodules.dut = dut = dsp.MultichannelDiscontinuityReconstruct(
+            n_channels=4, shape=ASQ)
+        samples = ([-0.5] * 20 +
+                   [-0.25, 0.10, 0.40, 0.60, 0.45] +
+                   [0.5] * 20)
+        frames = [[value, -value, value / 2, 0.0] for value in samples]
+        expected = [
+            [fixed.Const(value, shape=ASQ).as_value().value for value in frame]
+            for frame in frames[8:-8]
+        ]
+        outputs = []
+
+        async def stimulus(ctx):
+            ctx.set(dut.enable, 0)
+            for frame in frames:
+                await stream.put(ctx, dut.i,
+                                 [fixed.Const(value, shape=ASQ) for value in frame])
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            while len(outputs) < len(expected):
+                if ctx.get(dut.o.valid & dut.o.ready):
+                    outputs.append([
+                        ctx.get(dut.o.payload[ch]).as_value().value
+                        for ch in range(4)
+                    ])
+                await ctx.tick()
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        self.assertEqual(outputs, expected)
+
+    def test_multichannel_fixed_point_convert_rounds_symmetrically(self):
+        from tiliqua.raster import PSQ
+
+        m = Module()
+        m.domains.sync = ClockDomain()
+        m.submodules.dut = dut = dsp.MultichannelFixedPointConvert(
+            n_channels=4, input_shape=ASQ, output_shape=PSQ)
+        shift = ASQ.f_bits - PSQ.f_bits
+        half = 1 << (shift - 1)
+        just_below_one_and_a_half = (1 << shift) + half - 1
+        input_counts = [half, -half,
+                        just_below_one_and_a_half, -just_below_one_and_a_half]
+        scale = 1 << ASQ.f_bits
+        output = []
+
+        async def stimulus(ctx):
+            await stream.put(ctx, dut.i, [
+                fixed.Const(value / scale, shape=ASQ)
+                for value in input_counts
+            ])
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            while not ctx.get(dut.o.valid):
+                await ctx.tick()
+            output.extend(ctx.get(dut.o.payload[ch]).as_value().value
+                          for ch in range(4))
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        self.assertEqual(output, [1, -1, 1, -1])
+
+    def test_oscio_display_chain_emits_continuous_sample_bundles(self):
+        """The exact OSCIO DSP chain must survive downstream backpressure."""
+        from tiliqua.raster import PSQ
+
+        m = Module()
+        m.submodules.reconstruct = reconstruct = \
+            dsp.MultichannelDiscontinuityReconstruct(
+                n_channels=4, shape=ASQ)
+        m.submodules.resample = resample = \
+            dsp.MultichannelEdgeAwareResample(
+                n_channels=4, n_up=8, shape=ASQ)
+        m.submodules.convert = convert = \
+            dsp.MultichannelFixedPointConvert(
+                n_channels=4, input_shape=ASQ, output_shape=PSQ)
+        wiring.connect(m, reconstruct.o, resample.i)
+        wiring.connect(m, resample.o, convert.i)
+
+        n_frames = 40
+        frames = [
+            [0.5 * math.sin(2 * math.pi * n / period)
+             for period in (17, 23, 31, 37)]
+            for n in range(n_frames)
+        ]
+        outputs = []
+        stage_counts = [0, 0]
+
+        async def stimulus(ctx):
+            for frame in frames:
+                await stream.put(
+                    ctx,
+                    reconstruct.i,
+                    [fixed.Const(value, shape=ASQ) for value in frame],
+                )
+
+        async def testbench(ctx):
+            expected_count = (n_frames - 17) * 8
+            cycle = 0
+            while len(outputs) < expected_count:
+                # Exercise replacement of a consumed converter word as well as
+                # a short periodic stall like the capture-side stream fanout.
+                ctx.set(convert.o.ready, (cycle % 11) not in (8, 9))
+                if ctx.get(reconstruct.o.valid & reconstruct.o.ready):
+                    stage_counts[0] += 1
+                if ctx.get(resample.o.valid & resample.o.ready):
+                    stage_counts[1] += 1
+                if ctx.get(convert.o.valid & convert.o.ready):
+                    outputs.append([
+                        ctx.get(convert.o.payload[ch]).as_value().value
+                        for ch in range(4)
+                    ])
+                await ctx.tick()
+                cycle += 1
+                self.assertLess(
+                    cycle, 20_000,
+                    f"OSCIO display chain stalled: reconstruct={stage_counts[0]}, "
+                    f"resample={stage_counts[1]}, convert={len(outputs)}",
+                )
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        self.assertEqual(len(outputs), (n_frames - 17) * 8)
+        self.assertTrue(any(any(value != 0 for value in frame)
+                            for frame in outputs))
+
+    def test_oscio_q28_ramp_duration_matches_one_ms_per_div(self):
+        """A landscape acquisition should take about 10 divisions of samples."""
+        from tiliqua.raster import PSQ
+        from tiliqua.raster.digital_scope import SCOPE_TIMEBASE_SQ
+
+        m = Module()
+        m.submodules.dut = dut = dsp.Ramp(
+            shape=PSQ, timebase_shape=SCOPE_TIMEBASE_SQ)
+        m.d.comb += dut.end.eq(
+            fixed.Const(1920 / (1 << PSQ.f_bits), shape=PSQ))
+
+        # Firmware result for 1 ms/div, 125 px/div, xscale 5, 1.536 MHz.
+        increment = 1_365_333
+        outputs = []
+        wrap_indices = []
+
+        async def testbench(ctx):
+            ctx.set(dut.i.valid, 1)
+            ctx.set(dut.o.ready, 1)
+            ctx.set(dut.i.payload.td.as_value(), increment)
+            ctx.set(dut.i.payload.trigger, 1)
+            for _ in range(25_000):
+                outputs.append(ctx.get(dut.o.payload).as_value().value)
+                await ctx.tick()
+                if len(outputs) >= 2 and outputs[-1] < outputs[-2]:
+                    wrap_indices.append(len(outputs) - 1)
+                    if len(wrap_indices) == 2:
+                        break
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        # Capture at 1.536 MHz should need roughly 15,500 samples, not wrap in
+        # only a handful of samples.
+        self.assertEqual(len(wrap_indices), 2)
+        sweep_samples = wrap_indices[1] - wrap_indices[0]
+        self.assertGreater(sweep_samples, 14_000)
+        self.assertLess(sweep_samples, 17_000)
+
     def test_multichannel_edge_aware_resample_keeps_channels_aligned(self):
         m = Module()
         m.submodules.dut = dut = dsp.MultichannelEdgeAwareResample(
@@ -415,6 +598,81 @@ class DSPTests(unittest.TestCase):
         hard_edge = [frame[1] for frame in outputs[16:24]]
         self.assertEqual(hard_edge[:7], [-0.5] * 7)
         self.assertEqual(hard_edge[7], 0.5)
+
+    def test_edge_aware_resample_does_not_overshoot_negative_substeps(self):
+        """Interpolation must retain signed remainders instead of accumulating them."""
+        m = Module()
+        m.submodules.dut = dut = dsp.EdgeAwareResample(n_up=8, shape=ASQ)
+        start = 100
+        stop = 99
+        scale = 1 << ASQ.f_bits
+        outputs = []
+
+        async def stimulus(ctx):
+            await stream.put(ctx, dut.i, fixed.Const(start / scale, shape=ASQ))
+            await stream.put(ctx, dut.i, fixed.Const(stop / scale, shape=ASQ))
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            while len(outputs) < 8:
+                if ctx.get(dut.o.valid & dut.o.ready):
+                    outputs.append(ctx.get(dut.o.payload).as_value().value)
+                await ctx.tick()
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        expected = [start + ((stop - start) * phase // 8)
+                    for phase in range(1, 9)]
+        self.assertEqual(outputs, expected)
+        self.assertTrue(all(stop <= value <= start for value in outputs))
+
+    def test_multichannel_edge_aware_resample_is_exact_and_bounded(self):
+        m = Module()
+        m.submodules.dut = dut = dsp.MultichannelEdgeAwareResample(
+            n_channels=4, n_up=8, shape=ASQ)
+        starts = [100, -100, 17, -17]
+        stops = [99, -103, 24, -10]
+        scale = 1 << ASQ.f_bits
+        outputs = []
+
+        async def stimulus(ctx):
+            await stream.put(
+                ctx, dut.i,
+                [fixed.Const(value / scale, shape=ASQ) for value in starts])
+            await stream.put(
+                ctx, dut.i,
+                [fixed.Const(value / scale, shape=ASQ) for value in stops])
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            while len(outputs) < 8:
+                if ctx.get(dut.o.valid & dut.o.ready):
+                    outputs.append([
+                        ctx.get(dut.o.payload[ch]).as_value().value
+                        for ch in range(4)
+                    ])
+                await ctx.tick()
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        expected = [
+            [starts[ch] + ((stops[ch] - starts[ch]) * phase // 8)
+             for ch in range(4)]
+            for phase in range(1, 9)
+        ]
+        self.assertEqual(outputs, expected)
+        for frame in outputs:
+            for ch, value in enumerate(frame):
+                self.assertGreaterEqual(value, min(starts[ch], stops[ch]))
+                self.assertLessEqual(value, max(starts[ch], stops[ch]))
 
     @parameterized.expand([
         ["mux_mac", mac.MuxMAC],
@@ -746,6 +1004,7 @@ class _NormScopeTrigger(wiring.Component):
         m.d.comb += trig.falling.eq(self.falling)
         m.submodules.ramp = ramp = dsp.Ramp(shape=self._shape)
         td = fixed.Const(self._td_scale, shape=dsp.Ramp.TIMEBASE_SQ)
+        m.d.comb += ramp.end.eq(fixed.Const(0.985, shape=self._shape))
 
         ramp_at_top = Signal()
         prev_ramp_at_top = Signal()

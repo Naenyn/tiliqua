@@ -332,7 +332,7 @@ class ScopeTraceOverlay(wiring.Component):
                 lo + 1 + 2 * ENVELOPE_COORD_BITS].as_signed()
             channel_hit = enable_dvi & in_plot_compare & valid & \
                 (logical_y_compare >= ymin) & \
-                (logical_y_compare <= Mux(ymax > ymin, ymax, ymin + 1)) & \
+                (logical_y_compare <= ymax) & \
                 (intensity_dvi[ch] > 0)
             m.d.comb += channel_hits[ch].eq(channel_hit)
 

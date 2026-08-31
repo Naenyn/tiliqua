@@ -336,6 +336,7 @@ fn main() -> ! {
                               pac::Interrupt::TIMER0);
 
         let mut scope = Scope0::new(peripherals.SCOPE_PERIPH, 6);
+        scope.set_timebase_frac_bits(28);
         let overlay_periph = peripherals.OVERLAY_PERIPH;
         let ui_port = OverlayUiPort { overlay: &overlay_periph };
         let mut ui_menu = unsafe {
@@ -526,7 +527,10 @@ fn main() -> ! {
             // fluid through 20 ms/div (~5 completed sweeps/s), but fall to only
             // ~2 sweeps/s at 50 ms/div. Use progressive column replacement from
             // 50 ms/div onward so slower acquisitions remain visibly live.
-            scope.set_progressive(t_div_us >= 50_000);
+            scope.set_display_mode(
+                t_div_us >= 50_000,
+                opts.scope.acquisition.value == AcquisitionMode::Clean,
+            );
             let (plot_x_lo, plot_x_hi, plot_y_lo, plot_y_hi) =
                 waveform_plot_bounds(h_active, v_active);
             scope.set_plot_region(plot_x_lo, plot_x_hi, plot_y_lo, plot_y_hi);
@@ -554,7 +558,10 @@ fn main() -> ! {
                 // Plot coordinates grow downward, while the user-facing
                 // offset follows the normal graph convention: positive is
                 // up and negative is down.
-                scope.set_ypos_px(ch, -(ypos[ch] * (sppd / 4) as i16));
+                // Multiply before dividing so four quarter-division steps land
+                // exactly on the 62-pixel grid. Dividing ``sppd`` first made a
+                // displayed 1.00 d offset move only 60 pixels.
+                scope.set_ypos_px(ch, -(ypos[ch] * sppd as i16 / 4));
             }
             scope.set_channel_mask([
                 vis[0] == ChannelVis::On,

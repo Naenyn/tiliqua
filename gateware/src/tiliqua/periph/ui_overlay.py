@@ -30,8 +30,9 @@ class UiMenuOverlay(wiring.Component):
     """
     Composites a 1bpp menu bitmap over the incoming video stream.
 
-    Three registered pixel stages split coordinate rotation, bitmap addressing,
-    and BRAM bit selection while keeping data aligned with scan coordinates.
+    Four registered pixel stages split coordinate rotation, bitmap addressing,
+    BRAM output, and bit selection while keeping data aligned with scan
+    coordinates.
     When ``menu_enable`` is low the pixel stream passes through unchanged.
     """
 
@@ -116,6 +117,7 @@ class UiMenuOverlay(wiring.Component):
         local_y = Signal(signed(12))
         scan_local = Signal(ScanPixel)
         scan_addressed = Signal(ScanPixel)
+        scan_word = Signal(ScanPixel)
         scan_composite = Signal(ScanPixel)
         menu_lx = Signal(signed(12))
         menu_ly = Signal(signed(12))
@@ -127,10 +129,16 @@ class UiMenuOverlay(wiring.Component):
         menu_hit = Signal()
         menu_bit = Signal()
         menu_bit_idx = Signal(5)
+        menu_word = Signal(32)
+        menu_bit_idx_word = Signal(5)
         menu_hit_r = Signal()
         menu_en_r = Signal()
         menu_transparent_r = Signal()
         menu_px_r = Signal(Pixel)
+        menu_hit_word = Signal()
+        menu_en_word = Signal()
+        menu_transparent_word = Signal()
+        menu_px_word = Signal(Pixel)
         menu_hit_composite = Signal()
         menu_en_composite = Signal()
         menu_transparent_composite = Signal()
@@ -179,15 +187,27 @@ class UiMenuOverlay(wiring.Component):
             menu_px_r.eq(menu_px_local),
         ]
 
-        # Third stage: register the selected BRAM bit before the pixel mux. This
-        # avoids placing a 32:1 selector on the path into the video framebuffer.
+        # Third stage: register the complete synchronous BRAM word.  ECP5 BRAM
+        # has a relatively long clock-to-output delay; combining it with the
+        # following 32:1 selector can miss the 74.25 MHz DVI clock after route.
         m.d.dvi += [
-            scan_composite.eq(scan_addressed),
-            menu_bit.eq(self.menu_rdata.bit_select(menu_bit_idx, 1)),
-            menu_hit_composite.eq(menu_hit_r),
-            menu_en_composite.eq(menu_en_r),
-            menu_transparent_composite.eq(menu_transparent_r),
-            menu_px_composite.eq(menu_px_r),
+            scan_word.eq(scan_addressed),
+            menu_word.eq(self.menu_rdata),
+            menu_bit_idx_word.eq(menu_bit_idx),
+            menu_hit_word.eq(menu_hit_r),
+            menu_en_word.eq(menu_en_r),
+            menu_transparent_word.eq(menu_transparent_r),
+            menu_px_word.eq(menu_px_r),
+        ]
+
+        # Fourth stage: select and register the bit before the final pixel mux.
+        m.d.dvi += [
+            scan_composite.eq(scan_word),
+            menu_bit.eq(menu_word.bit_select(menu_bit_idx_word, 1)),
+            menu_hit_composite.eq(menu_hit_word),
+            menu_en_composite.eq(menu_en_word),
+            menu_transparent_composite.eq(menu_transparent_word),
+            menu_px_composite.eq(menu_px_word),
         ]
 
         m.d.comb += self.o.eq(scan_composite)

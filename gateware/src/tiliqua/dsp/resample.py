@@ -243,9 +243,19 @@ class EdgeAwareResample(wiring.Component):
         prev_delta = Signal(signed(width + 1))
         delta_magnitude = Signal(unsigned(width + 1))
         prev_delta_magnitude = Signal(unsigned(width + 1))
-        current = Signal(signed(width + 1))
+        # Retain the interpolation remainder in ``shift`` fractional bits.
+        # Repeatedly adding ``delta >> shift`` loses the remainder every phase;
+        # for negative deltas the arithmetic shift rounds down and can drive the
+        # interpolated samples past the target before the final endpoint snap.
+        # Accumulating the full delta in this wider numerator makes every phase
+        # equal to floor(prev + delta * phase / n_up), without a multiplier.
+        accum_width = width + shift + 1
+        current = Signal(signed(accum_width))
         emitted = Signal(self.shape)
-        step = Signal(signed(width + 1))
+        segment_delta = Signal(signed(width + 1))
+        first_accum = Signal(signed(accum_width))
+        next_accum = Signal(signed(accum_width))
+        first_value = Signal(signed(width + 1))
         next_value = Signal(signed(width + 1))
         hard_edge = Signal()
 
@@ -260,7 +270,10 @@ class EdgeAwareResample(wiring.Component):
                 (delta_magnitude >= self.min_step) &
                 ((delta_magnitude >> 3) > prev_delta_magnitude)
             ),
-            next_value.eq(current + step),
+            first_accum.eq((extended(prev) << shift) + delta),
+            next_accum.eq(current + segment_delta),
+            first_value.eq(first_accum >> shift),
+            next_value.eq(next_accum >> shift),
             self.i.ready.eq(~active),
             self.o.valid.eq(active),
             self.o.payload.eq(emitted),
@@ -275,13 +288,13 @@ class EdgeAwareResample(wiring.Component):
             with m.Else():
                 m.d.sync += [
                     target.eq(self.i.payload),
-                    current.eq(extended(prev) + (delta >> shift)),
+                    current.eq(first_accum),
+                    segment_delta.eq(delta),
                     emitted.eq(Mux(
                         hard_edge,
                         prev.as_value(),
-                        extended(prev) + (delta >> shift),
+                        first_value,
                     )),
-                    step.eq(delta >> shift),
                     edge_segment.eq(hard_edge),
                     phase.eq(1),
                     active.eq(1),
@@ -297,14 +310,13 @@ class EdgeAwareResample(wiring.Component):
                 ]
             with m.Elif(phase == self.n_up - 1):
                 m.d.sync += [
-                    current.eq(extended(target)),
                     emitted.eq(target),
                     edge_segment.eq(0),
                     phase.eq(phase + 1),
                 ]
             with m.Else():
                 m.d.sync += [
-                    current.eq(next_value),
+                    current.eq(next_accum),
                     emitted.eq(Mux(edge_segment, prev.as_value(), next_value)),
                     phase.eq(phase + 1),
                 ]
@@ -478,6 +490,7 @@ class MultichannelDiscontinuityReconstruct(wiring.Component):
         super().__init__({
             "i": In(stream.Signature(layout)),
             "o": Out(stream.Signature(layout)),
+            "enable": In(1, init=1),
         })
 
     def elaborate(self, platform):
@@ -494,8 +507,10 @@ class MultichannelDiscontinuityReconstruct(wiring.Component):
         result = Array(Signal(signed(width), name=f"result{ch}")
                        for ch in range(n_channels))
         channel = Signal(range(n_channels))
+        analysis_channel = Signal(range(n_channels))
         fill = Signal(range(17))
         processing = Signal()
+        analysis_valid = Signal()
         pending = Signal()
 
         def history_at(index):
@@ -520,7 +535,22 @@ class MultichannelDiscontinuityReconstruct(wiring.Component):
         step = Signal(unsigned(width + 2))
         center_left = Signal(unsigned(width + 2))
         center_right = Signal(unsigned(width + 2))
-        reconstruct = Signal()
+
+        # Register the measured motions before applying the discontinuity
+        # criteria.  At ASQ precision, selecting a channel, subtracting, taking
+        # five absolute values, comparing them, and selecting a replacement in
+        # one 60 MHz cycle was the final critical path.  Input bundles have
+        # ample idle clocks, so this one-stage pipeline has no throughput cost.
+        analysis_left = Signal(signed(width + 1))
+        analysis_center = Signal(signed(width + 1))
+        analysis_right = Signal(signed(width + 1))
+        analysis_left_motion = Signal(unsigned(width + 2))
+        analysis_right_motion = Signal(unsigned(width + 2))
+        analysis_step = Signal(unsigned(width + 2))
+        analysis_center_left = Signal(unsigned(width + 2))
+        analysis_center_right = Signal(unsigned(width + 2))
+        analysis_enable = Signal()
+        analysis_reconstruct = Signal()
 
         m.d.comb += [
             left_delta.eq(left_next - left),
@@ -535,12 +565,13 @@ class MultichannelDiscontinuityReconstruct(wiring.Component):
                                -center_left_delta, center_left_delta)),
             center_right.eq(Mux(center_right_delta < 0,
                                 -center_right_delta, center_right_delta)),
-            reconstruct.eq(
-                (step >= self.min_step) &
-                ((left_motion << 5) < step) &
-                ((right_motion << 5) < step)
+            analysis_reconstruct.eq(
+                analysis_enable &
+                (analysis_step >= self.min_step) &
+                ((analysis_left_motion << 5) < analysis_step) &
+                ((analysis_right_motion << 5) < analysis_step)
             ),
-            self.i.ready.eq(~processing & ~pending),
+            self.i.ready.eq(~processing & ~analysis_valid & ~pending),
             self.o.valid.eq(pending),
         ]
         for ch in range(n_channels):
@@ -554,28 +585,119 @@ class MultichannelDiscontinuityReconstruct(wiring.Component):
                 processing.eq(1),
             ]
 
+        m.d.sync += analysis_valid.eq(0)
         with m.If(processing):
-            with m.If(fill == 16):
-                m.d.sync += result[channel].eq(
-                    Mux(reconstruct,
-                        Mux(center_left <= center_right, left, right),
-                        center)
-                )
+            m.d.sync += [
+                analysis_channel.eq(channel),
+                analysis_left.eq(left),
+                analysis_center.eq(center),
+                analysis_right.eq(right),
+                analysis_left_motion.eq(left_motion),
+                analysis_right_motion.eq(right_motion),
+                analysis_step.eq(step),
+                analysis_center_left.eq(center_left),
+                analysis_center_right.eq(center_right),
+                analysis_enable.eq(self.enable),
+                analysis_valid.eq(1),
+            ]
             with m.If(channel == n_channels - 1):
+                m.d.sync += processing.eq(0)
+            with m.Else():
+                m.d.sync += channel.eq(channel + 1)
+
+        with m.If(analysis_valid):
+            with m.If(fill == 16):
+                m.d.sync += result[analysis_channel].eq(
+                    Mux(
+                        analysis_reconstruct,
+                        Mux(
+                            analysis_center_left <= analysis_center_right,
+                            analysis_left,
+                            analysis_right,
+                        ),
+                        analysis_center,
+                    )
+                )
+            with m.If(analysis_channel == n_channels - 1):
                 for ch in range(n_channels):
                     for n in range(15):
                         m.d.sync += history[ch][n].eq(history[ch][n + 1])
                     m.d.sync += history[ch][15].eq(incoming[ch])
-                m.d.sync += processing.eq(0)
                 with m.If(fill < 16):
                     m.d.sync += fill.eq(fill + 1)
                 with m.Else():
                     m.d.sync += pending.eq(1)
-            with m.Else():
-                m.d.sync += channel.eq(channel + 1)
 
         with m.If(pending & self.o.ready):
             m.d.sync += pending.eq(0)
+
+        return m
+
+
+class MultichannelFixedPointConvert(wiring.Component):
+
+    """Channel-aligned, rounded fixed-point narrowing.
+
+    Values are rounded to nearest with symmetric handling around zero and
+    saturated at the destination endpoints. This is intended for display paths
+    where silently truncating calibrated audio introduces a small DC bias.
+    """
+
+    def __init__(self, *, n_channels, input_shape, output_shape):
+        assert n_channels >= 1
+        assert input_shape.f_bits >= output_shape.f_bits
+        self.n_channels = n_channels
+        self.input_shape = input_shape
+        self.output_shape = output_shape
+        self.shift = input_shape.f_bits - output_shape.f_bits
+        super().__init__({
+            "i": In(stream.Signature(data.ArrayLayout(input_shape, n_channels))),
+            "o": Out(stream.Signature(data.ArrayLayout(output_shape, n_channels))),
+        })
+
+    def elaborate(self, platform):
+        m = Module()
+
+        shift = self.shift
+        out_width = self.output_shape.width
+        out_min = -(1 << (out_width - 1))
+        out_max = (1 << (out_width - 1)) - 1
+        pending = Signal()
+        converted = Array(
+            Signal(self.output_shape, name=f"converted{ch}")
+            for ch in range(self.n_channels)
+        )
+        m.d.comb += [
+            self.o.valid.eq(pending),
+            # A consumed value can be replaced without an idle cycle.
+            self.i.ready.eq(~pending | self.o.ready),
+        ]
+        for ch in range(self.n_channels):
+            m.d.comb += self.o.payload[ch].eq(converted[ch])
+
+        accept = self.i.valid & self.i.ready
+        with m.If(accept):
+            m.d.sync += pending.eq(1)
+        with m.Elif(self.o.ready):
+            m.d.sync += pending.eq(0)
+
+        for ch in range(self.n_channels):
+            raw = self.i.payload[ch].as_value()
+            extended = Cat(raw, raw[-1]).as_signed()
+            if shift:
+                magnitude = Mux(extended < 0, -extended, extended)
+                rounded_magnitude = (magnitude + (1 << (shift - 1))) >> shift
+                rounded = Mux(extended < 0, -rounded_magnitude, rounded_magnitude)
+            else:
+                rounded = extended
+            clipped = Mux(
+                rounded < out_min,
+                Const(out_min, signed(out_width)),
+                Mux(rounded > out_max,
+                    Const(out_max, signed(out_width)), rounded),
+            )
+            with m.If(accept):
+                m.d.sync += converted[ch].as_value().eq(clipped)
 
         return m
 
@@ -617,12 +739,16 @@ class MultichannelEdgeAwareResample(wiring.Component):
                      for ch in range(n_channels))
         target = Array(Signal(signed(width), name=f"target{ch}")
                        for ch in range(n_channels))
-        current = Array(Signal(signed(width + 1), name=f"current{ch}")
+        # Keep the interpolation numerator at ``shift`` extra fractional bits
+        # so signed division rounding is applied once per output value instead
+        # of being accumulated once per phase.
+        accum_width = width + shift + 1
+        current = Array(Signal(signed(accum_width), name=f"current{ch}")
                         for ch in range(n_channels))
         emitted = Array(Signal(signed(width), name=f"emitted{ch}")
                         for ch in range(n_channels))
-        step_by_ch = Array(Signal(signed(width + 1), name=f"step{ch}")
-                           for ch in range(n_channels))
+        delta_by_ch = Array(Signal(signed(width + 1), name=f"delta{ch}")
+                            for ch in range(n_channels))
         edge_segment = Array(Signal(name=f"edge_segment{ch}")
                              for ch in range(n_channels))
 
@@ -641,7 +767,9 @@ class MultichannelEdgeAwareResample(wiring.Component):
         prev_delta = Signal(signed(width + 1))
         delta_magnitude = Signal(unsigned(width + 1))
         prev_delta_magnitude = Signal(unsigned(width + 1))
-        interpolated = Signal(signed(width + 1))
+        first_accum = Signal(signed(accum_width))
+        next_accum = Signal(signed(accum_width))
+        first_value = Signal(signed(width + 1))
         next_value = Signal(signed(width + 1))
         hard_edge = Signal()
         m.d.comb += [
@@ -656,8 +784,10 @@ class MultichannelEdgeAwareResample(wiring.Component):
                 (delta_magnitude >= self.min_step) &
                 ((delta_magnitude >> 3) > prev_delta_magnitude)
             ),
-            interpolated.eq(extended(prev[channel]) + (delta >> shift)),
-            next_value.eq(current[channel] + step_by_ch[channel]),
+            first_accum.eq((extended(prev[channel]) << shift) + delta),
+            next_accum.eq(current[channel] + delta_by_ch[channel]),
+            first_value.eq(first_accum >> shift),
+            next_value.eq(next_accum >> shift),
             self.i.ready.eq(~setup_active & ~update_active & ~output_valid),
             self.o.valid.eq(output_valid),
         ]
@@ -680,10 +810,10 @@ class MultichannelEdgeAwareResample(wiring.Component):
         with m.If(setup_active):
             m.d.sync += [
                 target[channel].eq(incoming[channel]),
-                current[channel].eq(interpolated),
+                current[channel].eq(first_accum),
                 emitted[channel].eq(
-                    Mux(hard_edge, prev[channel], interpolated)),
-                step_by_ch[channel].eq(delta >> shift),
+                    Mux(hard_edge, prev[channel], first_value)),
+                delta_by_ch[channel].eq(delta),
                 edge_segment[channel].eq(hard_edge),
             ]
             with m.If(channel == n_channels - 1):
@@ -709,7 +839,6 @@ class MultichannelEdgeAwareResample(wiring.Component):
             with m.Elif(phase == n_up - 1):
                 for ch in range(n_channels):
                     m.d.sync += [
-                        current[ch].eq(extended(target[ch])),
                         emitted[ch].eq(target[ch]),
                         edge_segment[ch].eq(0),
                     ]
@@ -723,7 +852,7 @@ class MultichannelEdgeAwareResample(wiring.Component):
 
         with m.If(update_active):
             m.d.sync += [
-                current[channel].eq(next_value),
+                current[channel].eq(next_accum),
                 emitted[channel].eq(
                     Mux(edge_segment[channel], prev[channel], next_value)),
             ]
