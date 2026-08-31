@@ -18,3 +18,4 @@ tiliqua_hal::impl_spiflash! { SPIFlash0: tiliqua_pac::SPIFLASH_CTRL, }
 
 pub mod handlers;
 pub mod options;
+pub mod runtime;

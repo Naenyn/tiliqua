@@ -36,6 +36,20 @@ per period, strong subharmonics, noise, or a louder harmonic than fundamental
 can produce an octave or harmonic error. A YIN/autocorrelation detector remains
 the expected next step after validating input level behavior and the UI.
 
+## Runtime architecture
+
+Startup, interrupt-shared UI state, and the perpetual real-time loop have
+separate storage lifetimes. Allocation-heavy boot manifest and option decoding
+complete before interrupts are enabled, the retained UI lives in static main
+RAM, and the live loop consumes only a small copyable control snapshot. This is
+intentional: calibration profiles and quantizer scales must not enlarge the
+real-time stack as their menus grow.
+
+The firmware also retains a four-entry measurement bank. The current gateware
+still publishes only the selected channel, but future detector lanes and a
+four-color display can populate that stable interface without restructuring the
+foreground loop again.
+
 ## Build and test
 
 From `gateware/`:

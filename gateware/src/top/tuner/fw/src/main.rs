@@ -17,8 +17,9 @@ use tiliqua_lib::*;
 
 use options::{DisplayMode, Opts, Page, ReferenceTone};
 use opts::persistence::*;
-use opts::Options as _;
+use opts::{OptionString, Options as _};
 use pac::constants::*;
+use runtime::{ChannelMeasurement, MeasurementBank, RuntimeControls};
 use tiliqua_fw::*;
 use tiliqua_pac as pac;
 
@@ -40,7 +41,14 @@ struct App {
     ui: ui::UI<Encoder0, EurorackPmod0, I2c0, Opts>,
 }
 
+// The timer interrupt and foreground loop share one long-lived UI object.
+// Keeping it static prevents future profile/scale/menu growth from silently
+// becoming part of `main()`'s stack frame, which previously corrupted an
+// already constrained main RAM after the first interrupt.
+static APP: Mutex<RefCell<Option<App>>> = Mutex::new(RefCell::new(None));
+
 impl App {
+    #[inline(never)]
     fn new(opts: Opts) -> Self {
         let peripherals = unsafe { pac::Peripherals::steal() };
         let encoder = Encoder0::new(peripherals.ENCODER0);
@@ -59,9 +67,21 @@ impl App {
     }
 }
 
-fn timer0_handler(app: &Mutex<RefCell<App>>) {
+fn with_app<R>(f: impl FnOnce(&mut App) -> R) -> R {
     critical_section::with(|cs| {
-        let mut app = app.borrow_ref_mut(cs);
+        let mut slot = APP.borrow_ref_mut(cs);
+        f(slot.as_mut().expect("tuner app not initialized"))
+    })
+}
+
+fn install_app(opts: Opts) {
+    critical_section::with(|cs| {
+        *APP.borrow_ref_mut(cs) = Some(App::new(opts));
+    });
+}
+
+fn timer0_handler() {
+    with_app(|app| {
         // Never perform an unbounded motherboard-I2C transaction in this ISR.
         // Encoder/options and PMOD LEDs are all CSR-backed and deterministic.
         app.ui.update_realtime();
@@ -73,15 +93,8 @@ fn timer0_handler(app: &Mutex<RefCell<App>>) {
     });
 }
 
-#[derive(Clone, Copy, Default)]
-struct Measurement {
-    frequency_hz: f32,
-    vrms: f32,
-    vpp: f32,
-    valid: bool,
-}
-
-fn read_measurement(tuner: &pac::TUNER_PERIPH, counts_per_v: f32) -> Measurement {
+#[inline(never)]
+fn read_measurement(tuner: &pac::TUNER_PERIPH, counts_per_v: f32) -> ChannelMeasurement {
     // Sequence reads bracket each multi-register snapshot. If gateware publishes
     // while firmware is reading, retry rather than combine two measurements.
     let mut pitch_snapshot = (0, 0, 0, 0);
@@ -119,7 +132,7 @@ fn read_measurement(tuner: &pac::TUNER_PERIPH, counts_per_v: f32) -> Measurement
     };
     let vrms = (mean_square as f32).sqrt() / counts_per_v;
     let vpp = (maximum - minimum) as f32 / counts_per_v;
-    Measurement {
+    ChannelMeasurement {
         frequency_hz,
         vrms,
         vpp,
@@ -128,7 +141,7 @@ fn read_measurement(tuner: &pac::TUNER_PERIPH, counts_per_v: f32) -> Measurement
 }
 
 fn reference_frequency(
-    measurement: Measurement,
+    measurement: ChannelMeasurement,
     reference_hz: f32,
     mode: ReferenceTone,
 ) -> Option<f32> {
@@ -427,23 +440,73 @@ fn write_menu_right_aligned(
     write_menu_text(display, right + 1 - length, row, text, bold);
 }
 
-fn publish_menu(display: &pac::TUNER_DISPLAY, opts: &Opts) {
+struct MenuEntrySnapshot {
+    label: &'static str,
+    value: OptionString,
+    selected: bool,
+    editing: bool,
+}
+
+struct MenuSnapshot {
+    page_label: &'static str,
+    page_bold: bool,
+    page_editing: bool,
+    entries: [Option<MenuEntrySnapshot>; 3],
+}
+
+impl MenuSnapshot {
+    fn from_options(opts: &Opts) -> Self {
+        let page = opts.tracker.page.value;
+        let page_label = match page {
+            Page::Tuner => "TUNER",
+            Page::Settings => "SETTINGS",
+            Page::Help => "HELP",
+        };
+        let page_bold = opts.selected().is_none();
+        let options = opts.view().options();
+        let entries = core::array::from_fn(|index| {
+            options.get(index).map(|option| {
+                let selected = opts.selected() == Some(index);
+                let label = match (page, index) {
+                    (Page::Tuner, 2) => "ref tone",
+                    (Page::Settings, 0) => "a4 ref",
+                    (Page::Settings, 1) => "save",
+                    (Page::Settings, 2) => "reset",
+                    _ => option.name(),
+                };
+                MenuEntrySnapshot {
+                    label,
+                    value: option.value(),
+                    selected,
+                    editing: selected && opts.modify(),
+                }
+            })
+        });
+        Self {
+            page_label,
+            page_bold,
+            page_editing: page_bold && opts.modify(),
+            entries,
+        }
+    }
+}
+
+#[inline(never)]
+fn snapshot_menu() -> MenuSnapshot {
+    with_app(|app| MenuSnapshot::from_options(&app.ui.opts))
+}
+
+#[inline(never)]
+fn publish_menu(display: &pac::TUNER_DISPLAY, menu: &MenuSnapshot) {
     clear_menu_text(display);
-    let page = opts.tracker.page.value;
-    let page_label = match page {
-        Page::Tuner => "TUNER",
-        Page::Settings => "SETTINGS",
-        Page::Help => "HELP",
-    };
-    let page_bold = opts.selected().is_none();
     write_menu_right_aligned(
         display,
         MENU_PAGE_COLUMN + MENU_PAGE_WIDTH - 1,
         0,
-        page_label,
-        page_bold,
+        menu.page_label,
+        menu.page_bold,
     );
-    if page_bold && opts.modify() {
+    if menu.page_editing {
         write_menu_char(
             display,
             MENU_PAGE_COLUMN + MENU_PAGE_WIDTH - 1,
@@ -453,35 +516,33 @@ fn publish_menu(display: &pac::TUNER_DISPLAY, opts: &Opts) {
         );
     }
 
-    let options = opts.view().options();
-    for index in 0..3 {
-        if let Some(option) = options.get(index) {
-            let selected = opts.selected() == Some(index);
-            let label = match (page, index) {
-                (Page::Tuner, 2) => "ref tone",
-                (Page::Settings, 0) => "a4 ref",
-                (Page::Settings, 1) => "save",
-                (Page::Settings, 2) => "reset",
-                _ => option.name(),
-            };
-            write_menu_text(display, MENU_ITEM_COLUMN, index as u8, label, selected);
+    for (index, entry) in menu.entries.iter().enumerate() {
+        if let Some(entry) = entry {
+            write_menu_text(
+                display,
+                MENU_ITEM_COLUMN,
+                index as u8,
+                entry.label,
+                entry.selected,
+            );
             write_menu_right_aligned(
                 display,
                 MENU_VALUE_RIGHT,
                 index as u8,
-                &option.value(),
-                selected,
+                &entry.value,
+                entry.selected,
             );
-            if selected && opts.modify() {
+            if entry.editing {
                 write_menu_char(display, MENU_EDIT_COLUMN, index as u8, b'<', true);
             }
         }
     }
 }
 
+#[inline(never)]
 fn publish_tuner(
     display: &pac::TUNER_DISPLAY,
-    measurement: Measurement,
+    measurement: ChannelMeasurement,
     reference_hz: f32,
     input: u8,
     display_mode: DisplayMode,
@@ -606,11 +667,62 @@ fn publish_tuner(
     });
 }
 
-#[entry]
-fn main() -> ! {
+#[derive(Clone, Copy)]
+struct UiFrame {
+    controls: RuntimeControls,
+    save: bool,
+    wipe: bool,
+    menu_active: bool,
+    menu_dirty: bool,
+}
+
+fn poll_ui_frame() -> UiFrame {
+    with_app(|app| {
+        let save = app.ui.opts.settings.save_opts.poll();
+        let wipe = app.ui.opts.settings.wipe_opts.poll();
+        let menu_active = app.ui.draw();
+        app.ui.set_menu_visible(menu_active);
+        UiFrame {
+            controls: RuntimeControls::from_options(&app.ui.opts),
+            save,
+            wipe,
+            menu_active,
+            menu_dirty: app.ui.take_menu_dirty(),
+        }
+    })
+}
+
+/// Saving is deliberately isolated from the real-time loop. `Opts` is cloned
+/// only for an explicit save request, never on every 5-ms wakeup.
+#[inline(never)]
+fn snapshot_options_for_save() -> Opts {
+    with_app(|app| app.ui.opts.clone())
+}
+
+fn reset_options() {
+    with_app(|app| {
+        app.ui.opts = Opts::default();
+        app.ui.external_modify();
+    });
+}
+
+type TunerPersistence = FlashOptionsPersistence<SPIFlash0>;
+
+struct RuntimeResources {
+    timer: Timer0,
+    tuner: pac::TUNER_PERIPH,
+    display: pac::TUNER_DISPLAY,
+    persistence: Option<TunerPersistence>,
+    counts_per_v: f32,
+}
+
+/// Complete all allocation-heavy and deserialization-heavy startup work before
+/// enabling interrupts. Its stack frame is released before `run()` begins.
+#[inline(never)]
+fn startup() -> RuntimeResources {
     let peripherals = pac::Peripherals::take().unwrap();
     let sysclk = pac::clock::sysclk();
-    let mut timer = Timer0::new(peripherals.TIMER0, sysclk);
+    let timer = Timer0::new(peripherals.TIMER0, sysclk);
     let spiflash = SPIFlash0::new(peripherals.SPIFLASH_CTRL, SPIFLASH_BASE, SPIFLASH_SZ_BYTES);
 
     // Do not install the synchronous UART logger in the real-time tuner.
@@ -655,7 +767,7 @@ fn main() -> ! {
     );
 
     let mut opts = Opts::default();
-    let mut flash_persist = if let Some(window) = bootinfo.manifest.get_option_storage_window() {
+    let persistence = if let Some(window) = bootinfo.manifest.get_option_storage_window() {
         let mut storage = FlashOptionsPersistence::new(spiflash, window);
         storage.load_options(&mut opts).ok();
         Some(storage)
@@ -663,47 +775,56 @@ fn main() -> ! {
         warn!("No option storage region; settings will not persist");
         None
     };
-    let app = Mutex::new(RefCell::new(App::new(opts)));
-    critical_section::with(|cs| {
-        let mut app = app.borrow_ref_mut(cs);
+    install_app(opts);
+    with_app(|app| {
         app.ui.clear_draw();
         app.ui.set_menu_visible(false);
     });
-    handler!(timer0 = || timer0_handler(&app));
+
+    RuntimeResources {
+        timer,
+        tuner: peripherals.TUNER_PERIPH,
+        display: tuner_display,
+        persistence,
+        counts_per_v,
+    }
+}
+
+/// The perpetual real-time phase has a deliberately small, stable stack frame.
+/// Large startup temporaries and the retained UI are no longer live here.
+#[inline(never)]
+fn run(resources: RuntimeResources) -> ! {
+    let RuntimeResources {
+        mut timer,
+        tuner,
+        display: tuner_display,
+        mut persistence,
+        counts_per_v,
+    } = resources;
+    handler!(timer0 = || timer0_handler());
 
     irq::scope(|scope| {
         scope.register(handlers::Interrupt::TIMER0, timer0);
         timer.enable_tick_isr(TIMER0_ISR_PERIOD_MS, pac::Interrupt::TIMER0);
-        let tuner = peripherals.TUNER_PERIPH;
         let sample_rate = tuner.info().read().sample_rate().bits();
         let mut frame_ticks = FRAME_PERIOD_TICKS;
         let mut smoothed_midi = None;
+        let mut measurements = MeasurementBank::default();
         let mut menu_was_active = false;
         let mut menu_dirty_pending = false;
         loop {
             riscv::asm::wfi();
-            let (opts, save, wipe, menu_active, menu_dirty) = critical_section::with(|cs| {
-                let mut app = app.borrow_ref_mut(cs);
-                let save = app.ui.opts.settings.save_opts.poll();
-                let wipe = app.ui.opts.settings.wipe_opts.poll();
-                let menu_active = app.ui.draw();
-                app.ui.set_menu_visible(menu_active);
-                let menu_dirty = app.ui.take_menu_dirty();
-                (app.ui.opts.clone(), save, wipe, menu_active, menu_dirty)
-            });
-            menu_dirty_pending |= menu_dirty;
-            if save {
-                if let Some(storage) = flash_persist.as_mut() {
+            let ui_frame = poll_ui_frame();
+            menu_dirty_pending |= ui_frame.menu_dirty;
+            if ui_frame.save {
+                if let Some(storage) = persistence.as_mut() {
+                    let opts = snapshot_options_for_save();
                     storage.save_options(&opts).ok();
                 }
             }
-            if wipe {
-                critical_section::with(|cs| {
-                    let mut app = app.borrow_ref_mut(cs);
-                    app.ui.opts = Opts::default();
-                    app.ui.external_modify();
-                });
-                if let Some(storage) = flash_persist.as_mut() {
+            if ui_frame.wipe {
+                reset_options();
+                if let Some(storage) = persistence.as_mut() {
                     storage.erase_all().ok();
                 }
             }
@@ -711,32 +832,42 @@ fn main() -> ! {
             frame_ticks = frame_ticks.saturating_add(1);
             if frame_ticks >= FRAME_PERIOD_TICKS {
                 frame_ticks = 0;
-                let menu_transition = menu_active != menu_was_active;
+                let controls = ui_frame.controls;
+                let _mode = controls.mode;
+                let menu_transition = ui_frame.menu_active != menu_was_active;
                 if menu_transition {
                     clear_menu_text(&tuner_display);
-                    menu_was_active = menu_active;
+                    menu_was_active = ui_frame.menu_active;
                 }
                 let measurement = read_measurement(&tuner, counts_per_v);
-                let reference_hz = opts.settings.reference.value as f32;
+                measurements.update(controls.tuner_input, measurement);
+                let measurement = measurements.channel(controls.tuner_input);
+                let reference_hz = controls.reference_hz as f32;
                 let reference_output_hz =
-                    reference_frequency(measurement, reference_hz, opts.tuner.reference_tone.value);
+                    reference_frequency(measurement, reference_hz, controls.reference_mode);
                 configure_reference(&tuner, reference_output_hz, sample_rate);
                 publish_tuner(
                     &tuner_display,
                     measurement,
                     reference_hz,
-                    opts.tuner.input.value,
-                    opts.tuner.display.value,
-                    opts.tuner.reference_tone.value,
+                    controls.tuner_input,
+                    controls.display_mode,
+                    controls.reference_mode,
                     reference_output_hz,
                     &mut smoothed_midi,
-                    menu_active,
+                    ui_frame.menu_active,
                 );
-                if menu_active && (menu_dirty_pending || menu_transition) {
-                    publish_menu(&tuner_display, &opts);
+                if ui_frame.menu_active && (menu_dirty_pending || menu_transition) {
+                    let menu = snapshot_menu();
+                    publish_menu(&tuner_display, &menu);
                 }
                 menu_dirty_pending = false;
             }
         }
     })
+}
+
+#[entry]
+fn main() -> ! {
+    run(startup())
 }
