@@ -37,8 +37,11 @@ Start with off or 5kHz and use the highest cutoff that gives stable lock. Lower
 cutoffs (1.2kHz, 300Hz, and 75Hz) reject progressively more harmonics, but may
 attenuate the trigger waveform or make its crossing arrive later.
 
-Acquire clean suppresses short codec settling artifacts around hard edges.
-Acquire raw plots the calibrated input samples without that reconstruction.
+Use acquire clean for normal viewing. It is the recommended default and makes
+square, saw, and other sharp-edged waves look more like their intended shape.
+Use acquire raw when diagnosing the input itself and you want OSCIO to show the
+calibrated samples without edge cleanup. Raw may make sharp transitions look
+rougher or spikier, so it is usually less useful as the everyday display mode.
 
 DISPLAY sets grid style, grid and trace intensity, trace hue, and graph
 palette. MENU changes the overlay hue, automatic hide delay, and whether that

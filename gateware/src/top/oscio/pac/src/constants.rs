@@ -1,5 +1,5 @@
 pub const UI_NAME: &str = "OSCIO";
-pub const UI_TAG: &str = "c40967c5";
+pub const UI_TAG: &str = "e5b5fcd5";
 pub const HW_REV_MAJOR: u32 = 5;
 pub const USE_EXTERNAL_PLL: bool = true;
 pub const CLOCK_SYNC_HZ: u32 = 60000000;
@@ -54,8 +54,11 @@ Start with off or 5kHz and use the highest cutoff that gives stable lock. Lower
 cutoffs (1.2kHz, 300Hz, and 75Hz) reject progressively more harmonics, but may
 attenuate the trigger waveform or make its crossing arrive later.
 
-Acquire clean suppresses short codec settling artifacts around hard edges.
-Acquire raw plots the calibrated input samples without that reconstruction.
+Use acquire clean for normal viewing. It is the recommended default and makes
+square, saw, and other sharp-edged waves look more like their intended shape.
+Use acquire raw when diagnosing the input itself and you want OSCIO to show the
+calibrated samples without edge cleanup. Raw may make sharp transitions look
+rougher or spikier, so it is usually less useful as the everyday display mode.
 
 DISPLAY sets grid style, grid and trace intensity, trace hue, and graph
 palette. MENU changes the overlay hue, automatic hide delay, and whether that
@@ -70,4 +73,4 @@ pub const OVERLAY_UI_MEM_BASE: usize = 0xc1000000;
 pub const OVERLAY_UI_MENU_W: usize = 250;
 pub const OVERLAY_UI_MENU_H: usize = 160;
 pub const OVERLAY_UI_MENU_WORDS: usize = 1250;
-pub const HELP_SCROLL_MAX: u8 = 17;
+pub const HELP_SCROLL_MAX: u8 = 20;
