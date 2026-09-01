@@ -311,9 +311,9 @@ fn main() -> ! {
     };
     // Boot straight into the scope; ignore a saved Help-page selection.
     opts.tracker.page.value = Page::Chan12;
-    // Older builds allowed the persisted help position to reach 125. Keep an
-    // existing option store from restoring a now-invalid blank viewport.
-    opts.help.scroll.value = opts.help.scroll.value.min(5);
+    // Clamp persisted positions to the range generated from the current help
+    // text, since older builds may have stored a different document length.
+    opts.help.scroll.value = opts.help.scroll.value.min(HELP_SCROLL_MAX);
 
     let mut last_palette = opts.display.palette.value;
     let mut last_hide = opts.menu.hide.value;

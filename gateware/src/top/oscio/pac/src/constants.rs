@@ -1,5 +1,5 @@
 pub const UI_NAME: &str = "OSCIO";
-pub const UI_TAG: &str = "828aabaf";
+pub const UI_TAG: &str = "c40967c5";
 pub const HW_REV_MAJOR: u32 = 5;
 pub const USE_EXTERNAL_PLL: bool = true;
 pub const CLOCK_SYNC_HZ: u32 = 60000000;
@@ -70,3 +70,4 @@ pub const OVERLAY_UI_MEM_BASE: usize = 0xc1000000;
 pub const OVERLAY_UI_MENU_W: usize = 250;
 pub const OVERLAY_UI_MENU_H: usize = 160;
 pub const OVERLAY_UI_MENU_WORDS: usize = 1250;
+pub const HELP_SCROLL_MAX: u8 = 17;

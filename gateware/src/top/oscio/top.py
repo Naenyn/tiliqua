@@ -69,6 +69,7 @@ from tiliqua.tiliqua_soc import TiliquaSoc
 class ScopeSoc(TiliquaSoc):
 
     module_docstring = sys.modules[__name__].__doc__
+    help_visible_lines = 28
 
     bitstream_help = BitstreamHelp(
         brief="Four-channel triggered oscilloscope with audio thru.",
@@ -112,6 +113,12 @@ class ScopeSoc(TiliquaSoc):
             f"pub const OVERLAY_UI_MENU_H: usize = {ui_overlay.MENU_H};")
         self.add_rust_constant(
             f"pub const OVERLAY_UI_MENU_WORDS: usize = {ui_overlay.MENU_WORDS};")
+        help_scroll_max = max(
+            0,
+            len(self.module_docstring.splitlines()) - self.help_visible_lines,
+        )
+        self.add_rust_constant(
+            f"pub const HELP_SCROLL_MAX: u8 = {help_scroll_max};")
 
         self.n_upsample = 8 if self.clock_settings.audio_clock.is_192khz() else 32
 
