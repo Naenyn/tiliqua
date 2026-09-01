@@ -601,8 +601,10 @@ fn main() -> ! {
             scope.set_trigger(
                 !on_help_page,
                 trigger == TriggerMode::Free,
-                trigger == TriggerMode::Falling,
+                matches!(trigger, TriggerMode::AutoRising | TriggerMode::AutoFalling),
+                matches!(trigger, TriggerMode::Falling | TriggerMode::AutoFalling),
                 opts.scope.trigger_ch.value.hw_index(),
+                opts.scope.trig_filter.value.hw_index(),
             );
 
             last_help_scroll = opts.help.scroll.value;

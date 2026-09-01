@@ -151,14 +151,18 @@ macro_rules! impl_scope {
                 &mut self,
                 enabled: bool,
                 trigger_free: bool,
+                trigger_auto: bool,
                 falling: bool,
                 ch: u8,
+                filter: u8,
             ) {
                 self.registers.flags().write(|w| {
                     w.enable().bit(enabled);
                     w.trigger_always().bit(trigger_free);
+                    w.trigger_auto().bit(trigger_auto);
                     w.trigger_falling().bit(falling);
                     unsafe { w.trigger_ch().bits(ch.min(3)) };
+                    unsafe { w.trigger_filter().bits(filter.min(4)) };
                     w
                 });
             }

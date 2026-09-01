@@ -947,6 +947,110 @@ class DSPTests(unittest.TestCase):
         with sim.write_vcd(vcd_file=open("test_onepole.vcd", "w")):
             sim.run()
 
+    def test_trigger_lowpass_bypass_is_exact(self):
+
+        dut = dsp.TriggerLowPass(shape=ASQ)
+        samples = [-0.75, -0.2, 0.0, 0.125, 0.8]
+        outputs = []
+
+        async def stimulus(ctx):
+            ctx.set(dut.mode, 0)
+            for value in samples:
+                await stream.put(ctx, dut.i, fixed.Const(value, shape=ASQ))
+
+        async def testbench(ctx):
+            for _ in samples:
+                outputs.append((await stream.get(ctx, dut.o)).as_value().value)
+
+        sim = Simulator(dut)
+        sim.add_clock(1e-6)
+        sim.add_testbench(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        expected = [fixed.Const(v, shape=ASQ).as_value().value for v in samples]
+        self.assertEqual(outputs, expected)
+
+    def test_trigger_lowpass_rejects_high_harmonics(self):
+
+        dut = dsp.TriggerLowPass(shape=ASQ)
+        outputs = []
+        n_samples = 3072
+
+        async def stimulus(ctx):
+            # Mode 1 is approximately 5 kHz at OSCIO's 1.536 MHz trigger rate.
+            ctx.set(dut.mode, 1)
+            for n in range(n_samples):
+                low = 0.3 * math.sin(2 * math.pi * n / 512)
+                high = 0.3 * math.sin(2 * math.pi * n / 16)
+                await stream.put(ctx, dut.i, fixed.Const(low + high, shape=ASQ))
+
+        async def testbench(ctx):
+            for _ in range(n_samples):
+                outputs.append((await stream.get(ctx, dut.o)).as_float())
+
+        sim = Simulator(dut)
+        sim.add_clock(1e-6)
+        sim.add_testbench(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        # Ignore startup settling, then estimate each component by correlation.
+        settled = outputs[1024:]
+        low_amp = abs(sum(
+            y * math.sin(2 * math.pi * (n + 1024) / 512)
+            for n, y in enumerate(settled)
+        ))
+        high_amp = abs(sum(
+            y * math.sin(2 * math.pi * (n + 1024) / 16)
+            for n, y in enumerate(settled)
+        ))
+        self.assertGreater(low_amp, 20 * high_amp)
+
+    def test_auto_trigger_times_out_only_while_waiting(self):
+
+        dut = dsp.AutoTrigger(timeout_cycles=5)
+
+        async def testbench(ctx):
+            ctx.set(dut.enable, 1)
+            ctx.set(dut.waiting, 0)
+            for _ in range(8):
+                self.assertEqual(ctx.get(dut.o), 0)
+                await ctx.tick()
+
+            ctx.set(dut.waiting, 1)
+            for _ in range(4):
+                self.assertEqual(ctx.get(dut.o), 0)
+                await ctx.tick()
+            self.assertEqual(ctx.get(dut.o), 1)
+            await ctx.tick()
+            self.assertEqual(ctx.get(dut.o), 0)
+
+        sim = Simulator(dut)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()
+
+    def test_auto_trigger_passes_real_edges_without_auto_mode(self):
+
+        dut = dsp.AutoTrigger(timeout_cycles=5)
+
+        async def testbench(ctx):
+            ctx.set(dut.enable, 0)
+            ctx.set(dut.waiting, 1)
+            ctx.set(dut.edge, 0)
+            self.assertEqual(ctx.get(dut.o), 0)
+            ctx.set(dut.edge, 1)
+            self.assertEqual(ctx.get(dut.o), 1)
+            await ctx.tick()
+            ctx.set(dut.edge, 0)
+            self.assertEqual(ctx.get(dut.o), 0)
+
+        sim = Simulator(dut)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()
+
     def test_stream_arbiter(self):
 
         n_channels = 3

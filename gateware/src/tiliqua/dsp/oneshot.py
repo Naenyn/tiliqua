@@ -11,6 +11,123 @@ from amaranth_future import fixed
 from . import ASQ
 
 
+class TriggerLowPass(wiring.Component):
+
+    """Cheap two-pole low-pass used only to condition a trigger signal.
+
+    Mode 0 is an exact bypass. Modes 1 through 4 cascade two shift-only
+    one-pole sections with shifts 5, 7, 9, and 11. At OSCIO's 1.536 MHz
+    interpolated sample rate their combined -3 dB frequencies are
+    approximately 5 kHz, 1.2 kHz, 300 Hz, and 75 Hz respectively.
+
+    The filter states track the input while bypassed so enabling a filter does
+    not begin with a large zero-to-signal settling transient. Extra fractional
+    state bits keep the lower cutoff modes moving even for small input changes.
+    """
+
+    def __init__(self, shape=ASQ, *, extra_bits=8):
+        self.shape = shape
+        self.state_shape = fixed.SQ(shape.i_bits, shape.f_bits + extra_bits)
+        super().__init__({
+            "i": In(stream.Signature(shape)),
+            "mode": In(unsigned(3)),
+            "o": Out(stream.Signature(shape)),
+        })
+
+    def elaborate(self, platform):
+        m = Module()
+
+        state1 = Signal(self.state_shape)
+        state2 = Signal(self.state_shape)
+        sample = Signal(self.state_shape)
+        shift = Signal(unsigned(4), init=5)
+        delta1 = Signal(signed(self.state_shape.width + 1))
+        delta2 = Signal(signed(self.state_shape.width + 1))
+
+        with m.Switch(self.mode):
+            with m.Case(2):
+                m.d.comb += shift.eq(7)
+            with m.Case(3):
+                m.d.comb += shift.eq(9)
+            with m.Case(4):
+                m.d.comb += shift.eq(11)
+            with m.Default():
+                m.d.comb += shift.eq(5)
+
+        m.d.comb += [
+            sample.as_value().eq(
+                self.i.payload.as_value() <<
+                (self.state_shape.f_bits - self.shape.f_bits)),
+            delta1.eq(sample.as_value() - state1.as_value()),
+            delta2.eq(state1.as_value() - state2.as_value()),
+            self.o.valid.eq(self.i.valid),
+            self.i.ready.eq(self.o.ready),
+            self.o.payload.as_value().eq(Mux(
+                self.mode == 0,
+                self.i.payload.as_value(),
+                state2.as_value() >>
+                (self.state_shape.f_bits - self.shape.f_bits),
+            )),
+        ]
+
+        with m.If(self.i.valid & self.o.ready):
+            with m.If(self.mode == 0):
+                m.d.sync += [
+                    state1.eq(sample),
+                    state2.eq(sample),
+                ]
+            with m.Else():
+                m.d.sync += [
+                    state1.as_value().eq(state1.as_value() + (delta1 >> shift)),
+                    state2.as_value().eq(state2.as_value() + (delta2 >> shift)),
+                ]
+
+        return m
+
+
+class AutoTrigger(wiring.Component):
+
+    """Pass trigger edges through, or pulse after a bounded idle wait.
+
+    ``waiting`` must describe a state in which a timeout pulse can actually be
+    consumed. This keeps buffer swaps and other downstream stalls from using
+    up the timeout invisibly.
+    """
+
+    def __init__(self, *, timeout_cycles):
+        if timeout_cycles < 2:
+            raise ValueError("timeout_cycles must be at least 2")
+        self.timeout_cycles = timeout_cycles
+        super().__init__({
+            "edge": In(1),
+            "waiting": In(1),
+            "enable": In(1),
+            "o": Out(1),
+        })
+
+    def elaborate(self, platform):
+        m = Module()
+
+        counter = Signal(range(self.timeout_cycles))
+        expired = Signal()
+
+        m.d.comb += [
+            expired.eq(
+                self.enable & self.waiting &
+                (counter == self.timeout_cycles - 1)),
+            # A real edge always passes through. The caller still decides
+            # whether the acquisition engine is in a state that can use it.
+            self.o.eq(self.edge | expired),
+        ]
+
+        with m.If(~self.enable | ~self.waiting | self.edge | expired):
+            m.d.sync += counter.eq(0)
+        with m.Else():
+            m.d.sync += counter.eq(counter + 1)
+
+        return m
+
+
 class Trigger(wiring.Component):
 
     """

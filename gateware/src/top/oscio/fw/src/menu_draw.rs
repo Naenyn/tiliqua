@@ -57,7 +57,8 @@ const SCOPE_ROWS: &[MenuRow] = &[
     MenuRow::Opt(1, "trigger"),
     MenuRow::Opt(2, "trigger ch"),
     MenuRow::Opt(3, "trig lvl"),
-    MenuRow::Opt(4, "acquire"),
+    MenuRow::Opt(4, "trig filter"),
+    MenuRow::Opt(5, "acquire"),
 ];
 
 const DISPLAY_ROWS: &[MenuRow] = &[

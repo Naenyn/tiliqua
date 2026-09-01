@@ -1,5 +1,5 @@
 pub const UI_NAME: &str = "OSCIO";
-pub const UI_TAG: &str = "d22c8c3b";
+pub const UI_TAG: &str = "828aabaf";
 pub const HW_REV_MAJOR: u32 = 5;
 pub const USE_EXTERNAL_PLL: bool = true;
 pub const CLOCK_SYNC_HZ: u32 = 60000000;
@@ -41,11 +41,21 @@ the current edit, while pressing reopens it in navigation mode.
 CHANNEL 1-2 and CHANNEL 3-4 set each trace's vertical offset, volts per
 division, and visibility.
 
-OSCIO sets time per division, trigger mode, trigger source, trigger level, and
-acquisition style. Clean suppresses short codec settling artifacts around hard
-edges; Raw preserves the calibrated input samples without that reconstruction.
-Rising and falling modes lock the sweep to the selected trigger channel. Free
-mode continuously retriggers.
+OSCIO sets time/div, trigger mode, source, level, filter, and acquisition.
+
+Rising and falling are strict trigger modes: each sweep waits for the selected
+channel to cross trig lvl in the chosen direction. If no crossing arrives, the
+completed display is held. Auto rise and auto fall prefer the same locked edge,
+but start an untriggered refresh after 50 ms if the edge is lost. Free starts a
+new sweep immediately and does not lock to the signal.
+
+Trig filter low-passes trigger detection without filtering any displayed trace.
+Start with off or 5kHz and use the highest cutoff that gives stable lock. Lower
+cutoffs (1.2kHz, 300Hz, and 75Hz) reject progressively more harmonics, but may
+attenuate the trigger waveform or make its crossing arrive later.
+
+Acquire clean suppresses short codec settling artifacts around hard edges.
+Acquire raw plots the calibrated input samples without that reconstruction.
 
 DISPLAY sets grid style, grid and trace intensity, trace hue, and graph
 palette. MENU changes the overlay hue, automatic hide delay, and whether that

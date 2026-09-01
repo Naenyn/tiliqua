@@ -125,6 +125,10 @@ pub enum TriggerMode {
     Falling,
     #[strum(serialize = "free")]
     Free,
+    #[strum(serialize = "auto rise")]
+    AutoRising,
+    #[strum(serialize = "auto fall")]
+    AutoFalling,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
@@ -138,6 +142,33 @@ pub enum TriggerChannel {
     Ch3,
     #[strum(serialize = "4")]
     Ch4,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
+pub enum TriggerFilter {
+    #[default]
+    #[strum(serialize = "off")]
+    Off,
+    #[strum(serialize = "5kHz")]
+    F5kHz,
+    #[strum(serialize = "1.2kHz")]
+    F1p2kHz,
+    #[strum(serialize = "300Hz")]
+    F300Hz,
+    #[strum(serialize = "75Hz")]
+    F75Hz,
+}
+
+impl TriggerFilter {
+    pub fn hw_index(self) -> u8 {
+        match self {
+            TriggerFilter::Off     => 0,
+            TriggerFilter::F5kHz   => 1,
+            TriggerFilter::F1p2kHz => 2,
+            TriggerFilter::F300Hz  => 3,
+            TriggerFilter::F75Hz   => 4,
+        }
+    }
 }
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
@@ -284,6 +315,8 @@ pub struct ScopeOpts {
     pub trigger_ch: EnumOption<TriggerChannel>,
     #[option]
     pub trig_lvl: IntOption<TriggerLvlParams>,
+    #[option]
+    pub trig_filter: EnumOption<TriggerFilter>,
     #[option]
     pub acquisition: EnumOption<AcquisitionMode>,
 }

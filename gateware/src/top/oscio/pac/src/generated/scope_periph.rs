@@ -2,7 +2,7 @@
 #[doc = "Register block"]
 pub struct RegisterBlock {
     flags: FLAGS,
-    _reserved1: [u8; 0x03],
+    _reserved1: [u8; 0x02],
     hue: HUE,
     _reserved2: [u8; 0x03],
     intensity: INTENSITY,

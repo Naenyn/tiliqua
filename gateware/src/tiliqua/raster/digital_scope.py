@@ -46,11 +46,15 @@ class DigitalScopePeripheral(wiring.Component):
     vertical blank. NORM mode waits for a trigger edge before capture.
     """
 
+    AUTO_TRIGGER_TIMEOUT_S = 0.050
+
     class Flags(csr.Register, access="w"):
         enable: csr.Field(csr.action.W, unsigned(1))
         trigger_always: csr.Field(csr.action.W, unsigned(1))
         trigger_falling: csr.Field(csr.action.W, unsigned(1))
         trigger_ch: csr.Field(csr.action.W, unsigned(2))
+        trigger_filter: csr.Field(csr.action.W, unsigned(3))
+        trigger_auto: csr.Field(csr.action.W, unsigned(1))
 
     class Hue(csr.Register, access="w"):
         hue: csr.Field(csr.action.W, unsigned(8))
@@ -155,6 +159,8 @@ class DigitalScopePeripheral(wiring.Component):
         trigger_always = Signal()
         trigger_falling = Signal()
         trigger_ch = Signal(2)
+        trigger_filter = Signal(3)
+        trigger_auto = Signal()
 
         scale_x = Signal(unsigned(4))
         scale_y = Array(Signal(unsigned(3)) for _ in range(self.n_channels))
@@ -193,6 +199,8 @@ class DigitalScopePeripheral(wiring.Component):
         m.submodules.trig = trig = dsp.Trigger(
             shape=PSQ, hysteresis=0.016 / 8.192)
         m.d.comb += trig.falling.eq(trigger_falling)
+        m.submodules.trig_filter = trig_filter = dsp.TriggerLowPass(shape=PSQ)
+        m.d.comb += trig_filter.mode.eq(trigger_filter)
         m.submodules.ramp = ramp = dsp.Ramp(
             shape=PSQ, timebase_shape=SCOPE_TIMEBASE_SQ)
         timebase = Signal(shape=SCOPE_TIMEBASE_SQ)
@@ -206,17 +214,28 @@ class DigitalScopePeripheral(wiring.Component):
         ramp_at_top = Signal()
         trig_seen = Signal()
         norm_fire = Signal()
+        auto_fire = Signal()
         ramp_fire = Signal()
+
+        m.submodules.auto_trigger = auto_trigger = dsp.AutoTrigger(
+            timeout_cycles=max(2, round(self.fs * self.AUTO_TRIGGER_TIMEOUT_S)))
 
         m.d.comb += [
             ramp_at_top.eq(ramp.o.payload >= ramp_end),
             trig_seen.eq(trig.o.payload & trig.i.valid & trig.o.ready),
             norm_fire.eq(trig_seen & ramp_at_top & ~trigger_always),
+            auto_trigger.edge.eq(norm_fire),
+            auto_trigger.enable.eq(trigger_auto & ~trigger_always),
+            # Count only while a timeout can be consumed. In particular, do
+            # not let a display-bank swap expire the timer invisibly.
+            auto_trigger.waiting.eq(
+                ramp_at_top & self.capture_active & self.soc_en),
+            auto_fire.eq(auto_trigger.o & ~trigger_always),
             # The buffer controller briefly drops capture_active while a
             # completed sweep is swapped/cleared. Keep Ramp parked at top
             # during that interval; otherwise it can restart unseen and the
             # next capture misses an entire slow sweep.
-            ramp_fire.eq((trigger_always | norm_fire) &
+            ramp_fire.eq((trigger_always | auto_fire) &
                          self.capture_active & self.soc_en),
         ]
         trig_sample = Signal(shape=PSQ)
@@ -225,8 +244,11 @@ class DigitalScopePeripheral(wiring.Component):
                 with m.Case(ch):
                     m.d.comb += trig_sample.eq(self.isplit4.o[ch].payload)
 
-        dsp.connect_remap(m, irep2.o[0], trig.i, lambda o, i: [
-            i.payload.sample.eq(trig_sample),
+        dsp.connect_remap(m, irep2.o[0], trig_filter.i, lambda o, i: [
+            i.payload.eq(trig_sample),
+        ])
+        dsp.connect_remap(m, trig_filter.o, trig.i, lambda o, i: [
+            i.payload.sample.eq(o.payload),
             i.payload.threshold.eq(trigger_lvl),
         ])
         dsp.connect_remap(m, trig.o, ramp.i, lambda o, i: [
@@ -301,6 +323,10 @@ class DigitalScopePeripheral(wiring.Component):
             m.d.sync += trigger_falling.eq(self._flags.f.trigger_falling.w_data)
         with m.If(self._flags.f.trigger_ch.w_stb):
             m.d.sync += trigger_ch.eq(self._flags.f.trigger_ch.w_data)
+        with m.If(self._flags.f.trigger_filter.w_stb):
+            m.d.sync += trigger_filter.eq(self._flags.f.trigger_filter.w_data)
+        with m.If(self._flags.f.trigger_auto.w_stb):
+            m.d.sync += trigger_auto.eq(self._flags.f.trigger_auto.w_data)
 
         with m.If(self._hue.f.hue.w_stb):
             for ch in range(self.n_channels):
