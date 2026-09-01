@@ -451,6 +451,8 @@ class DSPTests(unittest.TestCase):
         from tiliqua.raster import PSQ
 
         m = Module()
+        m.submodules.input_fifo = input_fifo = stream_util.SyncFIFOBuffered(
+            shape=data.ArrayLayout(ASQ, 4), depth=16)
         m.submodules.reconstruct = reconstruct = \
             dsp.MultichannelDiscontinuityReconstruct(
                 n_channels=4, shape=ASQ)
@@ -460,6 +462,7 @@ class DSPTests(unittest.TestCase):
         m.submodules.convert = convert = \
             dsp.MultichannelFixedPointConvert(
                 n_channels=4, input_shape=ASQ, output_shape=PSQ)
+        wiring.connect(m, input_fifo.o, reconstruct.i)
         wiring.connect(m, reconstruct.o, resample.i)
         wiring.connect(m, resample.o, convert.i)
 
@@ -476,7 +479,7 @@ class DSPTests(unittest.TestCase):
             for frame in frames:
                 await stream.put(
                     ctx,
-                    reconstruct.i,
+                    input_fifo.i,
                     [fixed.Const(value, shape=ASQ) for value in frame],
                 )
 

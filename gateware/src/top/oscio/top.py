@@ -172,8 +172,13 @@ class ScopeSoc(TiliquaSoc):
 
         wiring.connect(m, pmod0.o_cal, pmod0.i_cal)
 
+        # The audio-domain crossing can expose at most its four-frame FIFO as
+        # a burst, while this display chain completes each frame well before
+        # the next 192 kHz sample arrives.  Sixteen entries retain a 4x burst
+        # cushion and map to compact LUT RAM; the former 256-entry FIFO spent
+        # two DP16KD blocks without providing useful additional elasticity.
         m.submodules.plot_fifo = plot_fifo = dsp.SyncFIFOBuffered(
-            shape=data.ArrayLayout(dsp.ASQ, 4), depth=256)
+            shape=data.ArrayLayout(dsp.ASQ, 4), depth=16)
 
         dsp.connect_peek(m, pmod0.o_cal, plot_fifo.i)
 

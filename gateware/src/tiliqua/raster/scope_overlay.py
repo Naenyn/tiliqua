@@ -248,11 +248,30 @@ class ScopeTraceOverlay(wiring.Component):
                     logical_y.eq(self.i.x - (h_active_dvi >> 1)),
                 ]
 
+        # Register the rotation result before subtracting the plot origin and
+        # checking the capture-memory bounds.  The former single stage placed
+        # both signed coordinate transforms on the same DVI path as the
+        # 17-bit column arithmetic, leaving the routed 74.25 MHz domain with a
+        # narrow margin.  ScanPixel takes the same extra stage so the visible
+        # result remains pixel-aligned.
+        scan_geometry = Signal(ScanPixel)
+        logical_x_geometry = Signal(signed(16))
+        logical_y_geometry = Signal(signed(16))
+        plot_x_lo_geometry = Signal(signed(16))
+        front_bank_geometry = Signal()
+        m.d.dvi += [
+            scan_geometry.eq(self.i),
+            logical_x_geometry.eq(logical_x),
+            logical_y_geometry.eq(logical_y),
+            plot_x_lo_geometry.eq(plot_x_lo_dvi),
+            front_bank_geometry.eq(front_bank),
+        ]
+
         col_full = Signal(signed(17))
         in_plot = Signal()
         m.d.comb += [
-            col_full.eq(logical_x - plot_x_lo_dvi),
-            in_plot.eq(self.i.de & (col_full >= 0) &
+            col_full.eq(logical_x_geometry - plot_x_lo_geometry),
+            in_plot.eq(scan_geometry.de & (col_full >= 0) &
                        (col_full < MAX_CAPTURE_COLS)),
         ]
 
@@ -265,11 +284,11 @@ class ScopeTraceOverlay(wiring.Component):
         in_plot_addr = Signal()
         front_bank_addr = Signal()
         m.d.dvi += [
-            scan_addr.eq(self.i),
-            logical_y_addr.eq(logical_y),
+            scan_addr.eq(scan_geometry),
+            logical_y_addr.eq(logical_y_geometry),
             col_addr.eq(col_full),
             in_plot_addr.eq(in_plot),
-            front_bank_addr.eq(front_bank),
+            front_bank_addr.eq(front_bank_geometry),
         ]
         for rp in read_ports:
             m.d.comb += [

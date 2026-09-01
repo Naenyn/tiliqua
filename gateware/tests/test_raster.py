@@ -10,8 +10,11 @@ from amaranth.sim import *
 from amaranth.lib import wiring
 
 from tiliqua.test import wishbone, stream, csr as csr_util
-from tiliqua.raster import persist, stroke, plot, blit, line, scope_capture
+from tiliqua.raster import (
+    persist, stroke, plot, blit, line, scope_capture, scope_overlay,
+)
 from tiliqua.video import framebuffer, modeline, palette
+from tiliqua.video.types import Rotation
 
 from amaranth_soc import csr
 from amaranth_soc.csr import wishbone as csr_wishbone
@@ -346,7 +349,7 @@ class RasterTests(unittest.TestCase):
             sim.run()
 
 
-class ColumnCaptureTests(unittest.TestCase):
+class ScopeRasterAccuracyTests(unittest.TestCase):
 
     def test_vertical_scale_lut_tracks_grid_voltage(self):
         """Every V/div choice should map its nominal voltage to one grid division."""
@@ -458,6 +461,104 @@ class ColumnCaptureTests(unittest.TestCase):
 
         sim = Simulator(m)
         sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()
+
+    @staticmethod
+    def _packed_ch0(ymin, ymax):
+        bits = scope_capture.ENVELOPE_COORD_BITS
+        mask = (1 << bits) - 1
+        # Channel 0 is {valid, ymin, ymax}; all other channels remain invalid.
+        return 1 | ((ymin & mask) << 1) | ((ymax & mask) << (1 + bits))
+
+    def test_completed_column_hits_same_logical_coordinate_in_all_rotations(self):
+        """Exercise compact capture memory through the complete DVI pixel path."""
+        m = Module()
+        m.domains.sync = ClockDomain("sync")
+        m.domains.dvi = ClockDomain("dvi")
+        m.submodules.dut = dut = scope_overlay.ScopeTraceOverlay()
+
+        column = 100
+        logical_y = 7
+        trace_color = 9
+        trace_intensity = 12
+
+        # Inverse mappings of ScopeTraceOverlay's physical-to-logical rotation.
+        cases = (
+            # 1280x720 landscape output.
+            (1280, 720, Rotation.NORMAL, -632, 108, 367),
+            (1280, 720, Rotation.INVERTED, -632, 1171, 352),
+            (1280, 720, Rotation.LEFT, -352, 632, 108),
+            (1280, 720, Rotation.RIGHT, -352, 647, 611),
+            # Official 720x720 companion display geometry.
+            (720, 720, Rotation.NORMAL, -352, 108, 367),
+            (720, 720, Rotation.INVERTED, -352, 611, 352),
+            (720, 720, Rotation.LEFT, -352, 352, 108),
+            (720, 720, Rotation.RIGHT, -352, 367, 611),
+        )
+
+        async def testbench(ctx):
+            ctx.set(dut.enable, 1)
+            ctx.set(dut.h_active, 1280)
+            ctx.set(dut.v_active, 720)
+            ctx.set(dut.hue[0], trace_color)
+            ctx.set(dut.intensity[0], trace_intensity)
+            for ch in range(1, 4):
+                ctx.set(dut.intensity[ch], 0)
+
+            # Keep scanout in vertical blank while the initial hidden bank is
+            # cleared and the completed sweep is atomically made visible.
+            ctx.set(dut.i.y, -1)
+            ctx.set(dut.i.de, 0)
+            for _ in range(scope_capture.MAX_CAPTURE_COLS + 20):
+                if ctx.get(dut.capture_active):
+                    break
+                await ctx.tick("sync")
+            self.assertEqual(ctx.get(dut.capture_active), 1)
+
+            ctx.set(dut.flush_valid, 1)
+            ctx.set(dut.flush_col, column)
+            ctx.set(dut.flush_word, self._packed_ch0(logical_y, logical_y))
+            await ctx.tick("sync")
+            ctx.set(dut.flush_valid, 0)
+            ctx.set(dut.sweep_done, 1)
+            await ctx.tick("sync")
+            ctx.set(dut.sweep_done, 0)
+
+            for _ in range(30):
+                if ctx.get(dut.swap_done):
+                    break
+                await ctx.tick("sync")
+            self.assertEqual(ctx.get(dut.swap_done), 1)
+
+            for (h_active, v_active, rotation, plot_x_lo,
+                 physical_x, physical_y) in cases:
+                ctx.set(dut.h_active, h_active)
+                ctx.set(dut.v_active, v_active)
+                ctx.set(dut.rotation, rotation)
+                ctx.set(dut.plot_x_lo, plot_x_lo)
+                ctx.set(dut.i.x, physical_x)
+                ctx.set(dut.i.y, physical_y)
+                ctx.set(dut.i.de, 1)
+                ctx.set(dut.i.pixel.color, 1)
+                ctx.set(dut.i.pixel.intensity, 1)
+
+                # Allow the coherent configuration CDC, synchronous memory,
+                # bank mux, comparisons, and color pipeline all to settle.
+                await ctx.tick("sync").repeat(10)
+                hit = False
+                for _ in range(24):
+                    await ctx.tick("dvi")
+                    hit |= (
+                        ctx.get(dut.o.de) == 1 and
+                        ctx.get(dut.o.pixel.color) == trace_color and
+                        ctx.get(dut.o.pixel.intensity) == trace_intensity
+                    )
+                self.assertTrue(hit, f"trace miss for rotation {rotation.name}")
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6, domain="sync")
+        sim.add_clock(0.8e-6, domain="dvi")
         sim.add_testbench(testbench)
         sim.run()
 
