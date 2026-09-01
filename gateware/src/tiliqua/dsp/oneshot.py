@@ -40,19 +40,10 @@ class TriggerLowPass(wiring.Component):
         state1 = Signal(self.state_shape)
         state2 = Signal(self.state_shape)
         sample = Signal(self.state_shape)
-        shift = Signal(unsigned(4), init=5)
         delta1 = Signal(signed(self.state_shape.width + 1))
         delta2 = Signal(signed(self.state_shape.width + 1))
-
-        with m.Switch(self.mode):
-            with m.Case(2):
-                m.d.comb += shift.eq(7)
-            with m.Case(3):
-                m.d.comb += shift.eq(9)
-            with m.Case(4):
-                m.d.comb += shift.eq(11)
-            with m.Default():
-                m.d.comb += shift.eq(5)
+        step1 = Signal.like(delta1)
+        step2 = Signal.like(delta2)
 
         m.d.comb += [
             sample.as_value().eq(
@@ -70,6 +61,19 @@ class TriggerLowPass(wiring.Component):
             )),
         ]
 
+        # Keep each cutoff as a constant-shift path. Selecting a shift amount
+        # dynamically infers two barrel shifters even though only four fixed
+        # coefficients are supported.
+        with m.Switch(self.mode):
+            with m.Case(2):
+                m.d.comb += [step1.eq(delta1 >> 7), step2.eq(delta2 >> 7)]
+            with m.Case(3):
+                m.d.comb += [step1.eq(delta1 >> 9), step2.eq(delta2 >> 9)]
+            with m.Case(4):
+                m.d.comb += [step1.eq(delta1 >> 11), step2.eq(delta2 >> 11)]
+            with m.Default():
+                m.d.comb += [step1.eq(delta1 >> 5), step2.eq(delta2 >> 5)]
+
         with m.If(self.i.valid & self.o.ready):
             with m.If(self.mode == 0):
                 m.d.sync += [
@@ -78,8 +82,8 @@ class TriggerLowPass(wiring.Component):
                 ]
             with m.Else():
                 m.d.sync += [
-                    state1.as_value().eq(state1.as_value() + (delta1 >> shift)),
-                    state2.as_value().eq(state2.as_value() + (delta2 >> shift)),
+                    state1.as_value().eq(state1.as_value() + step1),
+                    state2.as_value().eq(state2.as_value() + step2),
                 ]
 
         return m
@@ -94,12 +98,13 @@ class AutoTrigger(wiring.Component):
     up the timeout invisibly.
     """
 
-    def __init__(self, *, timeout_cycles):
-        if timeout_cycles < 2:
-            raise ValueError("timeout_cycles must be at least 2")
-        self.timeout_cycles = timeout_cycles
+    def __init__(self, *, timeout_ticks):
+        if timeout_ticks < 2:
+            raise ValueError("timeout_ticks must be at least 2")
+        self.timeout_ticks = timeout_ticks
         super().__init__({
             "edge": In(1),
+            "tick": In(1),
             "waiting": In(1),
             "enable": In(1),
             "o": Out(1),
@@ -108,13 +113,13 @@ class AutoTrigger(wiring.Component):
     def elaborate(self, platform):
         m = Module()
 
-        counter = Signal(range(self.timeout_cycles))
+        counter = Signal(range(self.timeout_ticks))
         expired = Signal()
 
         m.d.comb += [
             expired.eq(
-                self.enable & self.waiting &
-                (counter == self.timeout_cycles - 1)),
+                self.enable & self.waiting & self.tick &
+                (counter == self.timeout_ticks - 1)),
             # A real edge always passes through. The caller still decides
             # whether the acquisition engine is in a state that can use it.
             self.o.eq(self.edge | expired),
@@ -122,7 +127,7 @@ class AutoTrigger(wiring.Component):
 
         with m.If(~self.enable | ~self.waiting | self.edge | expired):
             m.d.sync += counter.eq(0)
-        with m.Else():
+        with m.Elif(self.tick):
             m.d.sync += counter.eq(counter + 1)
 
         return m

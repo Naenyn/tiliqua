@@ -786,8 +786,9 @@ class DSPTests(unittest.TestCase):
             result = await stream.get(ctx, matrix.o)
             self.assertAlmostEqual(result[0].as_float(),  0.3, places=4)
             self.assertAlmostEqual(result[1].as_float(), -0.4, places=4)
-            # 1.1 -> saturates to 1
-            self.assertAlmostEqual(result[2].as_float(),  1.0, places=4)
+            # Saturation depends on the configured ASQ integer width.
+            expected = fixed.Const(1.1, shape=ASQ, clamp=True).as_float()
+            self.assertAlmostEqual(result[2].as_float(), expected, places=4)
             self.assertAlmostEqual(result[3].as_float(), -0.8, places=4)
 
         sim = Simulator(matrix)
@@ -1007,18 +1008,59 @@ class DSPTests(unittest.TestCase):
         ))
         self.assertGreater(low_amp, 20 * high_amp)
 
+    def test_trigger_lowpass_modes_have_ordered_step_response(self):
+        """Every fixed coefficient path must select a progressively lower cutoff."""
+        settled = []
+        n_samples = 512
+
+        for mode in range(1, 5):
+            dut = dsp.TriggerLowPass(shape=ASQ)
+            outputs = []
+
+            async def stimulus(ctx, *, selected_mode=mode):
+                ctx.set(dut.mode, selected_mode)
+                for _ in range(n_samples):
+                    await stream.put(ctx, dut.i, fixed.Const(0.5, shape=ASQ))
+
+            async def testbench(ctx):
+                for _ in range(n_samples):
+                    outputs.append((await stream.get(ctx, dut.o)).as_float())
+
+            sim = Simulator(dut)
+            sim.add_clock(1e-6)
+            sim.add_testbench(stimulus)
+            sim.add_testbench(testbench)
+            sim.run()
+            settled.append(outputs[-1])
+
+        self.assertTrue(
+            all(faster > slower
+                for faster, slower in zip(settled, settled[1:])),
+            settled,
+        )
+        self.assertGreater(settled[0], 0.49)
+        self.assertLess(settled[-1], 0.05)
+
     def test_auto_trigger_times_out_only_while_waiting(self):
 
-        dut = dsp.AutoTrigger(timeout_cycles=5)
+        dut = dsp.AutoTrigger(timeout_ticks=5)
 
         async def testbench(ctx):
             ctx.set(dut.enable, 1)
+            ctx.set(dut.tick, 0)
             ctx.set(dut.waiting, 0)
             for _ in range(8):
                 self.assertEqual(ctx.get(dut.o), 0)
                 await ctx.tick()
 
             ctx.set(dut.waiting, 1)
+            # System clocks without accepted samples must not consume the
+            # sample-rate-based timeout.
+            for _ in range(8):
+                self.assertEqual(ctx.get(dut.o), 0)
+                await ctx.tick()
+
+            ctx.set(dut.tick, 1)
             for _ in range(4):
                 self.assertEqual(ctx.get(dut.o), 0)
                 await ctx.tick()
@@ -1033,10 +1075,11 @@ class DSPTests(unittest.TestCase):
 
     def test_auto_trigger_passes_real_edges_without_auto_mode(self):
 
-        dut = dsp.AutoTrigger(timeout_cycles=5)
+        dut = dsp.AutoTrigger(timeout_ticks=5)
 
         async def testbench(ctx):
             ctx.set(dut.enable, 0)
+            ctx.set(dut.tick, 0)
             ctx.set(dut.waiting, 1)
             ctx.set(dut.edge, 0)
             self.assertEqual(ctx.get(dut.o), 0)
@@ -1082,23 +1125,28 @@ class DSPTests(unittest.TestCase):
 class _NormScopeTrigger(wiring.Component):
     """Trigger + ramp path mirroring ``digital_scope`` NORM / FREE logic."""
 
-    def __init__(self, *, shape=ASQ, td_scale=0.5, hysteresis=0):
+    def __init__(self, *, shape=ASQ, td_scale=0.5, hysteresis=0,
+                 auto_timeout_ticks=16):
         self._shape = shape
         self._td_scale = td_scale
         self._hysteresis = hysteresis
+        self._auto_timeout_ticks = auto_timeout_ticks
         super().__init__({
             "i": In(amaranth_stream.Signature(data.StructLayout({
                 "sample": shape,
                 "threshold": shape,
             }))),
             "trigger_always": In(1),
+            "trigger_auto": In(1),
             "falling": In(1),
             "capture_active": In(1, init=1),
             "o": Out(amaranth_stream.Signature(shape)),
             "dbg_restarts": Out(unsigned(16)),
             "dbg_norm_fire": Out(1),
+            "dbg_auto_fire": Out(1),
             "dbg_ramp_at_top": Out(1),
             "dbg_norm_fire_count": Out(unsigned(16)),
+            "dbg_auto_fire_count": Out(unsigned(16)),
         })
 
     def elaborate(self, platform):
@@ -1115,24 +1163,36 @@ class _NormScopeTrigger(wiring.Component):
         ramp_restarted = Signal()
         trig_seen = Signal()
         norm_fire = Signal()
+        auto_fire = Signal()
         ramp_fire = Signal()
         restarts = Signal(16)
         norm_fire_count = Signal(16)
+        auto_fire_count = Signal(16)
+        m.submodules.auto_trigger = auto_trigger = dsp.AutoTrigger(
+            timeout_ticks=self._auto_timeout_ticks)
 
         m.d.comb += [
             ramp_at_top.eq(ramp.o.payload > fixed.Const(0.985, shape=self._shape)),
             ramp_restarted.eq(prev_ramp_at_top & ~ramp_at_top),
             trig_seen.eq(trig.o.payload & trig.i.valid & trig.o.ready),
             norm_fire.eq(trig_seen & ramp_at_top & ~self.trigger_always),
-            ramp_fire.eq((self.trigger_always | norm_fire) &
+            auto_trigger.edge.eq(norm_fire),
+            auto_trigger.tick.eq(trig.i.valid & trig.o.ready),
+            auto_trigger.enable.eq(self.trigger_auto & ~self.trigger_always),
+            auto_trigger.waiting.eq(ramp_at_top & self.capture_active),
+            auto_fire.eq(auto_trigger.o & ~self.trigger_always),
+            ramp_fire.eq((self.trigger_always | auto_fire) &
                          self.capture_active),
             self.dbg_norm_fire.eq(norm_fire),
+            self.dbg_auto_fire.eq(auto_fire),
             self.dbg_ramp_at_top.eq(ramp_at_top),
         ]
         m.d.sync += prev_ramp_at_top.eq(ramp_at_top)
 
         with m.If(norm_fire):
             m.d.sync += norm_fire_count.eq(norm_fire_count + 1)
+        with m.If(auto_fire):
+            m.d.sync += auto_fire_count.eq(auto_fire_count + 1)
         with m.If(ramp_restarted):
             m.d.sync += restarts.eq(restarts + 1)
 
@@ -1150,19 +1210,26 @@ class _NormScopeTrigger(wiring.Component):
             ramp.o.ready.eq(self.o.ready),
             self.dbg_restarts.eq(restarts),
             self.dbg_norm_fire_count.eq(norm_fire_count),
+            self.dbg_auto_fire_count.eq(auto_fire_count),
         ]
         return m
 
 
 class NormTriggerTests(unittest.TestCase):
 
-    def _make_dut(self, *, trigger_always=False, falling=False, hysteresis=0,
-                  td_scale=0.5):
+    def _make_dut(self, *, trigger_always=False, trigger_auto=False,
+                  falling=False, hysteresis=0, td_scale=0.5,
+                  auto_timeout_ticks=16):
         m = Module()
-        dut = _NormScopeTrigger(td_scale=td_scale, hysteresis=hysteresis)
+        dut = _NormScopeTrigger(
+            td_scale=td_scale,
+            hysteresis=hysteresis,
+            auto_timeout_ticks=auto_timeout_ticks,
+        )
         m.submodules.dut = dut
         m.d.comb += [
             dut.trigger_always.eq(trigger_always),
+            dut.trigger_auto.eq(trigger_auto),
             dut.falling.eq(falling),
         ]
         return m, dut
@@ -1271,6 +1338,59 @@ class NormTriggerTests(unittest.TestCase):
             for n in range(2000):
                 await self._put(ctx, dut, 0.9)
             self.assertGreater(ctx.get(dut.dbg_restarts), 2)
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()
+
+    def test_auto_mode_restarts_after_sample_timeout(self):
+        """AUTO must keep an edge-free input moving without becoming FREE."""
+        timeout = 17
+        m, dut = self._make_dut(
+            trigger_auto=True, auto_timeout_ticks=timeout)
+        auto_fire_samples = []
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            previous_count = 0
+            for n in range(2400):
+                await self._put(ctx, dut, 0.25)
+                count = ctx.get(dut.dbg_auto_fire_count)
+                if count != previous_count:
+                    auto_fire_samples.append(n)
+                    previous_count = count
+            self.assertGreater(len(auto_fire_samples), 2)
+            for a, b in zip(auto_fire_samples, auto_fire_samples[1:]):
+                # Each timeout begins only after the preceding ramp reaches
+                # the top; it cannot fire more frequently than the timeout.
+                self.assertGreaterEqual(b - a, timeout)
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()
+
+    def test_auto_timeout_pauses_while_capture_is_inactive(self):
+        m, dut = self._make_dut(
+            trigger_auto=True, auto_timeout_ticks=9)
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            while not ctx.get(dut.dbg_ramp_at_top):
+                await self._put(ctx, dut, 0.25)
+
+            ctx.set(dut.capture_active, 0)
+            for _ in range(30):
+                await self._put(ctx, dut, 0.25)
+                self.assertEqual(ctx.get(dut.dbg_auto_fire_count), 0)
+
+            ctx.set(dut.capture_active, 1)
+            for _ in range(8):
+                await self._put(ctx, dut, 0.25)
+                self.assertEqual(ctx.get(dut.dbg_auto_fire_count), 0)
+            await self._put(ctx, dut, 0.25)
+            self.assertEqual(ctx.get(dut.dbg_auto_fire_count), 1)
 
         sim = Simulator(m)
         sim.add_clock(1e-6)

@@ -213,21 +213,25 @@ class DigitalScopePeripheral(wiring.Component):
         #   - ``trigger_always`` (FREE) restarts as soon as the ramp reaches top.
         ramp_at_top = Signal()
         trig_seen = Signal()
+        trigger_sample_tick = Signal()
         norm_fire = Signal()
         auto_fire = Signal()
         ramp_fire = Signal()
 
         m.submodules.auto_trigger = auto_trigger = dsp.AutoTrigger(
-            timeout_cycles=max(2, round(self.fs * self.AUTO_TRIGGER_TIMEOUT_S)))
+            timeout_ticks=max(2, round(self.fs * self.AUTO_TRIGGER_TIMEOUT_S)))
 
         m.d.comb += [
             ramp_at_top.eq(ramp.o.payload >= ramp_end),
-            trig_seen.eq(trig.o.payload & trig.i.valid & trig.o.ready),
+            trigger_sample_tick.eq(trig.i.valid & trig.o.ready),
+            trig_seen.eq(trig.o.payload & trigger_sample_tick),
             norm_fire.eq(trig_seen & ramp_at_top & ~trigger_always),
             auto_trigger.edge.eq(norm_fire),
+            auto_trigger.tick.eq(trigger_sample_tick),
             auto_trigger.enable.eq(trigger_auto & ~trigger_always),
-            # Count only while a timeout can be consumed. In particular, do
-            # not let a display-bank swap expire the timer invisibly.
+            # Count accepted trigger samples only, and only while a timeout
+            # can be consumed. This makes the interval independent of the
+            # system clock and guarantees expiry accompanies a valid sample.
             auto_trigger.waiting.eq(
                 ramp_at_top & self.capture_active & self.soc_en),
             auto_fire.eq(auto_trigger.o & ~trigger_always),
