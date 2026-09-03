@@ -17,6 +17,7 @@ sys.path.insert(0, str(SONORO_SRC))
 
 from spectrogram import (  # noqa: E402
     ASQ,
+    AnalyzerSampleBuffer,
     DbfsLevelSmoother,
     MagnitudeToDbfs,
     SPECTRUM_CORDIC_GAIN,
@@ -26,6 +27,41 @@ from spectrogram import (  # noqa: E402
 
 
 class SonoroMagnitudeTests(unittest.TestCase):
+
+    def test_analyzer_buffer_preserves_live_samples_during_fft_stall(self):
+        shape = fixed.SQ(2, 16)
+        dut = AnalyzerSampleBuffer(shape=shape, depth=64)
+        sim = Simulator(dut)
+        sim.add_clock(1e-6)
+
+        async def bench(ctx):
+            sent = 0
+            received = []
+            total = 180
+
+            # Scale the real 48kHz/60MHz timing down by the same factor: the
+            # iterative FFT stalls for roughly 32 incoming samples at worst,
+            # then has ample time to drain before its next frame.
+            for cycle in range(2500):
+                source_pulse = (cycle % 10 == 0) and (sent < total)
+                sink_ready = not (300 <= cycle < 620)
+                ctx.set(dut.i.valid, source_pulse)
+                ctx.set(dut.i.payload.as_value(), sent)
+                ctx.set(dut.o.ready, sink_ready)
+
+                if source_pulse:
+                    self.assertTrue(ctx.get(dut.i.ready))
+                    sent += 1
+                if sink_ready and ctx.get(dut.o.valid):
+                    received.append(ctx.get(dut.o.payload.as_value()))
+                await ctx.tick()
+
+            self.assertEqual(sent, total)
+            self.assertEqual(received, list(range(total)))
+            self.assertEqual(ctx.get(dut.overflow), 0)
+
+        sim.add_testbench(bench)
+        sim.run()
 
     def test_physical_scan_coordinates_follow_display_rotation(self):
         m = Module()

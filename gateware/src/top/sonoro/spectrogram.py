@@ -257,6 +257,47 @@ class DbfsLevelSmoother(wiring.Component):
         return m
 
 
+class AnalyzerSampleBuffer(wiring.Component):
+    """Absorb analyzer back-pressure without interrupting live audio time.
+
+    SONORO observes a non-blocking tap of the codec stream, so the producer
+    cannot hold a sample while the iterative FFT is busy. Buffering the
+    already-resampled stream is inexpensive and keeps every analyzer sample
+    contiguous through those periodic stalls.
+    """
+
+    def __init__(self, shape=ASQ, depth=64):
+        self.shape = shape
+        self.depth = depth
+        super().__init__({
+            "i": In(stream.Signature(shape)),
+            "o": Out(stream.Signature(shape)),
+            "overflow": Out(1),
+        })
+
+    def elaborate(self, platform):
+        m = Module()
+        # SyncFIFO's asynchronous read forces this small memory into
+        # distributed RAM rather than consuming one of SONORO's full EBRs.
+        m.submodules.fifo = sample_fifo = fifo.SyncFIFO(
+            width=self.shape.as_shape().width,
+            depth=self.depth,
+        )
+
+        m.d.comb += [
+            self.i.ready.eq(sample_fifo.w_rdy),
+            sample_fifo.w_en.eq(self.i.valid),
+            sample_fifo.w_data.eq(self.i.payload.as_value()),
+            self.o.valid.eq(sample_fifo.r_rdy),
+            self.o.payload.as_value().eq(sample_fifo.r_data),
+            sample_fifo.r_en.eq(self.o.valid & self.o.ready),
+        ]
+        with m.If(self.i.valid & ~self.i.ready):
+            m.d.sync += self.overflow.eq(1)
+
+        return m
+
+
 def _spectrum_log_coord_lut(max_hz, bin_hz, max_bin):
     """Map 256 screen columns to Q8 FFT coordinates on a log axis.
 
@@ -630,6 +671,8 @@ class Spectrogram(wiring.Component):
         m.submodules.dbfs = dbfs = MagnitudeToDbfs(ASQ)
         m.submodules.level_smoother = level_smoother = DbfsLevelSmoother(
             FFT_SIZE)
+        m.submodules.sample_buffer = sample_buffer = AnalyzerSampleBuffer(
+            shape=ASQ, depth=64)
 
         # A short calibrated-level average calms ADC/numerical shimmer without
         # the two EBRs required by the full-precision magnitude smoother. The
@@ -708,32 +751,35 @@ class Spectrogram(wiring.Component):
             resample_fine.i.valid.eq(resample_wide.o.valid & ~use_wide),
             resample_fine.i.payload.eq(resample_wide.o.payload),
             resample_wide.o.ready.eq(Mux(
-                use_wide, analyzer.i.ready, resample_fine.i.ready)),
+                use_wide, sample_buffer.i.ready, resample_fine.i.ready)),
 
             resample_mid.i.valid.eq(
                 resample_fine.o.valid & (use_mid | use_low)),
             resample_mid.i.payload.eq(resample_fine.o.payload),
             resample_fine.o.ready.eq(Mux(
-                use_fine, analyzer.i.ready, resample_mid.i.ready)),
+                use_fine, sample_buffer.i.ready, resample_mid.i.ready)),
 
             resample_low.i.valid.eq(resample_mid.o.valid & use_low),
             resample_low.i.payload.eq(resample_mid.o.payload),
             resample_mid.o.ready.eq(Mux(
-                use_mid, analyzer.i.ready, resample_low.i.ready)),
-            resample_low.o.ready.eq(analyzer.i.ready),
+                use_mid, sample_buffer.i.ready, resample_low.i.ready)),
+            resample_low.o.ready.eq(sample_buffer.i.ready),
 
-            analyzer.i.valid.eq(Mux(
+            sample_buffer.i.valid.eq(Mux(
                 use_wide, resample_wide.o.valid,
                 Mux(use_fine, resample_fine.o.valid,
                     Mux(use_mid, resample_mid.o.valid,
                         resample_low.o.valid)),
             )),
-            analyzer.i.payload.eq(Mux(
+            sample_buffer.i.payload.eq(Mux(
                 use_wide, resample_wide.o.payload,
                 Mux(use_fine, resample_fine.o.payload,
                     Mux(use_mid, resample_mid.o.payload,
                         resample_low.o.payload)),
             )),
+            analyzer.i.valid.eq(sample_buffer.o.valid),
+            analyzer.i.payload.eq(sample_buffer.o.payload),
+            sample_buffer.o.ready.eq(analyzer.i.ready),
         ]
         wiring.connect(m, analyzer.o, envelope.i)
         wiring.connect(m, envelope.o, dbfs.i)
