@@ -72,7 +72,6 @@ const MONITOR_CIRCULAR_HOME_ROWS: &[MenuRow] = &[
 ];
 
 const SCOPE_ROWS: &[MenuRow] = &[
-    MenuRow::Header("Trigger"),
     MenuRow::Opt(0, "type"),
     MenuRow::Opt(1, "source"),
     MenuRow::Opt(2, "level"),
@@ -80,7 +79,6 @@ const SCOPE_ROWS: &[MenuRow] = &[
 ];
 
 const MONITOR_ROWS: &[MenuRow] = &[
-    MenuRow::Header("Ranges"),
     MenuRow::Opt(0, "CH1"),
     MenuRow::Opt(1, "CH2"),
     MenuRow::Opt(2, "CH3"),

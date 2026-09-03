@@ -195,6 +195,7 @@ impl ScopeVScale {
 pub enum ViewMode {
     #[default]
     Scope,
+    #[strum(serialize = "CV/LFO")]
     Monitor,
 }
 
@@ -259,9 +260,9 @@ pub enum Page {
     Chan12,
     #[strum(serialize = "CH 3-4")]
     Chan34,
-    #[strum(serialize = "SCOPE")]
+    #[strum(serialize = "TRIGGER")]
     Scope,
-    #[strum(serialize = "MONITOR")]
+    #[strum(serialize = "RANGES")]
     Monitor,
     #[strum(serialize = "DISPLAY")]
     Display,

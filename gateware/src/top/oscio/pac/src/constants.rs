@@ -1,5 +1,5 @@
 pub const UI_NAME: &str = "OSCIO";
-pub const UI_TAG: &str = "1043a93e";
+pub const UI_TAG: &str = "aac4efca";
 pub const HW_REV_MAJOR: u32 = 5;
 pub const USE_EXTERNAL_PLL: bool = true;
 pub const CLOCK_SYNC_HZ: u32 = 60000000;
@@ -22,7 +22,7 @@ pub const AUDIO_FS: u32 = 192000;
 pub const MODULE_DOCSTRING: &str = r###"
 OSCIO is a four-channel digital oscilloscope for Eurorack signals.
 
-All four analog inputs are displayed together. A voltage-monitor view presents
+All four analog inputs are displayed together. A CV/LFO view presents
 each input in its own history lane with level, low/high, peak-to-peak, period,
 and frequency measurements. Each input is also passed straight through to the
 matching output with no USB or delay-line processing.
@@ -45,21 +45,21 @@ return to the preceding menu pages.
 
 OSCIO is the first menu page, with mode as its first option. In scope mode it
 also provides time/div and acquire. CHANNEL 1-2 and CHANNEL 3-4 then set each
-trace's vertical offset, volts per division, and visibility. The SCOPE page's
-Trigger section contains trigger type, source, level, and filter. These channel
-and trigger pages are omitted from menu navigation in monitor mode.
+trace's vertical offset, volts per division, and visibility. The TRIGGER page
+contains trigger type, source, level, and filter. These channel and trigger
+pages are omitted from menu navigation in CV/LFO mode.
 
-In monitor mode the OSCIO page provides time/div and max freq. On a 720x720
+In CV/LFO mode the OSCIO page provides time/div and max freq. On a 720x720
 display it also provides channels, which switches between CH 1-2 and CH 3-4;
-rectangular displays show all four and omit that option. The MONITOR page's
-Ranges section gives every channel an independent full-window voltage range:
+rectangular displays show all four and omit that option. The RANGES page gives
+every channel an independent full-window voltage range:
 -5..+5 V, -10..+10 V, 0..+10 V, or 0..+5 V.
 
-Monitor is intended for CV, gates, envelopes, and LFOs. Its max freq defaults
-to 20 Hz and may be set from 0.25 Hz through 20 Hz. Monitor runs continuously
-without waiting for a trigger, clips each trace to its selected lane range, and
-measures the calibrated input before display
-interpolation or cleanup. Faster repeating signals are identified in the
+CV/LFO is intended for control voltages, gates, envelopes, and LFOs. Its max
+freq defaults to 20 Hz and may be set from 0.25 Hz through 20 Hz. CV/LFO runs
+continuously without waiting for a trigger, clips each trace to its selected
+lane range, and measures the calibrated input before display interpolation or
+cleanup. Faster repeating signals are identified in the
 statistics panel and replaced by an indicator in the history lanes, while
 their voltage and frequency statistics remain visible. A trace must stay below
 max freq for three seconds before it appears. Once visible, it tolerates brief
@@ -87,7 +87,7 @@ rougher or spikier, so it is usually less useful as the everyday display mode.
 
 DISPLAY sets trace intensity, trace hue, and graph palette. Scope mode also
 shows grid style and grid intensity; those unused controls are omitted in
-monitor mode. SYSTEM contains overlay hue, automatic hide behavior, rotation,
+CV/LFO mode. SYSTEM contains overlay hue, automatic hide behavior, rotation,
 and settings save/reset actions. HELP is the final menu page.
 "###;
 pub const OVERLAY_UI_SCRATCH_BASE: usize = 0x20f00000;

@@ -2,7 +2,7 @@
 
 Updated: 2026-09-02
 
-This document describes the implemented OSCIO scope and voltage-monitor design,
+This document describes the implemented OSCIO scope and CV/LFO design,
 its verification state, and the main constraints to preserve during future
 development.
 
@@ -20,7 +20,9 @@ development.
 
 ## Implemented views
 
-OSCIO provides two runtime-selectable views in one bitstream.
+OSCIO provides two runtime-selectable views in one bitstream. The low-frequency
+voltage view is labeled `CV/LFO` in the user interface; implementation names
+continue to use `Monitor` internally.
 
 ### Scope
 
@@ -35,9 +37,10 @@ The normal four-channel oscilloscope supports:
 - edge-aware interpolation for sharp waveforms; and
 - grid, palette, hue, intensity, rotation, and persistent settings.
 
-### Monitor
+### CV/LFO
 
-The voltage monitor is intended for CV, gates, envelopes, and LFOs. It provides:
+The CV/LFO view is intended for control voltages, gates, envelopes, and LFOs.
+It provides:
 
 - one history lane per calibrated analog input;
 - level, low, high, peak-to-peak, frequency, and period statistics;
@@ -63,7 +66,7 @@ offscreen pass.
 
 ## Display layouts
 
-Runtime video dimensions select the monitor layout; separate artifacts are not
+Runtime video dimensions select the CV/LFO layout; separate artifacts are not
 required.
 
 - Rectangular displays show all four lanes across the active display.
@@ -84,20 +87,20 @@ Scope navigation:
 1. `OSCIO`: mode, time/div, acquire
 2. `CH 1-2`: offset, scale, and enable for channels 1 and 2
 3. `CH 3-4`: offset, scale, and enable for channels 3 and 4
-4. `SCOPE`: a `Trigger` section with type, source, level, and filter
+4. `TRIGGER`: type, source, level, and filter
 5. `DISPLAY`: grid, grid intensity, trace intensity, hue, and palette
 6. `SYSTEM`: UI hue, hide behavior, rotation, save, and reset
 7. `HELP`
 
-Monitor navigation:
+CV/LFO navigation:
 
 1. `OSCIO`: mode, time/div, max freq, plus channels on 720x720
-2. `MONITOR`: a `Ranges` section with CH1 through CH4
+2. `RANGES`: CH1 through CH4
 3. `DISPLAY`: trace intensity, hue, and palette
 4. `SYSTEM`
 5. `HELP`
 
-Scope-only channel, trigger, and grid controls are omitted in monitor mode.
+Scope-only channel, trigger, and grid controls are omitted in CV/LFO mode.
 Likewise, the circular pagination control is omitted when it has no effect.
 
 ## Native-rate frequency detector
