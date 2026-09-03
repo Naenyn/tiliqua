@@ -14,7 +14,6 @@ from amaranth.lib.wiring import In, Out
 from amaranth_soc import csr
 from tiliqua import dsp
 from tiliqua.dsp import ASQ
-from tiliqua.raster.line import LineCmd, LineStripCmd
 from tiliqua.video.types import Pixel, ScanPixel
 
 
@@ -78,23 +77,6 @@ def _dbfs_level_q4_to_height(level_q4, tall):
 def _dbfs_level_to_height(level, tall):
     """Integer-level companion to :func:`_dbfs_level_q4_to_height`."""
     return _dbfs_level_q4_to_height(level << 4, tall)
-
-
-def _three_d_scan_geometry(high_quality):
-    """Return the final vertex and bin-group shift for a 256-bin sweep."""
-    return (
-        Mux(high_quality, 127, 63),
-        Mux(high_quality, 1, 2),
-    )
-
-
-def _three_d_frequency_coordinate(point, high_quality):
-    """Spread 64 or 128 3D vertices across the complete 0..255 axis."""
-    return Mux(
-        high_quality,
-        (point << 1) + (point >> 6),
-        _dbfs_level_to_height(point, Const(0)),
-    )
 
 
 class MagnitudeToDbfs(wiring.Component):
@@ -475,9 +457,7 @@ class Spectrogram(wiring.Component):
         phosphor: csr.Field(csr.action.W, unsigned(1))
         axes: csr.Field(csr.action.W, unsigned(1))
         input_ch: csr.Field(csr.action.W, unsigned(2))
-        view_3d: csr.Field(csr.action.W, unsigned(1))
         spectrum_mode: csr.Field(csr.action.W, unsigned(1))
-        display_ack: csr.Field(csr.action.W, unsigned(1))
 
     class Gain(csr.Register, access="w"):
         value: csr.Field(csr.action.W, unsigned(4))
@@ -503,14 +483,6 @@ class Spectrogram(wiring.Component):
         menu_visible: csr.Field(csr.action.W, unsigned(1))
         rotation: csr.Field(csr.action.W, unsigned(2))
 
-    class Status(csr.Register, access="r"):
-        display_buffer: csr.Field(csr.action.R, unsigned(1))
-        surface_valid: csr.Field(csr.action.R, unsigned(1))
-        renderer_idle: csr.Field(csr.action.R, unsigned(1))
-
-    class Config3d(csr.Register, access="w"):
-        quality: csr.Field(csr.action.W, unsigned(2))
-
     class SpectrumConfig(csr.Register, access="w"):
         style: csr.Field(csr.action.W, unsigned(1))
         bands: csr.Field(csr.action.W, unsigned(2))
@@ -519,16 +491,6 @@ class Spectrogram(wiring.Component):
         scale: csr.Field(csr.action.W, unsigned(1))
         highlight: csr.Field(csr.action.W, unsigned(1))
         grid: csr.Field(csr.action.W, unsigned(1))
-
-    class ProjectionX(csr.Register, access="w"):
-        frequency: csr.Field(csr.action.W, signed(10))
-        amplitude: csr.Field(csr.action.W, signed(10))
-        time: csr.Field(csr.action.W, signed(10))
-
-    class ProjectionY(csr.Register, access="w"):
-        frequency: csr.Field(csr.action.W, signed(10))
-        amplitude: csr.Field(csr.action.W, signed(10))
-        time: csr.Field(csr.action.W, signed(10))
 
     def __init__(self, *, fs):
         self.fs = fs
@@ -541,13 +503,6 @@ class Spectrogram(wiring.Component):
         self._persistence = regs.add("persistence", self.Persistence(), offset=0x10)
         self._hue = regs.add("hue", self.Hue(), offset=0x14)
         self._timings = regs.add("timings", self.Timings(), offset=0x18)
-        self._status = regs.add("status", self.Status(), offset=0x1c)
-        self._projection_x = regs.add(
-            "projection_x", self.ProjectionX(), offset=0x20)
-        self._projection_y = regs.add(
-            "projection_y", self.ProjectionY(), offset=0x24)
-        self._config_3d = regs.add(
-            "config_3d", self.Config3d(), offset=0x28)
         self._spectrum_config = regs.add(
             "spectrum_config", self.SpectrumConfig(), offset=0x2c)
         self._noise_floor = regs.add(
@@ -559,16 +514,6 @@ class Spectrogram(wiring.Component):
             "o": Out(ScanPixel),
             "audio_i": In(stream.Signature(data.ArrayLayout(ASQ, 4))),
             "bus": In(csr.Signature(addr_width=regs.addr_width, data_width=regs.data_width)),
-            "line_o": Out(stream.Signature(LineCmd)),
-            "line_busy": In(1),
-            "protect_enable": Out(1),
-            "protect_visible": Out(3),
-            "protect_drawing": Out(3),
-            "flush_request": Out(1),
-            "flush_done": In(1),
-            "clear_request": Out(1),
-            "clear_done": In(1),
-            "clear_busy": In(1),
         })
         self.bus.memory_map = self._bridge.bus.memory_map
 
@@ -580,9 +525,7 @@ class Spectrogram(wiring.Component):
         enable = Signal(init=1)
         phosphor = Signal(init=1)
         axes = Signal(init=1)
-        view_3d = Signal()
         spectrum_mode = Signal()
-        display_ack = Signal()
         input_ch = Signal(2)
         gain = Signal(4)
         range_sel = Signal(2)
@@ -590,7 +533,6 @@ class Spectrogram(wiring.Component):
         persistence = Signal(2, init=2)
         hue = Signal(4, init=5)
         noise_floor = Signal(2)
-        quality_3d = Signal(2, init=1)
         spectrum_style = Signal(init=1)
         spectrum_bands = Signal(2, init=1)
         spectrum_fill = Signal(3, init=3)
@@ -606,8 +548,6 @@ class Spectrogram(wiring.Component):
         v_active = Signal(12, init=720)
         menu_visible = Signal()
         rotation = Signal(2)
-        projection_x = [Signal(signed(10), init=value) for value in (384, 0, 90)]
-        projection_y = [Signal(signed(10), init=value) for value in (0, -320, -96)]
 
         with m.If(self._flags.element.w_stb):
             m.d.sync += [
@@ -615,9 +555,7 @@ class Spectrogram(wiring.Component):
                 phosphor.eq(self._flags.f.phosphor.w_data),
                 axes.eq(self._flags.f.axes.w_data),
                 input_ch.eq(self._flags.f.input_ch.w_data),
-                view_3d.eq(self._flags.f.view_3d.w_data),
                 spectrum_mode.eq(self._flags.f.spectrum_mode.w_data),
-                display_ack.eq(self._flags.f.display_ack.w_data),
             ]
         with m.If(self._gain.element.w_stb):
             m.d.sync += gain.eq(self._gain.f.value.w_data)
@@ -640,20 +578,6 @@ class Spectrogram(wiring.Component):
                 menu_visible.eq(self._timings.f.menu_visible.w_data),
                 rotation.eq(self._timings.f.rotation.w_data),
             ]
-        with m.If(self._projection_x.element.w_stb):
-            m.d.sync += [
-                projection_x[0].eq(self._projection_x.f.frequency.w_data),
-                projection_x[1].eq(self._projection_x.f.amplitude.w_data),
-                projection_x[2].eq(self._projection_x.f.time.w_data),
-            ]
-        with m.If(self._projection_y.element.w_stb):
-            m.d.sync += [
-                projection_y[0].eq(self._projection_y.f.frequency.w_data),
-                projection_y[1].eq(self._projection_y.f.amplitude.w_data),
-                projection_y[2].eq(self._projection_y.f.time.w_data),
-            ]
-        with m.If(self._config_3d.element.w_stb):
-            m.d.sync += quality_3d.eq(self._config_3d.f.quality.w_data)
         with m.If(self._spectrum_config.element.w_stb):
             m.d.sync += [
                 spectrum_style.eq(self._spectrum_config.f.style.w_data),
@@ -903,35 +827,6 @@ class Spectrogram(wiring.Component):
         spectrum_peak_r = spectrum_peak_state.read_port(domain="dvi")
         spectrum_peak_w = spectrum_peak_state.write_port(domain="dvi")
 
-        # The 3D renderer scans the same history RAM used by the beam-raced
-        # heatmap, then crosses projected line-strip commands into the system
-        # clock domain. Keeping only commands in this tiny FIFO avoids a
-        # second spectral-history buffer (there are only three EBRs left on
-        # the target device).
-        m.submodules.line_fifo = line_fifo = fifo.AsyncFIFOBuffered(
-            width=LineCmd.as_shape().size,
-            depth=8,
-            w_domain="dvi",
-            r_domain="sync",
-        )
-        m.d.comb += [
-            self.line_o.valid.eq(line_fifo.r_rdy),
-            self.line_o.payload.eq(line_fifo.r_data),
-            line_fifo.r_en.eq(line_fifo.r_rdy & self.line_o.ready),
-        ]
-        line_busy_dvi = Signal()
-        flush_done_dvi = Signal()
-        clear_done_dvi = Signal()
-        clear_busy_dvi = Signal()
-        m.submodules.line_busy_ff = FFSynchronizer(
-            self.line_busy, line_busy_dvi, o_domain="dvi")
-        m.submodules.flush_done_ff = FFSynchronizer(
-            self.flush_done, flush_done_dvi, o_domain="dvi")
-        m.submodules.clear_done_ff = FFSynchronizer(
-            self.clear_done, clear_done_dvi, o_domain="dvi")
-        m.submodules.clear_busy_ff = FFSynchronizer(
-            self.clear_busy, clear_busy_dvi, o_domain="dvi")
-
         write_col = Signal(8)
         newest_col = Signal(8)
         bin_index = Signal(9)
@@ -947,20 +842,6 @@ class Spectrogram(wiring.Component):
                 spectrum_publish_bank == spectrum_display_ack_sync),
             spectrum_write_bank.eq(~spectrum_publish_bank),
         ]
-
-        # A 3D frame is accepted only after the renderer finishes a complete
-        # surface sweep. This makes capture and visible animation one-to-one:
-        # every front ridge subsequently appears in the consecutive history.
-        render_token_dvi = Signal()
-        render_token_sync = Signal()
-        render_ack_sync = Signal()
-        render_ack_dvi = Signal()
-        render_slot_ready = Signal()
-        m.submodules.render_token_ff = FFSynchronizer(
-            render_token_dvi, render_token_sync, o_domain="sync")
-        m.submodules.render_ack_ff = FFSynchronizer(
-            render_ack_sync, render_ack_dvi, o_domain="dvi")
-        m.d.comb += render_slot_ready.eq(render_token_sync != render_ack_sync)
 
         accept_rate = Signal()
         spectrum_accept_rate = Signal()
@@ -996,16 +877,11 @@ class Spectrogram(wiring.Component):
                 m.d.comb += spectrum_accept_rate.eq(frame_seq[:4] == 0)
             with m.Default():
                 m.d.comb += spectrum_accept_rate.eq(frame_seq[:5] == 0)
-        # In 3D the renderer itself applies the selected sweep divider before
-        # issuing a token. Do not divide again using the free-running analyzer
-        # frame counter, which made the control nearly invisible in practice.
         m.d.comb += accept_now.eq(Mux(
-            view_3d,
-            render_slot_ready,
-            Mux(spectrum_mode,
-                spectrum_accept_rate & spectrum_bank_ready &
-                ~spectrum_log_clear_active,
-                accept_rate),
+            spectrum_mode,
+            spectrum_accept_rate & spectrum_bank_ready &
+            ~spectrum_log_clear_active,
+            accept_rate,
         ))
 
         current_bin = Signal(9)
@@ -1444,8 +1320,6 @@ class Spectrogram(wiring.Component):
                     frame_seq.eq(frame_seq + 1),
                     accept_latched.eq(accept_now),
                 ]
-                with m.If(view_3d & accept_now):
-                    m.d.sync += render_ack_sync.eq(render_token_sync)
             with m.Else():
                 m.d.sync += bin_index.eq(bin_index + 1)
 
@@ -1462,10 +1336,7 @@ class Spectrogram(wiring.Component):
         enable_dvi = Signal()
         phosphor_dvi = Signal()
         axes_dvi = Signal()
-        view_3d_dvi = Signal()
         spectrum_mode_dvi = Signal()
-        display_ack_dvi = Signal()
-        quality_3d_dvi = Signal(2)
         spectrum_style_dvi = Signal()
         spectrum_bands_dvi = Signal(2)
         spectrum_fill_dvi = Signal(3)
@@ -1486,8 +1357,6 @@ class Spectrogram(wiring.Component):
         spectrum_publish_bank_meta = Signal()
         spectrum_display_bank_dvi = Signal()
         spectrum_display_ack_dvi = Signal()
-        projection_x_dvi = [Signal(signed(10)) for _ in range(3)]
-        projection_y_dvi = [Signal(signed(10)) for _ in range(3)]
         newest_gray = Signal(8)
         newest_gray_meta = Signal(8)
         newest_binary_meta = Signal(8)
@@ -1496,10 +1365,7 @@ class Spectrogram(wiring.Component):
             ("enable", enable, enable_dvi),
             ("phosphor", phosphor, phosphor_dvi),
             ("axes", axes, axes_dvi),
-            ("view_3d", view_3d, view_3d_dvi),
             ("spectrum_mode", spectrum_mode, spectrum_mode_dvi),
-            ("display_ack", display_ack, display_ack_dvi),
-            ("quality_3d", quality_3d, quality_3d_dvi),
             ("spectrum_style", spectrum_style, spectrum_style_dvi),
             ("spectrum_bands", spectrum_bands, spectrum_bands_dvi),
             ("spectrum_fill", spectrum_fill, spectrum_fill_dvi),
@@ -1560,14 +1426,6 @@ class Spectrogram(wiring.Component):
                     ),
                 ),
             )
-        for axis_name, sources, destinations in [
-            ("projection_x", projection_x, projection_x_dvi),
-            ("projection_y", projection_y, projection_y_dvi),
-        ]:
-            for index, (src, dst) in enumerate(zip(sources, destinations)):
-                setattr(m.submodules, f"{axis_name}_{index}_ff",
-                        FFSynchronizer(src, dst, o_domain="dvi"))
-
         m.submodules.spectrum_publish_bank_ff = FFSynchronizer(
             spectrum_publish_bank, spectrum_publish_bank_meta,
             o_domain="dvi")
@@ -1591,427 +1449,6 @@ class Spectrogram(wiring.Component):
                 spectrum_display_bank_dvi.eq(spectrum_publish_bank_meta),
                 spectrum_display_ack_dvi.eq(spectrum_publish_bank_meta),
             ]
-
-        # ---- projected 3D waterfall ---------------------------------------
-        # Sixteen frequency ridges are drawn oldest-to-newest so the near
-        # spectra naturally overwrite the distant ones. Quality selects 64 or
-        # up to 128 peak-pooled vertices without changing history depth.
-        scan_slice = Signal(4)
-        scan_point = Signal(7)
-        scan_group_index = Signal(3)
-        scan_group_base = Signal(8)
-        scan_group_last = Signal(3)
-        scan_peak = Signal(6)
-        scan_peak_next = Signal(6)
-        scan_history_level = Signal(6)
-        scan_history_age = Signal(4)
-        scan_depth = Signal(8)
-        scan_history_bin = Signal(8)
-        scan_read_en = Signal()
-        scan_read_addr = Signal(16)
-        sweep_newest = Signal(8)
-        sweep_rate = Signal(2)
-        sweep_hue = Signal(4)
-        sweep_phosphor = Signal()
-        sweep_quality_3d = Signal(2)
-        sweep_projection_x = [Signal(signed(10)) for _ in range(3)]
-        sweep_projection_y = [Signal(signed(10)) for _ in range(3)]
-        visible_generation = Signal(3)
-        draw_generation = Signal(3)
-        visible_hue = Signal(4)
-        completed_generation = Signal(3)
-        completed_hue = Signal(4)
-        render_activity_seen = Signal()
-        clear_request = Signal()
-        flush_request = Signal()
-        visible_generation_sync = Signal(3)
-        draw_generation_sync = Signal(3)
-        completed_generation_sync = Signal(3)
-        surface_valid = Signal()
-        surface_valid_sync = Signal()
-        renderer_idle_dvi = Signal()
-        renderer_idle_sync = Signal()
-        m.submodules.visible_generation_ff = FFSynchronizer(
-            visible_generation, visible_generation_sync, o_domain="sync")
-        m.submodules.draw_generation_ff = FFSynchronizer(
-            draw_generation, draw_generation_sync, o_domain="sync")
-        m.submodules.completed_generation_ff = FFSynchronizer(
-            completed_generation, completed_generation_sync, o_domain="sync")
-        m.submodules.surface_valid_ff = FFSynchronizer(
-            surface_valid, surface_valid_sync, o_domain="sync")
-        m.submodules.renderer_idle_ff = FFSynchronizer(
-            renderer_idle_dvi, renderer_idle_sync, o_domain="sync")
-        m.d.comb += [
-            self.protect_enable.eq(view_3d),
-            self.protect_visible.eq(visible_generation_sync),
-            self.protect_drawing.eq(draw_generation_sync),
-            self.clear_request.eq(clear_request),
-            self.flush_request.eq(flush_request),
-            self._status.f.display_buffer.r_data.eq(
-                completed_generation_sync[0]),
-            self._status.f.surface_valid.r_data.eq(surface_valid_sync),
-            self._status.f.renderer_idle.r_data.eq(renderer_idle_sync),
-        ]
-
-        # In 3D, Rate controls how many complete surface redraws occur before
-        # a new analyzer frame is admitted. Tying it to completed sweeps makes
-        # the setting visible even when the renderer is the limiting stage.
-        render_sweep_count = Signal(3)
-        capture_sweep_due = Signal()
-
-        # Projection is deliberately split across four DVI clocks: capture,
-        # multiply, sum and enqueue. Besides making the 74.25MHz path safe,
-        # this isolates the synchronous EBR read from the DSP input path.
-        point_frequency_base = Signal(signed(10))
-        point_frequency = Signal(signed(11))
-        point_amplitude = Signal(signed(10))
-        point_time = Signal(signed(10))
-        point_pixel = Signal(Pixel)
-        point_cmd = Signal(LineStripCmd)
-        point_next = Signal(3)
-        products_x = [Signal(signed(22)) for _ in range(3)]
-        products_y = [Signal(signed(22)) for _ in range(3)]
-        projection_sum_x = Signal(signed(24))
-        projection_sum_y = Signal(signed(24))
-        projected_x = Signal(signed(12))
-        projected_y = Signal(signed(12))
-        center_x = Signal(signed(13))
-        baseline_y = Signal(signed(13))
-        line_word = Signal(LineCmd)
-        high_quality = Signal()
-        scan_point_last = Signal(7)
-        scan_group_shift = Signal(2)
-        frequency_coordinate = Signal(9)
-        sweep_hue_limited = Signal(3)
-        sweep_axis_hue_a = Signal(3)
-        sweep_axis_hue_b = Signal(3)
-        scan_geometry = _three_d_scan_geometry(high_quality)
-
-        m.d.comb += [
-            # Every range now has a matching analyzer sample rate and therefore
-            # uses all 256 positive-frequency bins. Pool the complete spectrum
-            # into 64 or 128 vertices solely according to the quality setting.
-            # The previous range-dependent geometry was inherited from the old
-            # fixed-rate analyzer and truncated the 6kHz and 3kHz views.
-            high_quality.eq(sweep_quality_3d == 2),
-            scan_point_last.eq(scan_geometry[0]),
-            scan_group_shift.eq(scan_geometry[1]),
-            frequency_coordinate.eq(
-                _three_d_frequency_coordinate(scan_point, high_quality)),
-            scan_history_age.eq(Const(15, 4) - scan_slice),
-            # Consecutive captures are spread across the full visual Z depth.
-            scan_depth.eq(scan_history_age << 4),
-            scan_group_base.eq(scan_point << scan_group_shift),
-            scan_group_last.eq(Mux(
-                scan_group_shift == 0, 0,
-                Mux(scan_group_shift == 1, 1,
-                    Mux(scan_group_shift == 2, 3, 7)))),
-            scan_history_bin.eq(scan_group_base + scan_group_index),
-            scan_history_level.eq(apply_display_floor(history_r.data)),
-            scan_peak_next.eq(Mux(
-                scan_history_level > scan_peak,
-                scan_history_level,
-                scan_peak)),
-            scan_read_en.eq(0),
-            scan_read_addr.eq(
-                ((sweep_newest + scan_history_age) << 8) |
-                scan_history_bin),
-            point_frequency.eq(Mux(
-                h_active_dvi >= 1024,
-                point_frequency_base << 1,
-                point_frequency_base,
-            )),
-            projection_sum_x.eq(products_x[0] + products_x[1] + products_x[2]),
-            projection_sum_y.eq(products_y[0] + products_y[1] + products_y[2]),
-            center_x.eq((h_active_dvi >> 1) - 50),
-            # Anchor the 3D volume around screen center instead of pinning its
-            # baseline near the bottom. On 720p this places the projected
-            # frequency/time floor around y=545, centering the typical
-            # amplitude range much more naturally in the display.
-            baseline_y.eq((v_active_dvi >> 1) + 185),
-            line_word.x.eq(projected_x),
-            line_word.y.eq(projected_y),
-            line_word.pixel.eq(point_pixel),
-            line_word.cmd.eq(point_cmd),
-            line_fifo.w_en.eq(0),
-            line_fifo.w_data.eq(line_word),
-            sweep_hue_limited.eq(sweep_hue[:3]),
-            sweep_axis_hue_a.eq(sweep_hue_limited + 2),
-            sweep_axis_hue_b.eq(sweep_hue_limited + 4),
-        ]
-        with m.Switch(sweep_rate):
-            with m.Case(0):
-                m.d.comb += capture_sweep_due.eq(1)
-            with m.Case(1):
-                m.d.comb += capture_sweep_due.eq(render_sweep_count[0] == 0)
-            with m.Case(2):
-                m.d.comb += capture_sweep_due.eq(render_sweep_count[:2] == 0)
-            with m.Default():
-                m.d.comb += capture_sweep_due.eq(render_sweep_count == 0)
-
-        with m.FSM(domain="dvi", name="waterfall_3d") as waterfall_3d_fsm:
-            with m.State("IDLE"):
-                m.d.dvi += [
-                    clear_request.eq(0),
-                    flush_request.eq(0),
-                ]
-                with m.If(enable_dvi & view_3d_dvi):
-                    m.d.dvi += [
-                        scan_slice.eq(0),
-                        scan_point.eq(0),
-                        # Freeze every property that can make one projected
-                        # sweep disagree with another. The live analyzer may
-                        # continue writing newer columns in the background.
-                        sweep_newest.eq(newest_dvi),
-                        sweep_rate.eq(rate_dvi),
-                        sweep_hue.eq(hue_dvi),
-                        sweep_phosphor.eq(phosphor_dvi),
-                        sweep_quality_3d.eq(quality_3d_dvi),
-                        draw_generation.eq(visible_generation + 1),
-                        render_activity_seen.eq(0),
-                        clear_request.eq(1),
-                    ]
-                    for index in range(3):
-                        m.d.dvi += [
-                            sweep_projection_x[index].eq(projection_x_dvi[index]),
-                            sweep_projection_y[index].eq(projection_y_dvi[index]),
-                        ]
-                    m.next = "WAIT_CLEAR"
-                with m.Elif(~view_3d_dvi):
-                    m.d.dvi += surface_valid.eq(0)
-
-            with m.State("WAIT_CLEAR"):
-                # The inactive physical framebuffer is cleared before every
-                # 3D surface. After this point all pixels are literal display
-                # pixels; no generation-tag reveal or persistence cleanup is
-                # involved in the image shown to the user.
-                with m.If(~view_3d_dvi):
-                    m.d.dvi += clear_request.eq(0)
-                    m.next = "IDLE"
-                with m.Elif(clear_done_dvi):
-                    m.d.dvi += clear_request.eq(0)
-                    m.next = "START_BIN_GROUP"
-
-            with m.State("START_BIN_GROUP"):
-                m.d.dvi += [
-                    scan_group_index.eq(0),
-                    scan_peak.eq(0),
-                ]
-                m.next = "ISSUE_HISTORY_READ"
-
-            with m.State("ISSUE_HISTORY_READ"):
-                m.d.comb += scan_read_en.eq(1)
-                m.next = "ACCUMULATE_BIN"
-
-            with m.State("ACCUMULATE_BIN"):
-                m.d.dvi += scan_peak.eq(scan_peak_next)
-                with m.If(scan_group_index == scan_group_last):
-                    m.next = "LOAD_HISTORY_POINT"
-                with m.Else():
-                    m.d.dvi += scan_group_index.eq(scan_group_index + 1)
-                    m.next = "ISSUE_HISTORY_READ"
-
-            with m.State("LOAD_HISTORY_POINT"):
-                m.d.dvi += [
-                    # Spread pooled vertices across the same 256-unit
-                    # frequency coordinate used by the axes and projection.
-                    point_frequency_base.eq(
-                        frequency_coordinate.as_signed() - 128),
-                    point_amplitude.eq(
-                        _dbfs_level_to_height(scan_peak, Const(0))),
-                    point_time.eq(scan_depth),
-                    point_pixel.intensity.eq(Mux(
-                        sweep_phosphor,
-                        5 + scan_peak[3:6],
-                        8 + scan_peak[4:6],
-                    )),
-                    point_pixel.color.eq(sweep_hue_limited),
-                    point_cmd.eq(Mux(
-                        scan_point == scan_point_last,
-                        LineStripCmd.END, LineStripCmd.CONTINUE)),
-                    point_next.eq(0),
-                ]
-                m.next = "MULTIPLY_POINT"
-
-            with m.State("MULTIPLY_POINT"):
-                for index, coordinate in enumerate(
-                        (point_frequency, point_amplitude, point_time)):
-                    m.d.dvi += [
-                        products_x[index].eq(coordinate * sweep_projection_x[index]),
-                        products_y[index].eq(coordinate * sweep_projection_y[index]),
-                    ]
-                m.next = "PROJECT_POINT"
-
-            with m.State("PROJECT_POINT"):
-                m.d.dvi += [
-                    projected_x.eq(center_x + (projection_sum_x >> 8)),
-                    projected_y.eq(baseline_y + (projection_sum_y >> 8)),
-                ]
-                m.next = "PUSH_POINT"
-
-            with m.State("PUSH_POINT"):
-                m.d.comb += line_fifo.w_en.eq(1)
-                with m.If(line_fifo.w_rdy):
-                    with m.Switch(point_next):
-                        with m.Case(0):
-                            with m.If(scan_point == scan_point_last):
-                                m.d.dvi += scan_point.eq(0)
-                                with m.If(scan_slice == 15):
-                                    with m.If(axes_dvi):
-                                        m.next = "AXIS_FREQUENCY_START"
-                                    with m.Else():
-                                        m.next = "WAIT_RENDER_COMPLETE"
-                                with m.Elif(enable_dvi & view_3d_dvi):
-                                    m.d.dvi += scan_slice.eq(scan_slice + 1)
-                                    m.next = "START_BIN_GROUP"
-                                with m.Else():
-                                    m.next = "IDLE"
-                            with m.Else():
-                                m.d.dvi += scan_point.eq(scan_point + 1)
-                                m.next = "START_BIN_GROUP"
-                        with m.Case(1):
-                            m.next = "AXIS_FREQUENCY_END"
-                        with m.Case(2):
-                            m.next = "AXIS_AMPLITUDE_START"
-                        with m.Case(3):
-                            m.next = "AXIS_AMPLITUDE_END"
-                        with m.Case(4):
-                            m.next = "AXIS_TIME_START"
-                        with m.Case(5):
-                            m.next = "AXIS_TIME_END"
-                        with m.Default():
-                            m.next = "WAIT_RENDER_COMPLETE"
-
-            with m.State("WAIT_RENDER_COMPLETE"):
-                # First drain commands and Bresenham. Plot requests still pass
-                # through a write-back cache, so this is not yet a safe swap
-                # boundary; the following state performs an explicit fence.
-                with m.If((line_fifo.w_level != 0) | line_busy_dvi):
-                    m.d.dvi += render_activity_seen.eq(1)
-                with m.If(render_activity_seen &
-                          (line_fifo.w_level == 0) & ~line_busy_dvi):
-                    m.d.dvi += flush_request.eq(1)
-                    m.next = "WAIT_CACHE_FLUSH"
-
-            with m.State("WAIT_CACHE_FLUSH"):
-                # ``flush_done`` is held until the request drops, so no pulse
-                # can be missed while crossing between sync and DVI domains.
-                with m.If(~view_3d_dvi):
-                    m.d.dvi += flush_request.eq(0)
-                    m.next = "IDLE"
-                with m.Elif(flush_done_dvi):
-                    m.d.dvi += [
-                        flush_request.eq(0),
-                        completed_generation.eq(draw_generation),
-                        completed_hue.eq(sweep_hue),
-                        surface_valid.eq(1),
-                        render_sweep_count.eq(render_sweep_count + 1),
-                    ]
-                    with m.If(capture_sweep_due &
-                              (render_token_dvi == render_ack_dvi)):
-                        m.d.dvi += render_token_dvi.eq(~render_token_dvi)
-                    m.next = "WAIT_DISPLAY_SWAP"
-
-            with m.State("WAIT_DISPLAY_SWAP"):
-                # Do not begin drawing into the old front buffer until firmware
-                # has moved the video/UI base to the completed back buffer.
-                with m.If(~view_3d_dvi |
-                          (display_ack_dvi == completed_generation[0])):
-                    m.next = "WAIT_SWAP_VSYNC"
-
-            with m.State("WAIT_SWAP_VSYNC"):
-                # The video DMA latches its base at VSync. Reveal the matching
-                # generation on that same frame boundary, never mid-scan.
-                with m.If(~view_3d_dvi):
-                    m.next = "IDLE"
-                with m.Elif(self.i.vsync & ~prev_vsync):
-                    m.d.dvi += [
-                        visible_generation.eq(completed_generation),
-                        visible_hue.eq(completed_hue),
-                    ]
-                    m.next = "IDLE"
-
-            # Three bright reference axes share the same projection matrix as
-            # the waterfall, so their orientation follows every camera move.
-            with m.State("AXIS_FREQUENCY_START"):
-                m.d.dvi += [
-                    point_frequency_base.eq(-128),
-                    point_amplitude.eq(0),
-                    point_time.eq(0),
-                    point_pixel.intensity.eq(13),
-                    point_pixel.color.eq(sweep_hue_limited),
-                    point_cmd.eq(LineStripCmd.CONTINUE),
-                    point_next.eq(1),
-                ]
-                m.next = "MULTIPLY_POINT"
-
-            with m.State("AXIS_FREQUENCY_END"):
-                m.d.dvi += [
-                    point_frequency_base.eq(127),
-                    point_amplitude.eq(0),
-                    point_time.eq(0),
-                    point_pixel.intensity.eq(13),
-                    point_pixel.color.eq(sweep_hue_limited),
-                    point_cmd.eq(LineStripCmd.END),
-                    point_next.eq(2),
-                ]
-                m.next = "MULTIPLY_POINT"
-
-            with m.State("AXIS_AMPLITUDE_START"):
-                m.d.dvi += [
-                    point_frequency_base.eq(-128),
-                    point_amplitude.eq(0),
-                    point_time.eq(0),
-                    point_pixel.intensity.eq(14),
-                    point_pixel.color.eq(sweep_axis_hue_a),
-                    point_cmd.eq(LineStripCmd.CONTINUE),
-                    point_next.eq(3),
-                ]
-                m.next = "MULTIPLY_POINT"
-
-            with m.State("AXIS_AMPLITUDE_END"):
-                m.d.dvi += [
-                    point_frequency_base.eq(-128),
-                    point_amplitude.eq(255),
-                    point_time.eq(0),
-                    point_pixel.intensity.eq(14),
-                    point_pixel.color.eq(sweep_axis_hue_a),
-                    point_cmd.eq(LineStripCmd.END),
-                    point_next.eq(4),
-                ]
-                m.next = "MULTIPLY_POINT"
-
-            with m.State("AXIS_TIME_START"):
-                m.d.dvi += [
-                    point_frequency_base.eq(-128),
-                    point_amplitude.eq(0),
-                    point_time.eq(0),
-                    point_pixel.intensity.eq(15),
-                    point_pixel.color.eq(sweep_axis_hue_b),
-                    point_cmd.eq(LineStripCmd.CONTINUE),
-                    point_next.eq(5),
-                ]
-                m.next = "MULTIPLY_POINT"
-
-            with m.State("AXIS_TIME_END"):
-                m.d.dvi += [
-                    point_frequency_base.eq(-128),
-                    point_amplitude.eq(0),
-                    point_time.eq(240),
-                    point_pixel.intensity.eq(15),
-                    point_pixel.color.eq(sweep_axis_hue_b),
-                    point_cmd.eq(LineStripCmd.END),
-                    point_next.eq(6),
-                ]
-                m.next = "MULTIPLY_POINT"
-
-        # Firmware must not draw a static full-screen page until every 3D
-        # writer has released PSRAM. ``IDLE`` alone is insufficient because a
-        # cancelled clear burst or queued Bresenham command can outlive the
-        # renderer state machine by a few cycles.
-        m.d.comb += renderer_idle_dvi.eq(
-            ~view_3d & waterfall_3d_fsm.ongoing("IDLE") &
-            (line_fifo.w_level == 0) & ~line_busy_dvi & ~clear_busy_dvi)
 
         wide = Signal()
         short = Signal()
@@ -2256,12 +1693,9 @@ class Spectrogram(wiring.Component):
                     spectrum_linear_gap_pipe)),
             in_plot.eq(self.i.de & (rel_x >= 0) & (rel_x < plot_w) &
                        (rel_y >= 0) & (rel_y < plot_h)),
-            history_r.en.eq(Mux(view_3d_dvi, scan_read_en, in_plot)),
-            history_r.addr.eq(Mux(
-                view_3d_dvi,
-                scan_read_addr,
-                ((newest_dvi + completed_age) << 8) | bin_addr,
-            )),
+            history_r.en.eq(in_plot),
+            history_r.addr.eq(
+                ((newest_dvi + completed_age) << 8) | bin_addr),
             spectrum_levels_r.en.eq(spectrum_read_en_r),
             spectrum_levels_r.addr.eq(
                 Cat(spectrum_read_bin_r, spectrum_display_bank_dvi)),
@@ -2324,7 +1758,7 @@ class Spectrogram(wiring.Component):
                        (rel_y == (plot_h >> 1)) |
                        (rel_y == plot_h - (plot_h >> 2)) |
                        (rel_y == plot_h - 1)),
-            axes_hit.eq(~view_3d_dvi & axes_dvi & self.i.de &
+            axes_hit.eq(axes_dvi & self.i.de &
                         (((rel_x == -axis_pad) & (rel_y >= 0) &
                           (rel_y <= plot_h + axis_pad)) |
                          ((rel_y == plot_h + axis_pad) &
@@ -2345,8 +1779,7 @@ class Spectrogram(wiring.Component):
             # rotation mux/subtract network from ``scan_d``.
             logical_x_d.eq(logical_x),
             logical_y_d.eq(logical_y),
-            spectrogram_plot_d.eq(
-                in_plot & ~view_3d_dvi & ~spectrum_mode_dvi),
+            spectrogram_plot_d.eq(in_plot & ~spectrum_mode_dvi),
             spectrum_plot_d.eq(spectrum_read_plot_r),
             spectrum_band_d.eq(spectrum_read_bin_r),
             spectrum_band_first_d.eq(spectrum_read_first_r),
@@ -2398,7 +1831,7 @@ class Spectrogram(wiring.Component):
                 rel_lx.eq(logical_x_d - x0),
                 rel_ly.eq(logical_y_d - y0),
                 char_index.eq(rel_lx.as_unsigned() >> 3),
-                active.eq(~view_3d_dvi & axes_dvi & scan_d.de &
+                active.eq(axes_dvi & scan_d.de &
                           (rel_lx >= 0) & (rel_lx < width_chars * 8) &
                           (rel_ly >= 0) & (rel_ly < 8)),
                 selected_char.eq(ord(" ")),

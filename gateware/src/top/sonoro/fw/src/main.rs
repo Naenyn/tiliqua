@@ -44,27 +44,15 @@ fn clear_framebuffer_region(base: usize) {
     riscv::asm::fence();
 }
 
-fn clear_3d_framebuffers() {
-    clear_framebuffer_region(PSRAM_FB_BASE);
-    clear_framebuffer_region(PSRAM_FB_BASE + FRAMEBUFFER_REGION_BYTES);
-}
-
-fn clear_help_text_window<D>(
-    display: &mut D,
-    h_active: u32,
-    v_active: u32,
-) -> Result<(), D::Error>
+fn clear_help_text_window<D>(display: &mut D, h_active: u32, v_active: u32) -> Result<(), D::Error>
 where
     D: DrawTarget<Color = HI8>,
 {
     let x = h_active / 2 - 292;
     let y = v_active / 2 - 172;
-    Rectangle::new(
-        Point::new(x as i32, y as i32),
-        Size::new(584, 390),
-    )
-    .into_styled(PrimitiveStyle::with_fill(HI8::BLACK))
-    .draw(display)
+    Rectangle::new(Point::new(x as i32, y as i32), Size::new(584, 390))
+        .into_styled(PrimitiveStyle::with_fill(HI8::BLACK))
+        .draw(display)
 }
 
 fn menu_panel_rect(pos_x: u32, pos_y: u32) -> Rectangle {
@@ -100,12 +88,7 @@ where
     draw::draw_options(display, opts, pos_x, pos_y, hue)
 }
 
-fn erase_menu<D>(
-    display: &mut D,
-    opts: &Opts,
-    pos_x: u32,
-    pos_y: u32,
-) -> Result<(), D::Error>
+fn erase_menu<D>(display: &mut D, opts: &Opts, pos_x: u32, pos_y: u32) -> Result<(), D::Error>
 where
     D: DrawTarget<Color = HI8>,
 {
@@ -199,13 +182,14 @@ fn scale_rgb_visible((r, g, b): (u8, u8, u8), intensity: u8) -> (u8, u8, u8) {
 
 fn max3(a: u8, b: u8, c: u8) -> u8 {
     let ab = if a > b { a } else { b };
-    if ab > c { ab } else { c }
+    if ab > c {
+        ab
+    } else {
+        c
+    }
 }
 
-fn scale_rgb_to_level(
-    (r, g, b): (u8, u8, u8),
-    target_level: u8,
-) -> (u8, u8, u8) {
+fn scale_rgb_to_level((r, g, b): (u8, u8, u8), target_level: u8) -> (u8, u8, u8) {
     let source_level = max3(r, g, b);
     if target_level == 0 || source_level == 0 {
         return (0, 0, 0);
@@ -217,11 +201,7 @@ fn scale_rgb_to_level(
     )
 }
 
-fn scale_rgb_like_palette(
-    palette: ColorPalette,
-    rgb: (u8, u8, u8),
-    intensity: u8,
-) -> (u8, u8, u8) {
+fn scale_rgb_like_palette(palette: ColorPalette, rgb: (u8, u8, u8), intensity: u8) -> (u8, u8, u8) {
     if let Some((r, g, b)) = palette.heatmap_color(intensity) {
         scale_rgb_to_level(rgb, max3(r, g, b))
     } else {
@@ -249,8 +229,7 @@ fn write_sonoro_palette(
                     4 + ((intensity as u16 * 11) / 15) as u8
                 };
                 let (r, g, b) =
-                    scale_rgb_like_palette(
-                        palette, palette.frequency_color(hue), bright_intensity);
+                    scale_rgb_like_palette(palette, palette.frequency_color(hue), bright_intensity);
                 video.set_palette_rgb(intensity, hue, r, g, b);
             }
         }
@@ -263,75 +242,13 @@ fn write_sonoro_palette(
     }
     for intensity in 0..16u8 {
         for hue in 0..16u8 {
-            let (r, g, b) = rotate_rgb_hue(
-                palette.heatmap_color(intensity).unwrap(), hue);
+            let (r, g, b) = rotate_rgb_hue(palette.heatmap_color(intensity).unwrap(), hue);
             video.set_palette_rgb(intensity, hue, r, g, b);
         }
     }
 }
 
-/// Integer sine/cosine for the 15-degree camera steps, in Q8 format.
-fn sin_cos_q8(angle: i8) -> (i32, i32) {
-    let (sin, cos) = match angle.abs() {
-        0 => (0, 256),
-        15 => (66, 247),
-        30 => (128, 222),
-        45 => (181, 181),
-        60 => (222, 128),
-        75 => (247, 66),
-        _ => (256, 0),
-    };
-    (if angle < 0 { -sin } else { sin }, cos)
-}
-
-fn mul_q8(a: i32, b: i32) -> i32 {
-    (a * b) >> 8
-}
-
-/// Build two rows of an Euler-rotated orthographic camera matrix. The base
-/// projection keeps frequency horizontal, amplitude vertical and sends time
-/// away from the viewer toward the upper-right of the display.
-fn projection_matrix(rot_x: i8, rot_y: i8, rot_z: i8) -> ([i16; 3], [i16; 3]) {
-    let (sx, cx) = sin_cos_q8(rot_x);
-    let (sy, cy) = sin_cos_q8(rot_y);
-    let (sz, cz) = sin_cos_q8(rot_z);
-
-    // R = Rz * Ry * Rx, Q8 throughout.
-    let rotation = [
-        [
-            mul_q8(cz, cy),
-            mul_q8(mul_q8(cz, sy), sx) - mul_q8(sz, cx),
-            mul_q8(mul_q8(cz, sy), cx) + mul_q8(sz, sx),
-        ],
-        [
-            mul_q8(sz, cy),
-            mul_q8(mul_q8(sz, sy), sx) + mul_q8(cz, cx),
-            mul_q8(mul_q8(sz, sy), cx) - mul_q8(cz, sx),
-        ],
-        [-sy, mul_q8(cy, sx), mul_q8(cy, cx)],
-    ];
-    let base_x = [384, 0, 90];
-    let base_y = [0, -320, -96];
-    let mut out_x = [0i16; 3];
-    let mut out_y = [0i16; 3];
-    for column in 0..3 {
-        let mut x = 0;
-        let mut y = 0;
-        for row in 0..3 {
-            x += mul_q8(base_x[row], rotation[row][column]);
-            y += mul_q8(base_y[row], rotation[row][column]);
-        }
-        out_x[column] = x as i16;
-        out_y[column] = y as i16;
-    }
-    (out_x, out_y)
-}
-
 fn sanitize_options(opts: &mut Opts, last_valid_page: &mut Page) {
-    if opts.histo.quality.value == Quality3d::Low {
-        opts.histo.quality.value = Quality3d::Medium;
-    }
-
     // DisplayOpts uses this hidden mirror to expose its grid option only in
     // spectrum mode. The actual mode remains owned by the SONORO page.
     opts.display.spectrum_mode.value = opts.sonoro.mode.value;
@@ -385,14 +302,8 @@ impl App {
         let pmod = EurorackPmod0::new(peripherals.PMOD0_PERIPH);
         let hide_ms = menu_hide_ms(opts.menu.hide.value);
         let hide_while_editing = opts.menu.edit_hide.value == EditHide::On;
-        let mut ui = ui::UI::new_with_fade(
-            opts,
-            TIMER0_ISR_PERIOD_MS,
-            hide_ms,
-            encoder,
-            pca9635,
-            pmod,
-        );
+        let mut ui =
+            ui::UI::new_with_fade(opts, TIMER0_ISR_PERIOD_MS, hide_ms, encoder, pca9635, pmod);
         ui.set_hide_while_editing(hide_while_editing);
         Self { ui }
     }
@@ -419,16 +330,10 @@ fn main() -> ! {
         .modeline
         .maybe_override_fixed(FIXED_MODELINE, CLOCK_DVI_HZ);
 
-    // The 3D renderer alternates between two 1 MiB framebuffer regions. PSRAM
-    // is not initialized at boot. Clear both regions before enabling video so
-    // random power-on contents cannot flash as the buffers are exchanged.
-    // Firmware begins at +0x200000, immediately after these two regions.
-    // Use ordinary RV32 stores rather than the legacy VexRiscv cache-flush
-    // custom instruction: SONORO runs on VexiiRiscv, where that instruction
-    // traps before the framebuffer/DVI peripheral can be enabled. Sequential
-    // volatile writes naturally evict the visible portions of both buffers;
-    // any final dirty cache lines lie in the unused padding after buffer 1.
-    clear_3d_framebuffers();
+    // PSRAM is not initialized at boot. Clear SONORO's single framebuffer
+    // before enabling video so random power-on contents cannot flash behind
+    // the beam-raced spectrum and spectrograph overlays.
+    clear_framebuffer_region(PSRAM_FB_BASE);
 
     let mut display = DMAFramebuffer0::new(
         peripherals.FRAMEBUFFER_PERIPH,
@@ -457,8 +362,7 @@ fn main() -> ! {
             None
         };
     // Boot into the analyzer view even when older saved SONORO settings came
-    // from the 3D renderer work. The 3D spectrograph remains available from
-    // the mode/view menus.
+    // from the combined 2D/3D renderer.
     opts.sonoro.mode.value = DisplayMode::Spectrum;
     opts.spectrum.spectrum_style.value = SpectrumStyle::Bars;
     opts.spectrum.scale.value = SpectrumScale::Log;
@@ -479,17 +383,9 @@ fn main() -> ! {
         let spectro = peripherals.SPECTROGRAM_PERIPH;
         let overlay = peripherals.OVERLAY_PERIPH;
         let mut first = true;
-        let mut current_fb_base = PSRAM_FB_BASE as u32;
         let mut last_on_help_page = false;
-        let mut last_view_3d = false;
         let mut last_help_scroll = 0;
-        let mut help_waiting_for_renderer = false;
-        // Each physical framebuffer retains UI independently. Remember the
-        // exact menu last drawn into each one so changed values, selection
-        // markers, and timeout hiding can be erased without clearing a large
-        // rectangle through the pixel plotter.
-        let mut menu_fb0: Option<(Opts, u32, u32, u32)> = None;
-        let mut menu_fb1: Option<(Opts, u32, u32, u32)> = None;
+        let mut menu_cache: Option<(Opts, u32, u32, u32)> = None;
 
         loop {
             let (opts, draw_options, save_opts, wipe_opts) = critical_section::with(|cs| {
@@ -497,12 +393,7 @@ fn main() -> ! {
                 sanitize_options(&mut app.ui.opts, &mut last_valid_page);
                 let save_opts = app.ui.opts.misc.save_opts.poll();
                 let wipe_opts = app.ui.opts.misc.wipe_opts.poll();
-                (
-                    app.ui.opts.clone(),
-                    app.ui.draw(),
-                    save_opts,
-                    wipe_opts,
-                )
+                (app.ui.opts.clone(), app.ui.draw(), save_opts, wipe_opts)
             });
             // Apply the selected framebuffer rotation before asking for the
             // logical drawing dimensions. The direct spectrum/2D overlay is
@@ -513,9 +404,9 @@ fn main() -> ! {
             let v_active = display.size().height;
             let on_help_page = opts.tracker.page.value == Page::Help;
             let spectrum_mode = opts.sonoro.mode.value == DisplayMode::Spectrum;
-            let view_3d = !spectrum_mode && opts.histo.view.value == ViewMode::ThreeD;
             let help_scroll = opts.help.scroll.value;
             let help_page_entered = on_help_page && !last_on_help_page;
+            let help_page_left = !on_help_page && last_on_help_page;
             if opts.menu.hide.value != last_hide {
                 critical_section::with(|cs| {
                     app.borrow_ref_mut(cs)
@@ -526,95 +417,28 @@ fn main() -> ! {
             }
             if opts.menu.edit_hide.value != last_edit_hide || first {
                 critical_section::with(|cs| {
-                    app.borrow_ref_mut(cs).ui.set_hide_while_editing(
-                        opts.menu.edit_hide.value == EditHide::On,
-                    );
+                    app.borrow_ref_mut(cs)
+                        .ui
+                        .set_hide_while_editing(opts.menu.edit_hide.value == EditHide::On);
                 });
                 last_edit_hide = opts.menu.edit_hide.value;
             }
-            if help_page_entered {
-                help_waiting_for_renderer = view_3d;
-            }
-            // In 3D, keep transient UI in the lower half of the palette. The
-            // literal back-buffer renderer also uses low plot hues so the
-            // legacy tagged cleanup path never touches visible 3D pixels.
-            let ui_hue = if view_3d {
-                opts.menu.ui_hue.value & 7
-            } else {
-                opts.menu.ui_hue.value
-            };
-            let surface_status = spectro.status().read();
-            // Help is a static framebuffer page. Suspend the autonomous 3D
-            // renderer before clearing or drawing it, and keep scanning the
-            // physical buffer that was visible on entry. Otherwise the 3D
-            // state machine can clear/swap underneath the freshly drawn help
-            // text even though analyzer capture itself is disabled.
-            let renderer_3d_enabled = view_3d && !on_help_page;
-            let help_renderer_ready =
-                !help_waiting_for_renderer || surface_status.renderer_idle().bit();
-            let help_page_became_ready =
-                on_help_page && help_waiting_for_renderer && help_renderer_ready;
-            let display_buffer = if on_help_page {
-                current_fb_base != PSRAM_FB_BASE as u32
-            } else {
-                renderer_3d_enabled
-                    && surface_status.surface_valid().bit()
-                    && surface_status.display_buffer().bit()
-            };
-            // Publish a Help stop request before touching either framebuffer.
-            // Normal 3D display acknowledgements remain below, after menu
-            // drawing, so scanout can never reveal a half-drawn menu.
-            if on_help_page {
-                spectro.flags().write(|w| unsafe {
-                    w.enable().bit(false);
-                    w.phosphor().bit(false);
-                    w.axes().bit(opts.display.axes.value == OnOff::On);
-                    w.input_ch().bits(opts.sonoro.input.value.hw_index());
-                    w.view_3d().bit(false);
-                    w.spectrum_mode().bit(spectrum_mode);
-                    w.display_ack().bit(display_buffer)
-                });
-            }
-            let desired_fb_base = PSRAM_FB_BASE as u32
-                + if display_buffer { 0x0010_0000 } else { 0 };
-            let framebuffer_swapped = desired_fb_base != current_fb_base;
-            if framebuffer_swapped {
-                display.update_fb_base(desired_fb_base);
-                current_fb_base = desired_fb_base;
-            }
-
-            // Help text and the 3D view are full-screen framebuffer layers.
-            // Clear both physical buffers at mode boundaries, but do not do a
-            // full clear for help scrolling; only the text viewport changes.
             let help_scroll_changed =
                 on_help_page && (!last_on_help_page || help_scroll != last_help_scroll);
-            let fullscreen_layer_changed =
-                first || (view_3d != last_view_3d) ||
-                ((on_help_page != last_on_help_page) &&
-                    (!on_help_page || help_renderer_ready)) ||
-                help_page_became_ready;
-            if fullscreen_layer_changed {
-                if view_3d || last_view_3d || on_help_page || last_on_help_page {
-                    clear_3d_framebuffers();
-                    menu_fb0 = None;
-                    menu_fb1 = None;
-                    if current_fb_base != desired_fb_base {
-                        display.update_fb_base(desired_fb_base);
-                        current_fb_base = desired_fb_base;
-                    }
-                }
+            if help_page_entered || help_page_left {
+                clear_framebuffer_region(PSRAM_FB_BASE);
+                menu_cache = None;
             }
             last_on_help_page = on_help_page;
-            last_view_3d = view_3d;
             last_help_scroll = help_scroll;
 
-            let frequency_ramp_palette =
-                spectrum_mode &&
-                (opts.spectrum.fill.value == SpectrumFill::Freq ||
-                 opts.spectrum.fill.value == SpectrumFill::FreqReverse);
-            if opts.display.palette.value != last_palette ||
-                    frequency_ramp_palette != last_frequency_ramp_palette ||
-                    first {
+            let frequency_ramp_palette = spectrum_mode
+                && (opts.spectrum.fill.value == SpectrumFill::Freq
+                    || opts.spectrum.fill.value == SpectrumFill::FreqReverse);
+            if opts.display.palette.value != last_palette
+                || frequency_ramp_palette != last_frequency_ramp_palette
+                || first
+            {
                 write_sonoro_palette(
                     opts.display.palette.value,
                     &mut display,
@@ -633,98 +457,68 @@ fn main() -> ! {
             critical_section::with(|cs| {
                 app.borrow_ref_mut(cs).ui.set_menu_visible(menu_visible);
             });
-            let ui_render_ready = !on_help_page || help_renderer_ready;
-            if ui_render_ready {
-                let menu_hash = menu_fingerprint(&opts);
-                let menu_slot = if display_buffer {
-                    &mut menu_fb1
-                } else {
-                    &mut menu_fb0
-                };
-                let menu_changed = menu_slot.as_ref().map(
-                    |(_, old_x, old_y, old_hash)| {
-                        *old_x != menu_x || *old_y != menu_y ||
-                            *old_hash != menu_hash
-                    }).unwrap_or(menu_visible);
-                // In 3D, each completed surface starts by clearing the back
-                // buffer. After the swap, the current physical buffer may no
-                // longer contain the cached menu even if its fingerprint matches.
-                // Redraw visible menus on 3D swaps, but avoid the old unconditional
-                // erase/redraw loop when no menu is visible.
-                let menu_invalidated_by_3d_swap =
-                    view_3d && framebuffer_swapped && menu_visible;
-                let menu_visibility_changed =
-                    menu_visible != menu_slot.is_some();
-                if first || menu_changed || menu_visibility_changed ||
-                        menu_invalidated_by_3d_swap {
-                    if let Some((old_opts, old_x, old_y, _)) = menu_slot.take() {
-                        erase_menu(
-                            &mut display, &old_opts, old_x, old_y).ok();
-                    }
-                    if menu_visible {
-                        draw_menu(
-                            &mut display, &opts, menu_x, menu_y, ui_hue).ok();
-                        *menu_slot = Some((
-                            opts.clone(), menu_x, menu_y, menu_hash));
-                    }
-                } else if menu_visible && !view_3d {
-                    // In the beam-raced 2D modes, framebuffer persistence also
-                    // decays UI pixels. Refresh the unchanged visible menu as the
-                    // original renderer did; unlike a state change, this needs no
-                    // erase pass. In 3D, the menu is stable in the front buffer,
-                    // so redundant refresh traffic remains disabled.
-                    draw_menu(
-                        &mut display, &opts, menu_x, menu_y, ui_hue).ok();
+            let ui_hue = opts.menu.ui_hue.value;
+            let menu_hash = menu_fingerprint(&opts);
+            let menu_changed = menu_cache
+                .as_ref()
+                .map(|(_, old_x, old_y, old_hash)| {
+                    *old_x != menu_x || *old_y != menu_y || *old_hash != menu_hash
+                })
+                .unwrap_or(menu_visible);
+            let menu_visibility_changed = menu_visible != menu_cache.is_some();
+            if first || menu_changed || menu_visibility_changed {
+                if let Some((old_opts, old_x, old_y, _)) = menu_cache.take() {
+                    erase_menu(&mut display, &old_opts, old_x, old_y).ok();
                 }
-                if draw_options || on_help_page || first || framebuffer_swapped {
-                    draw::draw_name(
+                if menu_visible {
+                    draw_menu(&mut display, &opts, menu_x, menu_y, ui_hue).ok();
+                    menu_cache = Some((opts.clone(), menu_x, menu_y, menu_hash));
+                }
+            } else if menu_visible {
+                // Framebuffer persistence also decays UI pixels in the direct
+                // 2D modes, so refresh an unchanged visible menu without an
+                // unnecessary erase pass.
+                draw_menu(&mut display, &opts, menu_x, menu_y, ui_hue).ok();
+            }
+            if draw_options || on_help_page || first {
+                draw::draw_name(
+                    &mut display,
+                    h_active / 2,
+                    v_active - 50,
+                    ui_hue,
+                    &bootinfo.manifest.name,
+                    &bootinfo.manifest.tag,
+                    &modeline,
+                )
+                .ok();
+            }
+
+            if on_help_page {
+                if help_page_entered || help_scroll_changed || first {
+                    clear_help_text_window(&mut display, h_active, v_active).ok();
+                    draw::draw_help(
                         &mut display,
-                        h_active / 2,
-                        v_active - 50,
+                        h_active / 2 - 280,
+                        v_active / 2 - 150,
+                        opts.help.scroll.value,
+                        MODULE_DOCSTRING,
                         ui_hue,
-                        &bootinfo.manifest.name,
-                        &bootinfo.manifest.tag,
-                        &modeline,
                     )
                     .ok();
                 }
-
-                if on_help_page {
-                    if help_page_entered || help_page_became_ready ||
-                            help_scroll_changed || first {
-                        clear_help_text_window(
+                if help_page_entered || first {
+                    if let Some(help) = bootinfo.manifest.help.as_ref() {
+                        draw::draw_tiliqua(
                             &mut display,
-                            h_active,
-                            v_active,
-                        )
-                        .ok();
-                        draw::draw_help(
-                            &mut display,
-                            h_active / 2 - 280,
-                            v_active / 2 - 150,
-                            opts.help.scroll.value,
-                            MODULE_DOCSTRING,
+                            (h_active / 2 - 80) as i32,
+                            (v_active / 2) as i32 - 330,
                             ui_hue,
+                            help.io_left.each_ref().map(|s| s.as_str()),
+                            help.io_right.each_ref().map(|s| s.as_str()),
                         )
                         .ok();
-                    }
-                    if help_page_entered || help_page_became_ready || first {
-                        if let Some(help) = bootinfo.manifest.help.as_ref() {
-                            draw::draw_tiliqua(
-                                &mut display,
-                                (h_active / 2 - 80) as i32,
-                                (v_active / 2) as i32 - 330,
-                                ui_hue,
-                                help.io_left.each_ref().map(|s| s.as_str()),
-                                help.io_right.each_ref().map(|s| s.as_str()),
-                            )
-                            .ok();
-                        }
                     }
                 }
-            }
-            if help_page_became_ready {
-                help_waiting_for_renderer = false;
             }
 
             if save_opts {
@@ -745,21 +539,13 @@ fn main() -> ! {
                 });
             }
 
-            // In normal 3D operation this acknowledgement deliberately comes
-            // after menu drawing. The renderer waits for it before swapping at
-            // VSync, so the next front buffer always contains a complete menu.
             spectro.flags().write(|w| unsafe {
                 w.enable().bit(!on_help_page);
-                w.phosphor().bit(
-                    !spectrum_mode
-                        && opts.histo.view.value == ViewMode::TwoD
-                        && opts.histo.style.value == RenderStyle::Phosphor,
-                );
+                w.phosphor()
+                    .bit(!spectrum_mode && opts.histo.style.value == RenderStyle::Phosphor);
                 w.axes().bit(opts.display.axes.value == OnOff::On);
                 w.input_ch().bits(opts.sonoro.input.value.hw_index());
-                w.view_3d().bit(renderer_3d_enabled);
-                w.spectrum_mode().bit(spectrum_mode);
-                w.display_ack().bit(display_buffer)
+                w.spectrum_mode().bit(spectrum_mode)
             });
             spectro
                 .gain()
@@ -776,41 +562,24 @@ fn main() -> ! {
             spectro
                 .hue()
                 .write(|w| unsafe { w.value().bits(opts.display.hue.value) });
-            spectro.noise_floor().write(|w| unsafe {
-                w.value().bits(opts.display.noise_floor.value.hw_index())
-            });
+            spectro
+                .noise_floor()
+                .write(|w| unsafe { w.value().bits(opts.display.noise_floor.value.hw_index()) });
             spectro.timings().write(|w| unsafe {
                 w.h_active().bits(h_active as u16);
                 w.v_active().bits(v_active as u16);
                 w.menu_visible().bit(menu_visible);
                 w.rotation().bits(opts.misc.rotation.value as u8)
             });
-            let (projection_x, projection_y) = projection_matrix(
-                opts.histo.rot_x.value,
-                opts.histo.rot_y.value,
-                opts.histo.rot_z.value,
-            );
-            spectro.projection_x().write(|w| unsafe {
-                w.frequency().bits(projection_x[0] as u16);
-                w.amplitude().bits(projection_x[1] as u16);
-                w.time().bits(projection_x[2] as u16)
-            });
-            spectro.projection_y().write(|w| unsafe {
-                w.frequency().bits(projection_y[0] as u16);
-                w.amplitude().bits(projection_y[1] as u16);
-                w.time().bits(projection_y[2] as u16)
-            });
-            spectro.config_3d().write(|w| unsafe {
-                w.quality().bits(opts.histo.quality.value.hw_index())
-            });
             spectro.spectrum_config().write(|w| unsafe {
-                w.style().bit(opts.spectrum.spectrum_style.value.hw_index() != 0);
+                w.style()
+                    .bit(opts.spectrum.spectrum_style.value.hw_index() != 0);
                 w.bands().bits(opts.spectrum.bands.value.hw_index());
                 w.fill().bits(opts.spectrum.fill.value.hw_index());
                 w.peaks().bits(opts.spectrum.peaks.value.hw_index());
                 w.scale().bit(opts.spectrum.scale.value.hw_index() != 0);
-                w.highlight().bit(
-                    opts.spectrum.highlight.value.hw_index() != 0);
+                w.highlight()
+                    .bit(opts.spectrum.highlight.value.hw_index() != 0);
                 w.grid().bit(opts.display.grid.value == OnOff::On)
             });
 
@@ -821,17 +590,10 @@ fn main() -> ! {
                 w.grid_pixel().bits(0)
             });
 
-            if renderer_3d_enabled {
-                // The 3D view uses explicit double-buffered surfaces. The
-                // gateware pauses persistence in 3D; this write is kept benign
-                // in case that pause is ever relaxed while debugging.
-                persist.set_cleanup();
-            } else {
-                // Help is a static framebuffer page. Keep decay as slow as
-                // the existing persistence controller allows so it remains
-                // readable until software clears/redraws it on scroll.
-                persist.set_persistence(if on_help_page { 80 } else { 24 });
-            }
+            // Help is a static framebuffer page. Keep decay as slow as the
+            // persistence controller allows so it remains readable until
+            // software clears/redraws it on scroll.
+            persist.set_persistence(if on_help_page { 80 } else { 24 });
             first = false;
         }
     })

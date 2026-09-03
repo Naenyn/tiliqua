@@ -18,39 +18,6 @@ pub enum Page {
 }
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
-pub enum ViewMode {
-    #[default]
-    #[strum(serialize = "2D")]
-    TwoD,
-    #[strum(serialize = "3D")]
-    ThreeD,
-}
-
-#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
-#[strum(serialize_all = "kebab-case")]
-pub enum Quality3d {
-    // Retain the old serialized discriminant so saved High values remain
-    // compatible, but omit Low from the encoder's EnumIter choices.
-    #[strum(disabled)]
-    Low,
-    #[default]
-    #[strum(serialize = "lower")]
-    Medium,
-    #[strum(serialize = "higher")]
-    High,
-}
-
-impl Quality3d {
-    pub fn hw_index(self) -> u8 {
-        match self {
-            Self::Low => 1,
-            Self::Medium => 1,
-            Self::High => 2,
-        }
-    }
-}
-
-#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 #[strum(serialize_all = "kebab-case")]
 pub enum DisplayMode {
     #[default]
@@ -334,7 +301,6 @@ impl DisplayNoiseFloor {
 
 int_params!(GainParams<u8>   { step: 1, min: 0, max: 12 });
 int_params!(HueParams<u8>    { step: 1, min: 0, max: 15 });
-int_params!(AngleParams<i8>  { step: 15, min: -90, max: 90 });
 int_params!(ScrollParams<u8> { step: 1, min: 0, max: 125 });
 int_params!(HideParams<u8>   { step: 1, min: 2, max: 16, format: IntFormat::Scaled { divisor: 2, precision: 1, suffix: "s" } });
 button_params!(OneShotButtonParams {
@@ -376,25 +342,10 @@ pub struct SpectrumOpts {
 #[derive(OptionPage, Clone)]
 pub struct HistoOpts {
     #[option]
-    pub view: EnumOption<ViewMode>,
-    #[option]
-    #[option_if(self.view.value == ViewMode::TwoD)]
     pub style: EnumOption<RenderStyle>,
     #[option]
-    #[option_if(self.view.value == ViewMode::TwoD && self.style.value == RenderStyle::Phosphor)]
+    #[option_if(self.style.value == RenderStyle::Phosphor)]
     pub persist: EnumOption<Persistence>,
-    #[option]
-    #[option_if(self.view.value == ViewMode::ThreeD)]
-    pub quality: EnumOption<Quality3d>,
-    #[option(-15)]
-    #[option_if(self.view.value == ViewMode::ThreeD)]
-    pub rot_x: IntOption<AngleParams>,
-    #[option(15)]
-    #[option_if(self.view.value == ViewMode::ThreeD)]
-    pub rot_y: IntOption<AngleParams>,
-    #[option(0)]
-    #[option_if(self.view.value == ViewMode::ThreeD)]
-    pub rot_z: IntOption<AngleParams>,
 }
 
 #[derive(OptionPage, Clone)]
