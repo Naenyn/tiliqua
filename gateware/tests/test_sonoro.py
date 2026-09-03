@@ -21,12 +21,78 @@ from spectrogram import (  # noqa: E402
     DbfsLevelSmoother,
     MagnitudeToDbfs,
     SPECTRUM_CORDIC_GAIN,
+    _dbfs_level_q4_to_height,
     _logical_scan_coordinates,
     _magnitude_raw_to_dbfs_level,
+    _three_d_frequency_coordinate,
+    _three_d_scan_geometry,
 )
 
 
 class SonoroMagnitudeTests(unittest.TestCase):
+
+    def test_dbfs_levels_span_plot_height(self):
+        m = Module()
+        level_q4 = Signal(10)
+        tall = Signal()
+        height = Signal(12)
+        m.d.comb += height.eq(_dbfs_level_q4_to_height(level_q4, tall))
+
+        async def bench(ctx):
+            for is_tall, plot_height in ((0, 256), (1, 512)):
+                previous = -1
+                for level in range(64):
+                    ctx.set(tall, is_tall)
+                    ctx.set(level_q4, level << 4)
+                    await ctx.delay(1e-9)
+                    actual = ctx.get(height)
+                    expected = round(level * (plot_height - 1) / 63)
+                    self.assertLessEqual(abs(actual - expected), 1)
+                    self.assertGreater(actual, previous)
+                    previous = actual
+                self.assertEqual(previous, plot_height - 1)
+
+        sim = Simulator(m)
+        sim.add_testbench(bench)
+        sim.run()
+
+    def test_three_d_quality_levels_cover_all_fft_bins(self):
+        m = Module()
+        high_quality = Signal()
+        point = Signal(7)
+        point_last = Signal(7)
+        group_shift = Signal(2)
+        coordinate = Signal(9)
+        geometry = _three_d_scan_geometry(high_quality)
+        m.d.comb += [
+            point_last.eq(geometry[0]),
+            group_shift.eq(geometry[1]),
+            coordinate.eq(_three_d_frequency_coordinate(
+                point, high_quality)),
+        ]
+
+        async def bench(ctx):
+            for high, expected_points, expected_shift in (
+                    (0, 64, 2), (1, 128, 1)):
+                ctx.set(high_quality, high)
+                await ctx.delay(1e-9)
+                last = ctx.get(point_last)
+                shift = ctx.get(group_shift)
+                self.assertEqual(last + 1, expected_points)
+                self.assertEqual(shift, expected_shift)
+                self.assertEqual(
+                    (last << shift) + ((1 << shift) - 1), 255)
+
+                ctx.set(point, 0)
+                await ctx.delay(1e-9)
+                self.assertEqual(ctx.get(coordinate), 0)
+                ctx.set(point, last)
+                await ctx.delay(1e-9)
+                self.assertEqual(ctx.get(coordinate), 255)
+
+        sim = Simulator(m)
+        sim.add_testbench(bench)
+        sim.run()
 
     def test_analyzer_buffer_preserves_live_samples_during_fft_stall(self):
         shape = fixed.SQ(2, 16)

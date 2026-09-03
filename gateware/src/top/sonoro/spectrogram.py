@@ -59,6 +59,44 @@ def _magnitude_raw_to_dbfs_level(raw, *, f_bits=ASQ.f_bits):
     return max(0, min(63, round(normalized * 63)))
 
 
+def _dbfs_level_q4_to_height(level_q4, tall):
+    """Map a 0..63 Q4 dBFS level across a 256- or 512-pixel plot.
+
+    A plain power-of-two scale maps full scale to 252 or 504 pixels, leaving
+    the 0dBFS value visibly below the top axis. These shift-add forms closely
+    approximate multiplication by 255/63 or 511/63, reach both endpoints
+    exactly, and stay within one pixel of the ideal rounded result.
+    """
+    level_q4 = level_q4.as_unsigned()
+    return Mux(
+        tall,
+        (level_q4 >> 1) + (level_q4 >> 7),
+        (level_q4 >> 2) + (level_q4 >> 8),
+    )
+
+
+def _dbfs_level_to_height(level, tall):
+    """Integer-level companion to :func:`_dbfs_level_q4_to_height`."""
+    return _dbfs_level_q4_to_height(level << 4, tall)
+
+
+def _three_d_scan_geometry(high_quality):
+    """Return the final vertex and bin-group shift for a 256-bin sweep."""
+    return (
+        Mux(high_quality, 127, 63),
+        Mux(high_quality, 1, 2),
+    )
+
+
+def _three_d_frequency_coordinate(point, high_quality):
+    """Spread 64 or 128 3D vertices across the complete 0..255 axis."""
+    return Mux(
+        high_quality,
+        (point << 1) + (point >> 6),
+        _dbfs_level_to_height(point, Const(0)),
+    )
+
+
 class MagnitudeToDbfs(wiring.Component):
     """Streaming calibrated magnitude-to-dBFS converter.
 
@@ -1676,39 +1714,26 @@ class Spectrogram(wiring.Component):
         center_x = Signal(signed(13))
         baseline_y = Signal(signed(13))
         line_word = Signal(LineCmd)
-        effective_quality = Signal(2)
+        high_quality = Signal()
         scan_point_last = Signal(7)
         scan_group_shift = Signal(2)
         frequency_coordinate = Signal(9)
         sweep_hue_limited = Signal(3)
         sweep_axis_hue_a = Signal(3)
         sweep_axis_hue_b = Signal(3)
+        scan_geometry = _three_d_scan_geometry(high_quality)
 
         m.d.comb += [
-            # Medium 3D quality keeps the full 24kHz view at 64 vertices so
-            # it reads as the wide, coarser overview. The lower ranges are
-            # already using the fine 24kHz analysis feed, so promote 12kHz and
-            # 6kHz to the denser 128-vertex surface even at medium quality:
-            # this makes those ranges behave like true zoom/detail views.
-            # 3kHz is naturally capped at 64 vertices because it contains only
-            # 64 distinct FFT bins.
-            effective_quality.eq(Mux(
-                (sweep_range != 3) &
-                    ((sweep_quality_3d == 2) | (sweep_range != 0)),
-                2,
-                1)),
-            scan_point_last.eq(Mux(
-                effective_quality == 1, 63, 127)),
-            scan_group_shift.eq(Mux(
-                effective_quality == 1,
-                    Mux(sweep_range <= 1, 2,
-                        Mux(sweep_range == 2, 1, 0)),
-                    Mux(sweep_range <= 1, 1, 0),
-            )),
-            frequency_coordinate.eq(Mux(
-                effective_quality == 1,
-                scan_point << 2,
-                scan_point << 1)),
+            # Every range now has a matching analyzer sample rate and therefore
+            # uses all 256 positive-frequency bins. Pool the complete spectrum
+            # into 64 or 128 vertices solely according to the quality setting.
+            # The previous range-dependent geometry was inherited from the old
+            # fixed-rate analyzer and truncated the 6kHz and 3kHz views.
+            high_quality.eq(sweep_quality_3d == 2),
+            scan_point_last.eq(scan_geometry[0]),
+            scan_group_shift.eq(scan_geometry[1]),
+            frequency_coordinate.eq(
+                _three_d_frequency_coordinate(scan_point, high_quality)),
             scan_history_age.eq(Const(15, 4) - scan_slice),
             # Consecutive captures are spread across the full visual Z depth.
             scan_depth.eq(scan_history_age << 4),
@@ -1829,7 +1854,8 @@ class Spectrogram(wiring.Component):
                     # frequency coordinate used by the axes and projection.
                     point_frequency_base.eq(
                         frequency_coordinate.as_signed() - 128),
-                    point_amplitude.eq(scan_peak << 2),
+                    point_amplitude.eq(
+                        _dbfs_level_to_height(scan_peak, Const(0))),
                     point_time.eq(scan_depth),
                     point_pixel.intensity.eq(Mux(
                         sweep_phosphor,
@@ -1983,7 +2009,7 @@ class Spectrogram(wiring.Component):
             with m.State("AXIS_AMPLITUDE_END"):
                 m.d.dvi += [
                     point_frequency_base.eq(-128),
-                    point_amplitude.eq(252),
+                    point_amplitude.eq(255),
                     point_time.eq(0),
                     point_pixel.intensity.eq(14),
                     point_pixel.color.eq(sweep_axis_hue_a),
@@ -2656,7 +2682,6 @@ class Spectrogram(wiring.Component):
         spectrum_fill_hit = Signal()
         spectrum_peak_hit = Signal()
         spectrum_shape_pixel = Signal()
-        spectrum_peak_height = Signal(12)
         spectrum_peak_y = Signal(signed(13))
         spectrum_peak_level = Signal(6)
         spectrum_peak_hold = Signal(5)
@@ -2710,7 +2735,7 @@ class Spectrogram(wiring.Component):
         spectrum_curve_product = Signal(signed(13))
         spectrum_curve_display_q4 = Signal(signed(13))
         spectrum_curve_level = Signal(6)
-        spectrum_curve_height = Signal(12)
+        spectrum_height_q4 = Signal(13)
         spectrum_peak_raw_prev = Signal(6)
         spectrum_peak_curve_start = Signal(6)
         spectrum_peak_curve_end = Signal(6)
@@ -2719,7 +2744,7 @@ class Spectrogram(wiring.Component):
         spectrum_peak_curve_delta = Signal(signed(8))
         spectrum_peak_curve_product = Signal(signed(13))
         spectrum_peak_curve_display_q4 = Signal(signed(13))
-        spectrum_peak_curve_height = Signal(12)
+        spectrum_peak_height_q4 = Signal(13)
         spectrum_peak_display_y = Signal(signed(13))
         spectrum_render_plot = Signal()
         spectrum_render_style = Signal()
@@ -2914,17 +2939,14 @@ class Spectrogram(wiring.Component):
             # Keep four fractional amplitude bits through the
             # screen-space conversion. At 720p this improves the vertical
             # granularity from eight pixels to half a pixel before rounding.
-            spectrum_curve_height.eq(Mux(
+            spectrum_height_q4.eq(Mux(
                 spectrum_log_underflow_d,
                 0,
-                (spectrum_curve_display_q4.as_unsigned() << y_scale_shift) >>
-                2)),
-            spectrum_height.eq(
                 Mux(spectrum_style_dvi,
-                    spectrum_curve_height,
-                    Mux(spectrum_log_underflow_d,
-                        0,
-                        spectrum_display_level << (y_scale_shift + 2)))),
+                    spectrum_curve_display_q4.as_unsigned(),
+                    spectrum_display_level << 4))),
+            spectrum_height.eq(_dbfs_level_q4_to_height(
+                spectrum_height_q4, y_scale_shift)),
             spectrum_y.eq(plot_h - 1 - spectrum_height),
             spectrum_scan_y.eq(logical_y_d - plot_y0),
             spectrum_shape_pixel.eq(
@@ -2998,16 +3020,13 @@ class Spectrogram(wiring.Component):
                 spectrum_peak_state_valid,
                 spectrum_peak_r.data[6:11],
                 0)),
-            spectrum_peak_height.eq(
-                spectrum_peak_level << (y_scale_shift + 2)),
-            spectrum_peak_y.eq(plot_h - 1 - spectrum_peak_height),
-            spectrum_peak_curve_height.eq(
-                (spectrum_peak_curve_display_q4.as_unsigned() <<
-                 y_scale_shift) >> 2),
-            spectrum_peak_display_y.eq(Mux(
+            spectrum_peak_height_q4.eq(Mux(
                 spectrum_style_dvi,
-                plot_h - 1 - spectrum_peak_curve_height,
-                spectrum_peak_y)),
+                spectrum_peak_curve_display_q4.as_unsigned(),
+                spectrum_peak_level << 4)),
+            spectrum_peak_y.eq(plot_h - 1 - _dbfs_level_q4_to_height(
+                spectrum_peak_height_q4, y_scale_shift)),
+            spectrum_peak_display_y.eq(spectrum_peak_y),
             spectrum_peak_hit.eq(
                 spectrum_render_plot & spectrum_plot_d &
                 spectrum_render_peak_enabled &
