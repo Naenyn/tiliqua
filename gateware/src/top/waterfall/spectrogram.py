@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: CERN-OHL-S-2.0
 
-"""Streaming spectral analysis and beam-raced waterfall display."""
+"""Streaming spectral analysis and projected 3D waterfall display."""
 
 import math
 import os
@@ -461,14 +461,7 @@ FONT_5X7 = {
 
 
 class Spectrogram(wiring.Component):
-    """512-point STFT feeding a fixed-left circular waterfall overlay.
-
-    One six-bit magnitude is retained for every positive-frequency bin in
-    each of 256 history columns. The newest complete spectrum is displayed at
-    the left edge; older spectra extend to the right. The history RAM has one
-    write port in the sync domain and one read port in the DVI domain, so no
-    framebuffer copies or PSRAM bandwidth are needed to scroll.
-    """
+    """512-point STFT feeding a projected, double-buffered 3D surface."""
 
     class Flags(csr.Register, access="w"):
         enable: csr.Field(csr.action.W, unsigned(1))
@@ -578,10 +571,14 @@ class Spectrogram(wiring.Component):
         wiring.connect(m, wiring.flipped(self.bus), self._bridge.bus)
 
         enable = Signal(init=1)
-        phosphor = Signal(init=1)
+        phosphor = Const(0)
         axes = Signal(init=1)
-        view_3d = Signal()
-        spectrum_mode = Signal()
+        # WATERFALL has one rendering mode. Keep the mode selector constant so
+        # synthesis can discard SONORO's spectrum and flat-spectrogram paths;
+        # a separate run control still lets firmware quiesce 3D for Help.
+        view_3d = Const(1)
+        renderer_enabled = Signal()
+        spectrum_mode = Const(0)
         display_ack = Signal()
         input_ch = Signal(2)
         gain = Signal(4)
@@ -612,11 +609,9 @@ class Spectrogram(wiring.Component):
         with m.If(self._flags.element.w_stb):
             m.d.sync += [
                 enable.eq(self._flags.f.enable.w_data),
-                phosphor.eq(self._flags.f.phosphor.w_data),
                 axes.eq(self._flags.f.axes.w_data),
                 input_ch.eq(self._flags.f.input_ch.w_data),
-                view_3d.eq(self._flags.f.view_3d.w_data),
-                spectrum_mode.eq(self._flags.f.spectrum_mode.w_data),
+                renderer_enabled.eq(self._flags.f.view_3d.w_data),
                 display_ack.eq(self._flags.f.display_ack.w_data),
             ]
         with m.If(self._gain.element.w_stb):
@@ -999,14 +994,7 @@ class Spectrogram(wiring.Component):
         # In 3D the renderer itself applies the selected sweep divider before
         # issuing a token. Do not divide again using the free-running analyzer
         # frame counter, which made the control nearly invisible in practice.
-        m.d.comb += accept_now.eq(Mux(
-            view_3d,
-            render_slot_ready,
-            Mux(spectrum_mode,
-                spectrum_accept_rate & spectrum_bank_ready &
-                ~spectrum_log_clear_active,
-                accept_rate),
-        ))
+        m.d.comb += accept_now.eq(renderer_enabled & render_slot_ready)
 
         current_bin = Signal(9)
         do_write = Signal()
@@ -1444,7 +1432,7 @@ class Spectrogram(wiring.Component):
                     frame_seq.eq(frame_seq + 1),
                     accept_latched.eq(accept_now),
                 ]
-                with m.If(view_3d & accept_now):
+                with m.If(renderer_enabled & accept_now):
                     m.d.sync += render_ack_sync.eq(render_token_sync)
             with m.Else():
                 m.d.sync += bin_index.eq(bin_index + 1)
@@ -1460,10 +1448,11 @@ class Spectrogram(wiring.Component):
 
         # ---- DVI-domain circular history projection ------------------------
         enable_dvi = Signal()
-        phosphor_dvi = Signal()
+        phosphor_dvi = Const(0)
         axes_dvi = Signal()
-        view_3d_dvi = Signal()
-        spectrum_mode_dvi = Signal()
+        view_3d_dvi = Const(1)
+        renderer_enabled_dvi = Signal()
+        spectrum_mode_dvi = Const(0)
         display_ack_dvi = Signal()
         quality_3d_dvi = Signal(2)
         spectrum_style_dvi = Signal()
@@ -1494,10 +1483,8 @@ class Spectrogram(wiring.Component):
         m.d.comb += newest_gray.eq(newest_col ^ (newest_col >> 1))
         for name, src, dst in [
             ("enable", enable, enable_dvi),
-            ("phosphor", phosphor, phosphor_dvi),
             ("axes", axes, axes_dvi),
-            ("view_3d", view_3d, view_3d_dvi),
-            ("spectrum_mode", spectrum_mode, spectrum_mode_dvi),
+            ("renderer_enabled", renderer_enabled, renderer_enabled_dvi),
             ("display_ack", display_ack, display_ack_dvi),
             ("quality_3d", quality_3d, quality_3d_dvi),
             ("spectrum_style", spectrum_style, spectrum_style_dvi),
@@ -1642,7 +1629,7 @@ class Spectrogram(wiring.Component):
         m.submodules.renderer_idle_ff = FFSynchronizer(
             renderer_idle_dvi, renderer_idle_sync, o_domain="sync")
         m.d.comb += [
-            self.protect_enable.eq(view_3d),
+            self.protect_enable.eq(renderer_enabled),
             self.protect_visible.eq(visible_generation_sync),
             self.protect_drawing.eq(draw_generation_sync),
             self.clear_request.eq(clear_request),
@@ -1755,7 +1742,7 @@ class Spectrogram(wiring.Component):
                     clear_request.eq(0),
                     flush_request.eq(0),
                 ]
-                with m.If(enable_dvi & view_3d_dvi):
+                with m.If(enable_dvi & renderer_enabled_dvi):
                     m.d.dvi += [
                         scan_slice.eq(0),
                         scan_point.eq(0),
@@ -1777,7 +1764,7 @@ class Spectrogram(wiring.Component):
                             sweep_projection_y[index].eq(projection_y_dvi[index]),
                         ]
                     m.next = "WAIT_CLEAR"
-                with m.Elif(~view_3d_dvi):
+                with m.Elif(~renderer_enabled_dvi):
                     m.d.dvi += surface_valid.eq(0)
 
             with m.State("WAIT_CLEAR"):
@@ -1785,7 +1772,7 @@ class Spectrogram(wiring.Component):
                 # 3D surface. After this point all pixels are literal display
                 # pixels; no generation-tag reveal or persistence cleanup is
                 # involved in the image shown to the user.
-                with m.If(~view_3d_dvi):
+                with m.If(~renderer_enabled_dvi):
                     m.d.dvi += clear_request.eq(0)
                     m.next = "IDLE"
                 with m.Elif(clear_done_dvi):
@@ -1861,7 +1848,7 @@ class Spectrogram(wiring.Component):
                                         m.next = "AXIS_FREQUENCY_START"
                                     with m.Else():
                                         m.next = "WAIT_RENDER_COMPLETE"
-                                with m.Elif(enable_dvi & view_3d_dvi):
+                                with m.Elif(enable_dvi & renderer_enabled_dvi):
                                     m.d.dvi += scan_slice.eq(scan_slice + 1)
                                     m.next = "START_BIN_GROUP"
                                 with m.Else():
@@ -1896,7 +1883,7 @@ class Spectrogram(wiring.Component):
             with m.State("WAIT_CACHE_FLUSH"):
                 # ``flush_done`` is held until the request drops, so no pulse
                 # can be missed while crossing between sync and DVI domains.
-                with m.If(~view_3d_dvi):
+                with m.If(~renderer_enabled_dvi):
                     m.d.dvi += flush_request.eq(0)
                     m.next = "IDLE"
                 with m.Elif(flush_done_dvi):
@@ -1915,14 +1902,14 @@ class Spectrogram(wiring.Component):
             with m.State("WAIT_DISPLAY_SWAP"):
                 # Do not begin drawing into the old front buffer until firmware
                 # has moved the video/UI base to the completed back buffer.
-                with m.If(~view_3d_dvi |
+                with m.If(~renderer_enabled_dvi |
                           (display_ack_dvi == completed_generation[0])):
                     m.next = "WAIT_SWAP_VSYNC"
 
             with m.State("WAIT_SWAP_VSYNC"):
                 # The video DMA latches its base at VSync. Reveal the matching
                 # generation on that same frame boundary, never mid-scan.
-                with m.If(~view_3d_dvi):
+                with m.If(~renderer_enabled_dvi):
                     m.next = "IDLE"
                 with m.Elif(self.i.vsync & ~prev_vsync):
                     m.d.dvi += [
@@ -2010,7 +1997,7 @@ class Spectrogram(wiring.Component):
         # cancelled clear burst or queued Bresenham command can outlive the
         # renderer state machine by a few cycles.
         m.d.comb += renderer_idle_dvi.eq(
-            ~view_3d & waterfall_3d_fsm.ongoing("IDLE") &
+            ~renderer_enabled_dvi & waterfall_3d_fsm.ongoing("IDLE") &
             (line_fifo.w_level == 0) & ~line_busy_dvi & ~clear_busy_dvi)
 
         wide = Signal()

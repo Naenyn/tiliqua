@@ -4,15 +4,15 @@
 # SPDX-License-Identifier: CERN-OHL-S-2.0
 
 """
-WATERFALL is a spectrum analyzer and spectrograph for Eurorack signals, with a
+WATERFALL is a three-dimensional spectrogram for Eurorack signals, with a
 selectable input and four-channel analog passthrough.
 
-A 512-point Hann-windowed FFT analyzes one selected input. New spectra appear
-at the left edge and history extends to the right. Low frequencies are at the
-bottom, high frequencies at the top, and brightness represents magnitude.
-The analysis rate follows the selected 24/12/6/3kHz display range, using
-48/24/12/6kHz feeds respectively. This keeps the full selected bandwidth while
-progressively improving FFT resolution from 93.75Hz/bin to 11.72Hz/bin.
+A 512-point Hann-windowed FFT analyzes one selected input. Sixteen connected
+spectral ridges form a frequency-amplitude surface: frequency runs across the
+display, amplitude rises vertically, and older spectra recede into the screen.
+The analysis rate follows the selected 24/12/6/3kHz range, using 48/24/12/6kHz
+feeds respectively. This keeps the full selected bandwidth while progressively
+improving FFT resolution from 93.75Hz/bin to 11.72Hz/bin.
 
 All four analog inputs pass directly to their matching outputs:
 
@@ -23,30 +23,14 @@ All four analog inputs pass directly to their matching outputs:
         in3 ───────────────────────► out3
         in4 ───────────────────────► out4
 
-WATERFALL options select a live spectrum analyzer or historical spectrograph,
-input, sensitivity, and maximum displayed frequency. Spectrum mode plots the
-newest FFT with frequency on X and magnitude on Y. Spectrograph mode adds 2D
-heatmap or 3D waterfall views and history speed; its 2D view also offers
-analytical or phosphor rendering and adjustable phosphor persistence.
-
-Analytical rendering emphasizes stable, crisp frequency bins. Phosphor
-rendering adds temporal smoothing, brighter highlights, and an age-dependent
-fade. Both styles use the same uninterrupted spectral history.
-
-In 3D view, 16 connected analytical spectral ridges form a
-frequency-amplitude surface. Frequency runs across the display, amplitude
-rises vertically, and older spectra recede into the screen. Explicit history
-replaces the phosphor treatment used in 2D. The 3D menu rotates the camera
-independently around the X, Y and Z axes in 15-degree steps.
-
-DISPLAY options toggle labeled frequency/history axes in 2D or the projected
-frequency, amplitude and time reference axes in 3D. Spectrum mode also offers
-an independent plot-grid toggle. Plot hue, menu hue, palette, and a
-display-only noise floor are shared by all views. The noise floor hides low
-level display clutter without changing the analyzed signal. Axis scales follow
-the selected range and rate. The Inferno palette supports hue rotation while
-preserving its heatmap gradient; grayscale palettes intentionally ignore hue.
-MISC contains display rotation and settings save/reset actions.
+WATERFALL options select the input, sensitivity, maximum displayed frequency,
+and history speed. VIEW selects mesh quality and rotates the camera
+independently around the X, Y and Z axes in 15-degree steps. DISPLAY controls
+the projected reference axes, plot hue, palette, and a display-only noise
+floor. The noise floor hides low-level display clutter without changing the
+analyzed signal. The Inferno palette supports hue rotation while preserving
+its heatmap gradient; grayscale palettes intentionally ignore hue. MISC
+contains display rotation and settings save/reset actions.
 """
 
 import os
@@ -175,7 +159,7 @@ class WaterfallSoc(TiliquaSoc):
     module_docstring = sys.modules[__name__].__doc__
 
     bitstream_help = BitstreamHelp(
-        brief="Four-channel spectrum analyzer and spectrograph.",
+        brief="Four-channel 3D spectrogram.",
         io_left=['CH1 in', 'CH2 in', 'CH3 in', 'CH4 in',
                  'CH1 thru', 'CH2 thru', 'CH3 thru', 'CH4 thru'],
         io_right=['menu / adjust', '', 'video out', '', '', '']

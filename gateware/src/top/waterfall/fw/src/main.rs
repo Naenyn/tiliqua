@@ -7,8 +7,8 @@ use irq::handler;
 use log::{info, warn};
 use riscv_rt::entry;
 
-use opts::persistence::*;
 use opts::Options;
+use opts::persistence::{FlashOptionsPersistence, OptionsPersistence};
 use tiliqua_fw::*;
 use tiliqua_hal::dma_framebuffer::DMAFramebuffer;
 use tiliqua_hal::embedded_graphics::prelude::*;
@@ -184,79 +184,12 @@ fn rotate_rgb_hue((r, g, b): (u8, u8, u8), shift: u8) -> (u8, u8, u8) {
     (rr as u8, gg as u8, bb as u8)
 }
 
-fn scale_rgb_visible((r, g, b): (u8, u8, u8), intensity: u8) -> (u8, u8, u8) {
-    let scale = if intensity == 0 {
-        0
-    } else {
-        4 + ((intensity as u16 * 11) / 15)
-    };
-    (
-        ((r as u16 * scale) / 15) as u8,
-        ((g as u16 * scale) / 15) as u8,
-        ((b as u16 * scale) / 15) as u8,
-    )
-}
-
-fn max3(a: u8, b: u8, c: u8) -> u8 {
-    let ab = if a > b { a } else { b };
-    if ab > c { ab } else { c }
-}
-
-fn scale_rgb_to_level(
-    (r, g, b): (u8, u8, u8),
-    target_level: u8,
-) -> (u8, u8, u8) {
-    let source_level = max3(r, g, b);
-    if target_level == 0 || source_level == 0 {
-        return (0, 0, 0);
-    }
-    (
-        ((r as u16 * target_level as u16) / source_level as u16) as u8,
-        ((g as u16 * target_level as u16) / source_level as u16) as u8,
-        ((b as u16 * target_level as u16) / source_level as u16) as u8,
-    )
-}
-
-fn scale_rgb_like_palette(
-    palette: ColorPalette,
-    rgb: (u8, u8, u8),
-    intensity: u8,
-) -> (u8, u8, u8) {
-    if let Some((r, g, b)) = palette.heatmap_color(intensity) {
-        scale_rgb_to_level(rgb, max3(r, g, b))
-    } else {
-        scale_rgb_visible(rgb, intensity)
-    }
-}
-
 /// Program WATERFALL's palette. Scalar heat maps use each hardware hue column
 /// for a rotated version, keeping the plot hue control meaningful.
 fn write_waterfall_palette(
     palette: ColorPalette,
     video: &mut impl DMAFramebuffer,
-    frequency_ramp: bool,
 ) {
-    if frequency_ramp {
-        for intensity in 0..16u8 {
-            for hue in 0..16u8 {
-                // Frequency-ramp fills use hue for horizontal position, so the
-                // palette color itself must stay legible. Keep true black at
-                // intensity 0, but lift nonzero levels into the same bright
-                // range used by the normal gradient fills.
-                let bright_intensity = if intensity == 0 {
-                    0
-                } else {
-                    4 + ((intensity as u16 * 11) / 15) as u8
-                };
-                let (r, g, b) =
-                    scale_rgb_like_palette(
-                        palette, palette.frequency_color(hue), bright_intensity);
-                video.set_palette_rgb(intensity, hue, r, g, b);
-            }
-        }
-        return;
-    }
-
     if palette.heatmap_color(0).is_none() {
         palette.write_to_hardware(video);
         return;
@@ -327,49 +260,10 @@ fn projection_matrix(rot_x: i8, rot_y: i8, rot_z: i8) -> ([i16; 3], [i16; 3]) {
     (out_x, out_y)
 }
 
-fn sanitize_options(opts: &mut Opts, last_valid_page: &mut Page) {
-    if opts.histo.quality.value == Quality3d::Low {
-        opts.histo.quality.value = Quality3d::Medium;
+fn sanitize_options(opts: &mut Opts) {
+    if opts.view.quality.value == Quality3d::Low {
+        opts.view.quality.value = Quality3d::Medium;
     }
-
-    // DisplayOpts uses this hidden mirror to expose its grid option only in
-    // spectrum mode. The actual mode remains owned by the WATERFALL page.
-    opts.display.spectrum_mode.value = opts.sonoro.mode.value;
-
-    // SPECTRUM and HISTO are alternate detail pages. The options framework
-    // does not support conditional pages, so skip over the inactive page while
-    // preserving navigation direction:
-    //
-    //   WATERFALL <--> SPECTRUM|HISTO <--> DISPLAY <--> MISC <--> HELP
-    //
-    // With the enum ordered as WATERFALL, SPECTRUM, HISTO, DISPLAY..., the
-    // inactive page is an in-between sentinel. Use the last valid page to tell
-    // whether the user was moving left or right through that sentinel.
-    let mut page = opts.tracker.page.value;
-    match (opts.sonoro.mode.value, page) {
-        (DisplayMode::Spectrum, Page::Histo) => {
-            page = if *last_valid_page == Page::Spectrum {
-                Page::Display
-            } else {
-                Page::Spectrum
-            };
-        }
-        (DisplayMode::Spectrograph, Page::Spectrum) => {
-            page = if *last_valid_page == Page::Histo {
-                Page::Waterfall
-            } else {
-                Page::Histo
-            };
-        }
-        _ => {}
-    }
-    if page != opts.tracker.page.value {
-        opts.tracker.page.value = page;
-        opts.tracker.selected = None;
-        opts.tracker.modify = true;
-    }
-
-    *last_valid_page = page;
 }
 
 struct App {
@@ -456,17 +350,9 @@ fn main() -> ! {
             warn!("No option storage region: disable persistent storage");
             None
         };
-    // Boot into the analyzer view even when older saved WATERFALL settings came
-    // from the 3D renderer work. The 3D spectrograph remains available from
-    // the mode/view menus.
-    opts.sonoro.mode.value = DisplayMode::Spectrum;
-    opts.spectrum.spectrum_style.value = SpectrumStyle::Bars;
-    opts.spectrum.scale.value = SpectrumScale::Log;
-    let mut last_valid_page = opts.tracker.page.value;
-    sanitize_options(&mut opts, &mut last_valid_page);
+    sanitize_options(&mut opts);
 
     let mut last_palette = opts.display.palette.value;
-    let mut last_frequency_ramp_palette = false;
     let mut last_hide = opts.menu.hide.value;
     let mut last_edit_hide = opts.menu.edit_hide.value;
     let app = Mutex::new(RefCell::new(App::new(opts)));
@@ -481,7 +367,6 @@ fn main() -> ! {
         let mut first = true;
         let mut current_fb_base = PSRAM_FB_BASE as u32;
         let mut last_on_help_page = false;
-        let mut last_view_3d = false;
         let mut last_help_scroll = 0;
         let mut help_waiting_for_renderer = false;
         // Each physical framebuffer retains UI independently. Remember the
@@ -494,7 +379,7 @@ fn main() -> ! {
         loop {
             let (opts, draw_options, save_opts, wipe_opts) = critical_section::with(|cs| {
                 let mut app = app.borrow_ref_mut(cs);
-                sanitize_options(&mut app.ui.opts, &mut last_valid_page);
+                sanitize_options(&mut app.ui.opts);
                 let save_opts = app.ui.opts.misc.save_opts.poll();
                 let wipe_opts = app.ui.opts.misc.wipe_opts.poll();
                 (
@@ -505,15 +390,12 @@ fn main() -> ! {
                 )
             });
             // Apply the selected framebuffer rotation before asking for the
-            // logical drawing dimensions. The direct spectrum/2D overlay is
-            // told about the same rotation below so both renderers agree in
-            // the first iteration after an encoder change.
+            // logical drawing dimensions. Gateware receives the same rotation
+            // below so the projected surface and software UI remain aligned.
             display.rotate(&opts.misc.rotation.value);
             let h_active = display.size().width;
             let v_active = display.size().height;
             let on_help_page = opts.tracker.page.value == Page::Help;
-            let spectrum_mode = opts.sonoro.mode.value == DisplayMode::Spectrum;
-            let view_3d = !spectrum_mode && opts.histo.view.value == ViewMode::ThreeD;
             let help_scroll = opts.help.scroll.value;
             let help_page_entered = on_help_page && !last_on_help_page;
             if opts.menu.hide.value != last_hide {
@@ -533,23 +415,19 @@ fn main() -> ! {
                 last_edit_hide = opts.menu.edit_hide.value;
             }
             if help_page_entered {
-                help_waiting_for_renderer = view_3d;
+                help_waiting_for_renderer = true;
             }
             // In 3D, keep transient UI in the lower half of the palette. The
             // literal back-buffer renderer also uses low plot hues so the
             // legacy tagged cleanup path never touches visible 3D pixels.
-            let ui_hue = if view_3d {
-                opts.menu.ui_hue.value & 7
-            } else {
-                opts.menu.ui_hue.value
-            };
+            let ui_hue = opts.menu.ui_hue.value & 7;
             let surface_status = spectro.status().read();
             // Help is a static framebuffer page. Suspend the autonomous 3D
             // renderer before clearing or drawing it, and keep scanning the
             // physical buffer that was visible on entry. Otherwise the 3D
             // state machine can clear/swap underneath the freshly drawn help
             // text even though analyzer capture itself is disabled.
-            let renderer_3d_enabled = view_3d && !on_help_page;
+            let renderer_3d_enabled = !on_help_page;
             let help_renderer_ready =
                 !help_waiting_for_renderer || surface_status.renderer_idle().bit();
             let help_page_became_ready =
@@ -569,9 +447,9 @@ fn main() -> ! {
                     w.enable().bit(false);
                     w.phosphor().bit(false);
                     w.axes().bit(opts.display.axes.value == OnOff::On);
-                    w.input_ch().bits(opts.sonoro.input.value.hw_index());
+                    w.input_ch().bits(opts.waterfall.input.value.hw_index());
                     w.view_3d().bit(false);
-                    w.spectrum_mode().bit(spectrum_mode);
+                    w.spectrum_mode().bit(false);
                     w.display_ack().bit(display_buffer)
                 });
             }
@@ -589,39 +467,28 @@ fn main() -> ! {
             let help_scroll_changed =
                 on_help_page && (!last_on_help_page || help_scroll != last_help_scroll);
             let fullscreen_layer_changed =
-                first || (view_3d != last_view_3d) ||
+                first ||
                 ((on_help_page != last_on_help_page) &&
                     (!on_help_page || help_renderer_ready)) ||
                 help_page_became_ready;
             if fullscreen_layer_changed {
-                if view_3d || last_view_3d || on_help_page || last_on_help_page {
-                    clear_3d_framebuffers();
-                    menu_fb0 = None;
-                    menu_fb1 = None;
-                    if current_fb_base != desired_fb_base {
-                        display.update_fb_base(desired_fb_base);
-                        current_fb_base = desired_fb_base;
-                    }
+                clear_3d_framebuffers();
+                menu_fb0 = None;
+                menu_fb1 = None;
+                if current_fb_base != desired_fb_base {
+                    display.update_fb_base(desired_fb_base);
+                    current_fb_base = desired_fb_base;
                 }
             }
             last_on_help_page = on_help_page;
-            last_view_3d = view_3d;
             last_help_scroll = help_scroll;
 
-            let frequency_ramp_palette =
-                spectrum_mode &&
-                (opts.spectrum.fill.value == SpectrumFill::Freq ||
-                 opts.spectrum.fill.value == SpectrumFill::FreqReverse);
-            if opts.display.palette.value != last_palette ||
-                    frequency_ramp_palette != last_frequency_ramp_palette ||
-                    first {
+            if opts.display.palette.value != last_palette || first {
                 write_waterfall_palette(
                     opts.display.palette.value,
                     &mut display,
-                    frequency_ramp_palette,
                 );
                 last_palette = opts.display.palette.value;
-                last_frequency_ramp_palette = frequency_ramp_palette;
             }
 
             let (menu_x, menu_y) = if on_help_page {
@@ -652,7 +519,7 @@ fn main() -> ! {
                 // Redraw visible menus on 3D swaps, but avoid the old unconditional
                 // erase/redraw loop when no menu is visible.
                 let menu_invalidated_by_3d_swap =
-                    view_3d && framebuffer_swapped && menu_visible;
+                    framebuffer_swapped && menu_visible;
                 let menu_visibility_changed =
                     menu_visible != menu_slot.is_some();
                 if first || menu_changed || menu_visibility_changed ||
@@ -667,14 +534,6 @@ fn main() -> ! {
                         *menu_slot = Some((
                             opts.clone(), menu_x, menu_y, menu_hash));
                     }
-                } else if menu_visible && !view_3d {
-                    // In the beam-raced 2D modes, framebuffer persistence also
-                    // decays UI pixels. Refresh the unchanged visible menu as the
-                    // original renderer did; unlike a state change, this needs no
-                    // erase pass. In 3D, the menu is stable in the front buffer,
-                    // so redundant refresh traffic remains disabled.
-                    draw_menu(
-                        &mut display, &opts, menu_x, menu_y, ui_hue).ok();
                 }
                 if draw_options || on_help_page || first || framebuffer_swapped {
                     draw::draw_name(
@@ -737,8 +596,7 @@ fn main() -> ! {
                     let mut app = app.borrow_ref_mut(cs);
                     app.ui.opts = Opts::default();
                     app.ui.opts.misc.rotation.value = modeline.rotate.clone();
-                    last_valid_page = Page::Waterfall;
-                    sanitize_options(&mut app.ui.opts, &mut last_valid_page);
+                    sanitize_options(&mut app.ui.opts);
                     if let Some(ref mut flash_persist) = flash_persist_opt {
                         flash_persist.erase_all().unwrap();
                     }
@@ -750,29 +608,22 @@ fn main() -> ! {
             // VSync, so the next front buffer always contains a complete menu.
             spectro.flags().write(|w| unsafe {
                 w.enable().bit(!on_help_page);
-                w.phosphor().bit(
-                    !spectrum_mode
-                        && opts.histo.view.value == ViewMode::TwoD
-                        && opts.histo.style.value == RenderStyle::Phosphor,
-                );
+                w.phosphor().bit(false);
                 w.axes().bit(opts.display.axes.value == OnOff::On);
-                w.input_ch().bits(opts.sonoro.input.value.hw_index());
+                w.input_ch().bits(opts.waterfall.input.value.hw_index());
                 w.view_3d().bit(renderer_3d_enabled);
-                w.spectrum_mode().bit(spectrum_mode);
+                w.spectrum_mode().bit(false);
                 w.display_ack().bit(display_buffer)
             });
             spectro
                 .gain()
-                .write(|w| unsafe { w.value().bits(opts.sonoro.gain.value) });
+                .write(|w| unsafe { w.value().bits(opts.waterfall.gain.value) });
             spectro
                 .range()
-                .write(|w| unsafe { w.value().bits(opts.sonoro.range.value.hw_index()) });
+                .write(|w| unsafe { w.value().bits(opts.waterfall.range.value.hw_index()) });
             spectro
                 .rate()
-                .write(|w| unsafe { w.value().bits(opts.sonoro.rate.value.hw_index()) });
-            spectro
-                .persistence()
-                .write(|w| unsafe { w.value().bits(opts.histo.persist.value.hw_index()) });
+                .write(|w| unsafe { w.value().bits(opts.waterfall.rate.value.hw_index()) });
             spectro
                 .hue()
                 .write(|w| unsafe { w.value().bits(opts.display.hue.value) });
@@ -786,9 +637,9 @@ fn main() -> ! {
                 w.rotation().bits(opts.misc.rotation.value as u8)
             });
             let (projection_x, projection_y) = projection_matrix(
-                opts.histo.rot_x.value,
-                opts.histo.rot_y.value,
-                opts.histo.rot_z.value,
+                opts.view.rot_x.value,
+                opts.view.rot_y.value,
+                opts.view.rot_z.value,
             );
             spectro.projection_x().write(|w| unsafe {
                 w.frequency().bits(projection_x[0] as u16);
@@ -801,17 +652,7 @@ fn main() -> ! {
                 w.time().bits(projection_y[2] as u16)
             });
             spectro.config_3d().write(|w| unsafe {
-                w.quality().bits(opts.histo.quality.value.hw_index())
-            });
-            spectro.spectrum_config().write(|w| unsafe {
-                w.style().bit(opts.spectrum.spectrum_style.value.hw_index() != 0);
-                w.bands().bits(opts.spectrum.bands.value.hw_index());
-                w.fill().bits(opts.spectrum.fill.value.hw_index());
-                w.peaks().bits(opts.spectrum.peaks.value.hw_index());
-                w.scale().bit(opts.spectrum.scale.value.hw_index() != 0);
-                w.highlight().bit(
-                    opts.spectrum.highlight.value.hw_index() != 0);
-                w.grid().bit(opts.display.grid.value == OnOff::On)
+                w.quality().bits(opts.view.quality.value.hw_index())
             });
 
             // WATERFALL draws its own plot axes. Keep the general-purpose XBEAM
@@ -821,16 +662,13 @@ fn main() -> ! {
                 w.grid_pixel().bits(0)
             });
 
-            if renderer_3d_enabled {
-                // The 3D view uses explicit double-buffered surfaces. The
-                // gateware pauses persistence in 3D; this write is kept benign
-                // in case that pause is ever relaxed while debugging.
-                persist.set_cleanup();
-            } else {
+            if on_help_page {
                 // Help is a static framebuffer page. Keep decay as slow as
                 // the existing persistence controller allows so it remains
                 // readable until software clears/redraws it on scroll.
-                persist.set_persistence(if on_help_page { 80 } else { 24 });
+                persist.set_persistence(80);
+            } else {
+                persist.set_cleanup();
             }
             first = false;
         }
