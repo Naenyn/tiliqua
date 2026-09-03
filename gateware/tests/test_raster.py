@@ -464,6 +464,130 @@ class ScopeRasterAccuracyTests(unittest.TestCase):
         sim.add_testbench(testbench)
         sim.run()
 
+    def test_monitor_ranges_map_and_clip_to_lane_window(self):
+        """Monitor range indices must honor their voltage endpoints per channel."""
+        from amaranth_future import fixed
+        from tiliqua.raster import PSQ
+
+        m = Module()
+        dut = scope_capture.ColumnCapture()
+        m.submodules.dut = dut
+
+        async def testbench(ctx):
+            ctx.set(dut.active, 1)
+            ctx.set(dut.plot_x_lo, -600)
+            ctx.set(dut.plot_x_hi, 600)
+            ctx.set(dut.scale_x, 5)
+            ctx.set(dut.x_offset, 0)
+            ctx.set(dut.visible[0], 1)
+            for ch in range(1, 4):
+                ctx.set(dut.visible[ch], 0)
+
+            async def push(ramp, volts):
+                flushes = []
+                ctx.set(dut.ramp, fixed.Const(ramp, shape=PSQ))
+                ctx.set(dut.audio[0], fixed.Const(volts / 8.192, shape=PSQ))
+                ctx.set(dut.sample_valid, 1)
+                await ctx.tick()
+                ctx.set(dut.sample_valid, 0)
+                for _ in range(12):
+                    if ctx.get(dut.flush_valid):
+                        flushes.append(ctx.get(dut.flush_word))
+                    await ctx.tick()
+                return flushes
+
+            # scale, vertical offset, input voltage, expected screen Y.
+            # Inputs beyond either endpoint verify that a trace cannot escape
+            # its lane and overwrite neighboring monitor statistics or traces.
+            cases = (
+                (6, 0, 5.0, -80),
+                (6, 0, 8.0, -80),
+                (6, 0, -8.0, 80),
+                (7, 0, 8.0, -64),
+                (7, 0, -8.0, 64),
+                (8, 80, 0.0, 80),
+                (8, 80, 8.0, -48),
+                (8, 80, -2.0, 80),
+                (9, 80, 5.0, -80),
+                (9, 80, 8.0, -80),
+                (9, 80, -1.0, 80),
+            )
+            for scale, offset, volts, expected_y in cases:
+                ctx.set(dut.scale_y[0], scale)
+                ctx.set(dut.y_offset[0], offset)
+                ctx.set(dut.clear, 1)
+                await ctx.tick()
+                ctx.set(dut.clear, 0)
+                await ctx.tick()
+
+                await push(0.99, 0.0)
+                await push(0.00, 0.0)
+                await push(0.01, volts)
+                flushed = await push(0.02, volts)
+                self.assertTrue(flushed)
+                self.assertEqual(
+                    self._unpack_ch0(flushed[-1]),
+                    (expected_y, expected_y),
+                    f"scale {scale}, input {volts} V",
+                )
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()
+
+    def test_column_capture_resumes_mid_sweep_after_invalidation(self):
+        """A slow progressive trace must not wait for another ramp wrap."""
+        from amaranth_future import fixed
+        from tiliqua.raster import PSQ
+
+        m = Module()
+        dut = scope_capture.ColumnCapture()
+        m.submodules.dut = dut
+
+        async def testbench(ctx):
+            ctx.set(dut.plot_x_lo, -600)
+            ctx.set(dut.plot_x_hi, 600)
+            ctx.set(dut.scale_x, 5)
+            ctx.set(dut.x_offset, 0)
+            ctx.set(dut.scale_y[0], 7)
+            ctx.set(dut.y_offset[0], 0)
+            ctx.set(dut.visible[0], 1)
+            for ch in range(1, 4):
+                ctx.set(dut.visible[ch], 0)
+
+            async def push(ramp, volts):
+                flushes = []
+                ctx.set(dut.ramp, fixed.Const(ramp, shape=PSQ))
+                ctx.set(dut.audio[0], fixed.Const(volts / 8.192, shape=PSQ))
+                ctx.set(dut.sample_valid, 1)
+                await ctx.tick()
+                ctx.set(dut.sample_valid, 0)
+                for _ in range(12):
+                    if ctx.get(dut.flush_valid):
+                        flushes.append(ctx.get(dut.flush_word))
+                    await ctx.tick()
+                return flushes
+
+            # Model an overlay invalidation: capture drops while its back bank
+            # is cleared, then rises again with the ramp still in mid-sweep.
+            ctx.set(dut.clear, 1)
+            await ctx.tick()
+            ctx.set(dut.clear, 0)
+            await ctx.tick()
+            ctx.set(dut.active, 1)
+            await ctx.tick()
+
+            await push(0.25, 2.0)
+            flushed = await push(0.27, 2.0)
+            self.assertTrue(flushed)
+            self.assertEqual(self._unpack_ch0(flushed[-1]), (-16, -16))
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()
+
     @staticmethod
     def _packed_ch0(ymin, ymax):
         bits = scope_capture.ENVELOPE_COORD_BITS
@@ -555,6 +679,50 @@ class ScopeRasterAccuracyTests(unittest.TestCase):
                         ctx.get(dut.o.pixel.intensity) == trace_intensity
                     )
                 self.assertTrue(hit, f"trace miss for rotation {rotation.name}")
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6, domain="sync")
+        sim.add_clock(0.8e-6, domain="dvi")
+        sim.add_testbench(testbench)
+        sim.run()
+
+    def test_scope_swap_waits_for_payload_before_acknowledging(self):
+        """The request must be published after its bundled CDC payload.
+
+        The request toggle and bank/generation payload cross independently.
+        Holding the payload stable before publishing the request prevents CDC
+        skew from making the displayed front bank alias the bank being cleared.
+        """
+        m = Module()
+        m.domains.sync = ClockDomain("sync")
+        m.domains.dvi = ClockDomain("dvi")
+        m.submodules.dut = dut = scope_overlay.ScopeTraceOverlay()
+
+        async def testbench(ctx):
+            ctx.set(dut.enable, 1)
+            ctx.set(dut.i.y, -1)
+            ctx.set(dut.i.de, 0)
+
+            for _ in range(scope_capture.MAX_CAPTURE_COLS + 20):
+                if ctx.get(dut.capture_active):
+                    break
+                await ctx.tick("sync")
+            self.assertEqual(ctx.get(dut.capture_active), 1)
+
+            ctx.set(dut.sweep_done, 1)
+            await ctx.tick("sync")
+            ctx.set(dut.sweep_done, 0)
+
+            # Even in vertical blank, the source-domain payload guard plus the
+            # two request synchronizers must delay acknowledgement.
+            dvi_clocks_to_ack = None
+            for _ in range(20):
+                await ctx.tick("dvi")
+                if ctx.get(dut.swap_done):
+                    dvi_clocks_to_ack = _ + 1
+                    break
+            self.assertIsNotNone(dvi_clocks_to_ack)
+            self.assertGreaterEqual(dvi_clocks_to_ack, 6)
 
         sim = Simulator(m)
         sim.add_clock(1e-6, domain="sync")

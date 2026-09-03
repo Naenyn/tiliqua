@@ -13,4 +13,5 @@ hal::impl_scope! {
 #[path = "../../../../rs/handlers_nolog.rs"]
 pub mod handlers;
 pub mod menu_draw;
+pub mod monitor;
 pub mod options;

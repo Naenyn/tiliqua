@@ -1167,6 +1167,8 @@ class _NormScopeTrigger(wiring.Component):
         trig_seen = Signal()
         norm_fire = Signal()
         auto_fire = Signal()
+        free_rearm_ready = Signal(init=1)
+        free_fire = Signal()
         ramp_fire = Signal()
         restarts = Signal(16)
         norm_fire_count = Signal(16)
@@ -1184,7 +1186,8 @@ class _NormScopeTrigger(wiring.Component):
             auto_trigger.enable.eq(self.trigger_auto & ~self.trigger_always),
             auto_trigger.waiting.eq(ramp_at_top & self.capture_active),
             auto_fire.eq(auto_trigger.o & ~self.trigger_always),
-            ramp_fire.eq((self.trigger_always | auto_fire) &
+            free_fire.eq(self.trigger_always & free_rearm_ready),
+            ramp_fire.eq((free_fire | auto_fire) &
                          self.capture_active),
             self.dbg_norm_fire.eq(norm_fire),
             self.dbg_auto_fire.eq(auto_fire),
@@ -1207,6 +1210,10 @@ class _NormScopeTrigger(wiring.Component):
             i.payload.trigger.eq(ramp_fire),
             i.payload.td.eq(td),
         ])
+        with m.If(~self.capture_active):
+            m.d.sync += free_rearm_ready.eq(1)
+        with m.Elif(ramp.i.valid & ramp.i.ready & ramp_at_top & free_fire):
+            m.d.sync += free_rearm_ready.eq(0)
         m.d.comb += [
             self.o.payload.eq(ramp.o.payload),
             self.o.valid.eq(ramp.o.valid),
@@ -1338,9 +1345,46 @@ class NormTriggerTests(unittest.TestCase):
 
         async def testbench(ctx):
             ctx.set(dut.o.ready, 1)
+            previous_restarts = 0
             for n in range(2000):
                 await self._put(ctx, dut, 0.9)
+                restarts = ctx.get(dut.dbg_restarts)
+                if restarts != previous_restarts:
+                    previous_restarts = restarts
+                    # Model the buffer swap/clear generation boundary.
+                    ctx.set(dut.capture_active, 0)
+                    await self._put(ctx, dut, 0.9)
+                    ctx.set(dut.capture_active, 1)
             self.assertGreater(ctx.get(dut.dbg_restarts), 2)
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()
+
+    def test_free_mode_waits_for_buffer_cycle_before_next_restart(self):
+        """A delayed sweep_done must not let FREE wrap before capture clears."""
+        m, dut = self._make_dut(trigger_always=True)
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+
+            while ctx.get(dut.dbg_restarts) == 0:
+                await self._put(ctx, dut, 0.0)
+            first_restart = ctx.get(dut.dbg_restarts)
+
+            while not ctx.get(dut.dbg_ramp_at_top):
+                await self._put(ctx, dut, 0.0)
+            for _ in range(20):
+                await self._put(ctx, dut, 0.0)
+            self.assertEqual(ctx.get(dut.dbg_restarts), first_restart)
+
+            ctx.set(dut.capture_active, 0)
+            await self._put(ctx, dut, 0.0)
+            ctx.set(dut.capture_active, 1)
+            await self._put(ctx, dut, 0.0)
+            await self._put(ctx, dut, 0.0)
+            self.assertGreater(ctx.get(dut.dbg_restarts), first_restart)
 
         sim = Simulator(m)
         sim.add_clock(1e-6)

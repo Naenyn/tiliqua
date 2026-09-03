@@ -124,6 +124,10 @@ def top_level_cli(
                         help="amaranth: emit debug verilog")
     parser.add_argument('--noflatten', action='store_true',
                         help="yosys: don't flatten heirarchy (useful for checking area usage).")
+    parser.add_argument('--seed', type=int, default=None,
+                        help="nextpnr: deterministic placement seed (default: tool default).")
+    parser.add_argument('--timing-strict', action='store_true',
+                        help="nextpnr: fail the build when routed timing is not met.")
     if ila_supported:
         parser.add_argument('--ila', action='store_true',
                             help="debug: add ila to design, program bitstream after build, poll UART for data.")
@@ -296,11 +300,16 @@ def top_level_cli(
 
     if args.action == CliAction.Build:
 
+        nextpnr_opts = "" if args.timing_strict else "--timing-allow-fail"
+        if args.seed is not None:
+            nextpnr_opts += f" --seed {args.seed}"
+        nextpnr_opts = nextpnr_opts.strip()
+
         build_flags = {
             "build_dir": build_path,
             "verbose": args.verbose,
             "debug_verilog": args.debug_verilog,
-            "nextpnr_opts": "--timing-allow-fail",
+            "nextpnr_opts": nextpnr_opts,
             "ecppack_opts": f"--freq 38.8 --compress --bootaddr {args.bootaddr}"
         }
 

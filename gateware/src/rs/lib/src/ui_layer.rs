@@ -1,7 +1,7 @@
 use core::convert::Infallible;
 
 use tiliqua_hal::embedded_graphics::draw_target::DrawTarget;
-use tiliqua_hal::embedded_graphics::geometry::{OriginDimensions, Size};
+use tiliqua_hal::embedded_graphics::geometry::{OriginDimensions, Point, Size};
 use tiliqua_hal::embedded_graphics::Pixel;
 
 use crate::color::HI8;
@@ -73,6 +73,48 @@ impl<const N_WORDS: usize> UiLayer<N_WORDS> {
             self.words[word] &= !(1u32 << bit);
         }
         self.dirty = true;
+    }
+
+    /// Draw only bitmap pixels that changed since the previous snapshot.
+    ///
+    /// This is useful for live framebuffer text: removed glyph pixels are
+    /// explicitly written in `off`, added pixels in `on`, and unchanged areas
+    /// generate no plot traffic. The previous bitmap is updated in place.
+    pub fn draw_diff<D>(
+        &self,
+        previous: &mut Self,
+        target: &mut D,
+        origin: Point,
+        on: HI8,
+        off: HI8,
+    ) -> Result<(), D::Error>
+    where
+        D: DrawTarget<Color = HI8>,
+    {
+        for word_i in 0..N_WORDS {
+            let new_word = self.words[word_i];
+            let mut changed = new_word ^ previous.words[word_i];
+            while changed != 0 {
+                let bit = changed.trailing_zeros() as usize;
+                let pixel_i = word_i * 32 + bit;
+                let y = pixel_i as u32 / self.width;
+                if y < self.height {
+                    let x = pixel_i as u32 % self.width;
+                    let color = if (new_word & (1u32 << bit)) != 0 {
+                        on
+                    } else {
+                        off
+                    };
+                    target.draw_iter(core::iter::once(Pixel(
+                        Point::new(origin.x + x as i32, origin.y + y as i32),
+                        color,
+                    )))?;
+                }
+                changed &= changed - 1;
+            }
+            previous.words[word_i] = new_word;
+        }
+        Ok(())
     }
 }
 

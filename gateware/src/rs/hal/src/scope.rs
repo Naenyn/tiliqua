@@ -20,8 +20,7 @@ pub fn capture_viewport(x_lo: i16, x_hi: i16, xscale: u8) -> (i16, i16) {
     let x_offset = x_lo as i32 - ramp_start_px;
     let ramp_end_px = x_hi as i32 - x_offset;
     let ramp_shift = xscale.saturating_sub(2) as u32;
-    let ramp_end_raw = (ramp_end_px << ramp_shift)
-        .clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+    let ramp_end_raw = (ramp_end_px << ramp_shift).clamp(i16::MIN as i32, i16::MAX as i32) as i16;
     (
         x_offset.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
         ramp_end_raw,
@@ -51,6 +50,12 @@ macro_rules! impl_scope {
                     registers, xscale, px_div_x, px_div_y, fs_up,
                     timebase_frac_bits: 24,
                 }
+            }
+
+            /// Borrow the generated register block for application-specific
+            /// extensions that are not shared by every scope peripheral.
+            pub fn registers(&self) -> &$PACSCOPEX {
+                &self.registers
             }
 
             pub fn set_timebase_frac_bits(&mut self, frac_bits: u8) {
@@ -112,6 +117,13 @@ macro_rules! impl_scope {
                     w.ch2().bit(visible[2]);
                     w.ch3().bit(visible[3])
                 });
+            }
+
+            /// Immediately hide the previous sweep and restart capture into a
+            /// clean display generation. This is required when plot geometry
+            /// or view-specific channel placement changes.
+            pub fn reset_trace(&mut self) {
+                self.registers.trace_reset().write(|w| w.reset().bit(true));
             }
 
             pub fn set_hue(&mut self, hue: u8) {
@@ -202,7 +214,6 @@ mod tests {
         assert_eq!(timebase_increment(125, 5, 1_536_000, 2_000_000, 28), 683);
         assert_eq!(timebase_increment(125, 5, 1_536_000, 500_000, 28), 2731);
     }
-
 
     #[test]
     fn capture_viewport_uses_the_full_visible_width_without_a_tail() {

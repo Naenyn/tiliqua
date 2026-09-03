@@ -37,6 +37,7 @@ class ScopeTraceOverlay(wiring.Component):
             "o": Out(ScanPixel),
             # Capture interface, sync domain.
             "enable": In(1),
+            "invalidate": In(1),
             "flush_valid": In(1),
             "flush_col": In(range(MAX_CAPTURE_COLS)),
             "flush_word": In(unsigned(ENVELOPE_WORD_BITS)),
@@ -79,6 +80,8 @@ class ScopeTraceOverlay(wiring.Component):
         back_bank = Signal(init=1)
         clear_col = Signal(range(MAX_CAPTURE_COLS))
         swap_bank = Signal()
+        capture_generation = Signal()
+        swap_generation = Signal()
         swap_request = Signal()
         swap_ack_dvi = Signal()
         swap_ack_sync = Signal()
@@ -108,7 +111,9 @@ class ScopeTraceOverlay(wiring.Component):
                             wp.addr.eq(clear_col),
                             wp.data.eq(ENVELOPE_SENTINEL),
                         ]
-                with m.If(~self.enable):
+                with m.If(self.invalidate):
+                    m.d.sync += clear_col.eq(0)
+                with m.Elif(~self.enable):
                     m.next = "DISABLED"
                 with m.Elif(clear_col == MAX_CAPTURE_COLS - 1):
                     m.next = "ARM"
@@ -117,21 +122,38 @@ class ScopeTraceOverlay(wiring.Component):
 
             with m.State("ARM"):
                 m.d.comb += self.capture_clear.eq(1)
-                with m.If(~self.enable):
+                with m.If(self.invalidate):
+                    m.d.sync += clear_col.eq(0)
+                    m.next = "CLEAR"
+                with m.Elif(~self.enable):
                     m.next = "DISABLED"
                 with m.Else():
                     m.next = "CAPTURE"
 
             with m.State("CAPTURE"):
                 m.d.comb += self.capture_active.eq(self.enable)
-                with m.If(~self.enable):
+                with m.If(self.invalidate):
+                    m.d.sync += clear_col.eq(0)
+                    m.next = "CLEAR"
+                with m.Elif(~self.enable):
                     m.next = "DISABLED"
                 with m.Elif(self.sweep_done):
                     m.d.sync += [
                         swap_bank.eq(back_bank),
-                        swap_request.eq(~swap_request),
+                        swap_generation.eq(capture_generation),
                     ]
-                    m.next = "WAIT_SWAP"
+                    m.next = "SETTLE_SWAP"
+
+            with m.State("SETTLE_SWAP"):
+                # Bundled-data CDC: publish the request only after its bank and
+                # generation payload has been stable for two complete sync
+                # clocks.  The DVI request synchronizer therefore cannot win
+                # the race against the independently synchronized payload.
+                m.next = "PUBLISH_SWAP"
+
+            with m.State("PUBLISH_SWAP"):
+                m.d.sync += swap_request.eq(~swap_request)
+                m.next = "WAIT_SWAP"
 
             with m.State("WAIT_SWAP"):
                 # Finish an outstanding swap even if display is disabled, so
@@ -147,22 +169,43 @@ class ScopeTraceOverlay(wiring.Component):
                     with m.Else():
                         m.next = "DISABLED"
 
+        # Tag completed sweeps with the configuration generation in which they
+        # were captured. An old swap already pending during invalidation can
+        # then be acknowledged without exposing stale trace data.
+        with m.If(self.invalidate):
+            m.d.sync += capture_generation.eq(~capture_generation)
+
         # ---- dvi-domain atomic bank selection ------------------------------
         swap_request_dvi = Signal()
         swap_bank_dvi = Signal()
+        swap_generation_dvi = Signal()
+        capture_generation_dvi = Signal()
         m.submodules.swap_request_ff = FFSynchronizer(
             swap_request, swap_request_dvi, o_domain="dvi")
         m.submodules.swap_bank_ff = FFSynchronizer(
             swap_bank, swap_bank_dvi, o_domain="dvi")
+        m.submodules.swap_generation_ff = FFSynchronizer(
+            swap_generation, swap_generation_dvi, o_domain="dvi")
+        m.submodules.capture_generation_ff = FFSynchronizer(
+            capture_generation, capture_generation_dvi, o_domain="dvi")
 
         front_bank = Signal()
+        front_valid = Signal()
+        generation_seen = Signal()
         # Any point in vertical blank is safe. Restricting swaps to the vsync
         # edge made a sweep completed just after that edge wait almost another
         # full frame, which was visible as inferior update responsiveness.
-        with m.If((self.i.y < 0) &
-                  (swap_ack_dvi != swap_request_dvi)):
+        with m.If(generation_seen != capture_generation_dvi):
+            m.d.dvi += [
+                generation_seen.eq(capture_generation_dvi),
+                front_valid.eq(0),
+            ]
+        with m.Elif((self.i.y < 0) &
+                    (swap_ack_dvi != swap_request_dvi)):
             m.d.dvi += [
                 front_bank.eq(swap_bank_dvi),
+                front_valid.eq(
+                    swap_generation_dvi == capture_generation_dvi),
                 swap_ack_dvi.eq(swap_request_dvi),
             ]
 
@@ -259,12 +302,14 @@ class ScopeTraceOverlay(wiring.Component):
         logical_y_geometry = Signal(signed(16))
         plot_x_lo_geometry = Signal(signed(16))
         front_bank_geometry = Signal()
+        front_valid_geometry = Signal()
         m.d.dvi += [
             scan_geometry.eq(self.i),
             logical_x_geometry.eq(logical_x),
             logical_y_geometry.eq(logical_y),
             plot_x_lo_geometry.eq(plot_x_lo_dvi),
             front_bank_geometry.eq(front_bank),
+            front_valid_geometry.eq(front_valid),
         ]
 
         col_full = Signal(signed(17))
@@ -283,12 +328,14 @@ class ScopeTraceOverlay(wiring.Component):
         col_addr = Signal(range(MAX_CAPTURE_COLS))
         in_plot_addr = Signal()
         front_bank_addr = Signal()
+        front_valid_addr = Signal()
         m.d.dvi += [
             scan_addr.eq(scan_geometry),
             logical_y_addr.eq(logical_y_geometry),
             col_addr.eq(col_full),
             in_plot_addr.eq(in_plot),
             front_bank_addr.eq(front_bank_geometry),
+            front_valid_addr.eq(front_valid_geometry),
         ]
         for rp in read_ports:
             m.d.comb += [
@@ -301,6 +348,7 @@ class ScopeTraceOverlay(wiring.Component):
         logical_y_data = Signal(signed(16))
         in_plot_data = Signal()
         front_bank_data = Signal()
+        front_valid_data = Signal()
         back_bank_data = Signal()
         progressive_data = Signal()
         capture_max_col_data = Signal(range(MAX_CAPTURE_COLS))
@@ -311,6 +359,7 @@ class ScopeTraceOverlay(wiring.Component):
             logical_y_data.eq(logical_y_addr),
             in_plot_data.eq(in_plot_addr),
             front_bank_data.eq(front_bank_addr),
+            front_valid_data.eq(front_valid_addr),
             back_bank_data.eq(back_bank_dvi),
             progressive_data.eq(progressive_dvi),
             capture_max_col_data.eq(capture_max_col_dvi),
@@ -326,11 +375,17 @@ class ScopeTraceOverlay(wiring.Component):
         logical_y_compare = Signal(signed(16))
         in_plot_compare = Signal()
         display_bank = Signal()
-        m.d.comb += display_bank.eq(
-            Mux(progressive_data & capture_progress_valid_data &
-                (col_data <= capture_max_col_data),
-                back_bank_data, front_bank_data)
-        )
+        display_word_valid = Signal()
+        progressive_column = Signal()
+        m.d.comb += [
+            progressive_column.eq(
+                progressive_data & capture_progress_valid_data &
+                (col_data <= capture_max_col_data)),
+            display_bank.eq(Mux(progressive_column,
+                                back_bank_data, front_bank_data)),
+            display_word_valid.eq(progressive_column | front_valid_data),
+        ]
+        display_word_valid_compare = Signal()
         m.d.dvi += [
             front_word.eq(Mux(display_bank,
                               read_ports[1].data,
@@ -338,6 +393,7 @@ class ScopeTraceOverlay(wiring.Component):
             scan_compare.eq(scan_data),
             logical_y_compare.eq(logical_y_data),
             in_plot_compare.eq(in_plot_data),
+            display_word_valid_compare.eq(display_word_valid),
         ]
 
         channel_hits = Signal(self.n_channels)
@@ -349,7 +405,8 @@ class ScopeTraceOverlay(wiring.Component):
             ymax = front_word[
                 lo + 1 + ENVELOPE_COORD_BITS:
                 lo + 1 + 2 * ENVELOPE_COORD_BITS].as_signed()
-            channel_hit = enable_dvi & in_plot_compare & valid & \
+            channel_hit = enable_dvi & in_plot_compare & \
+                display_word_valid_compare & valid & \
                 (logical_y_compare >= ymin) & \
                 (logical_y_compare <= ymax) & \
                 (intensity_dvi[ch] > 0)

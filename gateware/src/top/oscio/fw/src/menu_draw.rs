@@ -1,13 +1,13 @@
+use opts::Options;
 use tiliqua_hal::embedded_graphics::{
     mono_font::{ascii::FONT_9X15, ascii::FONT_9X15_BOLD, MonoTextStyle},
+    prelude::*,
     primitives::{Line, PrimitiveStyleBuilder, Rectangle},
     text::{Alignment, Text},
-    prelude::*,
 };
 use tiliqua_lib::color::HI8;
-use opts::Options;
 
-use crate::options::Page;
+use crate::options::{Opts, Page, ViewMode};
 
 const VSPACE: i32 = 18;
 const BORDER: i32 = 1;
@@ -52,13 +52,39 @@ const CHAN34_ROWS: &[MenuRow] = &[
     MenuRow::Opt(5, "enabled"),
 ];
 
+const SCOPE_HOME_ROWS: &[MenuRow] = &[
+    MenuRow::Opt(0, "mode"),
+    MenuRow::Opt(1, "time/div"),
+    MenuRow::Opt(2, "acquire"),
+];
+
+const MONITOR_HOME_ROWS: &[MenuRow] = &[
+    MenuRow::Opt(0, "mode"),
+    MenuRow::Opt(3, "time/div"),
+    MenuRow::Opt(4, "max freq"),
+];
+
+const MONITOR_CIRCULAR_HOME_ROWS: &[MenuRow] = &[
+    MenuRow::Opt(0, "mode"),
+    MenuRow::Opt(3, "time/div"),
+    MenuRow::Opt(4, "max freq"),
+    MenuRow::Opt(5, "channels"),
+];
+
 const SCOPE_ROWS: &[MenuRow] = &[
-    MenuRow::Opt(0, "timebase"),
-    MenuRow::Opt(1, "trigger"),
-    MenuRow::Opt(2, "trigger ch"),
-    MenuRow::Opt(3, "trig lvl"),
-    MenuRow::Opt(4, "trig filter"),
-    MenuRow::Opt(5, "acquire"),
+    MenuRow::Header("Trigger"),
+    MenuRow::Opt(0, "type"),
+    MenuRow::Opt(1, "source"),
+    MenuRow::Opt(2, "level"),
+    MenuRow::Opt(3, "filter"),
+];
+
+const MONITOR_ROWS: &[MenuRow] = &[
+    MenuRow::Header("Ranges"),
+    MenuRow::Opt(0, "CH1"),
+    MenuRow::Opt(1, "CH2"),
+    MenuRow::Opt(2, "CH3"),
+    MenuRow::Opt(3, "CH4"),
 ];
 
 const DISPLAY_ROWS: &[MenuRow] = &[
@@ -69,30 +95,39 @@ const DISPLAY_ROWS: &[MenuRow] = &[
     MenuRow::Opt(4, "palette"),
 ];
 
-const MENU_ROWS: &[MenuRow] = &[
+const MONITOR_DISPLAY_ROWS: &[MenuRow] = &[
+    MenuRow::Opt(2, "intensity"),
+    MenuRow::Opt(3, "hue"),
+    MenuRow::Opt(4, "palette"),
+];
+
+const SYSTEM_ROWS: &[MenuRow] = &[
     MenuRow::Opt(0, "ui hue"),
     MenuRow::Opt(1, "hide ui"),
     MenuRow::Opt(2, "edit hide"),
+    MenuRow::Opt(3, "rotation"),
+    MenuRow::Opt(4, "save"),
+    MenuRow::Opt(5, "reset"),
 ];
 
-const MISC_ROWS: &[MenuRow] = &[
-    MenuRow::Opt(0, "rotation"),
-    MenuRow::Opt(1, "save"),
-    MenuRow::Opt(2, "reset"),
-];
+const HELP_ROWS: &[MenuRow] = &[MenuRow::Opt(0, "scroll")];
 
-const HELP_ROWS: &[MenuRow] = &[
-    MenuRow::Opt(0, "scroll"),
-];
-
-fn rows_for_page(page: Page) -> &'static [MenuRow] {
+fn rows_for_page(page: Page, mode: ViewMode, circular_display: bool) -> &'static [MenuRow] {
     match page {
+        Page::Mode => match (mode, circular_display) {
+            (ViewMode::Scope, _) => SCOPE_HOME_ROWS,
+            (ViewMode::Monitor, false) => MONITOR_HOME_ROWS,
+            (ViewMode::Monitor, true) => MONITOR_CIRCULAR_HOME_ROWS,
+        },
         Page::Chan12 => CHAN12_ROWS,
         Page::Chan34 => CHAN34_ROWS,
         Page::Scope => SCOPE_ROWS,
-        Page::Display => DISPLAY_ROWS,
-        Page::Menu => MENU_ROWS,
-        Page::Misc => MISC_ROWS,
+        Page::Monitor => MONITOR_ROWS,
+        Page::Display => match mode {
+            ViewMode::Scope => DISPLAY_ROWS,
+            ViewMode::Monitor => MONITOR_DISPLAY_ROWS,
+        },
+        Page::System => SYSTEM_ROWS,
         Page::Help => HELP_ROWS,
     }
 }
@@ -107,17 +142,17 @@ fn row_spacing(page: Page) -> i32 {
 }
 
 /// Draw the scope menu with an opaque bordered panel and a row-sized separator.
-pub fn draw_scope_menu<D, O>(
+pub fn draw_scope_menu<D>(
     d: &mut D,
-    opts: &O,
+    opts: &Opts,
     page: Page,
+    circular_display: bool,
     hue: u8,
     menu_w: u32,
     menu_h: u32,
 ) -> Result<(), D::Error>
 where
     D: DrawTarget<Color = HI8>,
-    O: Options,
 {
     let font_white = MonoTextStyle::new(&FONT_9X15_BOLD, HI8::new(hue, 15));
     let font_grey = MonoTextStyle::new(&FONT_9X15, HI8::new(hue, 10));
@@ -128,7 +163,7 @@ where
         .stroke_width(1)
         .build();
 
-    let rows = rows_for_page(page);
+    let rows = rows_for_page(page, opts.mode.view.value, circular_display);
     let row_spacing = row_spacing(page);
     let y0 = CONTENT_Y0;
     let page_hl = matches!((opts.selected(), opts.modify()), (None, _));
@@ -149,10 +184,7 @@ where
         // fixed-size backing bitmap.
         Line::new(
             Point::new(SEP_X, y0 - 10),
-            Point::new(
-                SEP_X,
-                y0 - 13 + row_spacing * rows.len() as i32,
-            ),
+            Point::new(SEP_X, y0 - 13 + row_spacing * rows.len() as i32),
         )
         .into_styled(stroke)
         .draw(d)?;
@@ -173,7 +205,7 @@ where
             font_white,
             Alignment::Right,
         )
-            .draw(d)?;
+        .draw(d)?;
     }
 
     let mut row_y = y0;
@@ -189,7 +221,7 @@ where
                     font_header,
                     Alignment::Left,
                 )
-                    .draw(d)?;
+                .draw(d)?;
                 row_y += row_spacing;
             }
             MenuRow::Opt(idx, label) => {

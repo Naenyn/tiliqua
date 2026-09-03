@@ -10,6 +10,7 @@ from amaranth_future import fixed
 
 from .. import dsp
 from . import PSQ, PSQ_BASE_FBITS, psq_from_volts
+from .frequency_detector import NativeFrequencyDetector
 from .scope_capture import MAX_CAPTURE_COLS, ENVELOPE_WORD_BITS, ColumnCapture
 
 
@@ -102,12 +103,29 @@ class DigitalScopePeripheral(wiring.Component):
     class RampEnd(csr.Register, access="w"):
         value: csr.Field(csr.action.W, unsigned(16))
 
-    def __init__(self, n_channels=4, fs=48000):
+    class TraceReset(csr.Register, access="w"):
+        reset: csr.Field(csr.action.W, unsigned(1))
+
+    class MonitorSnapshot(csr.Register, access="w"):
+        snapshot: csr.Field(csr.action.W, unsigned(1))
+
+    class MonitorPeriod(csr.Register, access="r"):
+        period: csr.Field(csr.action.R, unsigned(NativeFrequencyDetector.PERIOD_BITS))
+
+    class MonitorStatus(csr.Register, access="r"):
+        valid: csr.Field(csr.action.R, unsigned(4))
+        rapid: csr.Field(csr.action.R, unsigned(4))
+
+    class MonitorFs(csr.Register, access="r"):
+        fs: csr.Field(csr.action.R, unsigned(32))
+
+    def __init__(self, n_channels=4, fs=48000, native_fs=None):
 
         self.fs = fs
+        self.native_fs = native_fs if native_fs is not None else fs
         self.n_channels = n_channels
 
-        regs = csr.Builder(addr_width=7, data_width=8)
+        regs = csr.Builder(addr_width=8, data_width=8)
         self._flags          = regs.add("flags",          self.Flags(),         offset=0x0)
         self._hue            = regs.add("hue",            self.Hue(),           offset=0x4)
         self._intensity      = regs.add("intensity",      self.Intensity(),     offset=0x8)
@@ -129,11 +147,20 @@ class DigitalScopePeripheral(wiring.Component):
         self._channel_en      = regs.add("channel_en",    self.ChannelEnable(),  offset=0x54)
         self._display_mode    = regs.add("display_mode",   self.DisplayMode(),     offset=0x74)
         self._ramp_end        = regs.add("ramp_end",       self.RampEnd(),          offset=0x78)
+        self._trace_reset     = regs.add("trace_reset",    self.TraceReset(),       offset=0x7C)
+        self._monitor_snapshot = regs.add("monitor_snapshot", self.MonitorSnapshot(), offset=0x80)
+        self._monitor_period = [
+            regs.add(f"monitor_period{ch}", self.MonitorPeriod(), offset=0x84 + ch * 4)
+            for ch in range(self.n_channels)
+        ]
+        self._monitor_status = regs.add("monitor_status", self.MonitorStatus(), offset=0x94)
+        self._monitor_fs = regs.add("monitor_fs", self.MonitorFs(), offset=0x98)
 
         self._bridge = csr.Bridge(regs.as_memory_map())
         super().__init__({
             "i": In(stream.Signature(data.ArrayLayout(PSQ, self.n_channels))),
-            "bus": In(csr.Signature(addr_width=7, data_width=8)),
+            "native_i": In(stream.Signature(data.ArrayLayout(dsp.ASQ, self.n_channels))),
+            "bus": In(csr.Signature(addr_width=8, data_width=8)),
             "soc_en": Out(unsigned(1), init=1),
             "capture_active": In(1),
             "capture_clear": In(1),
@@ -147,6 +174,7 @@ class DigitalScopePeripheral(wiring.Component):
             "clean_o": Out(1),
             "capture_max_col_o": Out(range(MAX_CAPTURE_COLS)),
             "capture_progress_valid_o": Out(1),
+            "trace_reset_o": Out(1),
             "hue_o": Out(unsigned(4)).array(self.n_channels),
             "intensity_o": Out(unsigned(4)).array(self.n_channels),
         })
@@ -163,7 +191,7 @@ class DigitalScopePeripheral(wiring.Component):
         trigger_auto = Signal()
 
         scale_x = Signal(unsigned(4))
-        scale_y = Array(Signal(unsigned(3)) for _ in range(self.n_channels))
+        scale_y = Array(Signal(unsigned(4)) for _ in range(self.n_channels))
         x_offset = Signal(signed(16))
         y_offset = Array(Signal(signed(16)) for _ in range(self.n_channels))
         hue = Array(Signal(unsigned(4)) for _ in range(self.n_channels))
@@ -187,6 +215,43 @@ class DigitalScopePeripheral(wiring.Component):
         m.d.comb += self._pixels_per_volt.f.pixels_per_volt.r_data.eq(
             psq_from_volts(1).reshape(PSQ_BASE_FBITS))
         m.d.comb += self._fs.f.fs.r_data.eq(self.fs)
+        m.d.comb += self._monitor_fs.f.fs.r_data.eq(self.native_fs)
+
+        # Period measurement observes the calibrated native-rate stream, not
+        # the display reconstruction/interpolation path. Its stream input is a
+        # nonblocking tap, so accepting a sample here cannot stall audio thru.
+        m.submodules.frequency_detector = frequency_detector = NativeFrequencyDetector(
+            shape=dsp.ASQ,
+            n_channels=self.n_channels,
+        )
+        m.d.comb += [
+            self.native_i.ready.eq(1),
+            frequency_detector.tick.eq(self.native_i.valid & self.native_i.ready),
+        ]
+        for ch in range(self.n_channels):
+            m.d.comb += frequency_detector.sample[ch].eq(self.native_i.payload[ch])
+
+        monitor_period_snapshot = Array(
+            Signal(unsigned(NativeFrequencyDetector.PERIOD_BITS),
+                   name=f"monitor_period_snapshot{ch}")
+            for ch in range(self.n_channels))
+        monitor_valid_snapshot = Signal(self.n_channels)
+        monitor_rapid_snapshot = Signal(self.n_channels)
+        for ch in range(self.n_channels):
+            m.d.comb += self._monitor_period[ch].f.period.r_data.eq(
+                monitor_period_snapshot[ch])
+        m.d.comb += [
+            self._monitor_status.f.valid.r_data.eq(monitor_valid_snapshot),
+            self._monitor_status.f.rapid.r_data.eq(monitor_rapid_snapshot),
+        ]
+        with m.If(self._monitor_snapshot.f.snapshot.w_stb
+                  & self._monitor_snapshot.f.snapshot.w_data):
+            for ch in range(self.n_channels):
+                m.d.sync += [
+                    monitor_period_snapshot[ch].eq(frequency_detector.period[ch]),
+                    monitor_valid_snapshot[ch].eq(frequency_detector.valid[ch]),
+                    monitor_rapid_snapshot[ch].eq(frequency_detector.rapid[ch]),
+                ]
 
         m.submodules.isplit4 = self.isplit4
 
@@ -216,6 +281,8 @@ class DigitalScopePeripheral(wiring.Component):
         trigger_sample_tick = Signal()
         norm_fire = Signal()
         auto_fire = Signal()
+        free_rearm_ready = Signal(init=1)
+        free_fire = Signal()
         ramp_fire = Signal()
 
         m.submodules.auto_trigger = auto_trigger = dsp.AutoTrigger(
@@ -235,11 +302,14 @@ class DigitalScopePeripheral(wiring.Component):
             auto_trigger.waiting.eq(
                 ramp_at_top & self.capture_active & self.soc_en),
             auto_fire.eq(auto_trigger.o & ~trigger_always),
-            # The buffer controller briefly drops capture_active while a
-            # completed sweep is swapped/cleared. Keep Ramp parked at top
-            # during that interval; otherwise it can restart unseen and the
-            # next capture misses an entire slow sweep.
-            ramp_fire.eq((trigger_always | auto_fire) &
+            # FREE may restart once per buffer-capture generation. sweep_done
+            # is pipelined with its final column, so capture_active does not
+            # drop until a few clocks after Ramp first reaches the endpoint.
+            # Without this latch Ramp can wrap during that gap; the subsequent
+            # capture clear erases the observed wrap and the whole next slow
+            # sweep is ignored.
+            free_fire.eq(trigger_always & free_rearm_ready),
+            ramp_fire.eq((free_fire | auto_fire) &
                          self.capture_active & self.soc_en),
         ]
         trig_sample = Signal(shape=PSQ)
@@ -259,6 +329,14 @@ class DigitalScopePeripheral(wiring.Component):
             i.payload.trigger.eq(ramp_fire),
             i.payload.td.eq(timebase),
         ])
+
+        # The swap/clear controller briefly deasserts capture_active between
+        # generations. Rearm FREE there, then consume the permission only when
+        # Ramp actually accepts the endpoint trigger.
+        with m.If(~self.capture_active | ~self.soc_en):
+            m.d.sync += free_rearm_ready.eq(1)
+        with m.Elif(ramp.i.valid & ramp.i.ready & ramp_at_top & free_fire):
+            m.d.sync += free_rearm_ready.eq(0)
 
         m.submodules.rampsplit4 = rampsplit4 = dsp.Split(
             self.n_channels, replicate=True, source=ramp.o, shape=PSQ)
@@ -306,9 +384,12 @@ class DigitalScopePeripheral(wiring.Component):
             self.clean_o.eq(clean),
             self.capture_max_col_o.eq(capture.max_col),
             self.capture_progress_valid_o.eq(capture_progress_valid),
+            self.trace_reset_o.eq(
+                self._trace_reset.f.reset.w_stb &
+                self._trace_reset.f.reset.w_data),
         ]
 
-        with m.If(self.capture_clear | self.swap_done):
+        with m.If(self.capture_clear | self.swap_done | self.trace_reset_o):
             m.d.sync += capture_progress_valid.eq(0)
         with m.Elif(capture.flush_valid):
             m.d.sync += capture_progress_valid.eq(1)

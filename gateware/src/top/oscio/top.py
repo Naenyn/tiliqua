@@ -5,8 +5,10 @@
 """
 OSCIO is a four-channel digital oscilloscope for Eurorack signals.
 
-All four analog inputs are displayed together. Each input is also passed
-straight through to the matching output with no USB or delay-line processing.
+All four analog inputs are displayed together. A voltage-monitor view presents
+each input in its own history lane with level, low/high, peak-to-peak, period,
+and frequency measurements. Each input is also passed straight through to the
+matching output with no USB or delay-line processing.
 
     .. code-block:: text
 
@@ -21,10 +23,30 @@ Turn the encoder to move through the menu. Press it to select a page or
 parameter, then turn to edit. The menu hides automatically; turning resumes
 the current edit, while pressing reopens it in navigation mode.
 
-CHANNEL 1-2 and CHANNEL 3-4 set each trace's vertical offset, volts per
-division, and visibility.
+OSCIO is the first menu page, with mode as its first option. In scope mode it
+also provides time/div and acquire. CHANNEL 1-2 and CHANNEL 3-4 then set each
+trace's vertical offset, volts per division, and visibility. The SCOPE page's
+Trigger section contains trigger type, source, level, and filter. These channel
+and trigger pages are omitted from menu navigation in monitor mode.
 
-OSCIO sets time/div, trigger mode, source, level, filter, and acquisition.
+In monitor mode the OSCIO page provides time/div and max freq. On a 720x720
+display it also provides channels, which switches between CH 1-2 and CH 3-4;
+rectangular displays show all four and omit that option. The MONITOR page's
+Ranges section gives every channel an independent full-window voltage range:
+-5..+5 V, -10..+10 V, 0..+10 V, or 0..+5 V.
+
+Monitor is intended for CV, gates, envelopes, and LFOs. Its max freq defaults
+to 20 Hz and may be set from 0.25 Hz through 20 Hz. Monitor runs continuously
+without waiting for a trigger, clips each trace to its selected lane range, and
+measures the calibrated input before display
+interpolation or cleanup. Faster repeating signals are identified in the
+statistics panel and replaced by an indicator in the history lanes, while
+their voltage and frequency statistics remain visible. A trace must stay below
+max freq for three seconds before it appears. Once visible, it tolerates brief
+excursions above max freq, but is hidden after one second above the limit or
+immediately at 1.5 times the limit (30 Hz when max freq is 20 Hz).
+Frequency and period appear only after OSCIO observes a repeatable rising cycle;
+static, very small, or irregular signals display -- instead of a false reading.
 
 Rising and falling are strict trigger modes: each sweep waits for the selected
 channel to cross trig lvl in the chosen direction. If no crossing arrives, the
@@ -43,10 +65,10 @@ Use acquire raw when diagnosing the input itself and you want OSCIO to show the
 calibrated samples without edge cleanup. Raw may make sharp transitions look
 rougher or spikier, so it is usually less useful as the everyday display mode.
 
-DISPLAY sets grid style, grid and trace intensity, trace hue, and graph
-palette. MENU changes the overlay hue, automatic hide delay, and whether that
-delay remains active while editing. MISC contains screen rotation and settings
-save/reset actions. HELP is the final menu page.
+DISPLAY sets trace intensity, trace hue, and graph palette. Scope mode also
+shows grid style and grid intensity; those unused controls are omitted in
+monitor mode. SYSTEM contains overlay hue, automatic hide behavior, rotation,
+and settings save/reset actions. HELP is the final menu page.
 
 On this page, turn the encoder to scroll. Select the HELP page title to return
 to the preceding menu pages.
@@ -75,7 +97,7 @@ class ScopeSoc(TiliquaSoc):
     help_visible_lines = 28
 
     bitstream_help = BitstreamHelp(
-        brief="Four-channel triggered oscilloscope with audio thru.",
+        brief="Four-channel oscilloscope and CV/LFO monitor with audio thru.",
         io_left=['CH1 in', 'CH2 in', 'CH3 in', 'CH4 in',
                  'CH1 thru', 'CH2 thru', 'CH3 thru', 'CH4 thru'],
         io_right=['menu / adjust', '', 'video out', '', '', '']
@@ -126,7 +148,9 @@ class ScopeSoc(TiliquaSoc):
         self.n_upsample = 8 if self.clock_settings.audio_clock.is_192khz() else 32
 
         self.scope_periph = DigitalScopePeripheral(
-            fs=self.clock_settings.audio_clock.fs() * self.n_upsample)
+            fs=self.clock_settings.audio_clock.fs() * self.n_upsample,
+            native_fs=self.clock_settings.audio_clock.fs(),
+        )
         self.csr_decoder.add(self.scope_periph.bus, addr=self.scope_periph_base, name="scope_periph")
 
         self.csr_decoder.add(self.overlay_periph.bus, addr=self.overlay_periph_base, name="overlay_periph")
@@ -142,6 +166,7 @@ class ScopeSoc(TiliquaSoc):
 
         m.d.comb += [
             self.scope_trace.enable.eq(self.scope_periph.soc_en),
+            self.scope_trace.invalidate.eq(self.scope_periph.trace_reset_o),
             self.scope_trace.flush_valid.eq(self.scope_periph.flush_valid),
             self.scope_trace.flush_col.eq(self.scope_periph.flush_col),
             self.scope_trace.flush_word.eq(self.scope_periph.flush_word),
@@ -171,6 +196,7 @@ class ScopeSoc(TiliquaSoc):
         pmod0 = self.pmod0_periph.pmod
 
         wiring.connect(m, pmod0.o_cal, pmod0.i_cal)
+        dsp.connect_peek(m, pmod0.o_cal, self.scope_periph.native_i)
 
         # The audio-domain crossing can expose at most its four-frame FIFO as
         # a burst, while this display chain completes each frame well before
@@ -181,7 +207,6 @@ class ScopeSoc(TiliquaSoc):
             shape=data.ArrayLayout(dsp.ASQ, 4), depth=16)
 
         dsp.connect_peek(m, pmod0.o_cal, plot_fifo.i)
-
         # The four input channels share reconstruction/interpolation arithmetic.
         # Their history and interpolation state remain independent, and both
         # blocks emit channel-aligned bundles. At 192 kHz there are ~312 sync
@@ -206,4 +231,12 @@ class ScopeSoc(TiliquaSoc):
 
 if __name__ == "__main__":
     this_path = os.path.dirname(os.path.realpath(__file__))
-    top_level_cli(ScopeSoc, path=this_path, archiver_callback=lambda archiver: archiver.with_option_storage())
+    top_level_cli(
+        ScopeSoc,
+        path=this_path,
+        argparse_callback=lambda parser: parser.set_defaults(
+            seed=2,
+            timing_strict=True,
+        ),
+        archiver_callback=lambda archiver: archiver.with_option_storage(),
+    )

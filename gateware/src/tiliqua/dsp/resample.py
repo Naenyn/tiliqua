@@ -755,6 +755,7 @@ class MultichannelEdgeAwareResample(wiring.Component):
         have_prev = Signal()
         have_prev_delta = Signal()
         setup_active = Signal()
+        setup_commit = Signal()
         update_active = Signal()
         output_valid = Signal()
         channel = Signal(range(n_channels))
@@ -769,9 +770,17 @@ class MultichannelEdgeAwareResample(wiring.Component):
         prev_delta_magnitude = Signal(unsigned(width + 1))
         first_accum = Signal(signed(accum_width))
         next_accum = Signal(signed(accum_width))
-        first_value = Signal(signed(width + 1))
         next_value = Signal(signed(width + 1))
         hard_edge = Signal()
+        # Setup used to calculate the edge decision and immediately feed it
+        # through the dynamically selected output mux in one cycle. On ECP5
+        # that formed the design's longest sync-domain path. Register the
+        # shared calculation before committing it to the selected channel;
+        # the extra four setup cycles are negligible relative to the hundreds
+        # of sync clocks available between native-rate input frames.
+        setup_delta = Signal(signed(width + 1))
+        setup_first_accum = Signal(signed(accum_width))
+        setup_hard_edge = Signal()
         m.d.comb += [
             delta.eq(extended(incoming[channel]) - extended(prev[channel])),
             prev_delta.eq(
@@ -786,9 +795,9 @@ class MultichannelEdgeAwareResample(wiring.Component):
             ),
             first_accum.eq((extended(prev[channel]) << shift) + delta),
             next_accum.eq(current[channel] + delta_by_ch[channel]),
-            first_value.eq(first_accum >> shift),
             next_value.eq(next_accum >> shift),
-            self.i.ready.eq(~setup_active & ~update_active & ~output_valid),
+            self.i.ready.eq(
+                ~setup_active & ~setup_commit & ~update_active & ~output_valid),
             self.o.valid.eq(output_valid),
         ]
         for ch in range(n_channels):
@@ -809,21 +818,34 @@ class MultichannelEdgeAwareResample(wiring.Component):
 
         with m.If(setup_active):
             m.d.sync += [
+                setup_delta.eq(delta),
+                setup_first_accum.eq(first_accum),
+                setup_hard_edge.eq(hard_edge),
+                setup_active.eq(0),
+                setup_commit.eq(1),
+            ]
+
+        with m.If(setup_commit):
+            m.d.sync += [
                 target[channel].eq(incoming[channel]),
-                current[channel].eq(first_accum),
+                current[channel].eq(setup_first_accum),
                 emitted[channel].eq(
-                    Mux(hard_edge, prev[channel], first_value)),
-                delta_by_ch[channel].eq(delta),
-                edge_segment[channel].eq(hard_edge),
+                    Mux(setup_hard_edge, prev[channel],
+                        setup_first_accum >> shift)),
+                delta_by_ch[channel].eq(setup_delta),
+                edge_segment[channel].eq(setup_hard_edge),
+                setup_commit.eq(0),
             ]
             with m.If(channel == n_channels - 1):
                 m.d.sync += [
-                    setup_active.eq(0),
                     output_valid.eq(1),
                     phase.eq(1),
                 ]
             with m.Else():
-                m.d.sync += channel.eq(channel + 1)
+                m.d.sync += [
+                    channel.eq(channel + 1),
+                    setup_active.eq(1),
+                ]
 
         with m.If(output_valid & self.o.ready):
             with m.If(phase == n_up):

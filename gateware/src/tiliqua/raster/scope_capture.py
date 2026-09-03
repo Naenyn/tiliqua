@@ -28,7 +28,11 @@ ENVELOPE_WORD_BITS = 4 * ENVELOPE_CHANNEL_BITS
 # settling at square/saw transitions into visible hooks and rounded shoulders.
 VERTICAL_DY_THRESH = 12
 
-# Eurorack-friendly V/div LUT for ``yscale_idx`` (must match ``ScopeVScale`` in scope FW).
+# Eurorack-friendly V/div LUT for ``yscale_idx``. Entries 0-5 must match
+# ``ScopeVScale`` in OSCIO firmware. Entries 6-9 are the monitor's full-window
+# mappings: bipolar 10 V, bipolar 20 V, unipolar 10 V, and unipolar 5 V. The
+# latter two share the same gain as their equal-span bipolar counterpart but
+# carry distinct indices so capture can apply the correct lane clipping.
 # Maps sample deflection: in_y = ((-av * mul) >> rshift) + y_offset, where ``av`` is
 # the reshaped PSQ sample (~4000 counts per volt).  One 1 V grid step is ppv>>6 = 62 px.
 YSCALE_LUT = (
@@ -38,6 +42,10 @@ YSCALE_LUT = (
     (127, 13),  # 3: 1.0 V/div
     (203, 15),  # 4: 2.5 V/div
     (203, 16),  # 5: 5.0 V/div
+    (262, 16),  # 6: -5..+5 V monitor window (16 px/V)
+    (131, 16),  # 7: -10..+10 V monitor window (8 px/V)
+    (262, 16),  # 8: 0..+10 V monitor window (16 px/V)
+    (524, 16),  # 9: 0..+5 V monitor window (32 px/V)
 )
 
 # The table above documents the original ratio directly, but the serialized
@@ -111,7 +119,7 @@ class ColumnCapture(wiring.Component):
             "plot_x_hi": In(signed(16)),
             "scale_x": In(unsigned(4)),
             "x_offset": In(signed(16)),
-            "scale_y": In(unsigned(3)).array(n_channels),
+            "scale_y": In(unsigned(4)).array(n_channels),
             "y_offset": In(signed(16)).array(n_channels),
             "sample_valid": In(1),
             "ramp": In(PSQ),
@@ -147,10 +155,16 @@ class ColumnCapture(wiring.Component):
         product_width = negated_width + coefficient_width
         latched_audio = Array(Signal(signed(audio_base_width), name=f"latched_audio{i}")
                               for i in range(self.n_channels))
-        latched_scale_y = Array(Signal(unsigned(3), name=f"latched_scale_y{i}")
+        latched_scale_y = Array(Signal(unsigned(4), name=f"latched_scale_y{i}")
                                 for i in range(self.n_channels))
         latched_y_offset = Array(Signal(signed(16), name=f"latched_y_offset{i}")
                                  for i in range(self.n_channels))
+        latched_clip_enable = Array(Signal(name=f"latched_clip_enable{i}")
+                                    for i in range(self.n_channels))
+        latched_clip_lo = Array(Signal(signed(16), name=f"latched_clip_lo{i}")
+                                for i in range(self.n_channels))
+        latched_clip_hi = Array(Signal(signed(16), name=f"latched_clip_hi{i}")
+                                for i in range(self.n_channels))
         scale_channel = Signal(range(self.n_channels))
         product_channel = Signal(range(self.n_channels))
         scaling = Signal()
@@ -162,17 +176,30 @@ class ColumnCapture(wiring.Component):
         offset_pipe = Signal(signed(16))
         rounded_product = Signal(signed(product_width - 16 + 1))
         scaled_y = Signal(signed(16))
+        coordinate_pipe = Signal(signed(16))
+        coordinate_channel = Signal(range(self.n_channels))
+        coordinate_clip_enable = Signal()
+        coordinate_clip_lo = Signal(signed(16))
+        coordinate_clip_hi = Signal(signed(16))
+        coordinate_valid = Signal()
+        clipped_y = Signal(signed(16))
 
         m.d.comb += raw_x.eq(
             (self.ramp.reshape(PSQ_BASE_FBITS).as_value() >> self.scale_x) +
             self.x_offset
         )
         with m.Switch(latched_scale_y[scale_channel]):
-            for idx, coefficient in enumerate(YSCALE_COEFF_Q16):
+            # Keep the six normal scope choices explicit, then merge monitor
+            # ranges with equal gain. Unknown indices safely use 0..+5 V gain.
+            for idx, coefficient in enumerate(YSCALE_COEFF_Q16[:6]):
                 with m.Case(idx):
                     m.d.comb += y_coefficient.eq(coefficient)
+            with m.Case(6, 8):
+                m.d.comb += y_coefficient.eq(YSCALE_COEFF_Q16[6])
+            with m.Case(7):
+                m.d.comb += y_coefficient.eq(YSCALE_COEFF_Q16[7])
             with m.Default():
-                m.d.comb += y_coefficient.eq(YSCALE_COEFF_Q16[3])
+                m.d.comb += y_coefficient.eq(YSCALE_COEFF_Q16[9])
         m.d.comb += [
             negated_audio.eq(-latched_audio[scale_channel]),
             yprod.eq(negated_audio * y_coefficient),
@@ -181,6 +208,13 @@ class ColumnCapture(wiring.Component):
             rounded_product.eq(
                 (product_pipe >> 16) + product_pipe[15]),
             scaled_y.eq(rounded_product + offset_pipe),
+            clipped_y.eq(
+                Mux(coordinate_clip_enable & (coordinate_pipe < coordinate_clip_lo),
+                    coordinate_clip_lo,
+                    Mux(coordinate_clip_enable & (coordinate_pipe > coordinate_clip_hi),
+                        coordinate_clip_hi,
+                        coordinate_pipe))
+            ),
         ]
 
         # Four input channels arrive as a bundle only once every ~39 sync clocks
@@ -190,6 +224,7 @@ class ColumnCapture(wiring.Component):
         m.d.sync += [
             sample_valid.eq(0),
             product_valid.eq(0),
+            coordinate_valid.eq(0),
         ]
         with m.If(self.sample_valid & ~scaling):
             m.d.sync += [
@@ -205,6 +240,11 @@ class ColumnCapture(wiring.Component):
                         self.audio[ch].reshape(PSQ_BASE_FBITS).as_value()),
                     latched_scale_y[ch].eq(self.scale_y[ch]),
                     latched_y_offset[ch].eq(self.y_offset[ch]),
+                    latched_clip_enable[ch].eq(self.scale_y[ch] >= 6),
+                    latched_clip_lo[ch].eq(
+                        self.y_offset[ch] - Mux(self.scale_y[ch] >= 8, 160, 80)),
+                    latched_clip_hi[ch].eq(
+                        self.y_offset[ch] + Mux(self.scale_y[ch] >= 8, 0, 80)),
                 ]
         with m.Elif(scaling):
             # Register the DSP output before rounding and offset addition.  The
@@ -223,8 +263,20 @@ class ColumnCapture(wiring.Component):
                 m.d.sync += scale_channel.eq(scale_channel + 1)
 
         with m.If(product_valid):
-            m.d.sync += in_y[product_channel].eq(scaled_y)
-            with m.If(product_channel == self.n_channels - 1):
+            m.d.sync += [
+                coordinate_pipe.eq(scaled_y),
+                coordinate_channel.eq(product_channel),
+                coordinate_clip_enable.eq(latched_clip_enable[product_channel]),
+                coordinate_clip_lo.eq(latched_clip_lo[product_channel]),
+                coordinate_clip_hi.eq(latched_clip_hi[product_channel]),
+                coordinate_valid.eq(1),
+            ]
+
+        # Lane clipping gets its own stage rather than extending the shared
+        # multiplier/round/offset timing path on the 60 MHz sync domain.
+        with m.If(coordinate_valid):
+            m.d.sync += in_y[coordinate_channel].eq(clipped_y)
+            with m.If(coordinate_channel == self.n_channels - 1):
                 m.d.sync += [
                     in_x.eq(scaled_x),
                     sample_active.eq(scaled_active),
@@ -246,9 +298,11 @@ class ColumnCapture(wiring.Component):
 
         prev_at_end = Signal()
 
-        # ``armed`` restricts accumulation to a clean, in-progress sweep.  It is
-        # set on a ramp restart and cleared at the top, so partial sweeps and the
-        # NORM hold-at-top never pollute the captured columns.
+        # ``armed`` restricts accumulation to an in-progress sweep. It is set
+        # on a ramp restart and also when capture resumes after its backing
+        # bank has been invalidated. The latter permits a mid-sweep UI change
+        # to begin progressively redrawing immediately instead of waiting up
+        # to an entire slow monitor pass for the next ramp wrap.
         armed = Signal()
 
         col_index = Signal(range(MAX_CAPTURE_COLS))
@@ -342,7 +396,7 @@ class ColumnCapture(wiring.Component):
                 prev_at_end.eq(0),
                 sweeping.eq(0),
                 max_col.eq(0),
-                armed.eq(0),
+                armed.eq(active_rise),
             ]
             for ch in range(self.n_channels):
                 m.d.sync += [
