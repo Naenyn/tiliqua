@@ -1014,7 +1014,6 @@ class Spectrogram(wiring.Component):
         raw_level = Signal(6)
         boosted_level = Signal(8)
         stored_level = Signal(6)
-        spectrum_frequency_shift = Signal(2)
         spectrum_desired_group_shift = Signal(2)
         spectrum_group_shift = Signal(2)
         spectrum_active_bin_last = Signal(8)
@@ -1064,44 +1063,27 @@ class Spectrogram(wiring.Component):
         spectrum_focus_level_sync = Signal(4)
         spectrum_focus_exact_sync = Signal()
         spectrum_focus_near_sync = Signal()
-        spectrum_focus_mid_sync = Signal()
-        spectrum_focus_far_sync = Signal()
         spectrum_focus_found_bin = Signal(8)
+        spectrum_focus_update_pending = Signal()
         spectrum_focus_centers = [
             Signal(8, name=f"spectrum_focus_{harmonic}_center")
-            for harmonic in range(1, 9)
+            for harmonic in range(1, 6)
         ]
         spectrum_focus_valids = [
             Signal(name=f"spectrum_focus_{harmonic}_valid")
-            for harmonic in range(1, 9)
+            for harmonic in range(1, 6)
         ]
         spectrum_focus_lo1 = [
             Signal(8, name=f"spectrum_focus_{harmonic}_lo1")
-            for harmonic in range(1, 9)
+            for harmonic in range(1, 6)
         ]
         spectrum_focus_hi1 = [
             Signal(8, name=f"spectrum_focus_{harmonic}_hi1")
-            for harmonic in range(1, 9)
-        ]
-        spectrum_focus_lo3 = [
-            Signal(8, name=f"spectrum_focus_{harmonic}_lo3")
-            for harmonic in range(1, 9)
-        ]
-        spectrum_focus_hi3 = [
-            Signal(8, name=f"spectrum_focus_{harmonic}_hi3")
-            for harmonic in range(1, 9)
-        ]
-        spectrum_focus_lo7 = [
-            Signal(8, name=f"spectrum_focus_{harmonic}_lo7")
-            for harmonic in range(1, 9)
-        ]
-        spectrum_focus_hi7 = [
-            Signal(8, name=f"spectrum_focus_{harmonic}_hi7")
-            for harmonic in range(1, 9)
+            for harmonic in range(1, 6)
         ]
         spectrum_focus_center_calc = [
             Signal(12, name=f"spectrum_focus_{harmonic}_center_calc")
-            for harmonic in range(1, 9)
+            for harmonic in range(1, 6)
         ]
         with m.If(spectrum_log_config_dirty):
             m.d.sync += [
@@ -1192,33 +1174,21 @@ class Spectrogram(wiring.Component):
         ]
         exact_hits = []
         near_hits = []
-        mid_hits = []
-        far_hits = []
-        for harmonic in range(1, 9):
+        for harmonic in range(1, 6):
             index = harmonic - 1
             valid = spectrum_focus_valids[index]
             center_calc = spectrum_focus_center_calc[index]
             m.d.comb += center_calc.eq(
-                spectrum_fundamental_next * harmonic)
+                spectrum_fundamental_bin * harmonic)
             exact_hits.append(
-                valid & (current_bin[:8] == spectrum_focus_centers[index])
-                if harmonic <= 5 else Const(0))
+                valid & (current_bin[:8] == spectrum_focus_centers[index]))
             near_hits.append(
                 valid &
                 (current_bin[:8] >= spectrum_focus_lo1[index]) &
-                (current_bin[:8] <= spectrum_focus_hi1[index])
-                if harmonic <= 5 else Const(0))
-            mid_hits.append(valid &
-                            (current_bin[:8] >= spectrum_focus_lo3[index]) &
-                            (current_bin[:8] <= spectrum_focus_hi3[index]))
-            far_hits.append(valid &
-                            (current_bin[:8] >= spectrum_focus_lo7[index]) &
-                            (current_bin[:8] <= spectrum_focus_hi7[index]))
+                (current_bin[:8] <= spectrum_focus_hi1[index]))
         m.d.comb += [
             spectrum_focus_exact_sync.eq(Cat(*exact_hits).any()),
             spectrum_focus_near_sync.eq(Cat(*near_hits).any()),
-            spectrum_focus_mid_sync.eq(0),
-            spectrum_focus_far_sync.eq(0),
             spectrum_focus_level_sync.eq(Mux(
                 spectrum_focus_exact_sync,
                 15,
@@ -1249,7 +1219,6 @@ class Spectrogram(wiring.Component):
                 current_bin == 0,
                 0,
                 Mux(boosted_level > 63, 63, boosted_level[:6]))),
-            spectrum_frequency_shift.eq(0),
             spectrum_desired_group_shift.eq(3 - spectrum_bands),
             spectrum_group_shift.eq(Mux(
                 spectrum_style | spectrum_scale,
@@ -1367,6 +1336,28 @@ class Spectrogram(wiring.Component):
                     spectrum_group_last.eq(current_bin[:3] == 7),
                 ]
 
+        # Fundamental selection has a relatively long comparison path. Update
+        # the small harmonic table one clock after latching the new anchor;
+        # analyzer bins are several clocks apart, so the table is ready before
+        # bin one arrives while removing that path from the table registers.
+        with m.If(spectrum_focus_update_pending):
+            m.d.sync += spectrum_focus_update_pending.eq(0)
+            for harmonic in range(1, 6):
+                index = harmonic - 1
+                center_calc = spectrum_focus_center_calc[index]
+                m.d.sync += [
+                    spectrum_focus_centers[index].eq(center_calc[:8]),
+                    spectrum_focus_valids[index].eq(
+                        (spectrum_fundamental_bin != 0) &
+                        (center_calc <= spectrum_active_bin_last)),
+                    spectrum_focus_lo1[index].eq(Mux(
+                        center_calc > 1, center_calc - 1, 0)),
+                    spectrum_focus_hi1[index].eq(Mux(
+                        center_calc + 1 > spectrum_active_bin_last,
+                        spectrum_active_bin_last,
+                        center_calc + 1)),
+                ]
+
         with m.If(level_smoother.o.valid):
             with m.If(level_smoother.o.payload.first):
                 # Spectrum display writes are frame-rate limited so slower
@@ -1396,34 +1387,8 @@ class Spectrogram(wiring.Component):
                         spectrum_log_column_prev.eq(0),
                         spectrum_log_bucket_peak.eq(0),
                         spectrum_log_bucket_focus.eq(0),
+                        spectrum_focus_update_pending.eq(1),
                     ]
-                    for harmonic in range(1, 9):
-                        index = harmonic - 1
-                        center_calc = spectrum_focus_center_calc[index]
-                        m.d.sync += [
-                            spectrum_focus_centers[index].eq(center_calc[:8]),
-                            spectrum_focus_valids[index].eq(
-                                (spectrum_fundamental_next != 0) &
-                                (center_calc <= spectrum_active_bin_last)),
-                            spectrum_focus_lo1[index].eq(Mux(
-                                center_calc > 1, center_calc - 1, 0)),
-                            spectrum_focus_hi1[index].eq(Mux(
-                                center_calc + 1 > spectrum_active_bin_last,
-                                spectrum_active_bin_last,
-                                center_calc + 1)),
-                            spectrum_focus_lo3[index].eq(Mux(
-                                center_calc > 3, center_calc - 3, 0)),
-                            spectrum_focus_hi3[index].eq(Mux(
-                                center_calc + 3 > spectrum_active_bin_last,
-                                spectrum_active_bin_last,
-                                center_calc + 3)),
-                            spectrum_focus_lo7[index].eq(Mux(
-                                center_calc > 7, center_calc - 7, 0)),
-                            spectrum_focus_hi7[index].eq(Mux(
-                                center_calc + 7 > spectrum_active_bin_last,
-                                spectrum_active_bin_last,
-                                center_calc + 7)),
-                        ]
             with m.Elif(do_write &
                         (current_bin <= spectrum_active_bin_last)):
                 # Track local maxima to choose a plausible fundamental anchor.
@@ -1645,7 +1610,6 @@ class Spectrogram(wiring.Component):
         scan_read_en = Signal()
         scan_read_addr = Signal(16)
         sweep_newest = Signal(8)
-        sweep_range = Signal(2)
         sweep_rate = Signal(2)
         sweep_hue = Signal(4)
         sweep_phosphor = Signal()
@@ -1799,7 +1763,6 @@ class Spectrogram(wiring.Component):
                         # sweep disagree with another. The live analyzer may
                         # continue writing newer columns in the background.
                         sweep_newest.eq(newest_dvi),
-                        sweep_range.eq(range_dvi),
                         sweep_rate.eq(rate_dvi),
                         sweep_hue.eq(hue_dvi),
                         sweep_phosphor.eq(phosphor_dvi),
@@ -2072,7 +2035,6 @@ class Spectrogram(wiring.Component):
         spectrum_linear_gap = Signal()
         spectrum_bin_prev = Signal(8)
         spectrum_active_bin_last_dvi = Signal(8)
-        frequency_shift = Signal(2)
         spectrum_desired_group_shift_dvi = Signal(2)
         spectrum_group_shift_dvi = Signal(2)
         spectrum_band_pixel_shift = Signal(4)
@@ -2204,7 +2166,6 @@ class Spectrogram(wiring.Component):
             completed_age.eq(Mux(age == 255, 254, age)),
             # Each range analyzes at a matching sample rate, so all four
             # ranges use the complete 256-bin half-spectrum.
-            frequency_shift.eq(0),
             spectrum_active_bin_last_dvi.eq(255),
             spectrum_desired_group_shift_dvi.eq(3 - spectrum_bands_dvi),
             spectrum_group_shift_dvi.eq(Mux(
@@ -2321,13 +2282,6 @@ class Spectrogram(wiring.Component):
         scan_d = Signal(ScanPixel)
         logical_x_d = Signal(12)
         logical_y_d = Signal(12)
-        logical_scan_d = _logical_scan_coordinates(
-            scan_d.x, scan_d.y,
-            h_active_dvi, v_active_dvi, rotation_dvi)
-        m.d.comb += [
-            logical_x_d.eq(logical_scan_d[0]),
-            logical_y_d.eq(logical_scan_d[1]),
-        ]
         spectrogram_plot_d = Signal()
         spectrum_plot_d = Signal()
         spectrum_band_d = Signal(8)
@@ -2386,6 +2340,11 @@ class Spectrogram(wiring.Component):
         ]
         m.d.dvi += [
             scan_d.eq(self.i),
+            # Carry the already-computed logical coordinates across the same
+            # BRAM pipeline boundary instead of rebuilding the complete
+            # rotation mux/subtract network from ``scan_d``.
+            logical_x_d.eq(logical_x),
+            logical_y_d.eq(logical_y),
             spectrogram_plot_d.eq(
                 in_plot & ~view_3d_dvi & ~spectrum_mode_dvi),
             spectrum_plot_d.eq(spectrum_read_plot_r),
