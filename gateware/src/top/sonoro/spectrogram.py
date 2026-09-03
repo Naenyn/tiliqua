@@ -606,16 +606,16 @@ class Spectrogram(wiring.Component):
         wide_downsample = self.fs // wide_fs
         m.submodules.resample_wide = resample_wide = dsp.Resample(
             fs_in=self.fs, n_up=1, m_down=wide_downsample,
-            bw=11/24, order_mult=40, shape=ASQ)
+            bw=11/24, order_mult=40, round_products=True, shape=ASQ)
         m.submodules.resample_fine = resample_fine = dsp.Resample(
             fs_in=wide_fs, n_up=1, m_down=2,
-            bw=11/24, order_mult=40, shape=ASQ)
+            bw=11/24, order_mult=40, round_products=True, shape=ASQ)
         m.submodules.resample_mid = resample_mid = dsp.Resample(
             fs_in=wide_fs // 2, n_up=1, m_down=2,
-            bw=11/24, order_mult=24, shape=ASQ)
+            bw=11/24, order_mult=24, round_products=True, shape=ASQ)
         m.submodules.resample_low = resample_low = dsp.Resample(
             fs_in=wide_fs // 4, n_up=1, m_down=2,
-            bw=11/24, order_mult=24, shape=ASQ)
+            bw=11/24, order_mult=24, round_products=True, shape=ASQ)
         # Remove converter/input offset before the Hann window can spread it
         # into FFT bin 1. At 192kHz, the quantized 0.9999 pole has a corner
         # near 3Hz: low enough to preserve the analyzer's 10Hz lower edge,

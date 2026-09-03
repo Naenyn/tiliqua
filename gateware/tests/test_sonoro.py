@@ -182,11 +182,119 @@ class SonoroMagnitudeTests(unittest.TestCase):
 
             magnitudes = np.abs(np.asarray(magnitudes))
             peak = magnitudes[tone_bin]
+            expected_peak = 0.5 * SPECTRUM_CORDIC_GAIN / 4
             off_tone = np.delete(
                 magnitudes[:fft_size // 2],
                 [tone_bin - 1, tone_bin, tone_bin + 1])
-            self.assertGreater(peak, 0.15)
+            self.assertLess(abs(peak - expected_peak), expected_peak * 0.03)
             self.assertLess(np.max(off_tone), peak * 10 ** (-55 / 20))
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(bench)
+        sim.run()
+
+    def test_rounded_fir_products_preserve_low_level_dc_gain(self):
+        shape = fixed.SQ(2, 16)
+        amplitude = 0.001
+        m = Module()
+        m.submodules.dut = dut = dsp.FIR(
+            fs=192_000,
+            filter_cutoff_hz=22_000,
+            filter_order=160,
+            stride_o=4,
+            round_products=True,
+            shape=shape,
+        )
+
+        async def stimulus(ctx):
+            while True:
+                await test_stream.put(
+                    ctx, dut.i, fixed.Const(amplitude, shape=shape))
+
+        async def bench(ctx):
+            outputs = []
+            ctx.set(dut.o.ready, 1)
+            while len(outputs) < 100:
+                if ctx.get(dut.o.valid & dut.o.ready):
+                    outputs.append(ctx.get(dut.o.payload).as_float())
+                await ctx.tick()
+
+            steady = np.asarray(outputs[-20:])
+            # This low level is deliberately chosen because reducing every
+            # signed product before accumulation formerly turned +0.001 into
+            # a small negative value in this 160-tap filter.
+            self.assertGreater(np.min(steady), 0)
+            self.assertLess(
+                abs(np.mean(steady) - amplitude), 5 / (1 << shape.f_bits))
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(bench)
+        sim.run()
+
+    def test_all_range_resamplers_preserve_passband_amplitude(self):
+        input_fs = 192_000
+        tone_hz = 375
+        amplitude = 0.25
+        shape = fixed.SQ(2, 16)
+        m = Module()
+        m.submodules.dc_block = dc_block = dsp.filters.DCBlock(
+            pole=0.9999, sq=shape)
+        m.submodules.wide = wide = dsp.Resample(
+            fs_in=input_fs, n_up=1, m_down=4,
+            bw=11 / 24, order_mult=40,
+            round_products=True, shape=shape)
+        m.submodules.fine = fine = dsp.Resample(
+            fs_in=48_000, n_up=1, m_down=2,
+            bw=11 / 24, order_mult=40,
+            round_products=True, shape=shape)
+        m.submodules.mid = mid = dsp.Resample(
+            fs_in=24_000, n_up=1, m_down=2,
+            bw=11 / 24, order_mult=24,
+            round_products=True, shape=shape)
+        m.submodules.low = low = dsp.Resample(
+            fs_in=12_000, n_up=1, m_down=2,
+            bw=11 / 24, order_mult=24,
+            round_products=True, shape=shape)
+        wiring.connect(m, dc_block.o, wide.i)
+        wiring.connect(m, wide.o, fine.i)
+        wiring.connect(m, fine.o, mid.i)
+        wiring.connect(m, mid.o, low.i)
+
+        async def stimulus(ctx):
+            sample = 0
+            while True:
+                value = amplitude * sin(2 * pi * tone_hz * sample / input_fs)
+                await test_stream.put(ctx, dc_block.i,
+                                      fixed.Const(value, shape=shape))
+                sample += 1
+
+        async def bench(ctx):
+            streams = (
+                (wide.o, 48_000),
+                (fine.o, 24_000),
+                (mid.o, 12_000),
+                (low.o, 6_000),
+            )
+            samples = [[] for _ in streams]
+            ctx.set(low.o.ready, 1)
+            while len(samples[-1]) < 1024:
+                for captured, (endpoint, _) in zip(samples, streams):
+                    if ctx.get(endpoint.valid & endpoint.ready):
+                        captured.append(ctx.get(endpoint.payload).as_float())
+                await ctx.tick()
+
+            for captured, (_, sample_rate) in zip(samples, streams):
+                tail = np.asarray(captured[-512:])
+                phase = np.exp(
+                    -2j * pi * tone_hz * np.arange(len(tail)) / sample_rate)
+                measured = 2 * abs(np.sum(tail * phase)) / len(tail)
+                self.assertLess(
+                    abs(measured - amplitude), amplitude * 0.01,
+                    f"{sample_rate / 2:g}Hz range passband gain")
 
         sim = Simulator(m)
         sim.add_clock(1e-6)
@@ -206,7 +314,8 @@ class SonoroMagnitudeTests(unittest.TestCase):
             pole=0.9999, sq=shape)
         m.submodules.resample = resample = dsp.Resample(
             fs_in=input_fs, n_up=1, m_down=input_fs // analysis_fs,
-            bw=11 / 24, order_mult=40, shape=shape)
+            bw=11 / 24, order_mult=40,
+            round_products=True, shape=shape)
         m.submodules.analyzer = analyzer = dsp.fft.STFTAnalyzer(
             shape=shape, sz=fft_size)
         m.submodules.envelope = envelope = dsp.spectral.SpectralEnvelope(
@@ -287,13 +396,16 @@ class SonoroMagnitudeTests(unittest.TestCase):
             pole=0.9999, sq=shape)
         m.submodules.wide = wide = dsp.Resample(
             fs_in=input_fs, n_up=1, m_down=4,
-            bw=11 / 24, order_mult=40, shape=shape)
+            bw=11 / 24, order_mult=40,
+            round_products=True, shape=shape)
         m.submodules.fine = fine = dsp.Resample(
             fs_in=48_000, n_up=1, m_down=2,
-            bw=11 / 24, order_mult=40, shape=shape)
+            bw=11 / 24, order_mult=40,
+            round_products=True, shape=shape)
         m.submodules.mid = mid = dsp.Resample(
             fs_in=24_000, n_up=1, m_down=2,
-            bw=11 / 24, order_mult=24, shape=shape)
+            bw=11 / 24, order_mult=24,
+            round_products=True, shape=shape)
         m.submodules.analyzer = analyzer = dsp.fft.STFTAnalyzer(
             shape=shape, sz=fft_size)
         m.submodules.envelope = envelope = dsp.spectral.SpectralEnvelope(

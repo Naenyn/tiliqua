@@ -41,7 +41,8 @@ class Resample(wiring.Component):
                  m_down:     int,
                  bw:         float=0.4,
                  order_mult: int=5,
-                 shape=ASQ):
+                 shape=ASQ,
+                 round_products: bool=False):
         """
         fs_in : int
             Expected sample rate of incoming samples, used for calculating filter coefficients.
@@ -59,6 +60,9 @@ class Resample(wiring.Component):
             rounded up to the next multiple of :py:`n_up` (required for even zero padding).
         shape : fixed.Shape
             Fixed-point shape for input/output samples. Defaults to ASQ.
+        round_products : bool
+            Symmetrically round FIR products before accumulation. Defaults to
+            the original compact datapath.
         """
 
         gcd = math.gcd(n_up, m_down)
@@ -87,6 +91,7 @@ class Resample(wiring.Component):
             prescale=self.n_up,
             stride_i=self.n_up,
             stride_o=self.m_down,
+            round_products=round_products,
             shape=shape)
 
         super().__init__({

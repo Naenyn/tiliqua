@@ -275,7 +275,8 @@ class FIR(wiring.Component):
                  prescale:         float=1,
                  stride_i:         int=1,
                  stride_o:         int=1,
-                 shape=ASQ):
+                 shape=ASQ,
+                 round_products: bool=False):
         """
         fs : int
             Sample rate of the filter, used for calculating FIR coefficients.
@@ -309,6 +310,10 @@ class FIR(wiring.Component):
             MACs to produce samples that will be discarded.
         shape : fixed.Shape
             Fixed-point shape for input/output samples. Defaults to ASQ.
+        round_products : bool
+            Round each signed product symmetrically before accumulation rather
+            than truncating it. The default retains the original datapath for
+            existing users.
         """
         self.shape = shape
         taps = signal.firwin(numtaps=filter_order, cutoff=filter_cutoff_hz,
@@ -318,6 +323,7 @@ class FIR(wiring.Component):
         self.prescale   = prescale
         self.stride_i   = stride_i
         self.stride_o   = stride_o
+        self.round_products = round_products
         super().__init__({
             "i": In(stream.Signature(shape)),
             "o": Out(stream.Signature(shape)),
@@ -375,10 +381,23 @@ class FIR(wiring.Component):
         ix_tap = Signal(range(n))
         ix_rd  = Signal(range(n))
 
-        # MAC variables: y = a * b
+        # MAC variables: y = sum(a * b). Assigning a full-precision signed
+        # product directly to y rounds toward negative infinity. Repeating that
+        # for every tap creates a measurable negative DC bias. SONORO opts into
+        # symmetric round-to-nearest before accumulation; the compact legacy
+        # behavior remains available to existing users.
         a  = Signal(self.ctype)
         b  = Signal(self.ctype)
         y  = Signal(self.ctype)
+        product = a.as_value() * b.as_value()
+        product_rounded = Signal(self.ctype)
+        if self.round_products:
+            # For a two's-complement value, adding half an output LSB and
+            # subtracting one raw LSB for negative values produces symmetric
+            # round-to-nearest (ties away from zero) under arithmetic shift.
+            m.d.comb += product_rounded.as_value().eq(
+                (product + (1 << (self.ctype.f_bits - 1))
+                 - (product < 0)) >> self.ctype.f_bits)
 
         m.d.comb += taps_rport.en.eq(1)
         m.d.comb += taps_rport.addr.eq(ix_tap)
@@ -421,7 +440,8 @@ class FIR(wiring.Component):
                     b.eq(taps_rport.data),
                 ]
                 m.d.sync += [
-                    y.eq(y + (a * b)),
+                    y.eq(y + (product_rounded if self.round_products
+                              else (a * b))),
                     macs.eq(macs+1),
                 ]
                 # next tap read position
@@ -443,7 +463,7 @@ class FIR(wiring.Component):
 
                 m.d.comb += [
                     self.o.valid.eq(stride_o_pos == 0),
-                    self.o.payload.eq(y)
+                    self.o.payload.eq(y),
                 ]
 
                 with m.If(self.o.ready | (stride_o_pos != 0)):
