@@ -23,6 +23,9 @@ Turn the encoder to move through the menu. Press it to select a page or
 parameter, then turn to edit. The menu hides automatically; turning resumes
 the current edit, while pressing reopens it in navigation mode.
 
+On the HELP page, turn the encoder to scroll. Select the HELP page title to
+return to the preceding menu pages.
+
 OSCIO is the first menu page, with mode as its first option. In scope mode it
 also provides time/div and acquire. CHANNEL 1-2 and CHANNEL 3-4 then set each
 trace's vertical offset, volts per division, and visibility. The SCOPE page's
@@ -69,9 +72,6 @@ DISPLAY sets trace intensity, trace hue, and graph palette. Scope mode also
 shows grid style and grid intensity; those unused controls are omitted in
 monitor mode. SYSTEM contains overlay hue, automatic hide behavior, rotation,
 and settings save/reset actions. HELP is the final menu page.
-
-On this page, turn the encoder to scroll. Select the HELP page title to return
-to the preceding menu pages.
 """
 
 import os

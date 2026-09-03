@@ -1,5 +1,5 @@
 pub const UI_NAME: &str = "OSCIO";
-pub const UI_TAG: &str = "098757e3";
+pub const UI_TAG: &str = "1043a93e";
 pub const HW_REV_MAJOR: u32 = 5;
 pub const USE_EXTERNAL_PLL: bool = true;
 pub const CLOCK_SYNC_HZ: u32 = 60000000;
@@ -39,6 +39,9 @@ matching output with no USB or delay-line processing.
 Turn the encoder to move through the menu. Press it to select a page or
 parameter, then turn to edit. The menu hides automatically; turning resumes
 the current edit, while pressing reopens it in navigation mode.
+
+On the HELP page, turn the encoder to scroll. Select the HELP page title to
+return to the preceding menu pages.
 
 OSCIO is the first menu page, with mode as its first option. In scope mode it
 also provides time/div and acquire. CHANNEL 1-2 and CHANNEL 3-4 then set each
@@ -86,9 +89,6 @@ DISPLAY sets trace intensity, trace hue, and graph palette. Scope mode also
 shows grid style and grid intensity; those unused controls are omitted in
 monitor mode. SYSTEM contains overlay hue, automatic hide behavior, rotation,
 and settings save/reset actions. HELP is the final menu page.
-
-On this page, turn the encoder to scroll. Select the HELP page title to return
-to the preceding menu pages.
 "###;
 pub const OVERLAY_UI_SCRATCH_BASE: usize = 0x20f00000;
 pub const OVERLAY_UI_MEM_BASE: usize = 0xc1000000;
