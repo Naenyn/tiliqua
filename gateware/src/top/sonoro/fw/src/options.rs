@@ -325,6 +325,9 @@ pub struct SonoroOpts {
     #[option(0)]
     pub gain: IntOption<GainParams>,
     #[option]
+    #[option_name("noise floor")]
+    pub noise_floor: EnumOption<DisplayNoiseFloor>,
+    #[option]
     pub range: EnumOption<FrequencyRange>,
     #[option]
     pub rate: EnumOption<ScrollRate>,
@@ -376,9 +379,6 @@ pub struct DisplayOpts {
     pub hue: IntOption<HueParams>,
     #[option(ColorPalette::Inferno)]
     pub palette: EnumOption<ColorPalette>,
-    #[option]
-    #[option_name("noise floor")]
-    pub noise_floor: EnumOption<DisplayNoiseFloor>,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]

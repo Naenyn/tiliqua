@@ -58,13 +58,15 @@ from .periph import dtr, encoder, eurorack_pmod, i2c, psram
 from .platform import *
 from .raster import blit, line, persist, plot
 from .video import framebuffer, palette
+from .wishbone import ResponseBuffer
 
 
 class TiliquaSoc(Component):
     def __init__(self, *, firmware_bin_path, ui_name, ui_tag, platform_class, clock_settings,
                  touch=False, finalize_csr_bridge=True, poke_outputs=False, mainram_size=0x4000,
                  fw_location=None, fw_offset=None, cpu_variant="tiliqua_rv32im",
-                 extra_cpu_regions=[], fb_overlay=None, extra_plot_ports=0):
+                 extra_cpu_regions=[], fb_overlay=None, extra_plot_ports=0,
+                 register_wb_response=False):
 
         super().__init__({})
 
@@ -76,6 +78,7 @@ class TiliquaSoc(Component):
         self.firmware_bin_path = firmware_bin_path
         self.touch = touch
         self.clock_settings = clock_settings
+        self.register_wb_response = register_wb_response
 
         self.platform_class = platform_class
 
@@ -157,6 +160,8 @@ class TiliquaSoc(Component):
             alignment=0,
             features={"cti", "bte", "err"}
         )
+        if self.register_wb_response:
+            self.wb_response = ResponseBuffer()
 
         # mainram
         self.mainram = blockram.Peripheral(size=self.mainram_size)
@@ -285,7 +290,12 @@ class TiliquaSoc(Component):
         # bus
         m.submodules.wb_arbiter = self.wb_arbiter
         m.submodules.wb_decoder = self.wb_decoder
-        wiring.connect(m, self.wb_arbiter.bus, self.wb_decoder.bus)
+        if self.register_wb_response:
+            m.submodules.wb_response = self.wb_response
+            wiring.connect(m, self.wb_arbiter.bus, self.wb_response.upstream)
+            wiring.connect(m, self.wb_response.downstream, self.wb_decoder.bus)
+        else:
+            wiring.connect(m, self.wb_arbiter.bus, self.wb_decoder.bus)
 
         # cpu
         m.submodules.cpu = self.cpu

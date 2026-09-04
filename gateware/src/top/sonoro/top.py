@@ -34,13 +34,13 @@ Analytical rendering emphasizes stable, crisp frequency bins. Phosphor
 rendering adds temporal smoothing, brighter highlights, and an age-dependent
 fade. Both styles use the same uninterrupted spectral history.
 
-DISPLAY options toggle labeled frequency/history axes. Spectrum mode also
-offers an independent plot-grid toggle. Plot hue, menu hue, palette, and a
-display-only noise floor are shared by all views. The noise floor hides low
-level display clutter without changing the analyzed signal. Axis scales follow
-the selected range and rate. The Inferno palette supports hue rotation while
-preserving its heatmap gradient; grayscale palettes intentionally ignore hue.
-MISC contains display rotation and settings save/reset actions.
+The main SONORO page also provides a display-only noise floor shared by all
+views. It hides low-level display clutter without changing the analyzed signal.
+DISPLAY options toggle labeled frequency/history axes; spectrum mode also
+offers an independent plot-grid toggle, plus plot hue and palette. Axis scales
+follow the selected range and rate. The Inferno palette supports hue rotation
+while preserving its heatmap gradient; grayscale palettes intentionally ignore
+hue. MISC contains display rotation and settings save/reset actions.
 """
 
 import os
@@ -77,6 +77,7 @@ class SonoroSoc(TiliquaSoc):
         super().__init__(
             finalize_csr_bridge=False,
             fb_overlay=self.overlay_periph.overlay,
+            register_wb_response=True,
             **kwargs,
         )
 

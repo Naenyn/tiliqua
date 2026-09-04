@@ -34,7 +34,7 @@ const FRAMEBUFFER_REGION_BYTES: usize = 0x0010_0000;
 // fixed to the largest menu so its border and black analyzer cutout never
 // jump as conditional options appear or disappear.
 const MENU_PANEL_WIDTH: u32 = 264;
-const MENU_PANEL_HEIGHT: u32 = 138;
+const MENU_PANEL_HEIGHT: u32 = 156;
 const MENU_PANEL_X_OFFSET: i32 = -92;
 const MENU_PANEL_Y_OFFSET: i32 = -18;
 
@@ -758,7 +758,7 @@ fn main() -> ! {
                 .write(|w| unsafe { w.value().bits(opts.display.hue.value) });
             spectro
                 .noise_floor()
-                .write(|w| unsafe { w.value().bits(opts.display.noise_floor.value.hw_index()) });
+                .write(|w| unsafe { w.value().bits(opts.sonoro.noise_floor.value.hw_index()) });
             spectro.timings().write(|w| unsafe {
                 w.h_active().bits(h_active as u16);
                 w.v_active().bits(v_active as u16);

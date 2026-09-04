@@ -1978,7 +1978,7 @@ class Spectrogram(wiring.Component):
                 (logical_x_geom >= h_active_dvi - 292) &
                 (logical_x_geom < h_active_dvi - 28) &
                 (logical_y_geom >= (v_active_dvi >> 1) - 18) &
-                (logical_y_geom < (v_active_dvi >> 1) + 120)),
+                (logical_y_geom < (v_active_dvi >> 1) + 138)),
         ]
         m.d.dvi += [
             # Rotation and plot-origin subtraction are shared by every
