@@ -45,7 +45,6 @@ from amaranth_soc import wishbone
 from tiliqua import dsp
 from tiliqua.build.cli import top_level_cli
 from tiliqua.build.types import BitstreamHelp
-from tiliqua.periph import overlay
 from tiliqua.raster import line
 from tiliqua.tiliqua_soc import TiliquaSoc
 from tiliqua.video.framebuffer import DMAFramebuffer
@@ -169,12 +168,15 @@ class WaterfallSoc(TiliquaSoc):
         self.spectrogram = Spectrogram(
             fs=kwargs["clock_settings"].audio_clock.fs())
         self.waterfall_line_plotter = line._LinePlotter()
-        self.overlay_periph = overlay.Peripheral(trace=self.spectrogram)
 
         super().__init__(
             finalize_csr_bridge=False,
-            fb_overlay=self.overlay_periph.overlay,
+            # Spectrogram is a timing-only pass-through in the DVI path. It
+            # observes VSync for atomic surface swaps without paying for the
+            # unused general-purpose grid overlay.
+            fb_overlay=self.spectrogram,
             extra_plot_ports=1,
+            with_persist=False,
             **kwargs,
         )
         self.backbuffer_clear = BackbufferClear(
@@ -182,22 +184,16 @@ class WaterfallSoc(TiliquaSoc):
         self.psram_periph.add_master(self.backbuffer_clear.bus)
 
         self.spectrogram_periph_base = 0x00001000
-        self.overlay_periph_base = 0x00001100
         self.csr_decoder.add(
             self.spectrogram.bus,
             addr=self.spectrogram_periph_base,
             name="spectrogram_periph",
         )
-        self.csr_decoder.add(
-            self.overlay_periph.bus,
-            addr=self.overlay_periph_base,
-            name="overlay_periph",
-        )
         self.finalize_csr_bridge()
 
     def elaborate(self, platform):
         m = Module()
-        m.submodules.overlay_periph = self.overlay_periph
+        m.submodules.spectrogram = self.spectrogram
         m.submodules.waterfall_line_plotter = self.waterfall_line_plotter
         m.submodules.backbuffer_clear = self.backbuffer_clear
         m.submodules += super().elaborate(platform)
@@ -207,16 +203,6 @@ class WaterfallSoc(TiliquaSoc):
         m.d.comb += self.spectrogram.line_busy.eq(
             self.waterfall_line_plotter.busy)
         m.d.comb += self.waterfall_line_plotter.alternate.eq(1)
-        m.d.comb += [
-            self.persist_periph.persist.protect_enable.eq(
-                self.spectrogram.protect_enable),
-            self.persist_periph.persist.tagged_only.eq(
-                self.spectrogram.protect_enable),
-            self.persist_periph.persist.protect_color_a.eq(
-                self.spectrogram.protect_visible),
-            self.persist_periph.persist.protect_color_b.eq(
-                self.spectrogram.protect_drawing),
-        ]
         wiring.connect(
             m, wiring.flipped(self.fb.fbp), self.backbuffer_clear.fbp)
         # Video scanout is the only hard real-time PSRAM client. Backpressure
@@ -231,9 +217,6 @@ class WaterfallSoc(TiliquaSoc):
                 waterfall_pixels.valid & ~self.fb.scanout_urgent),
             waterfall_pixels.ready.eq(
                 waterfall_plot.ready & ~self.fb.scanout_urgent),
-            self.persist_periph.persist.pause.eq(
-                self.fb.scanout_urgent |
-                self.spectrogram.protect_enable),
             self.backbuffer_clear.alternate.eq(1),
             self.backbuffer_clear.pause.eq(self.fb.scanout_urgent),
         ]

@@ -64,7 +64,8 @@ class TiliquaSoc(Component):
     def __init__(self, *, firmware_bin_path, ui_name, ui_tag, platform_class, clock_settings,
                  touch=False, finalize_csr_bridge=True, poke_outputs=False, mainram_size=0x4000,
                  fw_location=None, fw_offset=None, cpu_variant="tiliqua_rv32im",
-                 extra_cpu_regions=[], fb_overlay=None, extra_plot_ports=0):
+                 extra_cpu_regions=[], fb_overlay=None, extra_plot_ports=0,
+                 with_persist=True):
 
         super().__init__({})
 
@@ -77,6 +78,7 @@ class TiliquaSoc(Component):
         self.touch = touch
         self.clock_settings = clock_settings
         self.platform_class = platform_class
+        self.with_persist = with_persist
 
         # Memory map of CPU
         self.mainram_base         = 0x00000000
@@ -230,10 +232,15 @@ class TiliquaSoc(Component):
         self.csr_decoder.add(
                 self.framebuffer_periph.bus, addr=self.fb_periph_base, name="framebuffer_periph")
 
-        # Video persistance DMA effect
+        # Video persistence DMA effect. Framebuffer applications that replace
+        # complete frames atomically can omit its bus master and datapath. Keep
+        # the register shell so the common firmware PAC remains compatible.
         self.persist_periph = persist.Peripheral(
-            bus_dma=self.psram_periph)
-        self.csr_decoder.add(self.persist_periph.bus, addr=self.persist_periph_base, name="persist_periph")
+            bus_dma=self.psram_periph if self.with_persist else None)
+        self.csr_decoder.add(
+            self.persist_periph.bus,
+            addr=self.persist_periph_base,
+            name="persist_periph")
 
         # Pixel plotting, blending, rotation backend (no CSR interface)
         self.framebuffer_plotter = plot.FramebufferPlotter(
@@ -371,12 +378,16 @@ class TiliquaSoc(Component):
                 self.fb.fbp.base.eq(self.framebuffer_periph.fbp.base),
             ]
             wiring.connect(m, wiring.flipped(self.fb.fbp), self.framebuffer_plotter.fbp)
-            wiring.connect(m, wiring.flipped(self.fb.fbp), self.persist_periph.fbp)
+            if self.with_persist:
+                wiring.connect(
+                    m, wiring.flipped(self.fb.fbp), self.persist_periph.fbp)
         else:
             # Modeline is dynamic and comes from framebuffer peripheral CSRs
             wiring.connect(m, self.framebuffer_periph.fbp, self.fb.fbp)
             wiring.connect(m, self.framebuffer_periph.fbp, self.framebuffer_plotter.fbp)
-            wiring.connect(m, self.framebuffer_periph.fbp, self.persist_periph.fbp)
+            if self.with_persist:
+                wiring.connect(
+                    m, self.framebuffer_periph.fbp, self.persist_periph.fbp)
 
         # audio interface
         m.submodules.pmod0 = self.pmod0

@@ -15,7 +15,6 @@ use tiliqua_hal::embedded_graphics::prelude::*;
 use tiliqua_hal::embedded_graphics::primitives::{
     PrimitiveStyle, PrimitiveStyleBuilder, Rectangle,
 };
-use tiliqua_hal::persist::Persist;
 use tiliqua_lib::calibration::*;
 use tiliqua_lib::color::HI8;
 use tiliqua_lib::palette::ColorPalette;
@@ -302,7 +301,6 @@ fn main() -> ! {
     let sysclk = pac::clock::sysclk();
     let serial = Serial0::new(peripherals.UART0);
     let mut timer = Timer0::new(peripherals.TIMER0, sysclk);
-    let mut persist = Persist0::new(peripherals.PERSIST_PERIPH);
     let spiflash = SPIFlash0::new(peripherals.SPIFLASH_CTRL, SPIFLASH_BASE, SPIFLASH_SZ_BYTES);
 
     tiliqua_fw::handlers::logger_init(serial);
@@ -363,7 +361,6 @@ fn main() -> ! {
         timer.enable_tick_isr(TIMER0_ISR_PERIOD_MS, pac::Interrupt::TIMER0);
 
         let spectro = peripherals.SPECTROGRAM_PERIPH;
-        let overlay = peripherals.OVERLAY_PERIPH;
         let mut first = true;
         let mut current_fb_base = PSRAM_FB_BASE as u32;
         let mut last_on_help_page = false;
@@ -427,7 +424,6 @@ fn main() -> ! {
             // physical buffer that was visible on entry. Otherwise the 3D
             // state machine can clear/swap underneath the freshly drawn help
             // text even though analyzer capture itself is disabled.
-            let renderer_3d_enabled = !on_help_page;
             let help_renderer_ready =
                 !help_waiting_for_renderer || surface_status.renderer_idle().bit();
             let help_page_became_ready =
@@ -435,8 +431,7 @@ fn main() -> ! {
             let display_buffer = if on_help_page {
                 current_fb_base != PSRAM_FB_BASE as u32
             } else {
-                renderer_3d_enabled
-                    && surface_status.surface_valid().bit()
+                surface_status.surface_valid().bit()
                     && surface_status.display_buffer().bit()
             };
             // Publish a Help stop request before touching either framebuffer.
@@ -445,11 +440,8 @@ fn main() -> ! {
             if on_help_page {
                 spectro.flags().write(|w| unsafe {
                     w.enable().bit(false);
-                    w.phosphor().bit(false);
                     w.axes().bit(opts.display.axes.value == OnOff::On);
                     w.input_ch().bits(opts.waterfall.input.value.hw_index());
-                    w.view_3d().bit(false);
-                    w.spectrum_mode().bit(false);
                     w.display_ack().bit(display_buffer)
                 });
             }
@@ -608,11 +600,8 @@ fn main() -> ! {
             // VSync, so the next front buffer always contains a complete menu.
             spectro.flags().write(|w| unsafe {
                 w.enable().bit(!on_help_page);
-                w.phosphor().bit(false);
                 w.axes().bit(opts.display.axes.value == OnOff::On);
                 w.input_ch().bits(opts.waterfall.input.value.hw_index());
-                w.view_3d().bit(renderer_3d_enabled);
-                w.spectrum_mode().bit(false);
                 w.display_ack().bit(display_buffer)
             });
             spectro
@@ -632,9 +621,7 @@ fn main() -> ! {
             });
             spectro.timings().write(|w| unsafe {
                 w.h_active().bits(h_active as u16);
-                w.v_active().bits(v_active as u16);
-                w.menu_visible().bit(menu_visible);
-                w.rotation().bits(opts.misc.rotation.value as u8)
+                w.v_active().bits(v_active as u16)
             });
             let (projection_x, projection_y) = projection_matrix(
                 opts.view.rot_x.value,
@@ -655,21 +642,6 @@ fn main() -> ! {
                 w.quality().bits(opts.view.quality.value.hw_index())
             });
 
-            // WATERFALL draws its own plot axes. Keep the general-purpose XBEAM
-            // grid disabled for the MVP so the analytical display stays clean.
-            overlay.flags().write(|w| unsafe {
-                w.grid_style().bits(0);
-                w.grid_pixel().bits(0)
-            });
-
-            if on_help_page {
-                // Help is a static framebuffer page. Keep decay as slow as
-                // the existing persistence controller allows so it remains
-                // readable until software clears/redraws it on scroll.
-                persist.set_persistence(80);
-            } else {
-                persist.set_cleanup();
-            }
             first = false;
         }
     })
