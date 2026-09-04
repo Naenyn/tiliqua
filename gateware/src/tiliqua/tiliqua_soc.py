@@ -58,15 +58,13 @@ from .periph import dtr, encoder, eurorack_pmod, i2c, psram
 from .platform import *
 from .raster import blit, line, persist, plot
 from .video import framebuffer, palette
-from .wishbone import ResponseBuffer
 
 
 class TiliquaSoc(Component):
     def __init__(self, *, firmware_bin_path, ui_name, ui_tag, platform_class, clock_settings,
                  touch=False, finalize_csr_bridge=True, poke_outputs=False, mainram_size=0x4000,
                  fw_location=None, fw_offset=None, cpu_variant="tiliqua_rv32im",
-                 extra_cpu_regions=[], fb_overlay=None, extra_plot_ports=0,
-                 register_psram_response=False):
+                 extra_cpu_regions=[], fb_overlay=None, extra_plot_ports=0):
 
         super().__init__({})
 
@@ -78,8 +76,6 @@ class TiliquaSoc(Component):
         self.firmware_bin_path = firmware_bin_path
         self.touch = touch
         self.clock_settings = clock_settings
-        self.register_psram_response = register_psram_response
-
         self.platform_class = platform_class
 
         # Memory map of CPU
@@ -187,23 +183,8 @@ class TiliquaSoc(Component):
 
         # psram peripheral
         self.psram_periph = psram.Peripheral(size=self.psram_size)
-        if self.register_psram_response:
-            psram_bus_signature = self.psram_periph.bus.signature
-            self.psram_response = ResponseBuffer(
-                addr_width=psram_bus_signature.addr_width,
-                data_width=psram_bus_signature.data_width,
-                granularity=psram_bus_signature.granularity,
-                features={"cti", "bte"},
-            )
-            self.psram_response.upstream.memory_map = self.psram_periph.bus.memory_map
-            self.wb_decoder.add(
-                self.psram_response.upstream,
-                addr=self.psram_base,
-                name="psram",
-            )
-        else:
-            self.wb_decoder.add(self.psram_periph.bus, addr=self.psram_base,
-                                name="psram")
+        self.wb_decoder.add(self.psram_periph.bus, addr=self.psram_base,
+                            name="psram")
         self.csr_decoder.add(self.psram_periph.csr_bus, addr=self.psram_csr_base, name="psram_csr")
 
         # mobo i2c
@@ -349,14 +330,6 @@ class TiliquaSoc(Component):
 
         # psram
         m.submodules.psram_periph = self.psram_periph
-        if self.register_psram_response:
-            m.submodules.psram_response = self.psram_response
-            wiring.connect(
-                m,
-                self.psram_response.downstream,
-                self.psram_periph.bus,
-            )
-
         # spiflash
         if sim.is_hw(platform):
             spi0_provider = spiflash.ECP5ConfigurationFlashProvider()
