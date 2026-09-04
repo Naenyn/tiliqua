@@ -117,5 +117,5 @@ if __name__ == "__main__":
         # This deterministic placement has balanced passing margin across the
         # serializer, pixel, system and audio clocks. Unlike the repository
         # default, omit --timing-allow-fail so timing regressions fail the build.
-        nextpnr_opts="--seed 2",
+        nextpnr_opts="--seed 4",
     )
