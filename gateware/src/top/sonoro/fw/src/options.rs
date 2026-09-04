@@ -306,6 +306,9 @@ int_params!(HideParams<u8>   { step: 1, min: 2, max: 16, format: IntFormat::Scal
 button_params!(OneShotButtonParams {
     mode: ButtonMode::OneShot
 });
+button_params!(ToggleButtonParams {
+    mode: ButtonMode::Toggle
+});
 
 #[derive(OptionPage, Clone)]
 pub struct SonoroOpts {
@@ -319,6 +322,8 @@ pub struct SonoroOpts {
     pub range: EnumOption<FrequencyRange>,
     #[option]
     pub rate: EnumOption<ScrollRate>,
+    #[option(false)]
+    pub freeze: ButtonOption<ToggleButtonParams>,
 }
 
 #[derive(OptionPage, Clone)]

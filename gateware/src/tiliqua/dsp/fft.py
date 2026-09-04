@@ -206,9 +206,11 @@ class FFT(wiring.Component):
         W_rd_l = Signal(CQ(wshape))
         mW_rd_r_a = Signal(bshape)
         mW_rd_r_z = Signal(bshape)
+        mW_rd_r_p = Signal(bshape)
         m.d.comb += mW_rd_r_z.eq(mW_rd_r_a * W_rd_l.real)
         mW_rd_i_a = Signal(bshape)
         mW_rd_i_z = Signal(bshape)
+        mW_rd_i_p = Signal(bshape)
         m.d.comb += mW_rd_i_z.eq(mW_rd_i_a * W_rd_l.imag)
 
         # Butterfly sum and difference calculation based on
@@ -340,9 +342,22 @@ class FFT(wiring.Component):
                 m.next = "BUTTERFLY1"
 
             with m.State("BUTTERFLY1"):
-                # Accumulate second 2 multiplies into 'bw'.
-                m.d.sync += bw.real.eq(bw.real - mW_rd_i_z)
-                m.d.sync += bw.imag.eq(bw.imag + mW_rd_r_z)
+                # End both DSP paths at registers before the full-width
+                # butterfly add/subtract. Combining the multiplier and carry
+                # chain in one cycle is needlessly timing-critical, while one
+                # extra clock per butterfly is negligible for this iterative
+                # architecture.
+                m.d.sync += [
+                    mW_rd_r_p.eq(mW_rd_r_z),
+                    mW_rd_i_p.eq(mW_rd_i_z),
+                ]
+                m.next = "BUTTERFLY2"
+
+            with m.State("BUTTERFLY2"):
+                # Accumulate the registered second pair of products into
+                # 'bw'.
+                m.d.sync += bw.real.eq(bw.real - mW_rd_i_p)
+                m.d.sync += bw.imag.eq(bw.imag + mW_rd_r_p)
                 m.next = "WRITE-S"
 
             with m.State("WRITE-S"):

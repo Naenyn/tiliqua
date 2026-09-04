@@ -99,10 +99,21 @@ class DMAFramebuffer(wiring.Component):
         # TODO: FFSync needed? (sync -> dvi crossing, but should always be in reset when changed).
         wiring.connect(m, wiring.flipped(self.fbp.timings), dvi_tgen.timings)
 
+        # Register VSync before it controls the scanout FIFO. The timing
+        # generator derives VSync combinationally from the current X/Y
+        # counters; using that expression directly for the byte counter made
+        # one DVI-clock path continue through FIFO readiness, its Gray-code
+        # read-pointer increment, and finally the block-RAM address. VSync is
+        # asserted for many pixel clocks, so this one-cycle internal delay
+        # does not change frame alignment while giving the FIFO path a clean
+        # register boundary.
+        phy_vsync_dvi = Signal()
+        m.d.dvi += phy_vsync_dvi.eq(dvi_tgen.ctrl.vsync)
+
         # Create a VSync signal in the 'sync' domain. Decoupled from display VSync inversion!
         phy_vsync_sync = Signal()
         m.submodules.vsync_ff = FFSynchronizer(
-                i=dvi_tgen.ctrl.vsync, o=phy_vsync_sync, o_domain="sync")
+                i=phy_vsync_dvi, o=phy_vsync_sync, o_domain="sync")
 
         # DMA master bus
         bus = self.bus
@@ -170,7 +181,7 @@ class DMAFramebuffer(wiring.Component):
         # (1 FIFO word is N pixels, extracted byte-by-byte)
         bytecounter = Signal(exact_log2(4//self.bytes_per_pixel))
         last_word   = Signal(32)
-        with m.If(dvi_tgen.ctrl.vsync):
+        with m.If(phy_vsync_dvi):
             m.d.dvi += bytecounter.eq(0)
         with m.Elif(dvi_tgen.ctrl.de & fifo.r_rdy):
             m.d.comb += fifo.r_en.eq(bytecounter == 0),

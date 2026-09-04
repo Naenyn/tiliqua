@@ -15,6 +15,10 @@ use tiliqua_hal::embedded_graphics::prelude::*;
 use tiliqua_hal::embedded_graphics::primitives::{
     PrimitiveStyle, PrimitiveStyleBuilder, Rectangle,
 };
+use tiliqua_hal::embedded_graphics::{
+    mono_font::{ascii::FONT_5X7, MonoTextStyle},
+    text::Text,
+};
 use tiliqua_hal::persist::Persist;
 use tiliqua_lib::calibration::*;
 use tiliqua_lib::color::HI8;
@@ -99,6 +103,175 @@ where
     menu_panel_rect(pos_x, pos_y)
         .into_styled(PrimitiveStyle::with_stroke(HI8::BLACK, 1))
         .draw(display)
+}
+
+fn draw_axis_text<D>(
+    display: &mut D,
+    text: &str,
+    x: i32,
+    y: i32,
+    color: HI8,
+) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = HI8>,
+{
+    // Text positions in the gateware used an 8-pixel cell with a 5x7 glyph.
+    // The stock 5x7 framebuffer font has a six-pixel cell; preserving the
+    // original anchor points keeps tick labels aligned while making them a
+    // little less visually crowded.
+    Text::new(
+        text,
+        Point::new(x, y + 7),
+        MonoTextStyle::new(&FONT_5X7, color),
+    )
+    .draw(display)
+    .map(|_| ())
+}
+
+fn axis_fingerprint(opts: &Opts, width: u32, height: u32) -> u32 {
+    let frequency_ramp = opts.sonoro.mode.value == DisplayMode::Spectrum
+        && matches!(
+            opts.spectrum.fill.value,
+            SpectrumFill::Freq | SpectrumFill::FreqReverse
+        );
+    width
+        ^ height.rotate_left(12)
+        ^ ((opts.display.axes.value == OnOff::On) as u32) << 24
+        ^ ((opts.sonoro.mode.value == DisplayMode::Spectrum) as u32) << 25
+        ^ ((opts.sonoro.range.value.hw_index() as u32) << 26)
+        ^ ((opts.sonoro.rate.value.hw_index() as u32) << 28)
+        ^ ((opts.spectrum.scale.value.hw_index() as u32) << 30)
+        ^ ((frequency_ramp as u32) << 31)
+        ^ ((opts.display.hue.value as u32) << 16)
+}
+
+fn draw_analyzer_axes<D>(
+    display: &mut D,
+    opts: &Opts,
+    width: u32,
+    height: u32,
+) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = HI8>,
+{
+    if opts.display.axes.value != OnOff::On {
+        return Ok(());
+    }
+
+    let spectrum = opts.sonoro.mode.value == DisplayMode::Spectrum;
+    let frequency_ramp = spectrum
+        && matches!(
+            opts.spectrum.fill.value,
+            SpectrumFill::Freq | SpectrumFill::FreqReverse
+        );
+    let color = if frequency_ramp {
+        HI8::new(15, 12)
+    } else {
+        HI8::new(opts.display.hue.value, 10)
+    };
+    let x_shift = if width >= 1024 { 2 } else { 1 };
+    let y_shift = if height < 600 { 0 } else { 1 };
+    let plot_w = 256i32 << x_shift;
+    let plot_h = 256i32 << y_shift;
+    let plot_x = (width as i32 - plot_w) / 2;
+    let plot_y = (height as i32 - plot_h) / 2;
+    let axis_pad = 3i32;
+
+    let y_labels = if spectrum {
+        ["    0", "  -24", "  -48", "  -72", "  -96"]
+    } else {
+        match opts.sonoro.range.value {
+            FrequencyRange::Range24k => ["  24k", "  18k", "  12k", "   6k", "    0"],
+            FrequencyRange::Range12k => ["  12k", "   9k", "   6k", "   3k", "    0"],
+            FrequencyRange::Range6k => ["   6k", " 4.5k", "   3k", " 1.5k", "    0"],
+            FrequencyRange::Range3k => ["   3k", "2.25k", " 1.5k", "  750", "    0"],
+        }
+    };
+    let y_positions = [
+        plot_y - 3,
+        plot_y + plot_h / 4 - 3,
+        plot_y + plot_h / 2 - 3,
+        plot_y + plot_h - plot_h / 4 - 3,
+        plot_y + plot_h - 8,
+    ];
+    for (label, y) in y_labels.iter().zip(y_positions) {
+        draw_axis_text(display, label, plot_x - 48, y, color)?;
+    }
+    draw_axis_text(
+        display,
+        if spectrum { "AMP(dBFS)" } else { "FREQ (Hz)" },
+        plot_x - 72,
+        plot_y - 20,
+        color,
+    )?;
+
+    let label_y = plot_y + plot_h + axis_pad + 5;
+    if spectrum && opts.spectrum.scale.value == SpectrumScale::Log {
+        let (col_100, col_1k, col_10k, end_label) = match opts.sonoro.range.value {
+            FrequencyRange::Range24k => (75, 151, Some(226), " 20k"),
+            FrequencyRange::Range12k => (83, 166, Some(248), " 12k"),
+            FrequencyRange::Range6k => (92, 184, None, "  6k"),
+            FrequencyRange::Range3k => (103, 206, None, "  3k"),
+        };
+        draw_axis_text(display, "  10", plot_x - axis_pad, label_y, color)?;
+        draw_axis_text(
+            display,
+            " 100",
+            plot_x + (col_100 << x_shift) - 12,
+            label_y,
+            color,
+        )?;
+        draw_axis_text(
+            display,
+            "  1k",
+            plot_x + (col_1k << x_shift) - 12,
+            label_y,
+            color,
+        )?;
+        if let Some(column) = col_10k {
+            draw_axis_text(
+                display,
+                " 10k",
+                plot_x + (column << x_shift) - 12,
+                label_y,
+                color,
+            )?;
+        }
+        draw_axis_text(display, end_label, plot_x + plot_w - 24, label_y, color)?;
+    } else {
+        let x_labels = if spectrum {
+            match opts.sonoro.range.value {
+                FrequencyRange::Range24k => ["  0", "  6k ", " 12k ", " 18k ", " 24k "],
+                FrequencyRange::Range12k => ["  0", "  3k ", "  6k ", "  9k ", " 12k "],
+                FrequencyRange::Range6k => ["  0", "1.5k ", "  3k ", "4.5k ", "  6k "],
+                FrequencyRange::Range3k => ["  0", " 750 ", "1.5k ", "2.25k", "  3k "],
+            }
+        } else {
+            match opts.sonoro.rate.value {
+                ScrollRate::Fast => ["  0", "0.68s", "1.37s", "2.04s", "2.72s"],
+                ScrollRate::Medium => ["  0", "1.36s", "2.73s", "4.08s", "5.44s"],
+                ScrollRate::Slow => ["  0", "2.73s", "5.46s", "8.18s", "10.9s"],
+                ScrollRate::VerySlow => ["  0", "5.45s", "10.9s", "16.4s", "21.8s"],
+            }
+        };
+        let x_positions = [
+            plot_x - axis_pad,
+            plot_x + plot_w / 4 - 15,
+            plot_x + plot_w / 2 - 15,
+            plot_x + plot_w - plot_w / 4 - 15,
+            plot_x + plot_w - 30,
+        ];
+        for (label, x) in x_labels.iter().zip(x_positions) {
+            draw_axis_text(display, label, x, label_y, color)?;
+        }
+    }
+    draw_axis_text(
+        display,
+        if spectrum { "FREQ(Hz)" } else { "AGE (s) " },
+        plot_x + plot_w / 2 - 24,
+        plot_y + plot_h + axis_pad + 21,
+        color,
+    )
 }
 
 fn hash_menu_bytes(mut hash: u32, bytes: &[u8]) -> u32 {
@@ -257,7 +430,7 @@ fn sanitize_options(opts: &mut Opts, last_valid_page: &mut Page) {
     // does not support conditional pages, so skip over the inactive page while
     // preserving navigation direction:
     //
-    //   SONORO <--> SPECTRUM|HISTO <--> DISPLAY <--> MISC <--> HELP
+    //   SONORO <--> SPECTRUM|HISTO <--> DISPLAY <--> MENU <--> MISC <--> HELP
     //
     // With the enum ordered as SONORO, SPECTRUM, HISTO, DISPLAY..., the
     // inactive page is an in-between sentinel. Use the last valid page to tell
@@ -362,10 +535,14 @@ fn main() -> ! {
             None
         };
     // Boot into the analyzer view even when older saved SONORO settings came
-    // from the combined 2D/3D renderer.
+    // from a renderer with a different mode set.
     opts.sonoro.mode.value = DisplayMode::Spectrum;
     opts.spectrum.spectrum_style.value = SpectrumStyle::Bars;
     opts.spectrum.scale.value = SpectrumScale::Log;
+    // Freeze is a live transport state, not a startup preference. A toggle
+    // button gives it direct encoder-click behavior, so explicitly clear a
+    // previously saved value after loading the remaining options.
+    opts.sonoro.freeze.value = false;
     let mut last_valid_page = opts.tracker.page.value;
     sanitize_options(&mut opts, &mut last_valid_page);
 
@@ -386,6 +563,7 @@ fn main() -> ! {
         let mut last_on_help_page = false;
         let mut last_help_scroll = 0;
         let mut menu_cache: Option<(Opts, u32, u32, u32)> = None;
+        let mut last_axis_fingerprint: Option<u32> = None;
 
         loop {
             let (opts, draw_options, save_opts, wipe_opts) = critical_section::with(|cs| {
@@ -448,6 +626,21 @@ fn main() -> ! {
                 last_frequency_ramp_palette = frequency_ramp_palette;
             }
 
+            if on_help_page {
+                last_axis_fingerprint = None;
+            } else {
+                let fingerprint = axis_fingerprint(&opts, h_active, v_active);
+                // Axis text lives in the persistent framebuffer. Clear stale
+                // labels only when their layout/content changes, then refresh
+                // the small glyph set every loop so persistence never dims it.
+                if !first && !help_page_left && last_axis_fingerprint != Some(fingerprint) {
+                    clear_framebuffer_region(PSRAM_FB_BASE);
+                    menu_cache = None;
+                }
+                draw_analyzer_axes(&mut display, &opts, h_active, v_active).ok();
+                last_axis_fingerprint = Some(fingerprint);
+            }
+
             let (menu_x, menu_y) = if on_help_page {
                 (h_active / 2 - 30, v_active - 100)
             } else {
@@ -476,7 +669,7 @@ fn main() -> ! {
                 }
             } else if menu_visible {
                 // Framebuffer persistence also decays UI pixels in the direct
-                // 2D modes, so refresh an unchanged visible menu without an
+                // display modes, so refresh an unchanged visible menu without an
                 // unnecessary erase pass.
                 draw_menu(&mut display, &opts, menu_x, menu_y, ui_hue).ok();
             }
@@ -545,7 +738,8 @@ fn main() -> ! {
                     .bit(!spectrum_mode && opts.histo.style.value == RenderStyle::Phosphor);
                 w.axes().bit(opts.display.axes.value == OnOff::On);
                 w.input_ch().bits(opts.sonoro.input.value.hw_index());
-                w.spectrum_mode().bit(spectrum_mode)
+                w.spectrum_mode().bit(spectrum_mode);
+                w.freeze().bit(opts.sonoro.freeze.value)
             });
             spectro
                 .gain()

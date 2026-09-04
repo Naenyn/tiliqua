@@ -190,9 +190,17 @@ class DVIPHY(wiring.Component):
             ]
         with m.Else():
             m.d.dvi5x += [
-                tmds_ch0_shift.eq(Cat(tmds_ch0_shift[2:10], Const(0, 2))),
-                tmds_ch1_shift.eq(Cat(tmds_ch1_shift[2:10], Const(0, 2))),
-                tmds_ch2_shift.eq(Cat(tmds_ch2_shift[2:10], Const(0, 2)))
+                # Rotate rather than zero-fill. Every word is reloaded after
+                # exactly five DDR transfers, so the wrapped bits can never
+                # reach an output. Keeping every next-state bit sourced from
+                # a register also avoids inferring a slow load-vs-zero path on
+                # the high-speed shift registers.
+                tmds_ch0_shift.eq(Cat(tmds_ch0_shift[2:10],
+                                      tmds_ch0_shift[0:2])),
+                tmds_ch1_shift.eq(Cat(tmds_ch1_shift[2:10],
+                                      tmds_ch1_shift[0:2])),
+                tmds_ch2_shift.eq(Cat(tmds_ch2_shift[2:10],
+                                      tmds_ch2_shift[0:2]))
             ]
 
         if sim.is_hw(platform):

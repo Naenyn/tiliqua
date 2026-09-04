@@ -27,7 +27,8 @@ SONORO options select a live spectrum analyzer or historical 2D spectrograph,
 input, sensitivity, and maximum displayed frequency. Spectrum mode plots the
 newest FFT with frequency on X and magnitude on Y. Spectrograph mode offers
 analytical or phosphor rendering, history speed, and adjustable phosphor
-persistence.
+persistence. The direct-click freeze control holds the last complete analysis
+frame, including the spectrum, peak trace, and spectrograph history.
 
 Analytical rendering emphasizes stable, crisp frequency bins. Phosphor
 rendering adds temporal smoothing, brighter highlights, and an age-dependent
@@ -113,4 +114,8 @@ if __name__ == "__main__":
         SonoroSoc,
         path=this_path,
         archiver_callback=lambda archiver: archiver.with_option_storage(),
+        # This deterministic placement has balanced passing margin across the
+        # serializer, pixel, system and audio clocks. Unlike the repository
+        # default, omit --timing-allow-fail so timing regressions fail the build.
+        nextpnr_opts="--seed 2",
     )

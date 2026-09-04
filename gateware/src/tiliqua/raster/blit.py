@@ -148,10 +148,13 @@ class Peripheral(wiring.Component):
         sprite_r_port = self._sprite_mem.read_port()
         sprite_w_port = self._sprite_mem.write_port()
 
-        # Sheet width CSR (SoC must set this)
-        sheet_width_px = Signal(16)
+        # Sheet width CSR (SoC must set this). Store the derived byte stride
+        # once when configured instead of rebuilding it in the pixel-address
+        # path for every blit cycle.
+        bytes_per_row = Signal(16)
         with m.If(self._sheet_width.element.w_stb):
-            m.d.sync += sheet_width_px.eq(self._sheet_width.f.width.w_data)
+            m.d.sync += bytes_per_row.eq(
+                (self._sheet_width.f.width.w_data + 7) >> 3)
 
         # Status register (SoC must check this before issuing commands)
         m.d.comb += [
@@ -212,12 +215,10 @@ class Peripheral(wiring.Component):
         # TODO/WARN: currently this will only work if width (px) is divisible by 8!
         # TODO: these bit ops are a bit tricky to understand, although I can't immediately figure out
         # a nice way to make them a bit easier to read...
-        bytes_per_row = Signal(16)
         byte_addr = Signal(16)
         sprite_memory_addr = Signal(self.memory_addr_width)
         pixel_bit_index = Signal(5)
         m.d.comb += [
-            bytes_per_row.eq((sheet_width_px + 7) >> 3),
             byte_addr.eq(sprite_y * bytes_per_row + (sprite_x >> 3)),
             sprite_memory_addr.eq(byte_addr>>2),
             pixel_bit_index.eq(((byte_addr & 3) << 3) | (sprite_x & 7)),

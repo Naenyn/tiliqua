@@ -187,7 +187,6 @@ class WishboneL2Cache(wiring.Component):
                     with m.If((flush_wait == 0) &
                               ~(master.cyc & master.stb) &
                               ~(self.flush & ~flush_done)):
-                        m.d.comb += adr_line.eq(adr_line_flush)
                         m.d.sync += manual_flush.eq(0)
                         m.next = "TEST_FLUSH"
 

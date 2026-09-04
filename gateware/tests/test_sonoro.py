@@ -21,15 +21,130 @@ from spectrogram import (  # noqa: E402
     DbfsLevelSmoother,
     MagnitudeToDbfs,
     SPECTRUM_CORDIC_GAIN,
+    SPECTRUM_BIN_LOG_COLUMN_LUTS,
+    SPECTRUM_RANGE_ANALYSIS,
+    SpectrumLogFrameHandoff,
+    SpectrumReadRequestAligner,
     _dbfs_level_q4_to_height,
     _logical_scan_coordinates,
     _magnitude_raw_to_dbfs_level,
-    _three_d_frequency_coordinate,
-    _three_d_scan_geometry,
 )
 
 
 class SonoroMagnitudeTests(unittest.TestCase):
+
+    def test_375_hz_maps_inside_every_log_range(self):
+        expected_columns = (119, 130, 144, 162)
+        for index, ((_, bin_hz), expected) in enumerate(zip(
+                SPECTRUM_RANGE_ANALYSIS, expected_columns)):
+            tone_bin = round(375 / bin_hz)
+            self.assertEqual(
+                SPECTRUM_BIN_LOG_COLUMN_LUTS[index][tone_bin], expected)
+            self.assertLess(expected, 255)
+
+    def test_log_read_request_does_not_wrap_at_right_edge(self):
+        dut = SpectrumReadRequestAligner()
+        sim = Simulator(dut)
+        sim.add_clock(1e-6, domain="dvi")
+
+        async def bench(ctx):
+            # The final in-plot pixel is immediately followed by an outside
+            # pixel whose truncated log column wraps from 256 to zero. Plot
+            # validity and address must cross the pipeline boundary together.
+            ctx.set(dut.i_plot, 1)
+            ctx.set(dut.i_log_addr, 255)
+            ctx.set(dut.i_log_frac, 0x80)
+            ctx.set(dut.i_color, 15)
+            await ctx.tick(domain="dvi")
+            self.assertEqual(ctx.get(dut.o_plot), 1)
+            self.assertEqual(ctx.get(dut.o_log_addr), 255)
+            self.assertEqual(ctx.get(dut.o_log_frac), 0x80)
+            self.assertEqual(ctx.get(dut.o_color), 15)
+
+            ctx.set(dut.i_plot, 0)
+            ctx.set(dut.i_log_addr, 0)
+            ctx.set(dut.i_log_frac, 0)
+            ctx.set(dut.i_color, 0)
+            # Before the next edge, the active transaction must remain the
+            # final column rather than combining old plot=1 with new addr=0.
+            self.assertEqual(ctx.get(dut.o_plot), 1)
+            self.assertEqual(ctx.get(dut.o_log_addr), 255)
+            await ctx.tick(domain="dvi")
+            self.assertEqual(ctx.get(dut.o_plot), 0)
+            self.assertEqual(ctx.get(dut.o_log_addr), 0)
+
+        sim.add_testbench(bench)
+        sim.run()
+
+    def test_log_frame_publish_waits_for_delayed_final_bucket(self):
+        dut = SpectrumLogFrameHandoff()
+        sim = Simulator(dut)
+        sim.add_clock(1e-6)
+
+        async def bench(ctx):
+            # Submit the final bin into bank 0. The combinational next-bank
+            # selector may change immediately afterward, but the delayed ROM
+            # transaction must retain bank 0 until it is written/published.
+            ctx.set(dut.i_valid, 1)
+            ctx.set(dut.i_first, 0)
+            ctx.set(dut.i_write, 1)
+            ctx.set(dut.i_frame_write, 1)
+            ctx.set(dut.i_bin, 255)
+            ctx.set(dut.i_bank, 0)
+            self.assertEqual(ctx.get(dut.o_publish), 0)
+            await ctx.tick()
+
+            ctx.set(dut.i_valid, 0)
+            ctx.set(dut.i_bank, 1)
+            self.assertEqual(ctx.get(dut.o_publish), 0)
+            await ctx.tick()
+
+            self.assertEqual(ctx.get(dut.o_valid), 1)
+            self.assertEqual(ctx.get(dut.o_bin), 255)
+            self.assertEqual(ctx.get(dut.o_bank), 0)
+            self.assertEqual(ctx.get(dut.o_publish), 1)
+            await ctx.tick()
+            self.assertEqual(ctx.get(dut.o_publish), 0)
+
+        sim.add_testbench(bench)
+        sim.run()
+
+    def test_log_handoff_rejects_mirrored_fft_bins(self):
+        dut = SpectrumLogFrameHandoff()
+        sim = Simulator(dut)
+        sim.add_clock(1e-6)
+
+        async def bench(ctx):
+            # The spectral envelope emits all 512 FFT bins.  The upper half
+            # is the mirrored negative-frequency spectrum and must be
+            # rejected by the positive-frequency display. Truncating this
+            # index to eight bits folds (for example) bin 480 onto bin 224
+            # and draws a false tone near the right edge.
+            ctx.set(dut.i_valid, 1)
+            ctx.set(dut.i_first, 0)
+            ctx.set(dut.i_write, 1)
+            ctx.set(dut.i_frame_write, 1)
+            ctx.set(dut.i_bin, 480)
+            await ctx.tick()
+
+            ctx.set(dut.i_valid, 0)
+            await ctx.tick()
+
+            self.assertEqual(ctx.get(dut.o_valid), 0)
+            self.assertEqual(ctx.get(dut.o_publish), 0)
+
+            # Bin 511 must likewise not masquerade as positive bin 255 and
+            # publish a second, corrupted display bank.
+            ctx.set(dut.i_valid, 1)
+            ctx.set(dut.i_bin, 511)
+            await ctx.tick()
+            ctx.set(dut.i_valid, 0)
+            await ctx.tick()
+            self.assertEqual(ctx.get(dut.o_valid), 0)
+            self.assertEqual(ctx.get(dut.o_publish), 0)
+
+        sim.add_testbench(bench)
+        sim.run()
 
     def test_dbfs_levels_span_plot_height(self):
         m = Module()
@@ -51,44 +166,6 @@ class SonoroMagnitudeTests(unittest.TestCase):
                     self.assertGreater(actual, previous)
                     previous = actual
                 self.assertEqual(previous, plot_height - 1)
-
-        sim = Simulator(m)
-        sim.add_testbench(bench)
-        sim.run()
-
-    def test_three_d_quality_levels_cover_all_fft_bins(self):
-        m = Module()
-        high_quality = Signal()
-        point = Signal(7)
-        point_last = Signal(7)
-        group_shift = Signal(2)
-        coordinate = Signal(9)
-        geometry = _three_d_scan_geometry(high_quality)
-        m.d.comb += [
-            point_last.eq(geometry[0]),
-            group_shift.eq(geometry[1]),
-            coordinate.eq(_three_d_frequency_coordinate(
-                point, high_quality)),
-        ]
-
-        async def bench(ctx):
-            for high, expected_points, expected_shift in (
-                    (0, 64, 2), (1, 128, 1)):
-                ctx.set(high_quality, high)
-                await ctx.delay(1e-9)
-                last = ctx.get(point_last)
-                shift = ctx.get(group_shift)
-                self.assertEqual(last + 1, expected_points)
-                self.assertEqual(shift, expected_shift)
-                self.assertEqual(
-                    (last << shift) + ((1 << shift) - 1), 255)
-
-                ctx.set(point, 0)
-                await ctx.delay(1e-9)
-                self.assertEqual(ctx.get(coordinate), 0)
-                ctx.set(point, last)
-                await ctx.delay(1e-9)
-                self.assertEqual(ctx.get(coordinate), 255)
 
         sim = Simulator(m)
         sim.add_testbench(bench)
