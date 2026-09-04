@@ -29,7 +29,7 @@ class WishboneResponseBufferTests(unittest.TestCase):
             self.assertEqual(ctx.get(dut.upstream.ack), 1)
             self.assertEqual(ctx.get(dut.upstream.dat_r), 0x89ABCDEF)
             self.assertEqual(ctx.get(dut.downstream.stb), 0)
-            self.assertEqual(ctx.get(dut.downstream.cyc), 1)
+            self.assertEqual(ctx.get(dut.downstream.cyc), 0)
 
             ctx.set(dut.downstream.ack, 0)
             await ctx.tick()
@@ -39,7 +39,7 @@ class WishboneResponseBufferTests(unittest.TestCase):
         sim.add_testbench(bench)
         sim.run()
 
-    def test_preserves_cycle_across_back_to_back_burst_beats(self):
+    def test_registers_back_to_back_burst_beats_as_separate_cycles(self):
         dut = ResponseBuffer(features={"cti", "bte"})
         sim = Simulator(dut)
         sim.add_clock(1e-6)
@@ -55,7 +55,7 @@ class WishboneResponseBufferTests(unittest.TestCase):
 
             self.assertEqual(ctx.get(dut.upstream.ack), 1)
             self.assertEqual(ctx.get(dut.upstream.dat_r), 0x11111111)
-            self.assertEqual(ctx.get(dut.downstream.cyc), 1)
+            self.assertEqual(ctx.get(dut.downstream.cyc), 0)
             self.assertEqual(ctx.get(dut.downstream.stb), 0)
 
             # Present the next beat while the registered response completes.
@@ -71,7 +71,7 @@ class WishboneResponseBufferTests(unittest.TestCase):
 
             self.assertEqual(ctx.get(dut.upstream.ack), 1)
             self.assertEqual(ctx.get(dut.upstream.dat_r), 0x22222222)
-            self.assertEqual(ctx.get(dut.downstream.cyc), 1)
+            self.assertEqual(ctx.get(dut.downstream.cyc), 0)
             self.assertEqual(ctx.get(dut.downstream.stb), 0)
 
         sim.add_testbench(bench)

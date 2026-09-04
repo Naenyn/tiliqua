@@ -16,8 +16,8 @@ class ResponseBuffer(Component):
     That response is captured and presented to the upstream master for one
     clock cycle. While the response is being presented, the downstream strobe
     is suppressed so a combinational slave cannot accept the same request a
-    second time. ``cyc`` remains asserted across that wait state so a burst is
-    not split into a series of single-beat bus cycles.
+    second time. The downstream cycle is also released during that response
+    cycle, matching the transaction boundary expected by the PSRAM bridge.
 
     This deliberately inserts one response cycle and one bubble between
     consecutive transfers. It is intended for timing-sensitive control-plane
@@ -51,9 +51,7 @@ class ResponseBuffer(Component):
             self.downstream.adr.eq(self.upstream.adr),
             self.downstream.dat_w.eq(self.upstream.dat_w),
             self.downstream.sel.eq(self.upstream.sel),
-            # Keep the bus cycle intact across the inserted wait state. Only
-            # STB identifies an active transfer and therefore needs masking.
-            self.downstream.cyc.eq(self.upstream.cyc),
+            self.downstream.cyc.eq(self.upstream.cyc & ~response_valid),
             self.downstream.stb.eq(self.upstream.stb & ~response_valid),
             self.downstream.we.eq(self.upstream.we),
             self.downstream.cti.eq(self.upstream.cti),
