@@ -16,7 +16,8 @@ class ResponseBuffer(Component):
     That response is captured and presented to the upstream master for one
     clock cycle. While the response is being presented, the downstream strobe
     is suppressed so a combinational slave cannot accept the same request a
-    second time.
+    second time. ``cyc`` remains asserted across that wait state so a burst is
+    not split into a series of single-beat bus cycles.
 
     This deliberately inserts one response cycle and one bubble between
     consecutive transfers. It is intended for timing-sensitive control-plane
@@ -26,11 +27,12 @@ class ResponseBuffer(Component):
 
     def __init__(self, *, addr_width=30, data_width=32, granularity=8,
                  features=frozenset({"cti", "bte", "err"})):
+        self._features = frozenset(features)
         signature = wishbone.Signature(
             addr_width=addr_width,
             data_width=data_width,
             granularity=granularity,
-            features=features,
+            features=self._features,
         )
         super().__init__({
             "upstream": In(signature),
@@ -42,32 +44,43 @@ class ResponseBuffer(Component):
 
         response_valid = Signal()
         response_data = Signal.like(self.upstream.dat_r)
-        response_error = Signal()
+        if "err" in self._features:
+            response_error = Signal()
 
         m.d.comb += [
             self.downstream.adr.eq(self.upstream.adr),
             self.downstream.dat_w.eq(self.upstream.dat_w),
             self.downstream.sel.eq(self.upstream.sel),
-            self.downstream.cyc.eq(self.upstream.cyc & ~response_valid),
+            # Keep the bus cycle intact across the inserted wait state. Only
+            # STB identifies an active transfer and therefore needs masking.
+            self.downstream.cyc.eq(self.upstream.cyc),
             self.downstream.stb.eq(self.upstream.stb & ~response_valid),
             self.downstream.we.eq(self.upstream.we),
             self.downstream.cti.eq(self.upstream.cti),
             self.downstream.bte.eq(self.upstream.bte),
             self.upstream.dat_r.eq(response_data),
-            self.upstream.ack.eq(response_valid & ~response_error),
-            self.upstream.err.eq(response_valid & response_error),
         ]
+        if "err" in self._features:
+            m.d.comb += [
+                self.upstream.ack.eq(response_valid & ~response_error),
+                self.upstream.err.eq(response_valid & response_error),
+            ]
+            response_termination = self.downstream.ack | self.downstream.err
+        else:
+            m.d.comb += self.upstream.ack.eq(response_valid)
+            response_termination = self.downstream.ack
 
         with m.If(response_valid):
             m.d.sync += response_valid.eq(0)
         with m.Elif(
             self.downstream.cyc & self.downstream.stb &
-            (self.downstream.ack | self.downstream.err)
+            response_termination
         ):
             m.d.sync += [
                 response_valid.eq(1),
                 response_data.eq(self.downstream.dat_r),
-                response_error.eq(self.downstream.err),
             ]
+            if "err" in self._features:
+                m.d.sync += response_error.eq(self.downstream.err)
 
         return m

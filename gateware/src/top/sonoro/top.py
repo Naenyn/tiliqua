@@ -77,7 +77,7 @@ class SonoroSoc(TiliquaSoc):
         super().__init__(
             finalize_csr_bridge=False,
             fb_overlay=self.overlay_periph.overlay,
-            register_wb_response=True,
+            register_psram_response=True,
             **kwargs,
         )
 

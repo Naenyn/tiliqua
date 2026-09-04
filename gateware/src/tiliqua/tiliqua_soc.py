@@ -66,7 +66,7 @@ class TiliquaSoc(Component):
                  touch=False, finalize_csr_bridge=True, poke_outputs=False, mainram_size=0x4000,
                  fw_location=None, fw_offset=None, cpu_variant="tiliqua_rv32im",
                  extra_cpu_regions=[], fb_overlay=None, extra_plot_ports=0,
-                 register_wb_response=False):
+                 register_psram_response=False):
 
         super().__init__({})
 
@@ -78,7 +78,7 @@ class TiliquaSoc(Component):
         self.firmware_bin_path = firmware_bin_path
         self.touch = touch
         self.clock_settings = clock_settings
-        self.register_wb_response = register_wb_response
+        self.register_psram_response = register_psram_response
 
         self.platform_class = platform_class
 
@@ -160,9 +160,6 @@ class TiliquaSoc(Component):
             alignment=0,
             features={"cti", "bte", "err"}
         )
-        if self.register_wb_response:
-            self.wb_response = ResponseBuffer()
-
         # mainram
         self.mainram = blockram.Peripheral(size=self.mainram_size)
         self.wb_decoder.add(self.mainram.bus, addr=self.mainram_base, name="blockram")
@@ -190,8 +187,23 @@ class TiliquaSoc(Component):
 
         # psram peripheral
         self.psram_periph = psram.Peripheral(size=self.psram_size)
-        self.wb_decoder.add(self.psram_periph.bus, addr=self.psram_base,
-                            name="psram")
+        if self.register_psram_response:
+            psram_bus_signature = self.psram_periph.bus.signature
+            self.psram_response = ResponseBuffer(
+                addr_width=psram_bus_signature.addr_width,
+                data_width=psram_bus_signature.data_width,
+                granularity=psram_bus_signature.granularity,
+                features={"cti", "bte"},
+            )
+            self.psram_response.upstream.memory_map = self.psram_periph.bus.memory_map
+            self.wb_decoder.add(
+                self.psram_response.upstream,
+                addr=self.psram_base,
+                name="psram",
+            )
+        else:
+            self.wb_decoder.add(self.psram_periph.bus, addr=self.psram_base,
+                                name="psram")
         self.csr_decoder.add(self.psram_periph.csr_bus, addr=self.psram_csr_base, name="psram_csr")
 
         # mobo i2c
@@ -290,12 +302,7 @@ class TiliquaSoc(Component):
         # bus
         m.submodules.wb_arbiter = self.wb_arbiter
         m.submodules.wb_decoder = self.wb_decoder
-        if self.register_wb_response:
-            m.submodules.wb_response = self.wb_response
-            wiring.connect(m, self.wb_arbiter.bus, self.wb_response.upstream)
-            wiring.connect(m, self.wb_response.downstream, self.wb_decoder.bus)
-        else:
-            wiring.connect(m, self.wb_arbiter.bus, self.wb_decoder.bus)
+        wiring.connect(m, self.wb_arbiter.bus, self.wb_decoder.bus)
 
         # cpu
         m.submodules.cpu = self.cpu
@@ -342,6 +349,13 @@ class TiliquaSoc(Component):
 
         # psram
         m.submodules.psram_periph = self.psram_periph
+        if self.register_psram_response:
+            m.submodules.psram_response = self.psram_response
+            wiring.connect(
+                m,
+                self.psram_response.downstream,
+                self.psram_periph.bus,
+            )
 
         # spiflash
         if sim.is_hw(platform):
