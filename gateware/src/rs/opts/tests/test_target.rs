@@ -31,6 +31,15 @@ mod tests {
     button_params!(ToggleParams { mode: ButtonMode::Toggle });
     button_params!(OneShotParams { mode: ButtonMode::OneShot });
 
+    #[derive(Clone)]
+    struct LabeledToggleParams;
+
+    impl ButtonOptionParams for LabeledToggleParams {
+        const MODE: ButtonMode = ButtonMode::Toggle;
+        const FALSE_LABEL: &'static str = "running";
+        const TRUE_LABEL: &'static str = "frozen";
+    }
+
     #[derive(OptionPage, Clone)]
     pub struct ScopeOpts {
         #[option]
@@ -121,6 +130,14 @@ mod tests {
             }
         }
 
+    }
+
+    #[test]
+    fn test_custom_toggle_labels() {
+        let mut option = ButtonOption::<LabeledToggleParams>::new("freeze", false, 0);
+        assert_eq!(option.value().as_str(), "running");
+        assert!(option.button_press());
+        assert_eq!(option.value().as_str(), "frozen");
     }
 
 }

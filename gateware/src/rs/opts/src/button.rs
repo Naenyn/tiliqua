@@ -1,6 +1,6 @@
-use heapless::String;
 use core::fmt::Write;
-use serde::{Serialize, Deserialize};
+use heapless::String;
+use serde::{Deserialize, Serialize};
 
 use crate::traits::*;
 
@@ -23,6 +23,8 @@ pub struct ButtonOption<T: ButtonOptionParams> {
 
 pub trait ButtonOptionParams {
     const MODE: ButtonMode;
+    const FALSE_LABEL: &'static str = "<N>";
+    const TRUE_LABEL: &'static str = "<Y>";
 }
 
 impl<T: ButtonOptionParams> ButtonOption<T> {
@@ -58,7 +60,16 @@ impl<T: ButtonOptionParams> OptionTrait for ButtonOption<T> {
         let mut s: OptionString = String::new();
         match T::MODE {
             ButtonMode::Toggle => {
-                write!(&mut s, "{}", if self.value { "<Y>" } else { "<N>" }).ok();
+                write!(
+                    &mut s,
+                    "{}",
+                    if self.value {
+                        T::TRUE_LABEL
+                    } else {
+                        T::FALSE_LABEL
+                    },
+                )
+                .ok();
             }
             ButtonMode::OneShot => {
                 // Also draw on 1 delayed poll cycle so we can draw straight after the first poll
