@@ -65,7 +65,7 @@ class TiliquaSoc(Component):
                  touch=False, finalize_csr_bridge=True, poke_outputs=False, mainram_size=0x4000,
                  fw_location=None, fw_offset=None, cpu_variant="tiliqua_rv32im",
                  extra_cpu_regions=[], fb_overlay=None, extra_plot_ports=0,
-                 with_persist=True):
+                 with_persist=True, attach_framebuffer_masters=True):
 
         super().__init__({})
 
@@ -79,6 +79,7 @@ class TiliquaSoc(Component):
         self.clock_settings = clock_settings
         self.platform_class = platform_class
         self.with_persist = with_persist
+        self.attach_framebuffer_masters = attach_framebuffer_masters
 
         # Memory map of CPU
         self.mainram_base         = 0x00000000
@@ -225,7 +226,8 @@ class TiliquaSoc(Component):
                 palette=self.palette_periph.palette,
                 fixed_modeline=self.clock_settings.modeline,
                 overlay=fb_overlay)
-        self.psram_periph.add_master(self.fb.bus)
+        if self.attach_framebuffer_masters:
+            self.psram_periph.add_master(self.fb.bus)
 
         # Timing CSRs for video PHY
         self.framebuffer_periph = framebuffer.Peripheral()
@@ -246,7 +248,8 @@ class TiliquaSoc(Component):
         self.framebuffer_plotter = plot.FramebufferPlotter(
             bus_signature=self.psram_periph.bus.signature.flip(),
             n_ports=3 + extra_plot_ports)
-        self.psram_periph.add_master(self.framebuffer_plotter.bus)
+        if self.attach_framebuffer_masters:
+            self.psram_periph.add_master(self.framebuffer_plotter.bus)
 
         # Pixel plotter CSR interface
         self.pixel_plot = plot.Peripheral()

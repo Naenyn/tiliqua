@@ -179,27 +179,32 @@ class WaterfallSoc(TiliquaSoc):
             fb_overlay=self.spectrogram,
             extra_plot_ports=1,
             with_persist=False,
+            # WATERFALL combines every non-CPU PSRAM client below. This keeps
+            # the timing-critical central arbiter to a CPU-versus-DMA choice.
+            attach_framebuffer_masters=False,
             **kwargs,
         )
         self.waterfall_terrain_renderer = span.TriangleSpanRenderer(
             bus_signature=self.psram_periph.bus.signature.flip())
         self.backbuffer_clear = BackbufferClear(
             bus_signature=self.psram_periph.bus.signature.flip())
-        # Clear and terrain drawing are mutually exclusive phases of one
-        # surface update. Combine them before the SoC-level PSRAM arbiter so
-        # its CPU response path does not pay for two independent high-fanout
-        # renderer grants.
+        # Present all non-CPU memory traffic as one client to the central PSRAM
+        # arbiter. Scanout is added first, and the explicit ``scanout_urgent``
+        # backpressure below keeps bulk clear/terrain writes from occupying the
+        # local arbiter while its FIFO reserve is being refilled.
         psram_bus = self.psram_periph.bus
-        self.waterfall_memory_arbiter = wishbone.Arbiter(
+        self.waterfall_dma_arbiter = wishbone.Arbiter(
             addr_width=psram_bus.addr_width,
             data_width=psram_bus.data_width,
             granularity=psram_bus.granularity,
             features=psram_bus.features,
         )
-        self.waterfall_memory_arbiter.add(self.backbuffer_clear.bus)
-        self.waterfall_memory_arbiter.add(
+        self.waterfall_dma_arbiter.add(self.fb.bus)
+        self.waterfall_dma_arbiter.add(self.framebuffer_plotter.bus)
+        self.waterfall_dma_arbiter.add(self.backbuffer_clear.bus)
+        self.waterfall_dma_arbiter.add(
             self.waterfall_terrain_renderer.bus)
-        self.psram_periph.add_master(self.waterfall_memory_arbiter.bus)
+        self.psram_periph.add_master(self.waterfall_dma_arbiter.bus)
 
         self.spectrogram_periph_base = 0x00001000
         self.csr_decoder.add(
@@ -215,7 +220,7 @@ class WaterfallSoc(TiliquaSoc):
         m.submodules.waterfall_line_plotter = self.waterfall_line_plotter
         m.submodules.waterfall_terrain_renderer = self.waterfall_terrain_renderer
         m.submodules.backbuffer_clear = self.backbuffer_clear
-        m.submodules.waterfall_memory_arbiter = self.waterfall_memory_arbiter
+        m.submodules.waterfall_dma_arbiter = self.waterfall_dma_arbiter
         m.submodules += super().elaborate(platform)
 
         wiring.connect(
