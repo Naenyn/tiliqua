@@ -40,6 +40,17 @@ def reference_pixels(vertices, width, height):
     return pixels
 
 
+def packed_word_pixels(pixels, width):
+    """Expand touched pixels to the opaque four-pixel words we store."""
+    expanded = set()
+    for x, y in pixels:
+        word_x = x & ~3
+        for lane in range(4):
+            if word_x + lane < width:
+                expanded.add((word_x + lane, y))
+    return expanded
+
+
 class TriangleSpanRasterizerTests(unittest.TestCase):
 
     @staticmethod
@@ -115,7 +126,8 @@ class TriangleSpanRasterizerTests(unittest.TestCase):
                     logical, rotation, width, height)
                 self.assertEqual(
                     actual,
-                    reference_pixels(transformed, width, height),
+                    packed_word_pixels(
+                        reference_pixels(transformed, width, height), width),
                 )
 
     def test_repeated_small_surfaces_do_not_reemit_old_spans(self):
@@ -161,7 +173,10 @@ class TriangleSpanRasterizerTests(unittest.TestCase):
         sim.run()
         for frame, pixels in enumerate(frames):
             vertices = [(1, 1), (13 - frame, 2), (2, 10 - frame)]
-            self.assertEqual(pixels, reference_pixels(vertices, 16, 12))
+            self.assertEqual(
+                pixels,
+                packed_word_pixels(reference_pixels(vertices, 16, 12), 16),
+            )
 
     def test_adjacent_triangles_form_watertight_projected_cells(self):
         """Terrain's two triangles must not crack along their shared edge."""
@@ -206,7 +221,8 @@ class TriangleSpanRasterizerTests(unittest.TestCase):
                         for triangle in triangles
                     ]
                     expected = set().union(*(
-                        reference_pixels(triangle, width, height)
+                        packed_word_pixels(
+                            reference_pixels(triangle, width, height), width)
                         for triangle in transformed
                     ))
                     self.assertEqual(actual, expected)

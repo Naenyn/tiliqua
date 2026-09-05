@@ -213,16 +213,17 @@ fn write_waterfall_palette(
     palette: ColorPalette,
     video: &mut impl DMAFramebuffer,
 ) {
-    // Terrain encodes five-bit level as {intensity[3:0], color[3]} while the
-    // lower color bits retain eight selectable hue rotations. This doubles
-    // the visible amplitude gradation without enlarging the framebuffer.
+    // Terrain encodes six-bit level as {intensity[3:0], color[3:2]} while the
+    // lower two color bits retain four selectable hue rotations. This uses
+    // every palette entry for a smoother amplitude gradient without enlarging
+    // the framebuffer.
     for intensity in 0..16u8 {
         for hue in 0..16u8 {
-            let base_hue = hue & 7;
-            let level = intensity * 2 + (hue >> 3);
+            let base_hue = hue & 3;
+            let level = intensity * 4 + (hue >> 2);
             let position = level as u16 * 15;
-            let lower = (position / 31) as u8;
-            let fraction = position % 31;
+            let lower = (position / 63) as u8;
+            let fraction = position % 63;
             let upper = core::cmp::min(lower + 1, 15);
             let (lo, hi, rotate) = match palette.heatmap_color(lower) {
                 Some(lo) => (lo, palette.heatmap_color(upper).unwrap(), true),
@@ -233,8 +234,8 @@ fn write_waterfall_palette(
                 ),
             };
             let interpolate = |a: u8, b: u8| -> u8 {
-                (((a as u32 * (31 - fraction) as u32)
-                    + (b as u32 * fraction as u32) + 15) / 31) as u8
+                (((a as u32 * (63 - fraction) as u32)
+                    + (b as u32 * fraction as u32) + 31) / 63) as u8
             };
             let rgb = (
                 interpolate(lo.0, hi.0),
@@ -473,7 +474,7 @@ fn main() -> ! {
             // In 3D, keep transient UI in the lower half of the palette. The
             // literal back-buffer renderer also uses low plot hues so the
             // legacy tagged cleanup path never touches visible 3D pixels.
-            let ui_hue = opts.menu.ui_hue.value & 7;
+            let ui_hue = opts.menu.ui_hue.value & 3;
             let surface_status = spectro.status().read();
             // Help is a static framebuffer page. Suspend the autonomous 3D
             // renderer before clearing or drawing it, and keep scanning the

@@ -130,18 +130,47 @@ class TriangleSpanRasterizer(wiring.Component):
             edge_dy[1], edge_dx[1],
             edge_dy[2], edge_dx[2],
         ])
-        all_nonnegative = Signal()
-        all_nonpositive = Signal()
-        inside = Signal()
-        m.d.comb += [
-            all_nonnegative.eq((edge[0] >= 0) &
-                               (edge[1] >= 0) &
-                               (edge[2] >= 0)),
-            all_nonpositive.eq((edge[0] <= 0) &
-                               (edge[1] <= 0) &
-                               (edge[2] <= 0)),
-            inside.eq(all_nonnegative | all_nonpositive),
+        # The writer stores four identical 8-bit pixels per PSRAM word. Test
+        # the four integer pixel positions in parallel so the rasterizer can
+        # advance one packed word per clock without changing which words the
+        # previous pixel-at-a-time implementation ultimately wrote.
+        lane_inside = [Signal(name=f"lane_{lane}_inside")
+                       for lane in range(4)]
+        lane_edges = [
+            [Signal(signed(27), name=f"lane_{lane}_edge_{n}")
+             for n in range(3)]
+            for lane in range(4)
         ]
+        word_inside = Signal()
+        for lane in range(4):
+            for n in range(3):
+                # Spell constant lane offsets as shift/add expressions. A
+                # generic ``* lane`` made synthesis consume the device's last
+                # three DSP blocks and put one multiplier directly on the
+                # system-clock critical path.
+                if lane == 0:
+                    lane_offset = Const(0, signed(27))
+                elif lane == 1:
+                    lane_offset = edge_dy[n]
+                elif lane == 2:
+                    lane_offset = edge_dy[n] << 1
+                else:
+                    lane_offset = edge_dy[n] + (edge_dy[n] << 1)
+                m.d.comb += lane_edges[lane][n].eq(
+                    edge[n] + lane_offset)
+            all_nonnegative = (
+                (lane_edges[lane][0] >= 0) &
+                (lane_edges[lane][1] >= 0) &
+                (lane_edges[lane][2] >= 0))
+            all_nonpositive = (
+                (lane_edges[lane][0] <= 0) &
+                (lane_edges[lane][1] <= 0) &
+                (lane_edges[lane][2] <= 0))
+            m.d.comb += lane_inside[lane].eq(
+                all_nonnegative | all_nonpositive)
+        m.d.comb += word_inside.eq(
+            lane_inside[0] | lane_inside[1] |
+            lane_inside[2] | lane_inside[3])
 
         span_seen = Signal()
         span_x0 = Signal(unsigned(12))
@@ -179,7 +208,13 @@ class TriangleSpanRasterizer(wiring.Component):
 
             with m.State("LOAD_BOUNDS"):
                 m.d.sync += [
-                    min_x.eq(Mux(raw_min_x < 0, 0, raw_min_x)),
+                    # Align the scan origin to the packed word boundary. Any
+                    # leading lanes outside the actual triangle are rejected
+                    # by the parallel edge tests above.
+                    min_x.eq(Mux(
+                        raw_min_x < 0,
+                        0,
+                        Cat(Const(0, 2), raw_min_x[2:]))),
                     max_x.eq(Mux(raw_max_x > screen_max_x,
                                  screen_max_x, raw_max_x)),
                     min_y.eq(Mux(raw_min_y < 0, 0, raw_min_y)),
@@ -248,19 +283,25 @@ class TriangleSpanRasterizer(wiring.Component):
                             m.next = "SCAN"
 
             with m.State("SCAN"):
-                with m.If(inside):
+                with m.If(word_inside):
                     with m.If(~span_seen):
                         m.d.sync += [span_seen.eq(1), span_x0.eq(x)]
-                    m.d.sync += span_x1.eq(x)
+                    m.d.sync += span_x1.eq(x + 3)
 
-                with m.If(x == max_x):
+                # A triangle intersects each scanline in one contiguous run.
+                # Once a populated word is followed by an empty one, no later
+                # word on this row can contribute and the span is complete.
+                with m.If(span_seen & ~word_inside):
+                    m.next = "EMIT"
+                with m.Elif(x[2:] == max_x[2:]):
                     # The final inside decision is registered above.  EMIT sees
                     # the resulting inclusive endpoints on the following clock.
                     m.next = "EMIT"
                 with m.Else():
-                    m.d.sync += x.eq(x + 1)
+                    m.d.sync += x.eq(x + 4)
                     for n in range(3):
-                        m.d.sync += edge[n].eq(edge[n] + edge_dy[n])
+                        m.d.sync += edge[n].eq(
+                            edge[n] + (edge_dy[n] << 2))
 
             with m.State("EMIT"):
                 with m.If(span_seen):

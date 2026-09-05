@@ -36,7 +36,7 @@ class ProjectedPoint(data.Struct):
 
     x: signed(12)
     y: signed(12)
-    level: unsigned(5)
+    level: unsigned(6)
 
 
 def _magnitude_raw_to_dbfs_level(raw, *, f_bits=ASQ.f_bits):
@@ -989,16 +989,16 @@ class Spectrogram(wiring.Component):
         triangle_word = Signal(TriangleCmd)
         current_projected_point = Signal(ProjectedPoint)
         high_quality = Signal()
-        terrain_level = Signal(5)
-        terrain_cell_sum = Signal(7)
-        terrain_cell_level_next = Signal(5)
-        terrain_cell_level = Signal(5)
+        terrain_level = Signal(6)
+        terrain_cell_sum = Signal(8)
+        terrain_cell_level_next = Signal(6)
+        terrain_cell_level = Signal(6)
         scan_point_last = Signal(7)
         scan_group_shift = Signal(2)
         frequency_coordinate = Signal(9)
-        sweep_hue_limited = Signal(3)
-        sweep_axis_hue_a = Signal(3)
-        sweep_axis_hue_b = Signal(3)
+        sweep_hue_limited = Signal(2)
+        sweep_axis_hue_a = Signal(2)
+        sweep_axis_hue_b = Signal(2)
         scan_geometry = _three_d_scan_geometry(high_quality)
         terrain_row_read_en = Signal()
         terrain_row_write_en = Signal()
@@ -1044,10 +1044,11 @@ class Spectrogram(wiring.Component):
                 scan_group_shift == 0, 0,
                 Mux(scan_group_shift == 1, 1,
                     Mux(scan_group_shift == 2, 3, 7)))),
-            terrain_level.eq(Mux(
-                scan_peak == 0,
-                0,
-                Mux(scan_peak >= 62, 31, (scan_peak + 1) >> 1))),
+            # Preserve all six calibrated display-level bits. The packed
+            # framebuffer palette has room for 64 amplitude steps and four
+            # simultaneous hue rotations, so discarding the low bit here only
+            # created visible plateaus in dense terrain.
+            terrain_level.eq(scan_peak),
             scan_peak_next.eq(Mux(
                 scan_history_level > scan_peak,
                 scan_history_level,
@@ -1097,7 +1098,7 @@ class Spectrogram(wiring.Component):
                 + current_projected_point.level
                 + terrain_previous_right.level),
             terrain_cell_level_next.eq((terrain_cell_sum + 2) >> 2),
-            sweep_hue_limited.eq(sweep_hue[:3]),
+            sweep_hue_limited.eq(sweep_hue[:2]),
             sweep_axis_hue_a.eq(sweep_hue_limited + 2),
             sweep_axis_hue_b.eq(sweep_hue_limited + 4),
         ]
@@ -1206,7 +1207,7 @@ class Spectrogram(wiring.Component):
                         _dbfs_level_to_height(scan_peak, Const(0))),
                     point_time.eq(scan_depth),
                     # This pixel is consumed only by wire mode. Terrain keeps
-                    # its independent five-bit level in ProjectedPoint.
+                    # its independent six-bit level in ProjectedPoint.
                     point_pixel.intensity.eq(8 + scan_peak[4:6]),
                     point_pixel.color.eq(sweep_hue_limited),
                     point_cmd.eq(Mux(
@@ -1273,9 +1274,9 @@ class Spectrogram(wiring.Component):
                     triangle_word.x2.eq(current_projected_point.x),
                     triangle_word.y2.eq(current_projected_point.y),
                     triangle_word.pixel.color.eq(Cat(
-                        sweep_hue_limited, terrain_cell_level[0])),
+                        sweep_hue_limited, terrain_cell_level[:2])),
                     triangle_word.pixel.intensity.eq(
-                        terrain_cell_level[1:5]),
+                        terrain_cell_level[2:6]),
                     triangle_fifo.w_en.eq(terrain_cell_level != 0),
                 ]
                 # The inactive framebuffer was just cleared.  A zero-level
@@ -1296,9 +1297,9 @@ class Spectrogram(wiring.Component):
                     triangle_word.x2.eq(terrain_previous_right.x),
                     triangle_word.y2.eq(terrain_previous_right.y),
                     triangle_word.pixel.color.eq(Cat(
-                        sweep_hue_limited, terrain_cell_level[0])),
+                        sweep_hue_limited, terrain_cell_level[:2])),
                     triangle_word.pixel.intensity.eq(
-                        terrain_cell_level[1:5]),
+                        terrain_cell_level[2:6]),
                     triangle_fifo.w_en.eq(terrain_cell_level != 0),
                 ]
                 with m.If((terrain_cell_level == 0) | triangle_fifo.w_rdy):
