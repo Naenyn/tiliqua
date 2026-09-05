@@ -91,10 +91,13 @@ class TriangleSpanRasterizer(wiring.Component):
         screen_max_x = Signal(signed(13))
         screen_max_y = Signal(signed(13))
         m.d.comb += [
-            raw_min_x.eq(_min3(transformed.x0, transformed.x1, transformed.x2)),
-            raw_max_x.eq(_max3(transformed.x0, transformed.x1, transformed.x2)),
-            raw_min_y.eq(_min3(transformed.y0, transformed.y1, transformed.y2)),
-            raw_max_y.eq(_max3(transformed.y0, transformed.y1, transformed.y2)),
+            # ``cmd`` is registered after rotation. Keeping bounds selection
+            # on its far side prevents rotation, min/max and screen clipping
+            # from becoming one system-clock path.
+            raw_min_x.eq(_min3(cmd.x0, cmd.x1, cmd.x2)),
+            raw_max_x.eq(_max3(cmd.x0, cmd.x1, cmd.x2)),
+            raw_min_y.eq(_min3(cmd.y0, cmd.y1, cmd.y2)),
+            raw_max_y.eq(_max3(cmd.y0, cmd.y1, cmd.y2)),
             screen_max_x.eq(self.h_active - 1),
             screen_max_y.eq(self.v_active - 1),
         ]
@@ -171,22 +174,25 @@ class TriangleSpanRasterizer(wiring.Component):
             with m.State("IDLE"):
                 m.d.comb += self.i.ready.eq(1)
                 with m.If(self.i.valid):
-                    m.d.sync += [
-                        cmd.eq(transformed),
-                        min_x.eq(Mux(raw_min_x < 0, 0, raw_min_x)),
-                        max_x.eq(Mux(raw_max_x > screen_max_x,
-                                     screen_max_x, raw_max_x)),
-                        min_y.eq(Mux(raw_min_y < 0, 0, raw_min_y)),
-                        max_y.eq(Mux(raw_max_y > screen_max_y,
-                                     screen_max_y, raw_max_y)),
-                        edge_dx[0].eq(transformed.x1 - transformed.x0),
-                        edge_dy[0].eq(transformed.y1 - transformed.y0),
-                        edge_dx[1].eq(transformed.x2 - transformed.x1),
-                        edge_dy[1].eq(transformed.y2 - transformed.y1),
-                        edge_dx[2].eq(transformed.x0 - transformed.x2),
-                        edge_dy[2].eq(transformed.y0 - transformed.y2),
-                    ]
-                    m.next = "CHECK_BOUNDS"
+                    m.d.sync += cmd.eq(transformed)
+                    m.next = "LOAD_BOUNDS"
+
+            with m.State("LOAD_BOUNDS"):
+                m.d.sync += [
+                    min_x.eq(Mux(raw_min_x < 0, 0, raw_min_x)),
+                    max_x.eq(Mux(raw_max_x > screen_max_x,
+                                 screen_max_x, raw_max_x)),
+                    min_y.eq(Mux(raw_min_y < 0, 0, raw_min_y)),
+                    max_y.eq(Mux(raw_max_y > screen_max_y,
+                                 screen_max_y, raw_max_y)),
+                    edge_dx[0].eq(cmd.x1 - cmd.x0),
+                    edge_dy[0].eq(cmd.y1 - cmd.y0),
+                    edge_dx[1].eq(cmd.x2 - cmd.x1),
+                    edge_dy[1].eq(cmd.y2 - cmd.y1),
+                    edge_dx[2].eq(cmd.x0 - cmd.x2),
+                    edge_dy[2].eq(cmd.y0 - cmd.y2),
+                ]
+                m.next = "CHECK_BOUNDS"
 
             with m.State("CHECK_BOUNDS"):
                 with m.If((min_x > max_x) | (min_y > max_y) |
