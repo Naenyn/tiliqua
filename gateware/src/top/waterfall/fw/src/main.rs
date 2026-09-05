@@ -189,14 +189,39 @@ fn write_waterfall_palette(
     palette: ColorPalette,
     video: &mut impl DMAFramebuffer,
 ) {
-    if palette.heatmap_color(0).is_none() {
-        palette.write_to_hardware(video);
-        return;
-    }
+    // Terrain encodes five-bit level as {intensity[3:0], color[3]} while the
+    // lower color bits retain eight selectable hue rotations. This doubles
+    // the visible amplitude gradation without enlarging the framebuffer.
     for intensity in 0..16u8 {
         for hue in 0..16u8 {
-            let (r, g, b) = rotate_rgb_hue(
-                palette.heatmap_color(intensity).unwrap(), hue);
+            let base_hue = hue & 7;
+            let level = intensity * 2 + (hue >> 3);
+            let position = level as u16 * 15;
+            let lower = (position / 31) as u8;
+            let fraction = position % 31;
+            let upper = core::cmp::min(lower + 1, 15);
+            let (lo, hi, rotate) = match palette.heatmap_color(lower) {
+                Some(lo) => (lo, palette.heatmap_color(upper).unwrap(), true),
+                None => (
+                    palette.color(lower, base_hue),
+                    palette.color(upper, base_hue),
+                    false,
+                ),
+            };
+            let interpolate = |a: u8, b: u8| -> u8 {
+                (((a as u32 * (31 - fraction) as u32)
+                    + (b as u32 * fraction as u32) + 15) / 31) as u8
+            };
+            let rgb = (
+                interpolate(lo.0, hi.0),
+                interpolate(lo.1, hi.1),
+                interpolate(lo.2, hi.2),
+            );
+            let (r, g, b) = if rotate {
+                rotate_rgb_hue(rgb, base_hue)
+            } else {
+                rgb
+            };
             video.set_palette_rgb(intensity, hue, r, g, b);
         }
     }
@@ -640,7 +665,8 @@ fn main() -> ! {
             });
             spectro.config_3d().write(|w| unsafe {
                 w.quality().bits(opts.view.quality.value.hw_index());
-                w.style().bit(opts.view.style.value == SurfaceStyle::Terrain)
+                w.style().bit(opts.view.style.value == SurfaceStyle::Terrain);
+                w.log_scale().bit(opts.view.scale.value == FrequencyScale::Log)
             });
 
             first = false;

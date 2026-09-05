@@ -310,6 +310,14 @@ impl ColorPalette {
         }
     }
 
+    /// Return one raw color from the ordinary 16x16 hardware palette.
+    pub fn color(&self, intensity: u8, hue: u8) -> (u8, u8, u8) {
+        self.lut()[
+            ((intensity & 0x0f) as usize) * PX_HUE_MAX
+            + (hue & 0x0f) as usize
+        ]
+    }
+
     /// Return a color for a palette position when the palette is used as a
     /// horizontal frequency ramp. The selected palette chooses hue/color while
     /// the pixel intensity is free to represent amplitude.

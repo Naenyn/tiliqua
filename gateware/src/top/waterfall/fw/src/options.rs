@@ -56,6 +56,14 @@ impl SurfaceStyle {
 }
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
+#[strum(serialize_all = "kebab-case")]
+pub enum FrequencyScale {
+    #[default]
+    Log,
+    Linear,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 pub enum InputChannel {
     #[default]
     #[strum(serialize = "IN1")]
@@ -192,6 +200,8 @@ pub struct WaterfallOpts {
 pub struct ViewOpts {
     #[option]
     pub style: EnumOption<SurfaceStyle>,
+    #[option]
+    pub scale: EnumOption<FrequencyScale>,
     #[option]
     pub quality: EnumOption<Quality3d>,
     #[option(-15)]

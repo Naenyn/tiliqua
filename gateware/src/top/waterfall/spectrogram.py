@@ -36,7 +36,7 @@ class ProjectedPoint(data.Struct):
 
     x: signed(12)
     y: signed(12)
-    pixel: Pixel
+    level: unsigned(5)
 
 
 def _magnitude_raw_to_dbfs_level(raw, *, f_bits=ASQ.f_bits):
@@ -92,6 +92,28 @@ def _three_d_frequency_coordinate(point, high_quality):
         (point << 1) + (point >> 6),
         _dbfs_level_to_height(point, Const(0)),
     )
+
+
+def _log_frequency_bin_buckets(point_count, n_bins=N_BINS):
+    """Return inclusive FFT-bin bounds for an octave-spaced 3D sweep.
+
+    Bin zero is DC and is intentionally omitted. Repeated low-frequency
+    buckets are useful here: there are more display vertices than distinct
+    integer FFT bins in the first few octaves, so repetition produces a
+    continuous surface instead of holes near the origin.
+    """
+    if point_count < 2 or n_bins < 2:
+        raise ValueError("log-frequency geometry needs at least two points/bins")
+    edges = [
+        max(1, min(n_bins, round(n_bins ** (index / point_count))))
+        for index in range(point_count + 1)
+    ]
+    return [
+        (min(edges[index], n_bins - 1),
+         max(min(edges[index], n_bins - 1),
+             min(edges[index + 1] - 1, n_bins - 1)))
+        for index in range(point_count)
+    ]
 
 
 class MagnitudeToDbfs(wiring.Component):
@@ -379,6 +401,7 @@ class Spectrogram(wiring.Component):
     class Config3d(csr.Register, access="w"):
         quality: csr.Field(csr.action.W, unsigned(2))
         style: csr.Field(csr.action.W, unsigned(1))
+        log_scale: csr.Field(csr.action.W, unsigned(1))
 
     class ProjectionX(csr.Register, access="w"):
         frequency: csr.Field(csr.action.W, signed(10))
@@ -443,6 +466,7 @@ class Spectrogram(wiring.Component):
         noise_floor = Signal(2)
         quality_3d = Signal(2, init=1)
         terrain_style = Signal(init=1)
+        log_scale = Signal(init=1)
         h_active = Signal(12, init=720)
         v_active = Signal(12, init=720)
         projection_x = [Signal(signed(10), init=value) for value in (384, 0, 90)]
@@ -486,6 +510,7 @@ class Spectrogram(wiring.Component):
             m.d.sync += [
                 quality_3d.eq(self._config_3d.f.quality.w_data),
                 terrain_style.eq(self._config_3d.f.style.w_data),
+                log_scale.eq(self._config_3d.f.log_scale.w_data),
             ]
         # ---- audio analysis -------------------------------------------------
         # Match the analyzer sample rate to the selected frequency range. This
@@ -762,6 +787,7 @@ class Spectrogram(wiring.Component):
         display_ack_dvi = Signal()
         quality_3d_dvi = Signal(2)
         terrain_style_dvi = Signal()
+        log_scale_dvi = Signal()
         rate_dvi = Signal(2)
         hue_dvi = Signal(4)
         noise_floor_dvi = Signal(2)
@@ -779,6 +805,7 @@ class Spectrogram(wiring.Component):
             ("display_ack", display_ack, display_ack_dvi),
             ("quality_3d", quality_3d, quality_3d_dvi),
             ("terrain_style", terrain_style, terrain_style_dvi),
+            ("log_scale", log_scale, log_scale_dvi),
             ("rate", rate_sel, rate_dvi),
             ("h_active", h_active, h_active_dvi),
             ("v_active", v_active, v_active_dvi),
@@ -852,9 +879,9 @@ class Spectrogram(wiring.Component):
         # frequency ridges; terrain mode joins adjacent rows with filled cells.
         scan_slice = Signal(4)
         scan_point = Signal(7)
-        scan_group_index = Signal(3)
         scan_group_base = Signal(8)
         scan_group_last = Signal(3)
+        scan_bin_last = Signal(8)
         scan_peak = Signal(6)
         scan_peak_next = Signal(6)
         scan_history_level = Signal(6)
@@ -868,11 +895,27 @@ class Spectrogram(wiring.Component):
         sweep_hue = Signal(4)
         sweep_quality_3d = Signal(2)
         sweep_terrain_style = Signal()
+        sweep_log_scale = Signal()
         sweep_projection_x = [Signal(signed(10)) for _ in range(3)]
         sweep_projection_y = [Signal(signed(10)) for _ in range(3)]
 
+        # Logarithmic bin groups are static, so keep their inclusive start/end
+        # bounds in one small EBR instead of a large combinational mux. The
+        # lower half contains 64-vertex geometry and the upper half 128.
+        log_bucket_words = [0] * 256
+        for index, (first_bin, last_bin) in enumerate(
+                _log_frequency_bin_buckets(64)):
+            log_bucket_words[index] = first_bin | (last_bin << 8)
+        for index, (first_bin, last_bin) in enumerate(
+                _log_frequency_bin_buckets(128)):
+            log_bucket_words[128 + index] = first_bin | (last_bin << 8)
+        log_bucket_memory = memory.Memory(data=memory.MemoryData(
+            shape=unsigned(16), depth=256, init=log_bucket_words))
+        m.submodules.log_frequency_buckets = log_bucket_memory
+        log_bucket_r = log_bucket_memory.read_port(domain="dvi")
+
         # Terrain cells need the previous projected frequency row. Ping-pong
-        # memories retain 128 x/y/color vertices apiece; while one receives
+        # memories retain 128 x/y/level vertices apiece; while one receives
         # the current row, the other supplies the adjacent historical row.
         row_read_ports = []
         row_write_ports = []
@@ -945,9 +988,11 @@ class Spectrogram(wiring.Component):
         triangle_word = Signal(TriangleCmd)
         current_projected_point = Signal(ProjectedPoint)
         high_quality = Signal()
-        heat_intensity = Signal(4)
-        triangle_a_intensity = Signal(4)
-        triangle_b_intensity = Signal(4)
+        terrain_level = Signal(5)
+        triangle_a_sum = Signal(7)
+        triangle_b_sum = Signal(7)
+        triangle_a_level = Signal(5)
+        triangle_b_level = Signal(5)
         scan_point_last = Signal(7)
         scan_group_shift = Signal(2)
         frequency_coordinate = Signal(9)
@@ -961,6 +1006,8 @@ class Spectrogram(wiring.Component):
         m.d.comb += [
             terrain_row_read_en.eq(0),
             terrain_row_write_en.eq(0),
+            log_bucket_r.en.eq(0),
+            log_bucket_r.addr.eq(Cat(scan_point, high_quality)),
             row_read_point.as_value().eq(Mux(
                 row_bank == 0,
                 row_read_ports[1].data,
@@ -997,12 +1044,10 @@ class Spectrogram(wiring.Component):
                 scan_group_shift == 0, 0,
                 Mux(scan_group_shift == 1, 1,
                     Mux(scan_group_shift == 2, 3, 7)))),
-            scan_history_bin.eq(scan_group_base + scan_group_index),
-            heat_intensity.eq(Mux(
+            terrain_level.eq(Mux(
                 scan_peak == 0,
                 0,
-                Mux(scan_peak[2:6] == 15,
-                    15, scan_peak[2:6] + 1))),
+                Mux(scan_peak >= 62, 31, (scan_peak + 1) >> 1))),
             scan_peak_next.eq(Mux(
                 scan_history_level > scan_peak,
                 scan_history_level,
@@ -1040,32 +1085,25 @@ class Spectrogram(wiring.Component):
             triangle_fifo.w_data.eq(triangle_word),
             current_projected_point.x.eq(projected_x),
             current_projected_point.y.eq(projected_y),
-            current_projected_point.pixel.eq(point_pixel),
-            # Flat-shade each half-cell from its hottest vertex. This preserves
-            # narrow peaks while naturally giving adjacent facets distinct
-            # colors when the surface slopes.
-            triangle_a_intensity.eq(Mux(
-                terrain_previous_left.pixel.intensity >
-                terrain_current_left.pixel.intensity,
-                Mux(terrain_previous_left.pixel.intensity >
-                    current_projected_point.pixel.intensity,
-                    terrain_previous_left.pixel.intensity,
-                    current_projected_point.pixel.intensity),
-                Mux(terrain_current_left.pixel.intensity >
-                    current_projected_point.pixel.intensity,
-                    terrain_current_left.pixel.intensity,
-                    current_projected_point.pixel.intensity))),
-            triangle_b_intensity.eq(Mux(
-                terrain_previous_left.pixel.intensity >
-                current_projected_point.pixel.intensity,
-                Mux(terrain_previous_left.pixel.intensity >
-                    row_read_point.pixel.intensity,
-                    terrain_previous_left.pixel.intensity,
-                    row_read_point.pixel.intensity),
-                Mux(current_projected_point.pixel.intensity >
-                    row_read_point.pixel.intensity,
-                    current_projected_point.pixel.intensity,
-                    row_read_point.pixel.intensity))),
+            current_projected_point.level.eq(terrain_level),
+            # Average each facet's three vertices. The former maximum-vertex
+            # rule painted a whole triangle yellow whenever just one corner
+            # was hot. Multiplication by 43/128 is a shift-add approximation
+            # of division by three and avoids consuming another scarce DSP.
+            triangle_a_sum.eq(
+                terrain_previous_left.level
+                + terrain_current_left.level
+                + current_projected_point.level),
+            triangle_b_sum.eq(
+                terrain_previous_left.level
+                + current_projected_point.level
+                + row_read_point.level),
+            triangle_a_level.eq((
+                (triangle_a_sum << 5) + (triangle_a_sum << 3)
+                + (triangle_a_sum << 1) + triangle_a_sum + 64) >> 7),
+            triangle_b_level.eq((
+                (triangle_b_sum << 5) + (triangle_b_sum << 3)
+                + (triangle_b_sum << 1) + triangle_b_sum + 64) >> 7),
             sweep_hue_limited.eq(sweep_hue[:3]),
             sweep_axis_hue_a.eq(sweep_hue_limited + 2),
             sweep_axis_hue_b.eq(sweep_hue_limited + 4),
@@ -1099,6 +1137,7 @@ class Spectrogram(wiring.Component):
                         sweep_hue.eq(hue_dvi),
                         sweep_quality_3d.eq(quality_3d_dvi),
                         sweep_terrain_style.eq(terrain_style_dvi),
+                        sweep_log_scale.eq(log_scale_dvi),
                         draw_generation.eq(~visible_generation),
                         render_activity_seen.eq(0),
                         clear_request.eq(1),
@@ -1125,8 +1164,21 @@ class Spectrogram(wiring.Component):
                     m.next = "START_BIN_GROUP"
 
             with m.State("START_BIN_GROUP"):
+                with m.If(sweep_log_scale):
+                    m.d.comb += log_bucket_r.en.eq(1)
+                    m.next = "LATCH_LOG_BIN_GROUP"
+                with m.Else():
+                    m.d.dvi += [
+                        scan_history_bin.eq(scan_group_base),
+                        scan_bin_last.eq(scan_group_base + scan_group_last),
+                        scan_peak.eq(0),
+                    ]
+                    m.next = "ISSUE_HISTORY_READ"
+
+            with m.State("LATCH_LOG_BIN_GROUP"):
                 m.d.dvi += [
-                    scan_group_index.eq(0),
+                    scan_history_bin.eq(log_bucket_r.data[:8]),
+                    scan_bin_last.eq(log_bucket_r.data[8:16]),
                     scan_peak.eq(0),
                 ]
                 m.next = "ISSUE_HISTORY_READ"
@@ -1145,10 +1197,10 @@ class Spectrogram(wiring.Component):
 
             with m.State("ACCUMULATE_BIN"):
                 m.d.dvi += scan_peak.eq(scan_peak_next)
-                with m.If(scan_group_index == scan_group_last):
+                with m.If(scan_history_bin == scan_bin_last):
                     m.next = "LOAD_HISTORY_POINT"
                 with m.Else():
-                    m.d.dvi += scan_group_index.eq(scan_group_index + 1)
+                    m.d.dvi += scan_history_bin.eq(scan_history_bin + 1)
                     m.next = "ISSUE_HISTORY_READ"
 
             with m.State("LOAD_HISTORY_POINT"):
@@ -1160,10 +1212,9 @@ class Spectrogram(wiring.Component):
                     point_amplitude.eq(
                         _dbfs_level_to_height(scan_peak, Const(0))),
                     point_time.eq(scan_depth),
-                    point_pixel.intensity.eq(Mux(
-                        sweep_terrain_style,
-                        heat_intensity,
-                        8 + scan_peak[4:6])),
+                    # This pixel is consumed only by wire mode. Terrain keeps
+                    # its independent five-bit level in ProjectedPoint.
+                    point_pixel.intensity.eq(8 + scan_peak[4:6]),
                     point_pixel.color.eq(sweep_hue_limited),
                     point_cmd.eq(Mux(
                         scan_point == scan_point_last,
@@ -1219,8 +1270,9 @@ class Spectrogram(wiring.Component):
                     triangle_word.y1.eq(terrain_current_left.y),
                     triangle_word.x2.eq(current_projected_point.x),
                     triangle_word.y2.eq(current_projected_point.y),
-                    triangle_word.pixel.color.eq(sweep_hue_limited),
-                    triangle_word.pixel.intensity.eq(triangle_a_intensity),
+                    triangle_word.pixel.color.eq(Cat(
+                        sweep_hue_limited, triangle_a_level[0])),
+                    triangle_word.pixel.intensity.eq(triangle_a_level[1:5]),
                     triangle_fifo.w_en.eq(1),
                 ]
                 with m.If(triangle_fifo.w_rdy):
@@ -1235,8 +1287,9 @@ class Spectrogram(wiring.Component):
                     triangle_word.y1.eq(current_projected_point.y),
                     triangle_word.x2.eq(row_read_point.x),
                     triangle_word.y2.eq(row_read_point.y),
-                    triangle_word.pixel.color.eq(sweep_hue_limited),
-                    triangle_word.pixel.intensity.eq(triangle_b_intensity),
+                    triangle_word.pixel.color.eq(Cat(
+                        sweep_hue_limited, triangle_b_level[0])),
+                    triangle_word.pixel.intensity.eq(triangle_b_level[1:5]),
                     triangle_fifo.w_en.eq(1),
                 ]
                 with m.If(triangle_fifo.w_rdy):
