@@ -292,4 +292,8 @@ if __name__ == "__main__":
         WaterfallSoc,
         path=this_path,
         archiver_callback=lambda archiver: archiver.with_option_storage(),
+        # Qualify this dense design with an explicit placement and fail loudly
+        # if a source or toolchain change no longer meets every clock. The seed
+        # identifies this build recipe; timing is still rechecked on each build.
+        nextpnr_opts="--seed 1",
     )
