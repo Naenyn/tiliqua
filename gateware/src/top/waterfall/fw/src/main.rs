@@ -1,8 +1,9 @@
 #![no_std]
 #![no_main]
 
-use core::cell::RefCell;
+use core::{cell::RefCell, fmt::Write};
 use critical_section::Mutex;
+use heapless::String;
 use irq::handler;
 use log::{info, warn};
 use riscv_rt::entry;
@@ -14,6 +15,10 @@ use tiliqua_hal::dma_framebuffer::DMAFramebuffer;
 use tiliqua_hal::embedded_graphics::prelude::*;
 use tiliqua_hal::embedded_graphics::primitives::{
     PrimitiveStyle, PrimitiveStyleBuilder, Rectangle,
+};
+use tiliqua_hal::embedded_graphics::{
+    mono_font::{ascii::FONT_9X15_BOLD, MonoTextStyle},
+    text::Text,
 };
 use tiliqua_lib::calibration::*;
 use tiliqua_lib::color::HI8;
@@ -115,6 +120,25 @@ where
     menu_panel_rect(pos_x, pos_y)
         .into_styled(PrimitiveStyle::with_stroke(HI8::BLACK, 1))
         .draw(display)
+}
+
+fn draw_fps<D>(
+    display: &mut D,
+    fps_tenths: u32,
+    hue: u8,
+) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = HI8>,
+{
+    let mut label: String<16> = String::new();
+    write!(label, "{}.{:01} FPS", fps_tenths / 10, fps_tenths % 10).ok();
+    Text::new(
+        &label,
+        Point::new(16, 24),
+        MonoTextStyle::new(&FONT_9X15_BOLD, HI8::new(hue, 15)),
+    )
+    .draw(display)
+    .map(|_| ())
 }
 
 fn hash_menu_bytes(mut hash: u32, bytes: &[u8]) -> u32 {
@@ -391,6 +415,12 @@ fn main() -> ! {
         let mut last_on_help_page = false;
         let mut last_help_scroll = 0;
         let mut help_waiting_for_renderer = false;
+        // Count completed 3D surface swaps, rather than HDMI scan frames. This
+        // is the user-visible WATERFALL update rate and includes the small cost
+        // of drawing this diagnostic into each newly completed framebuffer.
+        let mut fps_window_start_ms = 0u32;
+        let mut fps_window_frames = 0u32;
+        let mut fps_tenths = 0u32;
         // Each physical framebuffer retains UI independently. Remember the
         // exact menu last drawn into each one so changed values, selection
         // markers, and timeout hiding can be erased without clearing a large
@@ -399,7 +429,7 @@ fn main() -> ! {
         let mut menu_fb1: Option<(Opts, u32, u32, u32)> = None;
 
         loop {
-            let (opts, draw_options, save_opts, wipe_opts) = critical_section::with(|cs| {
+            let (opts, draw_options, save_opts, wipe_opts, uptime_ms) = critical_section::with(|cs| {
                 let mut app = app.borrow_ref_mut(cs);
                 sanitize_options(&mut app.ui.opts);
                 let save_opts = app.ui.opts.misc.save_opts.poll();
@@ -409,6 +439,7 @@ fn main() -> ! {
                     app.ui.draw(),
                     save_opts,
                     wipe_opts,
+                    app.ui.uptime_ms,
                 )
             });
             // Apply the selected framebuffer rotation before asking for the
@@ -476,6 +507,18 @@ fn main() -> ! {
             if framebuffer_swapped {
                 display.update_fb_base(desired_fb_base);
                 current_fb_base = desired_fb_base;
+                if !on_help_page {
+                    fps_window_frames = fps_window_frames.saturating_add(1);
+                    let elapsed_ms = uptime_ms.wrapping_sub(fps_window_start_ms);
+                    if elapsed_ms >= 1000 {
+                        fps_tenths = fps_window_frames
+                            .saturating_mul(10_000)
+                            .saturating_add(elapsed_ms / 2)
+                            / elapsed_ms;
+                        fps_window_start_ms = uptime_ms;
+                        fps_window_frames = 0;
+                    }
+                }
             }
 
             // Help text and the 3D view are full-screen framebuffer layers.
@@ -563,6 +606,9 @@ fn main() -> ! {
                         &modeline,
                     )
                     .ok();
+                }
+                if framebuffer_swapped && !on_help_page {
+                    draw_fps(&mut display, fps_tenths, ui_hue).ok();
                 }
 
                 if on_help_page {
