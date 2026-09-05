@@ -932,6 +932,7 @@ class Spectrogram(wiring.Component):
         row_read_point = Signal(ProjectedPoint)
         terrain_current_left = Signal(ProjectedPoint)
         terrain_previous_left = Signal(ProjectedPoint)
+        terrain_previous_right = Signal(ProjectedPoint)
         # Complete surfaces alternate between two physical framebuffers. The
         # old multi-bit generation tags existed only for SONORO persistence.
         visible_generation = Signal()
@@ -991,6 +992,8 @@ class Spectrogram(wiring.Component):
         terrain_level = Signal(5)
         triangle_a_sum = Signal(7)
         triangle_b_sum = Signal(7)
+        triangle_a_level_next = Signal(5)
+        triangle_b_level_next = Signal(5)
         triangle_a_level = Signal(5)
         triangle_b_level = Signal(5)
         scan_point_last = Signal(7)
@@ -1097,11 +1100,11 @@ class Spectrogram(wiring.Component):
             triangle_b_sum.eq(
                 terrain_previous_left.level
                 + current_projected_point.level
-                + row_read_point.level),
-            triangle_a_level.eq((
+                + terrain_previous_right.level),
+            triangle_a_level_next.eq((
                 (triangle_a_sum << 5) + (triangle_a_sum << 3)
                 + (triangle_a_sum << 1) + triangle_a_sum + 64) >> 7),
-            triangle_b_level.eq((
+            triangle_b_level_next.eq((
                 (triangle_b_sum << 5) + (triangle_b_sum << 3)
                 + (triangle_b_sum << 1) + triangle_b_sum + 64) >> 7),
             sweep_hue_limited.eq(sweep_hue[:3]),
@@ -1258,7 +1261,18 @@ class Spectrogram(wiring.Component):
                     ]
                     m.next = "ADVANCE_SURFACE_POINT"
                 with m.Else():
-                    m.next = "PUSH_TRIANGLE_A"
+                    # Break the EBR-to-triangle path before doing the facet
+                    # average. The ECP5 row-memory output itself consumes a
+                    # substantial portion of one 74.25MHz DVI clock.
+                    m.d.dvi += terrain_previous_right.eq(row_read_point)
+                    m.next = "TERRAIN_LATCH_SHADE"
+
+            with m.State("TERRAIN_LATCH_SHADE"):
+                m.d.dvi += [
+                    triangle_a_level.eq(triangle_a_level_next),
+                    triangle_b_level.eq(triangle_b_level_next),
+                ]
+                m.next = "PUSH_TRIANGLE_A"
 
             with m.State("PUSH_TRIANGLE_A"):
                 # First half of A(previous-left), B(current-left),
@@ -1285,8 +1299,8 @@ class Spectrogram(wiring.Component):
                     triangle_word.y0.eq(terrain_previous_left.y),
                     triangle_word.x1.eq(current_projected_point.x),
                     triangle_word.y1.eq(current_projected_point.y),
-                    triangle_word.x2.eq(row_read_point.x),
-                    triangle_word.y2.eq(row_read_point.y),
+                    triangle_word.x2.eq(terrain_previous_right.x),
+                    triangle_word.y2.eq(terrain_previous_right.y),
                     triangle_word.pixel.color.eq(Cat(
                         sweep_hue_limited, triangle_b_level[0])),
                     triangle_word.pixel.intensity.eq(triangle_b_level[1:5]),
@@ -1295,7 +1309,7 @@ class Spectrogram(wiring.Component):
                 with m.If(triangle_fifo.w_rdy):
                     m.d.dvi += [
                         terrain_current_left.eq(current_projected_point),
-                        terrain_previous_left.eq(row_read_point),
+                        terrain_previous_left.eq(terrain_previous_right),
                     ]
                     m.next = "ADVANCE_SURFACE_POINT"
 
