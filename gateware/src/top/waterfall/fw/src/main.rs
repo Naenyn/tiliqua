@@ -211,19 +211,15 @@ fn rotate_rgb_hue((r, g, b): (u8, u8, u8), shift: u8) -> (u8, u8, u8) {
 /// for a rotated version, keeping the plot hue control meaningful.
 fn write_waterfall_palette(
     palette: ColorPalette,
-    plot_hue: u8,
     video: &mut impl DMAFramebuffer,
 ) {
-    // Colors 0..7 remain literal UI hues. Colors 8..15 are renderer pixels:
-    // color[2:1] carries a surface-generation tag and color[0] carries the
-    // fifth amplitude bit. Program all four tag variants identically so the
-    // scanout filter can reject stale pixels without sacrificing the current
-    // 32-level terrain gradient.
+    // Terrain encodes five-bit level as {intensity[3:0], color[3]} while the
+    // lower color bits retain eight selectable hue rotations. This doubles
+    // the visible amplitude gradation without enlarging the framebuffer.
     for intensity in 0..16u8 {
         for hue in 0..16u8 {
-            let tagged = hue >= 8;
-            let base_hue = if tagged { plot_hue & 7 } else { hue };
-            let level = intensity * 2 + if tagged { hue & 1 } else { 0 };
+            let base_hue = hue & 7;
+            let level = intensity * 2 + (hue >> 3);
             let position = level as u16 * 15;
             let lower = (position / 31) as u8;
             let fraction = position % 31;
@@ -404,7 +400,6 @@ fn main() -> ! {
     sanitize_options(&mut opts);
 
     let mut last_palette = opts.display.palette.value;
-    let mut last_plot_hue = opts.display.hue.value;
     let mut last_hide = opts.menu.hide.value;
     let mut last_edit_hide = opts.menu.edit_hide.value;
     let app = Mutex::new(RefCell::new(App::new(opts)));
@@ -548,15 +543,12 @@ fn main() -> ! {
             last_on_help_page = on_help_page;
             last_help_scroll = help_scroll;
 
-            if opts.display.palette.value != last_palette ||
-                    opts.display.hue.value != last_plot_hue || first {
+            if opts.display.palette.value != last_palette || first {
                 write_waterfall_palette(
                     opts.display.palette.value,
-                    opts.display.hue.value,
                     &mut display,
                 );
                 last_palette = opts.display.palette.value;
-                last_plot_hue = opts.display.hue.value;
             }
 
             let (menu_x, menu_y) = if on_help_page {
@@ -581,9 +573,10 @@ fn main() -> ! {
                         *old_x != menu_x || *old_y != menu_y ||
                             *old_hash != menu_hash
                     }).unwrap_or(menu_visible);
-                // A newly rendered surface can overwrite UI pixels in its back
-                // buffer even when the menu fingerprint has not changed. Redraw
-                // visible menus after a swap, while avoiding the old unconditional
+                // In 3D, each completed surface starts by clearing the back
+                // buffer. After the swap, the current physical buffer may no
+                // longer contain the cached menu even if its fingerprint matches.
+                // Redraw visible menus on 3D swaps, but avoid the old unconditional
                 // erase/redraw loop when no menu is visible.
                 let menu_invalidated_by_3d_swap =
                     framebuffer_swapped && menu_visible;
@@ -691,6 +684,9 @@ fn main() -> ! {
             spectro
                 .rate()
                 .write(|w| unsafe { w.value().bits(opts.waterfall.rate.value.hw_index()) });
+            spectro
+                .hue()
+                .write(|w| unsafe { w.value().bits(opts.display.hue.value) });
             spectro.noise_floor().write(|w| unsafe {
                 w.value().bits(opts.display.noise_floor.value.hw_index())
             });

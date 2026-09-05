@@ -383,6 +383,9 @@ class Spectrogram(wiring.Component):
     class Rate(csr.Register, access="w"):
         value: csr.Field(csr.action.W, unsigned(2))
 
+    class Hue(csr.Register, access="w"):
+        value: csr.Field(csr.action.W, unsigned(4))
+
     class NoiseFloor(csr.Register, access="w"):
         value: csr.Field(csr.action.W, unsigned(2))
 
@@ -418,6 +421,7 @@ class Spectrogram(wiring.Component):
         self._gain = regs.add("gain", self.Gain(), offset=0x04)
         self._range = regs.add("range", self.Range(), offset=0x08)
         self._rate = regs.add("rate", self.Rate(), offset=0x0c)
+        self._hue = regs.add("hue", self.Hue(), offset=0x14)
         self._timings = regs.add("timings", self.Timings(), offset=0x18)
         self._status = regs.add("status", self.Status(), offset=0x1c)
         self._projection_x = regs.add(
@@ -440,6 +444,9 @@ class Spectrogram(wiring.Component):
             "line_busy": In(1),
             "flush_request": Out(1),
             "flush_done": In(1),
+            "clear_request": Out(1),
+            "clear_done": In(1),
+            "clear_busy": In(1),
         })
         self.bus.memory_map = self._bridge.bus.memory_map
 
@@ -455,6 +462,7 @@ class Spectrogram(wiring.Component):
         gain = Signal(4)
         range_sel = Signal(2)
         rate_sel = Signal(2, init=2)
+        hue = Signal(4, init=5)
         noise_floor = Signal(2)
         quality_3d = Signal(2, init=1)
         terrain_style = Signal(init=1)
@@ -477,6 +485,8 @@ class Spectrogram(wiring.Component):
             m.d.sync += range_sel.eq(self._range.f.value.w_data)
         with m.If(self._rate.element.w_stb):
             m.d.sync += rate_sel.eq(self._rate.f.value.w_data)
+        with m.If(self._hue.element.w_stb):
+            m.d.sync += hue.eq(self._hue.f.value.w_data)
         with m.If(self._noise_floor.element.w_stb):
             m.d.sync += noise_floor.eq(self._noise_floor.f.value.w_data)
         with m.If(self._timings.element.w_stb):
@@ -696,10 +706,16 @@ class Spectrogram(wiring.Component):
         ]
         line_busy_dvi = Signal()
         flush_done_dvi = Signal()
+        clear_done_dvi = Signal()
+        clear_busy_dvi = Signal()
         m.submodules.line_busy_ff = FFSynchronizer(
             self.line_busy, line_busy_dvi, o_domain="dvi")
         m.submodules.flush_done_ff = FFSynchronizer(
             self.flush_done, flush_done_dvi, o_domain="dvi")
+        m.submodules.clear_done_ff = FFSynchronizer(
+            self.clear_done, clear_done_dvi, o_domain="dvi")
+        m.submodules.clear_busy_ff = FFSynchronizer(
+            self.clear_busy, clear_busy_dvi, o_domain="dvi")
 
         write_col = Signal(HISTORY_COL_BITS)
         newest_col = Signal(HISTORY_COL_BITS)
@@ -773,6 +789,7 @@ class Spectrogram(wiring.Component):
         terrain_style_dvi = Signal()
         log_scale_dvi = Signal()
         rate_dvi = Signal(2)
+        hue_dvi = Signal(4)
         noise_floor_dvi = Signal(2)
         h_active_dvi = Signal(12)
         v_active_dvi = Signal(12)
@@ -793,6 +810,7 @@ class Spectrogram(wiring.Component):
             ("h_active", h_active, h_active_dvi),
             ("v_active", v_active, v_active_dvi),
             ("newest_gray", newest_gray, newest_gray_meta),
+            ("hue", hue, hue_dvi),
             ("noise_floor", noise_floor, noise_floor_dvi),
         ]:
             setattr(m.submodules, f"{name}_ff", FFSynchronizer(src, dst, o_domain="dvi"))
@@ -874,6 +892,7 @@ class Spectrogram(wiring.Component):
         scan_read_addr = Signal(HISTORY_ADDR_BITS)
         sweep_newest = Signal(HISTORY_COL_BITS)
         sweep_rate = Signal(2)
+        sweep_hue = Signal(4)
         sweep_quality_3d = Signal(2)
         sweep_terrain_style = Signal()
         sweep_log_scale = Signal()
@@ -914,31 +933,30 @@ class Spectrogram(wiring.Component):
         terrain_current_left = Signal(ProjectedPoint)
         terrain_previous_left = Signal(ProjectedPoint)
         terrain_previous_right = Signal(ProjectedPoint)
-        # Complete surfaces alternate between two physical framebuffers. Two
-        # generation bits distinguish a newly drawn surface from pixels left
-        # behind the last time that same physical buffer was used. The scanout
-        # overlay treats mismatched tagged pixels as black, avoiding a full
-        # 1 MiB back-buffer clear before every frame.
-        visible_generation = Signal(2)
-        draw_generation = Signal(2)
-        completed_generation = Signal(2)
+        # Complete surfaces alternate between two physical framebuffers. The
+        # old multi-bit generation tags existed only for SONORO persistence.
+        visible_generation = Signal()
+        draw_generation = Signal()
+        completed_generation = Signal()
         render_activity_seen = Signal()
+        clear_request = Signal()
         flush_request = Signal()
-        completed_buffer_sync = Signal()
+        completed_generation_sync = Signal()
         surface_valid = Signal()
         surface_valid_sync = Signal()
         renderer_idle_dvi = Signal()
         renderer_idle_sync = Signal()
-        m.submodules.completed_buffer_ff = FFSynchronizer(
-            completed_generation[0], completed_buffer_sync, o_domain="sync")
+        m.submodules.completed_generation_ff = FFSynchronizer(
+            completed_generation, completed_generation_sync, o_domain="sync")
         m.submodules.surface_valid_ff = FFSynchronizer(
             surface_valid, surface_valid_sync, o_domain="sync")
         m.submodules.renderer_idle_ff = FFSynchronizer(
             renderer_idle_dvi, renderer_idle_sync, o_domain="sync")
         m.d.comb += [
+            self.clear_request.eq(clear_request),
             self.flush_request.eq(flush_request),
             self._status.f.display_buffer.r_data.eq(
-                completed_buffer_sync),
+                completed_generation_sync),
             self._status.f.surface_valid.r_data.eq(surface_valid_sync),
             self._status.f.renderer_idle.r_data.eq(renderer_idle_sync),
         ]
@@ -981,6 +999,9 @@ class Spectrogram(wiring.Component):
         scan_point_last = Signal(7)
         scan_group_shift = Signal(2)
         frequency_coordinate = Signal(9)
+        sweep_hue_limited = Signal(3)
+        sweep_axis_hue_a = Signal(3)
+        sweep_axis_hue_b = Signal(3)
         scan_geometry = _three_d_scan_geometry(high_quality)
         terrain_row_read_en = Signal()
         terrain_row_write_en = Signal()
@@ -1086,6 +1107,9 @@ class Spectrogram(wiring.Component):
             triangle_b_level_next.eq((
                 (triangle_b_sum << 5) + (triangle_b_sum << 3)
                 + (triangle_b_sum << 1) + triangle_b_sum + 64) >> 7),
+            sweep_hue_limited.eq(sweep_hue[:3]),
+            sweep_axis_hue_a.eq(sweep_hue_limited + 2),
+            sweep_axis_hue_b.eq(sweep_hue_limited + 4),
         ]
         with m.Switch(sweep_rate):
             with m.Case(0):
@@ -1099,7 +1123,10 @@ class Spectrogram(wiring.Component):
 
         with m.FSM(domain="dvi", name="waterfall_3d") as waterfall_3d_fsm:
             with m.State("IDLE"):
-                m.d.dvi += flush_request.eq(0)
+                m.d.dvi += [
+                    clear_request.eq(0),
+                    flush_request.eq(0),
+                ]
                 with m.If(enable_dvi):
                     m.d.dvi += [
                         scan_slice.eq(0),
@@ -1110,20 +1137,34 @@ class Spectrogram(wiring.Component):
                         # continue writing newer columns in the background.
                         sweep_newest.eq(newest_dvi),
                         sweep_rate.eq(rate_dvi),
+                        sweep_hue.eq(hue_dvi),
                         sweep_quality_3d.eq(quality_3d_dvi),
                         sweep_terrain_style.eq(terrain_style_dvi),
                         sweep_log_scale.eq(log_scale_dvi),
-                        draw_generation.eq(visible_generation + 1),
+                        draw_generation.eq(~visible_generation),
                         render_activity_seen.eq(0),
+                        clear_request.eq(1),
                     ]
                     for index in range(3):
                         m.d.dvi += [
                             sweep_projection_x[index].eq(projection_x_dvi[index]),
                             sweep_projection_y[index].eq(projection_y_dvi[index]),
                         ]
-                    m.next = "START_BIN_GROUP"
+                    m.next = "WAIT_CLEAR"
                 with m.Elif(~enable_dvi):
                     m.d.dvi += surface_valid.eq(0)
+
+            with m.State("WAIT_CLEAR"):
+                # The inactive physical framebuffer is cleared before every
+                # 3D surface. After this point all pixels are literal display
+                # pixels; no generation-tag reveal or persistence cleanup is
+                # involved in the image shown to the user.
+                with m.If(~enable_dvi):
+                    m.d.dvi += clear_request.eq(0)
+                    m.next = "IDLE"
+                with m.Elif(clear_done_dvi):
+                    m.d.dvi += clear_request.eq(0)
+                    m.next = "START_BIN_GROUP"
 
             with m.State("START_BIN_GROUP"):
                 with m.If(sweep_log_scale):
@@ -1177,11 +1218,7 @@ class Spectrogram(wiring.Component):
                     # This pixel is consumed only by wire mode. Terrain keeps
                     # its independent five-bit level in ProjectedPoint.
                     point_pixel.intensity.eq(8 + scan_peak[4:6]),
-                    # Tagged renderer pixels reserve color[3]=1 and carry the
-                    # two-bit surface generation in color[2:1]. Wire mode's
-                    # legacy brightness uses even five-bit palette levels.
-                    point_pixel.color.eq(Cat(
-                        Const(0), draw_generation, Const(1))),
+                    point_pixel.color.eq(sweep_hue_limited),
                     point_cmd.eq(Mux(
                         scan_point == scan_point_last,
                         LineStripCmd.END, LineStripCmd.CONTINUE)),
@@ -1248,12 +1285,13 @@ class Spectrogram(wiring.Component):
                     triangle_word.x2.eq(current_projected_point.x),
                     triangle_word.y2.eq(current_projected_point.y),
                     triangle_word.pixel.color.eq(Cat(
-                        triangle_a_level[0], draw_generation, Const(1))),
+                        sweep_hue_limited, triangle_a_level[0])),
                     triangle_word.pixel.intensity.eq(triangle_a_level[1:5]),
                     triangle_fifo.w_en.eq(triangle_a_level != 0),
                 ]
-                # A zero-level facet is represented by the scanout overlay's
-                # black fallback and need not consume rasterizer bandwidth.
+                # The inactive framebuffer was just cleared.  A zero-level
+                # facet is therefore already represented exactly and does
+                # not need to consume rasterizer or PSRAM bandwidth.
                 with m.If(triangle_a_level == 0):
                     m.next = "PUSH_TRIANGLE_B"
                 with m.Elif(triangle_fifo.w_rdy):
@@ -1269,7 +1307,7 @@ class Spectrogram(wiring.Component):
                     triangle_word.x2.eq(terrain_previous_right.x),
                     triangle_word.y2.eq(terrain_previous_right.y),
                     triangle_word.pixel.color.eq(Cat(
-                        triangle_b_level[0], draw_generation, Const(1))),
+                        sweep_hue_limited, triangle_b_level[0])),
                     triangle_word.pixel.intensity.eq(triangle_b_level[1:5]),
                     triangle_fifo.w_en.eq(triangle_b_level != 0),
                 ]
@@ -1354,7 +1392,7 @@ class Spectrogram(wiring.Component):
                 # Do not begin drawing into the old front buffer until firmware
                 # has moved the video/UI base to the completed back buffer.
                 with m.If(~enable_dvi |
-                          (display_ack_dvi == completed_generation[0])):
+                          (display_ack_dvi == completed_generation)):
                     m.next = "WAIT_SWAP_VSYNC"
 
             with m.State("WAIT_SWAP_VSYNC"):
@@ -1374,8 +1412,7 @@ class Spectrogram(wiring.Component):
                     point_amplitude.eq(0),
                     point_time.eq(0),
                     point_pixel.intensity.eq(13),
-                    point_pixel.color.eq(Cat(
-                        Const(0), draw_generation, Const(1))),
+                    point_pixel.color.eq(sweep_hue_limited),
                     point_cmd.eq(LineStripCmd.CONTINUE),
                     point_next.eq(1),
                 ]
@@ -1387,8 +1424,7 @@ class Spectrogram(wiring.Component):
                     point_amplitude.eq(0),
                     point_time.eq(0),
                     point_pixel.intensity.eq(13),
-                    point_pixel.color.eq(Cat(
-                        Const(0), draw_generation, Const(1))),
+                    point_pixel.color.eq(sweep_hue_limited),
                     point_cmd.eq(LineStripCmd.END),
                     point_next.eq(2),
                 ]
@@ -1400,8 +1436,7 @@ class Spectrogram(wiring.Component):
                     point_amplitude.eq(0),
                     point_time.eq(0),
                     point_pixel.intensity.eq(14),
-                    point_pixel.color.eq(Cat(
-                        Const(0), draw_generation, Const(1))),
+                    point_pixel.color.eq(sweep_axis_hue_a),
                     point_cmd.eq(LineStripCmd.CONTINUE),
                     point_next.eq(3),
                 ]
@@ -1413,8 +1448,7 @@ class Spectrogram(wiring.Component):
                     point_amplitude.eq(255),
                     point_time.eq(0),
                     point_pixel.intensity.eq(14),
-                    point_pixel.color.eq(Cat(
-                        Const(0), draw_generation, Const(1))),
+                    point_pixel.color.eq(sweep_axis_hue_a),
                     point_cmd.eq(LineStripCmd.END),
                     point_next.eq(4),
                 ]
@@ -1426,8 +1460,7 @@ class Spectrogram(wiring.Component):
                     point_amplitude.eq(0),
                     point_time.eq(0),
                     point_pixel.intensity.eq(15),
-                    point_pixel.color.eq(Cat(
-                        Const(0), draw_generation, Const(1))),
+                    point_pixel.color.eq(sweep_axis_hue_b),
                     point_cmd.eq(LineStripCmd.CONTINUE),
                     point_next.eq(5),
                 ]
@@ -1439,8 +1472,7 @@ class Spectrogram(wiring.Component):
                     point_amplitude.eq(0),
                     point_time.eq(240),
                     point_pixel.intensity.eq(15),
-                    point_pixel.color.eq(Cat(
-                        Const(0), draw_generation, Const(1))),
+                    point_pixel.color.eq(sweep_axis_hue_b),
                     point_cmd.eq(LineStripCmd.END),
                     point_next.eq(6),
                 ]
@@ -1448,29 +1480,14 @@ class Spectrogram(wiring.Component):
 
         # Firmware must not draw a static full-screen page until every 3D
         # writer has released PSRAM. ``IDLE`` alone is insufficient because a
-        # queued line or triangle command can outlive the renderer state
-        # machine by a few cycles.
+        # cancelled clear burst or queued Bresenham command can outlive the
+        # renderer state machine by a few cycles.
         m.d.comb += renderer_idle_dvi.eq(
             ~enable_dvi & waterfall_3d_fsm.ongoing("IDLE") &
             (line_fifo.w_level == 0) & (triangle_fifo.w_level == 0) &
-            ~line_busy_dvi)
+            ~line_busy_dvi & ~clear_busy_dvi)
 
-        # Tagged pixels from older uses of either physical framebuffer appear
-        # black. Firmware/UI pixels occupy colors 0..7 and deliberately bypass
-        # this filter, so menus and the static Help page remain literal.
-        stale_surface_pixel = Signal()
-        m.d.comb += [
-            stale_surface_pixel.eq(
-                self.i.pixel.color[3]
-                & (self.i.pixel.color[1:3] != visible_generation)),
-            self.o.pixel.color.eq(Mux(
-                stale_surface_pixel, 0, self.i.pixel.color)),
-            self.o.pixel.intensity.eq(Mux(
-                stale_surface_pixel, 0, self.i.pixel.intensity)),
-            self.o.x.eq(self.i.x),
-            self.o.y.eq(self.i.y),
-            self.o.de.eq(self.i.de),
-            self.o.hsync.eq(self.i.hsync),
-            self.o.vsync.eq(self.i.vsync),
-        ]
+        # WATERFALL contributes no beam-raced trace. Pass the scan stream
+        # through unchanged while observing VSync for atomic framebuffer swaps.
+        m.d.comb += self.o.eq(self.i)
         return m
