@@ -990,12 +990,9 @@ class Spectrogram(wiring.Component):
         current_projected_point = Signal(ProjectedPoint)
         high_quality = Signal()
         terrain_level = Signal(5)
-        triangle_a_sum = Signal(7)
-        triangle_b_sum = Signal(7)
-        triangle_a_level_next = Signal(5)
-        triangle_b_level_next = Signal(5)
-        triangle_a_level = Signal(5)
-        triangle_b_level = Signal(5)
+        terrain_cell_sum = Signal(7)
+        terrain_cell_level_next = Signal(5)
+        terrain_cell_level = Signal(5)
         scan_point_last = Signal(7)
         scan_group_shift = Signal(2)
         frequency_coordinate = Signal(9)
@@ -1089,24 +1086,17 @@ class Spectrogram(wiring.Component):
             current_projected_point.x.eq(projected_x),
             current_projected_point.y.eq(projected_y),
             current_projected_point.level.eq(terrain_level),
-            # Average each facet's three vertices. The former maximum-vertex
-            # rule painted a whole triangle yellow whenever just one corner
-            # was hot. Multiplication by 43/128 is a shift-add approximation
-            # of division by three and avoids consuming another scarce DSP.
-            triangle_a_sum.eq(
+            # Shade the complete projected cell from all four corners. Giving
+            # the two triangles independent three-corner averages made their
+            # shared diagonal visible as a dark, perforated-looking seam.
+            # Division by four is exact, cheaper, and makes the triangulation
+            # an implementation detail rather than part of the picture.
+            terrain_cell_sum.eq(
                 terrain_previous_left.level
                 + terrain_current_left.level
-                + current_projected_point.level),
-            triangle_b_sum.eq(
-                terrain_previous_left.level
                 + current_projected_point.level
                 + terrain_previous_right.level),
-            triangle_a_level_next.eq((
-                (triangle_a_sum << 5) + (triangle_a_sum << 3)
-                + (triangle_a_sum << 1) + triangle_a_sum + 64) >> 7),
-            triangle_b_level_next.eq((
-                (triangle_b_sum << 5) + (triangle_b_sum << 3)
-                + (triangle_b_sum << 1) + triangle_b_sum + 64) >> 7),
+            terrain_cell_level_next.eq((terrain_cell_sum + 2) >> 2),
             sweep_hue_limited.eq(sweep_hue[:3]),
             sweep_axis_hue_a.eq(sweep_hue_limited + 2),
             sweep_axis_hue_b.eq(sweep_hue_limited + 4),
@@ -1268,10 +1258,8 @@ class Spectrogram(wiring.Component):
                     m.next = "TERRAIN_LATCH_SHADE"
 
             with m.State("TERRAIN_LATCH_SHADE"):
-                m.d.dvi += [
-                    triangle_a_level.eq(triangle_a_level_next),
-                    triangle_b_level.eq(triangle_b_level_next),
-                ]
+                m.d.dvi += terrain_cell_level.eq(
+                    terrain_cell_level_next)
                 m.next = "PUSH_TRIANGLE_A"
 
             with m.State("PUSH_TRIANGLE_A"):
@@ -1285,14 +1273,15 @@ class Spectrogram(wiring.Component):
                     triangle_word.x2.eq(current_projected_point.x),
                     triangle_word.y2.eq(current_projected_point.y),
                     triangle_word.pixel.color.eq(Cat(
-                        sweep_hue_limited, triangle_a_level[0])),
-                    triangle_word.pixel.intensity.eq(triangle_a_level[1:5]),
-                    triangle_fifo.w_en.eq(triangle_a_level != 0),
+                        sweep_hue_limited, terrain_cell_level[0])),
+                    triangle_word.pixel.intensity.eq(
+                        terrain_cell_level[1:5]),
+                    triangle_fifo.w_en.eq(terrain_cell_level != 0),
                 ]
                 # The inactive framebuffer was just cleared.  A zero-level
                 # facet is therefore already represented exactly and does
                 # not need to consume rasterizer or PSRAM bandwidth.
-                with m.If(triangle_a_level == 0):
+                with m.If(terrain_cell_level == 0):
                     m.next = "PUSH_TRIANGLE_B"
                 with m.Elif(triangle_fifo.w_rdy):
                     m.next = "PUSH_TRIANGLE_B"
@@ -1307,11 +1296,12 @@ class Spectrogram(wiring.Component):
                     triangle_word.x2.eq(terrain_previous_right.x),
                     triangle_word.y2.eq(terrain_previous_right.y),
                     triangle_word.pixel.color.eq(Cat(
-                        sweep_hue_limited, triangle_b_level[0])),
-                    triangle_word.pixel.intensity.eq(triangle_b_level[1:5]),
-                    triangle_fifo.w_en.eq(triangle_b_level != 0),
+                        sweep_hue_limited, terrain_cell_level[0])),
+                    triangle_word.pixel.intensity.eq(
+                        terrain_cell_level[1:5]),
+                    triangle_fifo.w_en.eq(terrain_cell_level != 0),
                 ]
-                with m.If((triangle_b_level == 0) | triangle_fifo.w_rdy):
+                with m.If((terrain_cell_level == 0) | triangle_fifo.w_rdy):
                     m.d.dvi += [
                         terrain_current_left.eq(current_projected_point),
                         terrain_previous_left.eq(terrain_previous_right),

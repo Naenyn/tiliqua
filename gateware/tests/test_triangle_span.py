@@ -42,6 +42,30 @@ def reference_pixels(vertices, width, height):
 
 class TriangleSpanRasterizerTests(unittest.TestCase):
 
+    @staticmethod
+    async def _send_triangle(ctx, dut, vertices, pixels):
+        for index, (x, y) in enumerate(vertices):
+            ctx.set(getattr(dut.i.payload, f"x{index}"), x)
+            ctx.set(getattr(dut.i.payload, f"y{index}"), y)
+        ctx.set(dut.i.payload.pixel.color, 5)
+        ctx.set(dut.i.payload.pixel.intensity, 11)
+        ctx.set(dut.i.valid, 1)
+        while not ctx.get(dut.i.ready):
+            await ctx.tick()
+        await ctx.tick()
+        ctx.set(dut.i.valid, 0)
+
+        for _ in range(10000):
+            if ctx.get(dut.o.valid):
+                y = ctx.get(dut.o.payload.y)
+                for x in range(ctx.get(dut.o.payload.x0),
+                               ctx.get(dut.o.payload.x1) + 1):
+                    pixels.add((x, y))
+            if not ctx.get(dut.busy):
+                return
+            await ctx.tick()
+        raise AssertionError("rasterizer did not finish")
+
     def test_spans_match_edge_equations_in_every_rotation(self):
         width = 12
         height = 10
@@ -139,6 +163,62 @@ class TriangleSpanRasterizerTests(unittest.TestCase):
             vertices = [(1, 1), (13 - frame, 2), (2, 10 - frame)]
             self.assertEqual(pixels, reference_pixels(vertices, 16, 12))
 
+    def test_adjacent_triangles_form_watertight_projected_cells(self):
+        """Terrain's two triangles must not crack along their shared edge."""
+        width = 32
+        height = 24
+        # Convex cells with horizontal, vertical and diagonal shared edges.
+        cells = [
+            ((3, 3), (6, 18), (24, 16), (22, 5)),
+            ((2, 8), (9, 20), (28, 14), (20, 2)),
+            ((5, 2), (5, 21), (26, 19), (26, 4)),
+            ((2, 4), (12, 20), (29, 18), (20, 5)),
+        ]
+
+        for rotation in Rotation:
+            for cell in cells:
+                with self.subTest(rotation=rotation, cell=cell):
+                    # Match WATERFALL's A-B-C and A-C-D split.
+                    triangles = [
+                        (cell[0], cell[1], cell[2]),
+                        (cell[0], cell[2], cell[3]),
+                    ]
+                    dut = TriangleSpanRasterizer()
+                    sim = Simulator(dut)
+                    sim.add_clock(1e-6)
+                    actual = set()
+
+                    async def bench(ctx):
+                        ctx.set(dut.h_active, width)
+                        ctx.set(dut.v_active, height)
+                        ctx.set(dut.rotation, rotation)
+                        ctx.set(dut.alternate, 1)
+                        ctx.set(dut.o.ready, 1)
+                        for triangle in triangles:
+                            await self._send_triangle(
+                                ctx, dut, triangle, actual)
+
+                    sim.add_testbench(bench)
+                    sim.run()
+                    transformed = [
+                        transform_triangle(
+                            triangle, rotation, width, height)
+                        for triangle in triangles
+                    ]
+                    expected = set().union(*(
+                        reference_pixels(triangle, width, height)
+                        for triangle in transformed
+                    ))
+                    self.assertEqual(actual, expected)
+
+                    # No background pixel may be trapped between filled
+                    # pixels on a scanline of this convex projected cell.
+                    for y in range(height):
+                        xs = sorted(x for x, py in actual if py == y)
+                        if xs:
+                            self.assertEqual(
+                                xs, list(range(xs[0], xs[-1] + 1)))
+
 
 class PackedSpanWriterTests(unittest.TestCase):
 
@@ -201,6 +281,86 @@ class PackedSpanWriterTests(unittest.TestCase):
                  wishbone.CycleType.END_OF_BURST.value),
             ],
         )
+
+    def test_adjacent_stalled_spans_leave_no_unwritten_bytes(self):
+        """Exercise shared words, back-pressure and burst interruption."""
+        bus_signature = wishbone.Signature(
+            addr_width=22,
+            data_width=32,
+            granularity=8,
+            features={"cti", "bte"},
+        )
+        dut = PackedSpanWriter(bus_signature=bus_signature, burst_words=4)
+        sim = Simulator(dut)
+        sim.add_clock(1e-6)
+        memory = bytearray(16 * 4)
+        spans = [
+            (1, 5, 1, 0x31),
+            (6, 11, 1, 0x62),
+            (12, 14, 1, 0x93),
+            (0, 15, 2, 0xc4),
+        ]
+
+        async def bench(ctx):
+            ctx.set(dut.fbp.base, 0)
+            ctx.set(dut.fbp.timings.h_active, 16)
+            ctx.set(dut.fbp.timings.v_active, 4)
+            ctx.set(dut.fbp.enable, 1)
+
+            cycle = 0
+            for x0, x1, y, packed_pixel in spans:
+                ctx.set(dut.i.payload.x0, x0)
+                ctx.set(dut.i.payload.x1, x1)
+                ctx.set(dut.i.payload.y, y)
+                ctx.set(dut.i.payload.pixel.color, packed_pixel & 0xf)
+                ctx.set(dut.i.payload.pixel.intensity, packed_pixel >> 4)
+                ctx.set(dut.i.payload.alternate, 0)
+                ctx.set(dut.i.valid, 1)
+                while not ctx.get(dut.i.ready):
+                    pause = cycle % 11 in (7, 8)
+                    ack = cycle % 5 != 2
+                    ctx.set(dut.pause, pause)
+                    ctx.set(dut.bus.ack, ack)
+                    if ack and ctx.get(dut.bus.cyc) and ctx.get(dut.bus.stb):
+                        address = ctx.get(dut.bus.adr) * 4
+                        select = ctx.get(dut.bus.sel)
+                        data = ctx.get(dut.bus.dat_w)
+                        for lane in range(4):
+                            if select & (1 << lane):
+                                memory[address + lane] = (
+                                    data >> (lane * 8)) & 0xff
+                    cycle += 1
+                    await ctx.tick()
+                await ctx.tick()
+                ctx.set(dut.i.valid, 0)
+
+            for _ in range(200):
+                pause = cycle % 11 in (7, 8)
+                ack = cycle % 5 != 2
+                ctx.set(dut.pause, pause)
+                ctx.set(dut.bus.ack, ack)
+                if ack and ctx.get(dut.bus.cyc) and ctx.get(dut.bus.stb):
+                    address = ctx.get(dut.bus.adr) * 4
+                    select = ctx.get(dut.bus.sel)
+                    data = ctx.get(dut.bus.dat_w)
+                    for lane in range(4):
+                        if select & (1 << lane):
+                            memory[address + lane] = (
+                                data >> (lane * 8)) & 0xff
+                if not ctx.get(dut.busy):
+                    break
+                cycle += 1
+                await ctx.tick()
+            else:
+                self.fail("span writer did not finish")
+
+        sim.add_testbench(bench)
+        sim.run()
+        expected = bytearray(16 * 4)
+        for x0, x1, y, packed_pixel in spans:
+            expected[y * 16 + x0:y * 16 + x1 + 1] = bytes(
+                [packed_pixel] * (x1 - x0 + 1))
+        self.assertEqual(memory, expected)
 
 
 if __name__ == "__main__":
