@@ -1115,18 +1115,19 @@ class Spectrogram(wiring.Component):
                 + current_projected_point.level
                 + terrain_previous_right.level),
             terrain_cell_level_next.eq((terrain_cell_sum + 2) >> 2),
-            # Age is measured in complete history slices. Subtracting one
-            # calibrated display step per slice creates a smooth persistence
-            # fade (about 1.5dB per slice) without altering surface geometry.
+            # Frequency coloring already has independent hue and brightness
+            # fields, so age can reduce brightness directly. Level coloring
+            # instead encodes age as a separate palette dimension below; its
+            # amplitude-selected color must not move through the heat map.
             terrain_cell_display_level_next.eq(Mux(
-                sweep_age_fade,
+                sweep_age_fade & sweep_frequency_color,
                 Mux(
                     terrain_cell_level_next > scan_history_age,
                     terrain_cell_level_next - scan_history_age,
                     0),
                 terrain_cell_level_next)),
             wire_display_level.eq(Mux(
-                sweep_age_fade,
+                sweep_age_fade & sweep_frequency_color,
                 Mux(scan_peak > scan_history_age,
                     scan_peak - scan_history_age, 0),
                 scan_peak)),
@@ -1261,11 +1262,17 @@ class Spectrogram(wiring.Component):
                     point_pixel.intensity.eq(Mux(
                         sweep_frequency_color,
                         wire_frequency_intensity,
-                        wire_display_level[2:6])),
+                        Mux(sweep_age_fade,
+                            Cat(wire_display_level[5],
+                                scan_history_age[1:4]),
+                            wire_display_level[2:6]))),
                     point_pixel.color.eq(Mux(
                         sweep_frequency_color,
                         sweep_frequency_hue,
-                        Cat(sweep_hue_limited, wire_display_level[:2]))),
+                        Mux(sweep_age_fade,
+                            wire_display_level[1:5],
+                            Cat(sweep_hue_limited,
+                                wire_display_level[:2])))),
                     point_cmd.eq(Mux(
                         scan_point == scan_point_last,
                         LineStripCmd.END, LineStripCmd.CONTINUE)),
@@ -1334,12 +1341,17 @@ class Spectrogram(wiring.Component):
                     triangle_word.pixel.color.eq(Mux(
                         sweep_frequency_color,
                         sweep_frequency_hue,
-                        Cat(sweep_hue_limited,
-                            terrain_cell_display_level[:2]))),
+                        Mux(sweep_age_fade,
+                            terrain_cell_display_level[1:5],
+                            Cat(sweep_hue_limited,
+                                terrain_cell_display_level[:2])))),
                     triangle_word.pixel.intensity.eq(
                         Mux(sweep_frequency_color,
                             terrain_cell_frequency_intensity,
-                            terrain_cell_display_level[2:6])),
+                            Mux(sweep_age_fade,
+                                Cat(terrain_cell_display_level[5],
+                                    scan_history_age[1:4]),
+                                terrain_cell_display_level[2:6]))),
                     triangle_fifo.w_en.eq(terrain_cell_display_level != 0),
                 ]
                 # The inactive framebuffer was just cleared.  A zero-level
@@ -1362,12 +1374,17 @@ class Spectrogram(wiring.Component):
                     triangle_word.pixel.color.eq(Mux(
                         sweep_frequency_color,
                         sweep_frequency_hue,
-                        Cat(sweep_hue_limited,
-                            terrain_cell_display_level[:2]))),
+                        Mux(sweep_age_fade,
+                            terrain_cell_display_level[1:5],
+                            Cat(sweep_hue_limited,
+                                terrain_cell_display_level[:2])))),
                     triangle_word.pixel.intensity.eq(
                         Mux(sweep_frequency_color,
                             terrain_cell_frequency_intensity,
-                            terrain_cell_display_level[2:6])),
+                            Mux(sweep_age_fade,
+                                Cat(terrain_cell_display_level[5],
+                                    scan_history_age[1:4]),
+                                terrain_cell_display_level[2:6]))),
                     triangle_fifo.w_en.eq(terrain_cell_display_level != 0),
                 ]
                 with m.If((terrain_cell_display_level == 0) | triangle_fifo.w_rdy):

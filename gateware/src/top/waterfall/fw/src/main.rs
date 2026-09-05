@@ -256,6 +256,8 @@ fn write_waterfall_palette(
     palette: ColorPalette,
     video: &mut impl DMAFramebuffer,
     frequency_ramp: bool,
+    age_fade: bool,
+    hue_shift: u8,
 ) {
     if frequency_ramp {
         for intensity in 0..16u8 {
@@ -271,6 +273,54 @@ fn write_waterfall_palette(
                     bright_intensity,
                 );
                 video.set_palette_rgb(intensity, hue, r, g, b);
+            }
+        }
+        return;
+    }
+
+    if age_fade {
+        // With age fading enabled, use the 256-entry hardware palette as
+        // 32 amplitude colors x 8 age-brightness steps. Age scales RGB
+        // uniformly, so an old surface keeps the same amplitude color rather
+        // than sliding backward through the heat map.
+        for intensity in 0..16u8 {
+            for hue in 0..16u8 {
+                let level = ((intensity & 1) << 4) | hue;
+                let age = intensity >> 1;
+                let position = level as u16 * 15;
+                let lower = (position / 31) as u8;
+                let fraction = position % 31;
+                let upper = core::cmp::min(lower + 1, 15);
+                let (lo, hi, rotate) = match palette.heatmap_color(lower) {
+                    Some(lo) => (lo, palette.heatmap_color(upper).unwrap(), true),
+                    None => (
+                        palette.color(lower, hue_shift),
+                        palette.color(upper, hue_shift),
+                        false,
+                    ),
+                };
+                let interpolate = |a: u8, b: u8| -> u8 {
+                    (((a as u32 * (31 - fraction) as u32)
+                        + (b as u32 * fraction as u32) + 15) / 31) as u8
+                };
+                let rgb = (
+                    interpolate(lo.0, hi.0),
+                    interpolate(lo.1, hi.1),
+                    interpolate(lo.2, hi.2),
+                );
+                let (r, g, b) = if rotate {
+                    rotate_rgb_hue(rgb, hue_shift)
+                } else {
+                    rgb
+                };
+                let brightness = 15 - age;
+                video.set_palette_rgb(
+                    intensity,
+                    hue,
+                    ((r as u16 * brightness as u16 + 7) / 15) as u8,
+                    ((g as u16 * brightness as u16 + 7) / 15) as u8,
+                    ((b as u16 * brightness as u16 + 7) / 15) as u8,
+                );
             }
         }
         return;
@@ -465,6 +515,8 @@ fn main() -> ! {
 
     let mut last_palette = opts.display.palette.value;
     let mut last_color_by = opts.view.color_by.value;
+    let mut last_age_fade = opts.view.age_fade.value;
+    let mut last_plot_hue = opts.display.hue.value;
     let mut last_hide = opts.menu.hide.value;
     let mut last_edit_hide = opts.menu.edit_hide.value;
     let app = Mutex::new(RefCell::new(App::new(opts)));
@@ -610,15 +662,21 @@ fn main() -> ! {
 
             if opts.display.palette.value != last_palette
                 || opts.view.color_by.value != last_color_by
+                || opts.view.age_fade.value != last_age_fade
+                || opts.display.hue.value != last_plot_hue
                 || first
             {
                 write_waterfall_palette(
                     opts.display.palette.value,
                     &mut display,
                     opts.view.color_by.value == ColorBy::Frequency,
+                    opts.view.age_fade.value == OnOff::On,
+                    opts.display.hue.value,
                 );
                 last_palette = opts.display.palette.value;
                 last_color_by = opts.view.color_by.value;
+                last_age_fade = opts.view.age_fade.value;
+                last_plot_hue = opts.display.hue.value;
             }
 
             let (menu_x, menu_y) = if on_help_page {
