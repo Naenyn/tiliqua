@@ -185,8 +185,21 @@ class WaterfallSoc(TiliquaSoc):
             bus_signature=self.psram_periph.bus.signature.flip())
         self.backbuffer_clear = BackbufferClear(
             bus_signature=self.psram_periph.bus.signature.flip())
-        self.psram_periph.add_master(self.backbuffer_clear.bus)
-        self.psram_periph.add_master(self.waterfall_terrain_renderer.bus)
+        # Clear and terrain drawing are mutually exclusive phases of one
+        # surface update. Combine them before the SoC-level PSRAM arbiter so
+        # its CPU response path does not pay for two independent high-fanout
+        # renderer grants.
+        psram_bus = self.psram_periph.bus
+        self.waterfall_memory_arbiter = wishbone.Arbiter(
+            addr_width=psram_bus.addr_width,
+            data_width=psram_bus.data_width,
+            granularity=psram_bus.granularity,
+            features=psram_bus.features,
+        )
+        self.waterfall_memory_arbiter.add(self.backbuffer_clear.bus)
+        self.waterfall_memory_arbiter.add(
+            self.waterfall_terrain_renderer.bus)
+        self.psram_periph.add_master(self.waterfall_memory_arbiter.bus)
 
         self.spectrogram_periph_base = 0x00001000
         self.csr_decoder.add(
@@ -202,6 +215,7 @@ class WaterfallSoc(TiliquaSoc):
         m.submodules.waterfall_line_plotter = self.waterfall_line_plotter
         m.submodules.waterfall_terrain_renderer = self.waterfall_terrain_renderer
         m.submodules.backbuffer_clear = self.backbuffer_clear
+        m.submodules.waterfall_memory_arbiter = self.waterfall_memory_arbiter
         m.submodules += super().elaborate(platform)
 
         wiring.connect(
