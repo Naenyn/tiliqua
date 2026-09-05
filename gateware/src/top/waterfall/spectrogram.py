@@ -402,6 +402,8 @@ class Spectrogram(wiring.Component):
         quality: csr.Field(csr.action.W, unsigned(2))
         style: csr.Field(csr.action.W, unsigned(1))
         log_scale: csr.Field(csr.action.W, unsigned(1))
+        age_fade: csr.Field(csr.action.W, unsigned(1))
+        frequency_color: csr.Field(csr.action.W, unsigned(1))
 
     class ProjectionX(csr.Register, access="w"):
         frequency: csr.Field(csr.action.W, signed(10))
@@ -467,6 +469,8 @@ class Spectrogram(wiring.Component):
         quality_3d = Signal(2, init=1)
         terrain_style = Signal(init=1)
         log_scale = Signal(init=1)
+        age_fade = Signal(init=1)
+        frequency_color = Signal()
         h_active = Signal(12, init=720)
         v_active = Signal(12, init=720)
         projection_x = [Signal(signed(10), init=value) for value in (384, 0, 90)]
@@ -511,6 +515,8 @@ class Spectrogram(wiring.Component):
                 quality_3d.eq(self._config_3d.f.quality.w_data),
                 terrain_style.eq(self._config_3d.f.style.w_data),
                 log_scale.eq(self._config_3d.f.log_scale.w_data),
+                age_fade.eq(self._config_3d.f.age_fade.w_data),
+                frequency_color.eq(self._config_3d.f.frequency_color.w_data),
             ]
         # ---- audio analysis -------------------------------------------------
         # Match the analyzer sample rate to the selected frequency range. This
@@ -788,6 +794,8 @@ class Spectrogram(wiring.Component):
         quality_3d_dvi = Signal(2)
         terrain_style_dvi = Signal()
         log_scale_dvi = Signal()
+        age_fade_dvi = Signal()
+        frequency_color_dvi = Signal()
         rate_dvi = Signal(2)
         hue_dvi = Signal(4)
         noise_floor_dvi = Signal(2)
@@ -806,6 +814,8 @@ class Spectrogram(wiring.Component):
             ("quality_3d", quality_3d, quality_3d_dvi),
             ("terrain_style", terrain_style, terrain_style_dvi),
             ("log_scale", log_scale, log_scale_dvi),
+            ("age_fade", age_fade, age_fade_dvi),
+            ("frequency_color", frequency_color, frequency_color_dvi),
             ("rate", rate_sel, rate_dvi),
             ("h_active", h_active, h_active_dvi),
             ("v_active", v_active, v_active_dvi),
@@ -896,6 +906,8 @@ class Spectrogram(wiring.Component):
         sweep_quality_3d = Signal(2)
         sweep_terrain_style = Signal()
         sweep_log_scale = Signal()
+        sweep_age_fade = Signal()
+        sweep_frequency_color = Signal()
         sweep_projection_x = [Signal(signed(10)) for _ in range(3)]
         sweep_projection_y = [Signal(signed(10)) for _ in range(3)]
 
@@ -992,11 +1004,16 @@ class Spectrogram(wiring.Component):
         terrain_level = Signal(6)
         terrain_cell_sum = Signal(8)
         terrain_cell_level_next = Signal(6)
-        terrain_cell_level = Signal(6)
+        terrain_cell_display_level_next = Signal(6)
+        terrain_cell_display_level = Signal(6)
+        terrain_cell_frequency_intensity = Signal(4)
+        wire_display_level = Signal(6)
+        wire_frequency_intensity = Signal(4)
         scan_point_last = Signal(7)
         scan_group_shift = Signal(2)
         frequency_coordinate = Signal(9)
         sweep_hue_limited = Signal(2)
+        sweep_frequency_hue = Signal(4)
         sweep_axis_hue_a = Signal(2)
         sweep_axis_hue_b = Signal(2)
         scan_geometry = _three_d_scan_geometry(high_quality)
@@ -1098,7 +1115,38 @@ class Spectrogram(wiring.Component):
                 + current_projected_point.level
                 + terrain_previous_right.level),
             terrain_cell_level_next.eq((terrain_cell_sum + 2) >> 2),
+            # Age is measured in complete history slices. Subtracting one
+            # calibrated display step per slice creates a smooth persistence
+            # fade (about 1.5dB per slice) without altering surface geometry.
+            terrain_cell_display_level_next.eq(Mux(
+                sweep_age_fade,
+                Mux(
+                    terrain_cell_level_next > scan_history_age,
+                    terrain_cell_level_next - scan_history_age,
+                    0),
+                terrain_cell_level_next)),
+            wire_display_level.eq(Mux(
+                sweep_age_fade,
+                Mux(scan_peak > scan_history_age,
+                    scan_peak - scan_history_age, 0),
+                scan_peak)),
+            # Frequency coloring has only four amplitude bits. Round nonzero
+            # six-bit levels upward so quiet history does not become black,
+            # and saturate the top four codes instead of wrapping at 64.
+            terrain_cell_frequency_intensity.eq(Mux(
+                terrain_cell_display_level == 0,
+                0,
+                Mux(terrain_cell_display_level >= 60,
+                    15, (terrain_cell_display_level + 3) >> 2))),
+            wire_frequency_intensity.eq(Mux(
+                wire_display_level == 0,
+                0,
+                Mux(wire_display_level >= 60,
+                    15, (wire_display_level + 3) >> 2))),
             sweep_hue_limited.eq(sweep_hue[:2]),
+            sweep_frequency_hue.eq(
+                Mux(high_quality, scan_point >> 3, scan_point >> 2)
+                + sweep_hue),
             sweep_axis_hue_a.eq(sweep_hue_limited + 2),
             sweep_axis_hue_b.eq(sweep_hue_limited + 4),
         ]
@@ -1132,6 +1180,8 @@ class Spectrogram(wiring.Component):
                         sweep_quality_3d.eq(quality_3d_dvi),
                         sweep_terrain_style.eq(terrain_style_dvi),
                         sweep_log_scale.eq(log_scale_dvi),
+                        sweep_age_fade.eq(age_fade_dvi),
+                        sweep_frequency_color.eq(frequency_color_dvi),
                         draw_generation.eq(~visible_generation),
                         render_activity_seen.eq(0),
                         clear_request.eq(1),
@@ -1208,8 +1258,14 @@ class Spectrogram(wiring.Component):
                     point_time.eq(scan_depth),
                     # This pixel is consumed only by wire mode. Terrain keeps
                     # its independent six-bit level in ProjectedPoint.
-                    point_pixel.intensity.eq(8 + scan_peak[4:6]),
-                    point_pixel.color.eq(sweep_hue_limited),
+                    point_pixel.intensity.eq(Mux(
+                        sweep_frequency_color,
+                        wire_frequency_intensity,
+                        wire_display_level[2:6])),
+                    point_pixel.color.eq(Mux(
+                        sweep_frequency_color,
+                        sweep_frequency_hue,
+                        Cat(sweep_hue_limited, wire_display_level[:2]))),
                     point_cmd.eq(Mux(
                         scan_point == scan_point_last,
                         LineStripCmd.END, LineStripCmd.CONTINUE)),
@@ -1259,8 +1315,10 @@ class Spectrogram(wiring.Component):
                     m.next = "TERRAIN_LATCH_SHADE"
 
             with m.State("TERRAIN_LATCH_SHADE"):
-                m.d.dvi += terrain_cell_level.eq(
-                    terrain_cell_level_next)
+                m.d.dvi += [
+                    terrain_cell_display_level.eq(
+                        terrain_cell_display_level_next),
+                ]
                 m.next = "PUSH_TRIANGLE_A"
 
             with m.State("PUSH_TRIANGLE_A"):
@@ -1273,16 +1331,21 @@ class Spectrogram(wiring.Component):
                     triangle_word.y1.eq(terrain_current_left.y),
                     triangle_word.x2.eq(current_projected_point.x),
                     triangle_word.y2.eq(current_projected_point.y),
-                    triangle_word.pixel.color.eq(Cat(
-                        sweep_hue_limited, terrain_cell_level[:2])),
+                    triangle_word.pixel.color.eq(Mux(
+                        sweep_frequency_color,
+                        sweep_frequency_hue,
+                        Cat(sweep_hue_limited,
+                            terrain_cell_display_level[:2]))),
                     triangle_word.pixel.intensity.eq(
-                        terrain_cell_level[2:6]),
-                    triangle_fifo.w_en.eq(terrain_cell_level != 0),
+                        Mux(sweep_frequency_color,
+                            terrain_cell_frequency_intensity,
+                            terrain_cell_display_level[2:6])),
+                    triangle_fifo.w_en.eq(terrain_cell_display_level != 0),
                 ]
                 # The inactive framebuffer was just cleared.  A zero-level
                 # facet is therefore already represented exactly and does
                 # not need to consume rasterizer or PSRAM bandwidth.
-                with m.If(terrain_cell_level == 0):
+                with m.If(terrain_cell_display_level == 0):
                     m.next = "PUSH_TRIANGLE_B"
                 with m.Elif(triangle_fifo.w_rdy):
                     m.next = "PUSH_TRIANGLE_B"
@@ -1296,13 +1359,18 @@ class Spectrogram(wiring.Component):
                     triangle_word.y1.eq(current_projected_point.y),
                     triangle_word.x2.eq(terrain_previous_right.x),
                     triangle_word.y2.eq(terrain_previous_right.y),
-                    triangle_word.pixel.color.eq(Cat(
-                        sweep_hue_limited, terrain_cell_level[:2])),
+                    triangle_word.pixel.color.eq(Mux(
+                        sweep_frequency_color,
+                        sweep_frequency_hue,
+                        Cat(sweep_hue_limited,
+                            terrain_cell_display_level[:2]))),
                     triangle_word.pixel.intensity.eq(
-                        terrain_cell_level[2:6]),
-                    triangle_fifo.w_en.eq(terrain_cell_level != 0),
+                        Mux(sweep_frequency_color,
+                            terrain_cell_frequency_intensity,
+                            terrain_cell_display_level[2:6])),
+                    triangle_fifo.w_en.eq(terrain_cell_display_level != 0),
                 ]
-                with m.If((terrain_cell_level == 0) | triangle_fifo.w_rdy):
+                with m.If((terrain_cell_display_level == 0) | triangle_fifo.w_rdy):
                     m.d.dvi += [
                         terrain_current_left.eq(current_projected_point),
                         terrain_previous_left.eq(terrain_previous_right),

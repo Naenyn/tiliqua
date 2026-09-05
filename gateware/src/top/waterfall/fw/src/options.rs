@@ -64,6 +64,14 @@ pub enum FrequencyScale {
 }
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
+#[strum(serialize_all = "kebab-case")]
+pub enum ColorBy {
+    #[default]
+    Level,
+    Frequency,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 pub enum InputChannel {
     #[default]
     #[strum(serialize = "IN1")]
@@ -204,6 +212,12 @@ pub struct ViewOpts {
     pub scale: EnumOption<FrequencyScale>,
     #[option]
     pub quality: EnumOption<Quality3d>,
+    #[option]
+    #[option_name("color by")]
+    pub color_by: EnumOption<ColorBy>,
+    #[option]
+    #[option_name("age fade")]
+    pub age_fade: EnumOption<OnOff>,
     #[option(-15)]
     pub rot_x: IntOption<AngleParams>,
     #[option(15)]

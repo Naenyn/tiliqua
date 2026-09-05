@@ -207,12 +207,75 @@ fn rotate_rgb_hue((r, g, b): (u8, u8, u8), shift: u8) -> (u8, u8, u8) {
     (rr as u8, gg as u8, bb as u8)
 }
 
-/// Program WATERFALL's palette. Scalar heat maps use each hardware hue column
-/// for a rotated version, keeping the plot hue control meaningful.
+fn scale_rgb_visible((r, g, b): (u8, u8, u8), intensity: u8) -> (u8, u8, u8) {
+    let scale = if intensity == 0 {
+        0
+    } else {
+        4 + ((intensity as u16 * 11) / 15)
+    };
+    (
+        ((r as u16 * scale) / 15) as u8,
+        ((g as u16 * scale) / 15) as u8,
+        ((b as u16 * scale) / 15) as u8,
+    )
+}
+
+fn max3(a: u8, b: u8, c: u8) -> u8 {
+    let ab = if a > b { a } else { b };
+    if ab > c { ab } else { c }
+}
+
+fn scale_rgb_to_level((r, g, b): (u8, u8, u8), target_level: u8) -> (u8, u8, u8) {
+    let source_level = max3(r, g, b);
+    if target_level == 0 || source_level == 0 {
+        return (0, 0, 0);
+    }
+    (
+        ((r as u16 * target_level as u16) / source_level as u16) as u8,
+        ((g as u16 * target_level as u16) / source_level as u16) as u8,
+        ((b as u16 * target_level as u16) / source_level as u16) as u8,
+    )
+}
+
+fn scale_rgb_like_palette(
+    palette: ColorPalette,
+    rgb: (u8, u8, u8),
+    intensity: u8,
+) -> (u8, u8, u8) {
+    if let Some((r, g, b)) = palette.heatmap_color(intensity) {
+        scale_rgb_to_level(rgb, max3(r, g, b))
+    } else {
+        scale_rgb_visible(rgb, intensity)
+    }
+}
+
+/// Program WATERFALL's palette. Level coloring devotes six address bits to a
+/// smooth amplitude gradient. Frequency coloring instead devotes the hue
+/// nibble to horizontal position and retains four amplitude-brightness bits.
 fn write_waterfall_palette(
     palette: ColorPalette,
     video: &mut impl DMAFramebuffer,
+    frequency_ramp: bool,
 ) {
+    if frequency_ramp {
+        for intensity in 0..16u8 {
+            for hue in 0..16u8 {
+                let bright_intensity = if intensity == 0 {
+                    0
+                } else {
+                    4 + ((intensity as u16 * 11) / 15) as u8
+                };
+                let (r, g, b) = scale_rgb_like_palette(
+                    palette,
+                    palette.frequency_color(hue),
+                    bright_intensity,
+                );
+                video.set_palette_rgb(intensity, hue, r, g, b);
+            }
+        }
+        return;
+    }
+
     // Terrain encodes six-bit level as {intensity[3:0], color[3:2]} while the
     // lower two color bits retain four selectable hue rotations. This uses
     // every palette entry for a smoother amplitude gradient without enlarging
@@ -401,6 +464,7 @@ fn main() -> ! {
     sanitize_options(&mut opts);
 
     let mut last_palette = opts.display.palette.value;
+    let mut last_color_by = opts.view.color_by.value;
     let mut last_hide = opts.menu.hide.value;
     let mut last_edit_hide = opts.menu.edit_hide.value;
     let app = Mutex::new(RefCell::new(App::new(opts)));
@@ -544,12 +608,17 @@ fn main() -> ! {
             last_on_help_page = on_help_page;
             last_help_scroll = help_scroll;
 
-            if opts.display.palette.value != last_palette || first {
+            if opts.display.palette.value != last_palette
+                || opts.view.color_by.value != last_color_by
+                || first
+            {
                 write_waterfall_palette(
                     opts.display.palette.value,
                     &mut display,
+                    opts.view.color_by.value == ColorBy::Frequency,
                 );
                 last_palette = opts.display.palette.value;
+                last_color_by = opts.view.color_by.value;
             }
 
             let (menu_x, menu_y) = if on_help_page {
@@ -713,7 +782,9 @@ fn main() -> ! {
             spectro.config_3d().write(|w| unsafe {
                 w.quality().bits(opts.view.quality.value.hw_index());
                 w.style().bit(opts.view.style.value == SurfaceStyle::Terrain);
-                w.log_scale().bit(opts.view.scale.value == FrequencyScale::Log)
+                w.log_scale().bit(opts.view.scale.value == FrequencyScale::Log);
+                w.age_fade().bit(opts.view.age_fade.value == OnOff::On);
+                w.frequency_color().bit(opts.view.color_by.value == ColorBy::Frequency)
             });
 
             first = false;
