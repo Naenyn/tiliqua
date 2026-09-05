@@ -94,6 +94,21 @@ def _three_d_frequency_coordinate(point, high_quality):
     )
 
 
+def _terrain_visibility_level(level, age, age_fade):
+    """Return the post-age level used solely to cull invisible facets.
+
+    Level-colored terrain keeps its original amplitude color while the palette
+    fades RGB brightness with age.  Applying the same age envelope separately
+    here lets sufficiently quiet old facets disappear without moving surviving
+    facets through the amplitude palette.
+    """
+    return Mux(
+        age_fade,
+        Mux(level > age, level - age, 0),
+        level,
+    )
+
+
 def _log_frequency_bin_buckets(point_count, n_bins=N_BINS):
     """Return inclusive FFT-bin bounds for an octave-spaced 3D sweep.
 
@@ -1006,6 +1021,8 @@ class Spectrogram(wiring.Component):
         terrain_cell_level_next = Signal(6)
         terrain_cell_display_level_next = Signal(6)
         terrain_cell_display_level = Signal(6)
+        terrain_cell_visibility_level_next = Signal(6)
+        terrain_cell_visible = Signal()
         terrain_cell_frequency_intensity = Signal(4)
         wire_display_level = Signal(6)
         wire_frequency_intensity = Signal(4)
@@ -1151,6 +1168,18 @@ class Spectrogram(wiring.Component):
                     terrain_cell_level_next - scan_history_age,
                     0),
                 terrain_cell_level_next)),
+            # Keep culling independent from shading. In level-color mode the
+            # facet retains its original amplitude-selected hue while this
+            # parallel envelope removes only old, effectively invisible
+            # low-level geometry. Frequency-color mode already applies the
+            # same envelope to brightness, so the two modes now agree on
+            # which terrain is worth rasterizing.
+            terrain_cell_visibility_level_next.eq(
+                _terrain_visibility_level(
+                    terrain_cell_level_next,
+                    scan_history_age,
+                    sweep_age_fade,
+                )),
             wire_display_level.eq(Mux(
                 sweep_age_fade & sweep_frequency_color,
                 Mux(scan_peak > scan_history_age,
@@ -1376,6 +1405,8 @@ class Spectrogram(wiring.Component):
                 m.d.dvi += [
                     terrain_cell_display_level.eq(
                         terrain_cell_display_level_next),
+                    terrain_cell_visible.eq(
+                        terrain_cell_visibility_level_next != 0),
                 ]
                 m.next = "PUSH_TRIANGLE_A"
 
@@ -1397,12 +1428,12 @@ class Spectrogram(wiring.Component):
                         Mux(sweep_frequency_color,
                             terrain_cell_frequency_intensity,
                             terrain_level_intensity)),
-                    triangle_fifo.w_en.eq(terrain_cell_display_level != 0),
+                    triangle_fifo.w_en.eq(terrain_cell_visible),
                 ]
-                # The inactive framebuffer was just cleared.  A zero-level
-                # facet is therefore already represented exactly and does
+                # The inactive framebuffer was just cleared. Zero-level and
+                # age-culled facets are therefore already represented and do
                 # not need to consume rasterizer or PSRAM bandwidth.
-                with m.If(terrain_cell_display_level == 0):
+                with m.If(~terrain_cell_visible):
                     m.next = "PUSH_TRIANGLE_B"
                 with m.Elif(triangle_fifo.w_rdy):
                     m.next = "PUSH_TRIANGLE_B"
@@ -1424,9 +1455,9 @@ class Spectrogram(wiring.Component):
                         Mux(sweep_frequency_color,
                             terrain_cell_frequency_intensity,
                             terrain_level_intensity)),
-                    triangle_fifo.w_en.eq(terrain_cell_display_level != 0),
+                    triangle_fifo.w_en.eq(terrain_cell_visible),
                 ]
-                with m.If((terrain_cell_display_level == 0) | triangle_fifo.w_rdy):
+                with m.If(~terrain_cell_visible | triangle_fifo.w_rdy):
                     m.d.dvi += [
                         terrain_current_left.eq(current_projected_point),
                         terrain_previous_left.eq(terrain_previous_right),

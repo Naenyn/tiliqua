@@ -1,6 +1,9 @@
 import importlib.util
 from pathlib import Path
 
+from amaranth import Module, Signal
+from amaranth.sim import Simulator
+
 
 WATERFALL_SRC = Path(__file__).parents[1] / "src" / "top" / "waterfall"
 spec = importlib.util.spec_from_file_location(
@@ -8,6 +11,7 @@ spec = importlib.util.spec_from_file_location(
 waterfall_spectrogram = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(waterfall_spectrogram)
 _log_frequency_bin_buckets = waterfall_spectrogram._log_frequency_bin_buckets
+_terrain_visibility_level = waterfall_spectrogram._terrain_visibility_level
 
 
 def test_log_frequency_buckets_cover_positive_spectrum():
@@ -39,3 +43,32 @@ def test_log_frequency_buckets_give_octaves_equal_space():
                      for bin_index in (4, 8, 16, 32, 64, 128)]
     octave_widths = [b - a for a, b in zip(octave_points, octave_points[1:])]
     assert max(octave_widths) - min(octave_widths) <= 1
+
+
+def test_terrain_visibility_culls_quiet_old_facets_without_recoloring():
+    m = Module()
+    level = Signal(6)
+    age = Signal(4)
+    age_fade = Signal()
+    visibility = Signal(6)
+    m.d.comb += visibility.eq(
+        _terrain_visibility_level(level, age, age_fade))
+
+    async def bench(ctx):
+        for source_level, source_age, fade, expected in (
+                (0, 15, 1, 0),
+                (6, 15, 1, 0),
+                (15, 15, 1, 0),
+                (16, 15, 1, 1),
+                (24, 15, 1, 9),
+                (24, 7, 1, 17),
+                (6, 15, 0, 6)):
+            ctx.set(level, source_level)
+            ctx.set(age, source_age)
+            ctx.set(age_fade, fade)
+            await ctx.delay(1e-9)
+            assert ctx.get(visibility) == expected
+
+    sim = Simulator(m)
+    sim.add_testbench(bench)
+    sim.run()
