@@ -269,7 +269,13 @@ class TriangleSpanRasterizer(wiring.Component):
 
 
 class PackedSpanWriter(wiring.Component):
-    """Write opaque spans directly to PSRAM in bounded incrementing bursts."""
+    """Write opaque spans directly to PSRAM in bounded incrementing bursts.
+
+    Spans use conservative four-pixel word coverage. WATERFALL renders a
+    continuous opaque surface into a freshly cleared backbuffer, so allowing
+    neighboring facets to overlap by at most three horizontal pixels is both
+    harmless and preferable to leaving partial-byte cracks between them.
+    """
 
     def __init__(self, *, bus_signature, burst_words=16):
         if burst_words < 1:
@@ -292,31 +298,17 @@ class PackedSpanWriter(wiring.Component):
         address = Signal(bus.addr_width)
         word_index = Signal(unsigned(10))
         last_word = Signal(unsigned(10))
-        start_lane = Signal(2)
-        end_lane = Signal(2)
         pixel = Signal(Pixel)
         burst_count = Signal(range(self.burst_words))
 
-        first_masks = Array(Const(value, 4) for value in (0b1111, 0b1110, 0b1100, 0b1000))
-        last_masks = Array(Const(value, 4) for value in (0b0001, 0b0011, 0b0111, 0b1111))
-        select = Signal(4)
-        first_word = Signal()
         final_word = Signal()
         end_burst = Signal()
         m.d.comb += [
             final_word.eq(word_index == last_word),
-            select.eq(
-                Mux(first_word, first_masks[start_lane], Const(0b1111, 4)) &
-                Mux(final_word, last_masks[end_lane], Const(0b1111, 4))),
             end_burst.eq(final_word |
                          (burst_count == self.burst_words - 1) |
                          self.pause),
         ]
-
-        # Preserve the accepted start word independently of the input stream;
-        # it is needed to recognize the first word after i.ready is released.
-        accepted_first_word = Signal(unsigned(10))
-        m.d.comb += first_word.eq(word_index == accepted_first_word)
 
         fb_words_per_line = Signal(unsigned(12))
         m.d.comb += fb_words_per_line.eq(self.fbp.timings.h_active >> 2)
@@ -333,10 +325,7 @@ class PackedSpanWriter(wiring.Component):
                              Mux(self.i.payload.alternate, 0x40000, 0)) +
                             self.i.payload.y * fb_words_per_line + first),
                         word_index.eq(first),
-                        accepted_first_word.eq(first),
                         last_word.eq(last),
-                        start_lane.eq(self.i.payload.x0[:2]),
-                        end_lane.eq(self.i.payload.x1[:2]),
                         pixel.eq(self.i.payload.pixel),
                         burst_count.eq(0),
                     ]
@@ -349,7 +338,7 @@ class PackedSpanWriter(wiring.Component):
                     bus.we.eq(1),
                     bus.adr.eq(address),
                     bus.dat_w.eq(Cat([pixel] * pixels_per_word)),
-                    bus.sel.eq(select),
+                    bus.sel.eq(0b1111),
                     bus.cti.eq(Mux(
                         end_burst,
                         wishbone.CycleType.END_OF_BURST,

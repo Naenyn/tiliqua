@@ -222,7 +222,7 @@ class TriangleSpanRasterizerTests(unittest.TestCase):
 
 class PackedSpanWriterTests(unittest.TestCase):
 
-    def test_unaligned_span_uses_packed_words_and_byte_selects(self):
+    def test_unaligned_span_uses_conservative_packed_words(self):
         bus_signature = wishbone.Signature(
             addr_width=22,
             data_width=32,
@@ -273,11 +273,11 @@ class PackedSpanWriterTests(unittest.TestCase):
         self.assertEqual(
             writes,
             [
-                (0x108, 0b1000, packed_pixel * 0x01010101,
+                (0x108, 0b1111, packed_pixel * 0x01010101,
                  wishbone.CycleType.INCR_BURST.value),
                 (0x109, 0b1111, packed_pixel * 0x01010101,
                  wishbone.CycleType.INCR_BURST.value),
-                (0x10a, 0b0111, packed_pixel * 0x01010101,
+                (0x10a, 0b1111, packed_pixel * 0x01010101,
                  wishbone.CycleType.END_OF_BURST.value),
             ],
         )
@@ -358,8 +358,10 @@ class PackedSpanWriterTests(unittest.TestCase):
         sim.run()
         expected = bytearray(16 * 4)
         for x0, x1, y, packed_pixel in spans:
-            expected[y * 16 + x0:y * 16 + x1 + 1] = bytes(
-                [packed_pixel] * (x1 - x0 + 1))
+            conservative_x0 = x0 & ~3
+            conservative_x1 = x1 | 3
+            expected[y * 16 + conservative_x0:y * 16 + conservative_x1 + 1] = bytes(
+                [packed_pixel] * (conservative_x1 - conservative_x0 + 1))
         self.assertEqual(memory, expected)
 
 
