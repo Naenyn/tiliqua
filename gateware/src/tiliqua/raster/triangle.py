@@ -91,7 +91,6 @@ class TrianglePlotter(wiring.Component):
         multiply_b = Signal(signed(13))
         product = Signal(signed(26))
         first_product = Signal(signed(26))
-        area = Signal(signed(26))
 
         # Eight shared multiply cycles: two for signed area, then two for the
         # initial value of each edge at the clipped bounding-box origin.
@@ -111,12 +110,6 @@ class TrianglePlotter(wiring.Component):
             edge_dy[1], edge_dx[1],
             edge_dy[2], edge_dx[2],
         ])
-        m.d.comb += [
-            multiply_a.eq(setup_a[init_step]),
-            multiply_b.eq(setup_b[init_step]),
-            product.eq(multiply_a * multiply_b),
-        ]
-
         all_nonnegative = Signal()
         all_nonpositive = Signal()
         inside = Signal()
@@ -187,28 +180,47 @@ class TrianglePlotter(wiring.Component):
                         x.eq(min_x),
                         y.eq(min_y),
                     ]
-                    m.next = "SETUP_MULTIPLY"
+                    m.next = "LOAD_SETUP"
+
+            # Register each selected operand before the DSP, and register the
+            # DSP result before subtracting it from the paired product.  The
+            # extra setup cycles are insignificant next to filling a triangle,
+            # while the registers keep vertex/bounds muxing, multiplication,
+            # subtraction, and FSM control out of one system-clock path.
+            with m.State("LOAD_SETUP"):
+                m.d.sync += [
+                    multiply_a.eq(setup_a[init_step]),
+                    multiply_b.eq(setup_b[init_step]),
+                ]
+                m.next = "SETUP_MULTIPLY"
 
             with m.State("SETUP_MULTIPLY"):
+                m.d.sync += product.eq(multiply_a * multiply_b)
+                m.next = "STORE_SETUP"
+
+            with m.State("STORE_SETUP"):
                 with m.If(~init_step[0]):
                     m.d.sync += first_product.eq(product)
                     m.d.sync += init_step.eq(init_step + 1)
+                    m.next = "LOAD_SETUP"
                 with m.Else():
                     value = Signal(signed(26))
                     m.d.comb += value.eq(first_product - product)
                     with m.Switch(init_step):
                         with m.Case(1):
-                            m.d.sync += area.eq(value)
                             with m.If(value == 0):
                                 m.next = "IDLE"
                             with m.Else():
                                 m.d.sync += init_step.eq(2)
+                                m.next = "LOAD_SETUP"
                         with m.Case(3):
                             m.d.sync += [edge[0].eq(value), row_edge[0].eq(value)]
                             m.d.sync += init_step.eq(4)
+                            m.next = "LOAD_SETUP"
                         with m.Case(5):
                             m.d.sync += [edge[1].eq(value), row_edge[1].eq(value)]
                             m.d.sync += init_step.eq(6)
+                            m.next = "LOAD_SETUP"
                         with m.Default():
                             m.d.sync += [edge[2].eq(value), row_edge[2].eq(value)]
                             m.next = "SCAN"
