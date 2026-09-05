@@ -164,20 +164,15 @@ class _FramebufferBackend(wiring.Component):
     ``BlendMode.ADDITIVE`` performs a READ-BLEND-WRITE operation, which is slower.
     """
 
-    def __init__(self, bus_signature, *, zero_allocate_alternate=False):
+    def __init__(self, bus_signature):
         self.pixel_bits = Pixel.as_shape().size
         self.pixel_bytes = self.pixel_bits // 8
         self.pixels_per_word = bus_signature.data_width // self.pixel_bits
-        self.zero_allocate_alternate = zero_allocate_alternate
         super().__init__({
             # Incoming plot request stream
             "i": In(stream.Signature(PlotRequest)),
             # DMA bus for framebuffer access
             "bus": Out(bus_signature),
-            # Assert while the active write targets a framebuffer that its
-            # owner has explicitly cleared.  This lets the cache allocate a
-            # zeroed line without reading it back from external memory.
-            "zero_write_miss": Out(1),
             # Dynamic attributes of framebuffer needed for plotting.
             "fbp": In(DMAFramebuffer.Properties()),
             "busy": Out(1),
@@ -337,9 +332,6 @@ class _FramebufferBackend(wiring.Component):
                     bus.cyc.eq(1),
                     bus.we.eq(1),
                     bus.dat_w.eq(Cat([pixel_write]*self.pixels_per_word)),
-                    self.zero_write_miss.eq(
-                        current_req.alternate
-                        if self.zero_allocate_alternate else 0),
                 ]
                 with m.If(bus.stb & bus.ack):
                     m.next = 'IDLE'
@@ -354,12 +346,9 @@ class FramebufferPlotter(wiring.Component):
     Combined cache, arbiter, and plotting logic.
     Takes (one or many) streams of pixels to plot, and DMAs them to a framebuffer.
     """
-    def __init__(self, bus_signature, n_ports: int = 1,
-                 cachesize_words: int = 64,
-                 zero_allocate_alternate: bool = False):
+    def __init__(self, bus_signature, n_ports: int = 1, cachesize_words: int = 64):
         self.n_ports = n_ports
         self.cachesize_words = cachesize_words
-        self.zero_allocate_alternate = zero_allocate_alternate
         super().__init__({
             # One (or many) incoming plot request streams
             "i": In(stream.Signature(PlotRequest)).array(n_ports),
@@ -382,8 +371,7 @@ class FramebufferPlotter(wiring.Component):
             cachesize_words=self.cachesize_words,
             autoflush=True)
         m.submodules.backend = backend = _FramebufferBackend(
-            bus_signature=cache.master.signature.flip(),
-            zero_allocate_alternate=self.zero_allocate_alternate)
+            bus_signature=cache.master.signature.flip())
         m.submodules.arbiter = arbiter = stream_util.Arbiter(
             n_channels=self.n_ports, shape=PlotRequest)
 
@@ -404,7 +392,6 @@ class FramebufferPlotter(wiring.Component):
         ]
         # Backend -> cache
         wiring.connect(m, backend.bus, cache.master)
-        m.d.comb += cache.zero_write_miss.eq(backend.zero_write_miss)
         m.d.comb += [
             # Do not begin the fence while the backend is still translating or
             # issuing the final accepted pixel request.

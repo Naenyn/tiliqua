@@ -180,10 +180,6 @@ class WaterfallSoc(TiliquaSoc):
             fb_overlay=self.spectrogram,
             extra_plot_ports=2,
             with_persist=False,
-            # Every inactive buffer is explicitly cleared before terrain and
-            # axes are drawn, so cache misses can allocate local zero lines
-            # without reading the cleared data back from PSRAM.
-            zero_allocate_alternate=True,
             **kwargs,
         )
         self.backbuffer_clear = BackbufferClear(
