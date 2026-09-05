@@ -66,6 +66,11 @@ class WishboneL2Cache(wiring.Component):
                                             data_width=data_width,
                                             granularity=granularity,
                                             features={"cti", "bte"})),
+            # The current write targets backing memory whose complete cache
+            # line is known to contain zero.  On a miss, allocate a cleared
+            # line locally instead of paying for a pointless PSRAM refill.
+            # This is only a hint for writes; reads retain normal semantics.
+            "zero_write_miss": In(1),
             # Manual full-cache write-back/invalidate fence. Completion is a
             # level held until ``flush`` is released, for CDC-safe handshakes.
             "flush": In(1),
@@ -109,6 +114,7 @@ class WishboneL2Cache(wiring.Component):
 
 
         write_from_slave = Signal()
+        write_zero_line = Signal()
 
         word_select = Const(1).replicate(dw_to//self.granularity)
 
@@ -123,6 +129,12 @@ class WishboneL2Cache(wiring.Component):
             m.d.comb += [
                 wr_port.addr.eq(Cat(burst_offset, adr_line)),
                 wr_port.data.eq(slave.dat_r),
+                wr_port.en.eq(word_select),
+            ]
+        with m.Elif(write_zero_line):
+            m.d.comb += [
+                wr_port.addr.eq(Cat(burst_offset, adr_line)),
+                wr_port.data.eq(0),
                 wr_port.en.eq(word_select),
             ]
         with m.Else():
@@ -207,6 +219,16 @@ class WishboneL2Cache(wiring.Component):
                     with m.If(tag_do.dirty):
                         m.d.comb += rd_port.addr.eq(Cat(burst_offset_lookahead, adr_line)),
                         m.next = "EVICT"
+                    with m.Elif(master.we & self.zero_write_miss):
+                        # The backing line was explicitly cleared by its
+                        # owner.  Initialize the local line in four cheap EBR
+                        # writes, then retry the original partial-byte write.
+                        m.d.comb += [
+                            tag_di.valid.eq(1),
+                            tag_wr_port.en.eq(1),
+                        ]
+                        m.d.sync += burst_offset.eq(0)
+                        m.next = "ZERO-FILL"
                     with m.Else():
                         # Write the tag to set the slave address for the cache refill.
                         m.d.comb += [
@@ -235,13 +257,25 @@ class WishboneL2Cache(wiring.Component):
                         m.next = "WAIT-REFILL"
 
             with m.State("WAIT-REFILL"):
-                # Write the tag to set the slave address for the cache refill.
+                # Write the tag to set the slave address for the next line.
                 m.d.comb += [
                     tag_di.valid.eq(1),
                     tag_wr_port.en.eq(1),
                 ]
-                # Deassert stb between EVICT/REFILL
-                m.next = "REFILL"
+                # Deassert stb between eviction and the next operation.  A
+                # known-zero write can allocate locally after the eviction;
+                # every other access refills from backing memory as before.
+                with m.If(master.we & self.zero_write_miss):
+                    m.d.sync += burst_offset.eq(0)
+                    m.next = "ZERO-FILL"
+                with m.Else():
+                    m.next = "REFILL"
+
+            with m.State("ZERO-FILL"):
+                m.d.comb += write_zero_line.eq(1)
+                m.d.sync += burst_offset.eq(burst_offset + 1)
+                with m.If(burst_offset == (self.burst_len - 1)):
+                    m.next = "TEST_HIT"
 
             with m.State("REFILL"):
                 m.d.comb += [

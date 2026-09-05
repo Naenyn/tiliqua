@@ -1287,9 +1287,14 @@ class Spectrogram(wiring.Component):
                     triangle_word.pixel.color.eq(Cat(
                         sweep_hue_limited, triangle_a_level[0])),
                     triangle_word.pixel.intensity.eq(triangle_a_level[1:5]),
-                    triangle_fifo.w_en.eq(1),
+                    triangle_fifo.w_en.eq(triangle_a_level != 0),
                 ]
-                with m.If(triangle_fifo.w_rdy):
+                # The inactive framebuffer was just cleared.  A zero-level
+                # facet is therefore already represented exactly and does
+                # not need to consume rasterizer or PSRAM bandwidth.
+                with m.If(triangle_a_level == 0):
+                    m.next = "PUSH_TRIANGLE_B"
+                with m.Elif(triangle_fifo.w_rdy):
                     m.next = "PUSH_TRIANGLE_B"
 
             with m.State("PUSH_TRIANGLE_B"):
@@ -1304,9 +1309,9 @@ class Spectrogram(wiring.Component):
                     triangle_word.pixel.color.eq(Cat(
                         sweep_hue_limited, triangle_b_level[0])),
                     triangle_word.pixel.intensity.eq(triangle_b_level[1:5]),
-                    triangle_fifo.w_en.eq(1),
+                    triangle_fifo.w_en.eq(triangle_b_level != 0),
                 ]
-                with m.If(triangle_fifo.w_rdy):
+                with m.If((triangle_b_level == 0) | triangle_fifo.w_rdy):
                     m.d.dvi += [
                         terrain_current_left.eq(current_projected_point),
                         terrain_previous_left.eq(terrain_previous_right),

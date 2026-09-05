@@ -64,5 +64,41 @@ class CacheTests(unittest.TestCase):
         with sim.write_vcd(vcd_file=open("test_cache_basic.vcd", "w")):
             sim.run()
 
+    def test_known_zero_write_miss_skips_backing_refill(self):
+
+        m = Module()
+
+        m.submodules.cache = self.cache
+        m.submodules.psram = self.psram
+        wiring.connect(m, self.cache.slave, self.psram.bus)
+
+        backing_reads = Signal(16)
+        with m.If(self.cache.slave.ack & ~self.cache.slave.we):
+            m.d.sync += backing_reads.eq(backing_reads + 1)
+
+        async def testbench(ctx):
+            master = self.cache.master
+
+            # Only byte one changes.  The other bytes and the other three
+            # words in this newly allocated cache line must remain zero.
+            ctx.set(self.cache.zero_write_miss, 1)
+            await wishbone.classic_wr(
+                ctx, master, adr=0x100, dat_w=0x0000aa00, sel=0b0010)
+            ctx.set(self.cache.zero_write_miss, 0)
+
+            self.assertEqual(ctx.get(backing_reads), 0)
+            self.assertEqual(
+                await wishbone.classic_rd(ctx, master, adr=0x100),
+                0x0000aa00,
+            )
+            for address in range(0x101, 0x104):
+                self.assertEqual(
+                    await wishbone.classic_rd(ctx, master, adr=address), 0)
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()
+
 if __name__ == "__main__":
     unittest.main()
