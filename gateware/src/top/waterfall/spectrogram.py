@@ -1009,13 +1009,38 @@ class Spectrogram(wiring.Component):
         terrain_cell_frequency_intensity = Signal(4)
         wire_display_level = Signal(6)
         wire_frequency_intensity = Signal(4)
+        # Palette packing has only 64 possible level inputs. Keep both the
+        # faded (5-bit) and full-resolution (6-bit) codes in one tiny ROM.
+        # Two registered read ports serve wire and terrain rendering without
+        # spreading a wide constant mux across the already-dense DVI domain.
+        palette_code_words = []
+        for level in range(64):
+            fade_level = level * 15 >> 5
+            fade_code = (1 + fade_level % 15) | ((fade_level // 15) << 4)
+            full_level = level * 15 >> 4
+            full_code = (1 + full_level % 15) | ((full_level // 15) << 4)
+            palette_code_words.append(fade_code | (full_code << 5))
+        palette_code_memory = memory.Memory(data=memory.MemoryData(
+            shape=unsigned(11), depth=64, init=palette_code_words))
+        m.submodules.palette_codes = palette_code_memory
+        palette_wire_r = palette_code_memory.read_port(domain="dvi")
+        palette_terrain_r = palette_code_memory.read_port(domain="dvi")
+        frequency_hues = Array(Const(
+            1 + ((position * 15) >> 4), 4)
+            for position in range(16))
+        terrain_fade_code = Signal(5)
+        wire_fade_code = Signal(5)
+        terrain_full_code = Signal(6)
+        wire_full_code = Signal(6)
+        terrain_level_color = Signal(4)
+        wire_level_color = Signal(4)
+        terrain_level_intensity = Signal(4)
+        wire_level_intensity = Signal(4)
         scan_point_last = Signal(7)
         scan_group_shift = Signal(2)
         frequency_coordinate = Signal(9)
-        sweep_hue_limited = Signal(2)
+        sweep_frequency_position = Signal(4)
         sweep_frequency_hue = Signal(4)
-        sweep_axis_hue_a = Signal(2)
-        sweep_axis_hue_b = Signal(2)
         scan_geometry = _three_d_scan_geometry(high_quality)
         terrain_row_read_en = Signal()
         terrain_row_write_en = Signal()
@@ -1144,12 +1169,38 @@ class Spectrogram(wiring.Component):
                 0,
                 Mux(wire_display_level >= 60,
                     15, (wire_display_level + 3) >> 2))),
-            sweep_hue_limited.eq(sweep_hue[:2]),
-            sweep_frequency_hue.eq(
+            # Physical hue zero is reserved for framebuffer UI and axes.
+            # The lookup code packs hue in bits 0..3 and amplitude group in
+            # the upper bits. Age is inserted independently below.
+            terrain_fade_code.eq(
+                palette_terrain_r.data[:5]),
+            wire_fade_code.eq(palette_wire_r.data[:5]),
+            terrain_full_code.eq(
+                palette_terrain_r.data[5:11]),
+            wire_full_code.eq(palette_wire_r.data[5:11]),
+            terrain_level_color.eq(Mux(
+                sweep_age_fade,
+                terrain_fade_code[:4], terrain_full_code[:4])),
+            wire_level_color.eq(Mux(
+                sweep_age_fade,
+                wire_fade_code[:4], wire_full_code[:4])),
+            terrain_level_intensity.eq(Mux(
+                sweep_age_fade,
+                Cat(terrain_fade_code[4], scan_history_age[1:4]),
+                terrain_full_code[4:6])),
+            wire_level_intensity.eq(Mux(
+                sweep_age_fade,
+                Cat(wire_fade_code[4], scan_history_age[1:4]),
+                wire_full_code[4:6])),
+            sweep_frequency_position.eq(
                 Mux(high_quality, scan_point >> 3, scan_point >> 2)
                 + sweep_hue),
-            sweep_axis_hue_a.eq(sweep_hue_limited + 2),
-            sweep_axis_hue_b.eq(sweep_hue_limited + 4),
+            sweep_frequency_hue.eq(
+                frequency_hues[sweep_frequency_position]),
+            palette_wire_r.en.eq(0),
+            palette_wire_r.addr.eq(scan_peak),
+            palette_terrain_r.en.eq(0),
+            palette_terrain_r.addr.eq(terrain_cell_display_level_next),
         ]
         with m.Switch(sweep_rate):
             with m.Case(0):
@@ -1249,6 +1300,7 @@ class Spectrogram(wiring.Component):
                     m.next = "ISSUE_HISTORY_READ"
 
             with m.State("LOAD_HISTORY_POINT"):
+                m.d.comb += palette_wire_r.en.eq(1)
                 m.d.dvi += [
                     # Spread pooled vertices across the same 256-unit
                     # frequency coordinate used by the axes and projection.
@@ -1257,22 +1309,6 @@ class Spectrogram(wiring.Component):
                     point_amplitude.eq(
                         _dbfs_level_to_height(scan_peak, Const(0))),
                     point_time.eq(scan_depth),
-                    # This pixel is consumed only by wire mode. Terrain keeps
-                    # its independent six-bit level in ProjectedPoint.
-                    point_pixel.intensity.eq(Mux(
-                        sweep_frequency_color,
-                        wire_frequency_intensity,
-                        Mux(sweep_age_fade,
-                            Cat(wire_display_level[5],
-                                scan_history_age[1:4]),
-                            wire_display_level[2:6]))),
-                    point_pixel.color.eq(Mux(
-                        sweep_frequency_color,
-                        sweep_frequency_hue,
-                        Mux(sweep_age_fade,
-                            wire_display_level[1:5],
-                            Cat(sweep_hue_limited,
-                                wire_display_level[:2])))),
                     point_cmd.eq(Mux(
                         scan_point == scan_point_last,
                         LineStripCmd.END, LineStripCmd.CONTINUE)),
@@ -1281,6 +1317,20 @@ class Spectrogram(wiring.Component):
                 m.next = "MULTIPLY_POINT"
 
             with m.State("MULTIPLY_POINT"):
+                # The registered palette ROM requested by LOAD_HISTORY_POINT
+                # is valid here. Axis points retain the explicit colors set by
+                # their start states because they use nonzero point_next tags.
+                with m.If(point_next == 0):
+                    m.d.dvi += [
+                        point_pixel.intensity.eq(Mux(
+                            sweep_frequency_color,
+                            wire_frequency_intensity,
+                            wire_level_intensity)),
+                        point_pixel.color.eq(Mux(
+                            sweep_frequency_color,
+                            sweep_frequency_hue,
+                            wire_level_color)),
+                    ]
                 for index, coordinate in enumerate(
                         (point_frequency, point_amplitude, point_time)):
                     m.d.dvi += [
@@ -1322,6 +1372,7 @@ class Spectrogram(wiring.Component):
                     m.next = "TERRAIN_LATCH_SHADE"
 
             with m.State("TERRAIN_LATCH_SHADE"):
+                m.d.comb += palette_terrain_r.en.eq(1)
                 m.d.dvi += [
                     terrain_cell_display_level.eq(
                         terrain_cell_display_level_next),
@@ -1341,17 +1392,11 @@ class Spectrogram(wiring.Component):
                     triangle_word.pixel.color.eq(Mux(
                         sweep_frequency_color,
                         sweep_frequency_hue,
-                        Mux(sweep_age_fade,
-                            terrain_cell_display_level[1:5],
-                            Cat(sweep_hue_limited,
-                                terrain_cell_display_level[:2])))),
+                        terrain_level_color)),
                     triangle_word.pixel.intensity.eq(
                         Mux(sweep_frequency_color,
                             terrain_cell_frequency_intensity,
-                            Mux(sweep_age_fade,
-                                Cat(terrain_cell_display_level[5],
-                                    scan_history_age[1:4]),
-                                terrain_cell_display_level[2:6]))),
+                            terrain_level_intensity)),
                     triangle_fifo.w_en.eq(terrain_cell_display_level != 0),
                 ]
                 # The inactive framebuffer was just cleared.  A zero-level
@@ -1374,17 +1419,11 @@ class Spectrogram(wiring.Component):
                     triangle_word.pixel.color.eq(Mux(
                         sweep_frequency_color,
                         sweep_frequency_hue,
-                        Mux(sweep_age_fade,
-                            terrain_cell_display_level[1:5],
-                            Cat(sweep_hue_limited,
-                                terrain_cell_display_level[:2])))),
+                        terrain_level_color)),
                     triangle_word.pixel.intensity.eq(
                         Mux(sweep_frequency_color,
                             terrain_cell_frequency_intensity,
-                            Mux(sweep_age_fade,
-                                Cat(terrain_cell_display_level[5],
-                                    scan_history_age[1:4]),
-                                terrain_cell_display_level[2:6]))),
+                            terrain_level_intensity)),
                     triangle_fifo.w_en.eq(terrain_cell_display_level != 0),
                 ]
                 with m.If((terrain_cell_display_level == 0) | triangle_fifo.w_rdy):
@@ -1488,7 +1527,7 @@ class Spectrogram(wiring.Component):
                     point_amplitude.eq(0),
                     point_time.eq(0),
                     point_pixel.intensity.eq(13),
-                    point_pixel.color.eq(sweep_hue_limited),
+                    point_pixel.color.eq(0),
                     point_cmd.eq(LineStripCmd.CONTINUE),
                     point_next.eq(1),
                 ]
@@ -1500,7 +1539,7 @@ class Spectrogram(wiring.Component):
                     point_amplitude.eq(0),
                     point_time.eq(0),
                     point_pixel.intensity.eq(13),
-                    point_pixel.color.eq(sweep_hue_limited),
+                    point_pixel.color.eq(0),
                     point_cmd.eq(LineStripCmd.END),
                     point_next.eq(2),
                 ]
@@ -1512,7 +1551,7 @@ class Spectrogram(wiring.Component):
                     point_amplitude.eq(0),
                     point_time.eq(0),
                     point_pixel.intensity.eq(14),
-                    point_pixel.color.eq(sweep_axis_hue_a),
+                    point_pixel.color.eq(0),
                     point_cmd.eq(LineStripCmd.CONTINUE),
                     point_next.eq(3),
                 ]
@@ -1524,7 +1563,7 @@ class Spectrogram(wiring.Component):
                     point_amplitude.eq(255),
                     point_time.eq(0),
                     point_pixel.intensity.eq(14),
-                    point_pixel.color.eq(sweep_axis_hue_a),
+                    point_pixel.color.eq(0),
                     point_cmd.eq(LineStripCmd.END),
                     point_next.eq(4),
                 ]
@@ -1536,7 +1575,7 @@ class Spectrogram(wiring.Component):
                     point_amplitude.eq(0),
                     point_time.eq(0),
                     point_pixel.intensity.eq(15),
-                    point_pixel.color.eq(sweep_axis_hue_b),
+                    point_pixel.color.eq(0),
                     point_cmd.eq(LineStripCmd.CONTINUE),
                     point_next.eq(5),
                 ]
@@ -1548,7 +1587,7 @@ class Spectrogram(wiring.Component):
                     point_amplitude.eq(0),
                     point_time.eq(240),
                     point_pixel.intensity.eq(15),
-                    point_pixel.color.eq(sweep_axis_hue_b),
+                    point_pixel.color.eq(0),
                     point_cmd.eq(LineStripCmd.END),
                     point_next.eq(6),
                 ]

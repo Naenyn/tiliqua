@@ -249,27 +249,39 @@ fn scale_rgb_like_palette(
     }
 }
 
-/// Program WATERFALL's palette. Level coloring devotes six address bits to a
-/// smooth amplitude gradient. Frequency coloring instead devotes the hue
-/// nibble to horizontal position and retains four amplitude-brightness bits.
+/// Program WATERFALL's shared palette. Physical hue zero belongs to UI and
+/// axes; terrain uses the remaining entries for level/age or frequency/level.
 fn write_waterfall_palette(
     palette: ColorPalette,
     video: &mut impl DMAFramebuffer,
     frequency_ramp: bool,
     age_fade: bool,
     hue_shift: u8,
+    ui_hue: u8,
 ) {
+    // Framebuffer UI and renderer pixels share one 8-bit hardware palette.
+    // Reserve physical hue column zero for UI, axes and erase pixels. The
+    // selected UI hue is baked into that column, leaving the other fifteen
+    // columns exclusively available to the surface renderer.
+    for intensity in 0..16u8 {
+        let (r, g, b) = ColorPalette::Linear.color(intensity, ui_hue);
+        video.set_palette_rgb(intensity, 0, r, g, b);
+    }
+
     if frequency_ramp {
         for intensity in 0..16u8 {
-            for hue in 0..16u8 {
+            for hue in 1..16u8 {
                 let bright_intensity = if intensity == 0 {
                     0
                 } else {
                     4 + ((intensity as u16 * 11) / 15) as u8
                 };
+                // Fifteen renderer columns span the complete frequency
+                // palette while column zero remains reserved for the UI.
+                let position = (((hue - 1) as u16 * 15 + 7) / 14) as u8;
                 let (r, g, b) = scale_rgb_like_palette(
                     palette,
-                    palette.frequency_color(hue),
+                    palette.frequency_color(position),
                     bright_intensity,
                 );
                 video.set_palette_rgb(intensity, hue, r, g, b);
@@ -279,17 +291,16 @@ fn write_waterfall_palette(
     }
 
     if age_fade {
-        // With age fading enabled, use the 256-entry hardware palette as
-        // 32 amplitude colors x 8 age-brightness steps. Age scales RGB
-        // uniformly, so an old surface keeps the same amplitude color rather
-        // than sliding backward through the heat map.
+        // The 240 renderer entries provide 30 amplitude colors x 8 age-
+        // brightness steps. Age scales RGB uniformly, so an old surface keeps
+        // the same amplitude color rather than sliding through the heat map.
         for intensity in 0..16u8 {
-            for hue in 0..16u8 {
-                let level = ((intensity & 1) << 4) | hue;
+            for hue in 1..16u8 {
+                let level = (intensity & 1) * 15 + (hue - 1);
                 let age = intensity >> 1;
                 let position = level as u16 * 15;
-                let lower = (position / 31) as u8;
-                let fraction = position % 31;
+                let lower = (position / 29) as u8;
+                let fraction = position % 29;
                 let upper = core::cmp::min(lower + 1, 15);
                 let (lo, hi, rotate) = match palette.heatmap_color(lower) {
                     Some(lo) => (lo, palette.heatmap_color(upper).unwrap(), true),
@@ -300,8 +311,8 @@ fn write_waterfall_palette(
                     ),
                 };
                 let interpolate = |a: u8, b: u8| -> u8 {
-                    (((a as u32 * (31 - fraction) as u32)
-                        + (b as u32 * fraction as u32) + 15) / 31) as u8
+                    (((a as u32 * (29 - fraction) as u32)
+                        + (b as u32 * fraction as u32) + 14) / 29) as u8
                 };
                 let rgb = (
                     interpolate(lo.0, hi.0),
@@ -326,29 +337,28 @@ fn write_waterfall_palette(
         return;
     }
 
-    // Terrain encodes six-bit level as {intensity[3:0], color[3:2]} while the
-    // lower two color bits retain four selectable hue rotations. This uses
-    // every palette entry for a smoother amplitude gradient without enlarging
-    // the framebuffer.
+    // Without age fading, the renderer uses 60 amplitude colors. Four groups
+    // occupy intensity rows 0..3, with fifteen colors per row; physical hue
+    // column zero remains reserved for the UI.
     for intensity in 0..16u8 {
-        for hue in 0..16u8 {
-            let base_hue = hue & 3;
-            let level = intensity * 4 + (hue >> 2);
+        for hue in 1..16u8 {
+            let group = intensity & 3;
+            let level = group * 15 + (hue - 1);
             let position = level as u16 * 15;
-            let lower = (position / 63) as u8;
-            let fraction = position % 63;
+            let lower = (position / 59) as u8;
+            let fraction = position % 59;
             let upper = core::cmp::min(lower + 1, 15);
             let (lo, hi, rotate) = match palette.heatmap_color(lower) {
                 Some(lo) => (lo, palette.heatmap_color(upper).unwrap(), true),
                 None => (
-                    palette.color(lower, base_hue),
-                    palette.color(upper, base_hue),
+                    palette.color(lower, hue_shift),
+                    palette.color(upper, hue_shift),
                     false,
                 ),
             };
             let interpolate = |a: u8, b: u8| -> u8 {
-                (((a as u32 * (63 - fraction) as u32)
-                    + (b as u32 * fraction as u32) + 31) / 63) as u8
+                (((a as u32 * (59 - fraction) as u32)
+                    + (b as u32 * fraction as u32) + 29) / 59) as u8
             };
             let rgb = (
                 interpolate(lo.0, hi.0),
@@ -356,7 +366,7 @@ fn write_waterfall_palette(
                 interpolate(lo.2, hi.2),
             );
             let (r, g, b) = if rotate {
-                rotate_rgb_hue(rgb, base_hue)
+                rotate_rgb_hue(rgb, hue_shift)
             } else {
                 rgb
             };
@@ -517,6 +527,7 @@ fn main() -> ! {
     let mut last_color_by = opts.view.color_by.value;
     let mut last_age_fade = opts.view.age_fade.value;
     let mut last_plot_hue = opts.display.hue.value;
+    let mut last_ui_hue = opts.menu.ui_hue.value;
     let mut last_hide = opts.menu.hide.value;
     let mut last_edit_hide = opts.menu.edit_hide.value;
     let app = Mutex::new(RefCell::new(App::new(opts)));
@@ -587,10 +598,10 @@ fn main() -> ! {
             if help_page_entered {
                 help_waiting_for_renderer = true;
             }
-            // In 3D, keep transient UI in the lower half of the palette. The
-            // literal back-buffer renderer also uses low plot hues so the
-            // legacy tagged cleanup path never touches visible 3D pixels.
-            let ui_hue = opts.menu.ui_hue.value & 3;
+            // Physical hue zero is reserved by write_waterfall_palette for
+            // all software UI. The user's selected hue is baked into that
+            // palette column rather than encoded into framebuffer pixels.
+            let ui_hue = 0;
             let surface_status = spectro.status().read();
             // Help is a static framebuffer page. Suspend the autonomous 3D
             // renderer before clearing or drawing it, and keep scanning the
@@ -664,6 +675,7 @@ fn main() -> ! {
                 || opts.view.color_by.value != last_color_by
                 || opts.view.age_fade.value != last_age_fade
                 || opts.display.hue.value != last_plot_hue
+                || opts.menu.ui_hue.value != last_ui_hue
                 || first
             {
                 write_waterfall_palette(
@@ -672,11 +684,13 @@ fn main() -> ! {
                     opts.view.color_by.value == ColorBy::Frequency,
                     opts.view.age_fade.value == OnOff::On,
                     opts.display.hue.value,
+                    opts.menu.ui_hue.value,
                 );
                 last_palette = opts.display.palette.value;
                 last_color_by = opts.view.color_by.value;
                 last_age_fade = opts.view.age_fade.value;
                 last_plot_hue = opts.display.hue.value;
+                last_ui_hue = opts.menu.ui_hue.value;
             }
 
             let (menu_x, menu_y) = if on_help_page {
