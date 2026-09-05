@@ -47,7 +47,7 @@ from amaranth_soc import wishbone
 from tiliqua import dsp
 from tiliqua.build.cli import top_level_cli
 from tiliqua.build.types import BitstreamHelp
-from tiliqua.raster import line, triangle
+from tiliqua.raster import line, span
 from tiliqua.tiliqua_soc import TiliquaSoc
 from tiliqua.video.framebuffer import DMAFramebuffer
 from tiliqua.video.types import Pixel
@@ -170,7 +170,6 @@ class WaterfallSoc(TiliquaSoc):
         self.spectrogram = Spectrogram(
             fs=kwargs["clock_settings"].audio_clock.fs())
         self.waterfall_line_plotter = line._LinePlotter()
-        self.waterfall_triangle_plotter = triangle.TrianglePlotter()
 
         super().__init__(
             finalize_csr_bridge=False,
@@ -178,13 +177,16 @@ class WaterfallSoc(TiliquaSoc):
             # observes VSync for atomic surface swaps without paying for the
             # unused general-purpose grid overlay.
             fb_overlay=self.spectrogram,
-            extra_plot_ports=2,
+            extra_plot_ports=1,
             with_persist=False,
             **kwargs,
         )
+        self.waterfall_terrain_renderer = span.TriangleSpanRenderer(
+            bus_signature=self.psram_periph.bus.signature.flip())
         self.backbuffer_clear = BackbufferClear(
             bus_signature=self.psram_periph.bus.signature.flip())
         self.psram_periph.add_master(self.backbuffer_clear.bus)
+        self.psram_periph.add_master(self.waterfall_terrain_renderer.bus)
 
         self.spectrogram_periph_base = 0x00001000
         self.csr_decoder.add(
@@ -198,7 +200,7 @@ class WaterfallSoc(TiliquaSoc):
         m = Module()
         m.submodules.spectrogram = self.spectrogram
         m.submodules.waterfall_line_plotter = self.waterfall_line_plotter
-        m.submodules.waterfall_triangle_plotter = self.waterfall_triangle_plotter
+        m.submodules.waterfall_terrain_renderer = self.waterfall_terrain_renderer
         m.submodules.backbuffer_clear = self.backbuffer_clear
         m.submodules += super().elaborate(platform)
 
@@ -206,39 +208,33 @@ class WaterfallSoc(TiliquaSoc):
             m, self.spectrogram.line_o, self.waterfall_line_plotter.i)
         wiring.connect(
             m, self.spectrogram.triangle_o,
-            self.waterfall_triangle_plotter.i)
+            self.waterfall_terrain_renderer.i)
         m.d.comb += self.spectrogram.line_busy.eq(
             self.waterfall_line_plotter.busy |
-            self.waterfall_triangle_plotter.busy)
+            self.waterfall_terrain_renderer.busy)
         m.d.comb += [
             self.waterfall_line_plotter.alternate.eq(1),
-            self.waterfall_triangle_plotter.alternate.eq(1),
-            self.waterfall_triangle_plotter.h_active.eq(
-                self.fb.fbp.timings.h_active),
-            self.waterfall_triangle_plotter.v_active.eq(
-                self.fb.fbp.timings.v_active),
+            self.waterfall_terrain_renderer.alternate.eq(1),
+            self.waterfall_terrain_renderer.pause.eq(
+                self.fb.scanout_urgent),
         ]
         wiring.connect(
             m, wiring.flipped(self.fb.fbp), self.backbuffer_clear.fbp)
+        wiring.connect(
+            m, wiring.flipped(self.fb.fbp),
+            self.waterfall_terrain_renderer.fbp)
         # Video scanout is the only hard real-time PSRAM client. Backpressure
         # the exact line renderer whenever its FIFO reserve is being refilled;
         # this changes completion latency, not geometry, and prevents complex
         # spectra from starving the visible framebuffer DMA.
         waterfall_pixels = self.waterfall_line_plotter.o
         waterfall_plot = self.framebuffer_plotter.i[3]
-        terrain_pixels = self.waterfall_triangle_plotter.o
-        terrain_plot = self.framebuffer_plotter.i[4]
         m.d.comb += [
             waterfall_plot.payload.eq(waterfall_pixels.payload),
             waterfall_plot.valid.eq(
                 waterfall_pixels.valid & ~self.fb.scanout_urgent),
             waterfall_pixels.ready.eq(
                 waterfall_plot.ready & ~self.fb.scanout_urgent),
-            terrain_plot.payload.eq(terrain_pixels.payload),
-            terrain_plot.valid.eq(
-                terrain_pixels.valid & ~self.fb.scanout_urgent),
-            terrain_pixels.ready.eq(
-                terrain_plot.ready & ~self.fb.scanout_urgent),
             self.backbuffer_clear.alternate.eq(1),
             self.backbuffer_clear.pause.eq(self.fb.scanout_urgent),
         ]
