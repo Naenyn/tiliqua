@@ -639,7 +639,8 @@ fn main() -> ! {
                 w.time().bits(projection_y[2] as u16)
             });
             spectro.config_3d().write(|w| unsafe {
-                w.quality().bits(opts.view.quality.value.hw_index())
+                w.quality().bits(opts.view.quality.value.hw_index());
+                w.style().bit(opts.view.style.value == SurfaceStyle::Terrain)
             });
 
             first = false;

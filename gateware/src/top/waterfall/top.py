@@ -24,8 +24,9 @@ All four analog inputs pass directly to their matching outputs:
         in4 ───────────────────────► out4
 
 WATERFALL options select the input, sensitivity, maximum displayed frequency,
-and history speed. VIEW selects mesh quality and rotates the camera
-independently around the X, Y and Z axes in 15-degree steps. DISPLAY controls
+and history speed. VIEW selects a wire or filled terrain surface, its quality,
+and rotates the camera independently around the X, Y and Z axes in 15-degree
+steps. DISPLAY controls
 the projected reference axes, plot hue, palette, and a display-only noise
 floor. The noise floor hides low-level display clutter without changing the
 analyzed signal. The Inferno palette supports hue rotation while preserving

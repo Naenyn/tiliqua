@@ -39,6 +39,23 @@ impl Quality3d {
 }
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
+#[strum(serialize_all = "kebab-case")]
+pub enum SurfaceStyle {
+    Wire,
+    #[default]
+    Terrain,
+}
+
+impl SurfaceStyle {
+    pub fn hw_index(self) -> u8 {
+        match self {
+            Self::Wire => 0,
+            Self::Terrain => 1,
+        }
+    }
+}
+
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 pub enum InputChannel {
     #[default]
     #[strum(serialize = "IN1")]
@@ -173,6 +190,8 @@ pub struct WaterfallOpts {
 
 #[derive(OptionPage, Clone)]
 pub struct ViewOpts {
+    #[option]
+    pub style: EnumOption<SurfaceStyle>,
     #[option]
     pub quality: EnumOption<Quality3d>,
     #[option(-15)]

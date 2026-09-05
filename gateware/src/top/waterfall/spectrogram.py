@@ -369,6 +369,7 @@ class Spectrogram(wiring.Component):
 
     class Config3d(csr.Register, access="w"):
         quality: csr.Field(csr.action.W, unsigned(2))
+        style: csr.Field(csr.action.W, unsigned(1))
 
     class ProjectionX(csr.Register, access="w"):
         frequency: csr.Field(csr.action.W, signed(10))
@@ -431,6 +432,7 @@ class Spectrogram(wiring.Component):
         hue = Signal(4, init=5)
         noise_floor = Signal(2)
         quality_3d = Signal(2, init=1)
+        terrain_style = Signal(init=1)
         h_active = Signal(12, init=720)
         v_active = Signal(12, init=720)
         projection_x = [Signal(signed(10), init=value) for value in (384, 0, 90)]
@@ -471,7 +473,10 @@ class Spectrogram(wiring.Component):
                 projection_y[2].eq(self._projection_y.f.time.w_data),
             ]
         with m.If(self._config_3d.element.w_stb):
-            m.d.sync += quality_3d.eq(self._config_3d.f.quality.w_data)
+            m.d.sync += [
+                quality_3d.eq(self._config_3d.f.quality.w_data),
+                terrain_style.eq(self._config_3d.f.style.w_data),
+            ]
         # ---- audio analysis -------------------------------------------------
         # Match the analyzer sample rate to the selected frequency range. This
         # keeps all 256 positive-frequency FFT bins useful at every range rather
@@ -736,6 +741,7 @@ class Spectrogram(wiring.Component):
         axes_dvi = Signal()
         display_ack_dvi = Signal()
         quality_3d_dvi = Signal(2)
+        terrain_style_dvi = Signal()
         rate_dvi = Signal(2)
         hue_dvi = Signal(4)
         noise_floor_dvi = Signal(2)
@@ -752,6 +758,7 @@ class Spectrogram(wiring.Component):
             ("axes", axes, axes_dvi),
             ("display_ack", display_ack, display_ack_dvi),
             ("quality_3d", quality_3d, quality_3d_dvi),
+            ("terrain_style", terrain_style, terrain_style_dvi),
             ("rate", rate_sel, rate_dvi),
             ("h_active", h_active, h_active_dvi),
             ("v_active", v_active, v_active_dvi),
@@ -824,6 +831,11 @@ class Spectrogram(wiring.Component):
         # spectra naturally overwrite the distant ones. Quality selects 64 or
         # up to 128 peak-pooled vertices without changing history depth.
         scan_slice = Signal(4)
+        # Terrain mode repeats each history ridge through the projected depth
+        # interval before the next ridge. This forms an opaque, back-to-front
+        # height field using the existing exact line rasterizer: no triangle
+        # divider, Z buffer, or additional PSRAM surface is required.
+        scan_fill_depth = Signal(4)
         scan_point = Signal(7)
         scan_group_index = Signal(3)
         scan_group_base = Signal(8)
@@ -840,6 +852,7 @@ class Spectrogram(wiring.Component):
         sweep_rate = Signal(2)
         sweep_hue = Signal(4)
         sweep_quality_3d = Signal(2)
+        sweep_terrain_style = Signal()
         sweep_projection_x = [Signal(signed(10)) for _ in range(3)]
         sweep_projection_y = [Signal(signed(10)) for _ in range(3)]
         # Complete surfaces alternate between two physical framebuffers. The
@@ -896,6 +909,10 @@ class Spectrogram(wiring.Component):
         baseline_y = Signal(signed(13))
         line_word = Signal(LineCmd)
         high_quality = Signal()
+        scan_fill_depth_last = Signal(4)
+        heat_intensity = Signal(4)
+        ridge_intensity = Signal(5)
+        surface_intensity = Signal(4)
         scan_point_last = Signal(7)
         scan_group_shift = Signal(2)
         frequency_coordinate = Signal(9)
@@ -911,6 +928,10 @@ class Spectrogram(wiring.Component):
             # The previous range-dependent geometry was inherited from the old
             # fixed-rate analyzer and truncated the 6kHz and 3kHz views.
             high_quality.eq(sweep_quality_3d == 2),
+            # Medium quality samples every other depth unit. The projected
+            # spacing is at most about one pixel for the default camera. High
+            # quality samples every unit for aggressive camera rotations.
+            scan_fill_depth_last.eq(Mux(high_quality, 15, 14)),
             scan_point_last.eq(scan_geometry[0]),
             scan_group_shift.eq(scan_geometry[1]),
             frequency_coordinate.eq(
@@ -924,6 +945,20 @@ class Spectrogram(wiring.Component):
                 Mux(scan_group_shift == 1, 1,
                     Mux(scan_group_shift == 2, 3, 7)))),
             scan_history_bin.eq(scan_group_base + scan_group_index),
+            heat_intensity.eq(Mux(
+                scan_peak == 0,
+                0,
+                Mux(scan_peak[2:6] == 15,
+                    15, scan_peak[2:6] + 1))),
+            ridge_intensity.eq(
+                heat_intensity + Const(2, unsigned(5))),
+            surface_intensity.eq(Mux(
+                sweep_terrain_style,
+                Mux(
+                    scan_fill_depth == 0,
+                    Mux(ridge_intensity > 15, 15, ridge_intensity[:4]),
+                    heat_intensity),
+                8 + scan_peak[4:6])),
             scan_peak_next.eq(Mux(
                 scan_history_level > scan_peak,
                 scan_history_level,
@@ -975,6 +1010,7 @@ class Spectrogram(wiring.Component):
                     m.d.dvi += [
                         scan_slice.eq(0),
                         scan_point.eq(0),
+                        scan_fill_depth.eq(0),
                         # Freeze every property that can make one projected
                         # sweep disagree with another. The live analyzer may
                         # continue writing newer columns in the background.
@@ -982,6 +1018,7 @@ class Spectrogram(wiring.Component):
                         sweep_rate.eq(rate_dvi),
                         sweep_hue.eq(hue_dvi),
                         sweep_quality_3d.eq(quality_3d_dvi),
+                        sweep_terrain_style.eq(terrain_style_dvi),
                         draw_generation.eq(~visible_generation),
                         render_activity_seen.eq(0),
                         clear_request.eq(1),
@@ -1042,8 +1079,8 @@ class Spectrogram(wiring.Component):
                         frequency_coordinate.as_signed() - 128),
                     point_amplitude.eq(
                         _dbfs_level_to_height(scan_peak, Const(0))),
-                    point_time.eq(scan_depth),
-                    point_pixel.intensity.eq(8 + scan_peak[4:6]),
+                    point_time.eq(scan_depth - scan_fill_depth),
+                    point_pixel.intensity.eq(surface_intensity),
                     point_pixel.color.eq(sweep_hue_limited),
                     point_cmd.eq(Mux(
                         scan_point == scan_point_last,
@@ -1075,13 +1112,25 @@ class Spectrogram(wiring.Component):
                         with m.Case(0):
                             with m.If(scan_point == scan_point_last):
                                 m.d.dvi += scan_point.eq(0)
-                                with m.If(scan_slice == 15):
+                                with m.If(
+                                        sweep_terrain_style &
+                                        (scan_slice != 15) &
+                                        (scan_fill_depth != scan_fill_depth_last)):
+                                    m.d.dvi += scan_fill_depth.eq(
+                                        scan_fill_depth +
+                                        Mux(high_quality, 1, 2))
+                                    m.next = "START_BIN_GROUP"
+                                with m.Elif(scan_slice == 15):
+                                    m.d.dvi += scan_fill_depth.eq(0)
                                     with m.If(axes_dvi):
                                         m.next = "AXIS_FREQUENCY_START"
                                     with m.Else():
                                         m.next = "WAIT_RENDER_COMPLETE"
                                 with m.Elif(enable_dvi):
-                                    m.d.dvi += scan_slice.eq(scan_slice + 1)
+                                    m.d.dvi += [
+                                        scan_slice.eq(scan_slice + 1),
+                                        scan_fill_depth.eq(0),
+                                    ]
                                     m.next = "START_BIN_GROUP"
                                 with m.Else():
                                     m.next = "IDLE"
