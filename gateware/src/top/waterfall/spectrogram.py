@@ -967,6 +967,12 @@ class Spectrogram(wiring.Component):
             scan_read_addr.eq(
                 ((sweep_newest + scan_history_age) << 8) |
                 scan_history_bin),
+            # Drive the DVI-domain RAM port from the renderer scan. Without
+            # these connections the port remains at address zero (the
+            # deliberately suppressed DC bin), flattening every ridge even
+            # though the projection and line renderer continue to work.
+            history_r.en.eq(scan_read_en),
+            history_r.addr.eq(scan_read_addr),
             point_frequency.eq(Mux(
                 h_active_dvi >= 1024,
                 point_frequency_base << 1,
