@@ -179,6 +179,11 @@ class WaterfallSoc(TiliquaSoc):
             fb_overlay=self.spectrogram,
             extra_plot_ports=1,
             with_persist=False,
+            # Keep the high-fanout PSRAM renderer arbitration out of the CPU
+            # cache response path. SONORO uses the same local boundary; the
+            # WATERFALL split originally omitted it and became placement-
+            # sensitive as the dedicated terrain masters were added.
+            register_psram_response=True,
             **kwargs,
         )
         self.waterfall_terrain_renderer = span.TriangleSpanRenderer(
