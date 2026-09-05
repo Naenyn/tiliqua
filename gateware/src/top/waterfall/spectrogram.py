@@ -15,6 +15,7 @@ from amaranth_soc import csr
 from tiliqua import dsp
 from tiliqua.dsp import ASQ
 from tiliqua.raster.line import LineCmd, LineStripCmd
+from tiliqua.raster.triangle import TriangleCmd
 from tiliqua.video.types import Pixel, ScanPixel
 
 
@@ -28,6 +29,14 @@ HISTORY_COL_BITS = (HISTORY_COLS - 1).bit_length()
 HISTORY_ADDR_BITS = HISTORY_COL_BITS + 8
 SPECTRUM_DB_FLOOR = -96.0
 SPECTRUM_CORDIC_GAIN = dsp.cordic.RectToPolarCordic.K
+
+
+class ProjectedPoint(data.Struct):
+    """One projected mesh vertex retained while building adjacent cells."""
+
+    x: signed(12)
+    y: signed(12)
+    pixel: Pixel
 
 
 def _magnitude_raw_to_dbfs_level(raw, *, f_bits=ASQ.f_bits):
@@ -408,6 +417,7 @@ class Spectrogram(wiring.Component):
             "audio_i": In(stream.Signature(data.ArrayLayout(ASQ, 4))),
             "bus": In(csr.Signature(addr_width=regs.addr_width, data_width=regs.data_width)),
             "line_o": Out(stream.Signature(LineCmd)),
+            "triangle_o": Out(stream.Signature(TriangleCmd)),
             "line_busy": In(1),
             "flush_request": Out(1),
             "flush_done": In(1),
@@ -654,10 +664,20 @@ class Spectrogram(wiring.Component):
             w_domain="dvi",
             r_domain="sync",
         )
+        m.submodules.triangle_fifo = triangle_fifo = fifo.AsyncFIFOBuffered(
+            width=TriangleCmd.as_shape().size,
+            depth=8,
+            w_domain="dvi",
+            r_domain="sync",
+        )
         m.d.comb += [
             self.line_o.valid.eq(line_fifo.r_rdy),
             self.line_o.payload.eq(line_fifo.r_data),
             line_fifo.r_en.eq(line_fifo.r_rdy & self.line_o.ready),
+            self.triangle_o.valid.eq(triangle_fifo.r_rdy),
+            self.triangle_o.payload.eq(triangle_fifo.r_data),
+            triangle_fifo.r_en.eq(
+                triangle_fifo.r_rdy & self.triangle_o.ready),
         ]
         line_busy_dvi = Signal()
         flush_done_dvi = Signal()
@@ -827,15 +847,10 @@ class Spectrogram(wiring.Component):
             m.d.dvi += newest_dvi.eq(newest_binary_meta)
 
         # ---- projected 3D waterfall ---------------------------------------
-        # Sixteen frequency ridges are drawn oldest-to-newest so the near
-        # spectra naturally overwrite the distant ones. Quality selects 64 or
-        # up to 128 peak-pooled vertices without changing history depth.
+        # Sixteen spectra are drawn oldest-to-newest so the near surface cells
+        # naturally overwrite distant cells without a Z buffer. Wire mode emits
+        # frequency ridges; terrain mode joins adjacent rows with filled cells.
         scan_slice = Signal(4)
-        # Terrain mode repeats each history ridge through the projected depth
-        # interval before the next ridge. This forms an opaque, back-to-front
-        # height field using the existing exact line rasterizer: no triangle
-        # divider, Z buffer, or additional PSRAM surface is required.
-        scan_fill_depth = Signal(4)
         scan_point = Signal(7)
         scan_group_index = Signal(3)
         scan_group_base = Signal(8)
@@ -855,6 +870,25 @@ class Spectrogram(wiring.Component):
         sweep_terrain_style = Signal()
         sweep_projection_x = [Signal(signed(10)) for _ in range(3)]
         sweep_projection_y = [Signal(signed(10)) for _ in range(3)]
+
+        # Terrain cells need the previous projected frequency row. Ping-pong
+        # memories retain 128 x/y/color vertices apiece; while one receives
+        # the current row, the other supplies the adjacent historical row.
+        row_read_ports = []
+        row_write_ports = []
+        for index in range(2):
+            row_memory = memory.Memory(data=memory.MemoryData(
+                shape=ProjectedPoint,
+                depth=128,
+                init=[0] * 128,
+            ))
+            setattr(m.submodules, f"terrain_row_{index}", row_memory)
+            row_read_ports.append(row_memory.read_port(domain="dvi"))
+            row_write_ports.append(row_memory.write_port(domain="dvi"))
+        row_bank = Signal()
+        row_read_point = Signal(ProjectedPoint)
+        terrain_current_left = Signal(ProjectedPoint)
+        terrain_previous_left = Signal(ProjectedPoint)
         # Complete surfaces alternate between two physical framebuffers. The
         # old multi-bit generation tags existed only for SONORO persistence.
         visible_generation = Signal()
@@ -908,11 +942,12 @@ class Spectrogram(wiring.Component):
         center_x = Signal(signed(13))
         baseline_y = Signal(signed(13))
         line_word = Signal(LineCmd)
+        triangle_word = Signal(TriangleCmd)
+        current_projected_point = Signal(ProjectedPoint)
         high_quality = Signal()
-        scan_fill_depth_last = Signal(4)
         heat_intensity = Signal(4)
-        ridge_intensity = Signal(5)
-        surface_intensity = Signal(4)
+        triangle_a_intensity = Signal(4)
+        triangle_b_intensity = Signal(4)
         scan_point_last = Signal(7)
         scan_group_shift = Signal(2)
         frequency_coordinate = Signal(9)
@@ -920,6 +955,28 @@ class Spectrogram(wiring.Component):
         sweep_axis_hue_a = Signal(3)
         sweep_axis_hue_b = Signal(3)
         scan_geometry = _three_d_scan_geometry(high_quality)
+        terrain_row_read_en = Signal()
+        terrain_row_write_en = Signal()
+
+        m.d.comb += [
+            terrain_row_read_en.eq(0),
+            terrain_row_write_en.eq(0),
+            row_read_point.as_value().eq(Mux(
+                row_bank == 0,
+                row_read_ports[1].data,
+                row_read_ports[0].data)),
+        ]
+        for index, (read_port, write_port) in enumerate(
+                zip(row_read_ports, row_write_ports)):
+            m.d.comb += [
+                read_port.en.eq(
+                    terrain_row_read_en & (row_bank != index)),
+                read_port.addr.eq(scan_point),
+                write_port.en.eq(
+                    terrain_row_write_en & (row_bank == index)),
+                write_port.addr.eq(scan_point),
+                write_port.data.eq(current_projected_point),
+            ]
 
         m.d.comb += [
             # Every range now has a matching analyzer sample rate and therefore
@@ -928,10 +985,6 @@ class Spectrogram(wiring.Component):
             # The previous range-dependent geometry was inherited from the old
             # fixed-rate analyzer and truncated the 6kHz and 3kHz views.
             high_quality.eq(sweep_quality_3d == 2),
-            # Medium quality samples every other depth unit. The projected
-            # spacing is at most about one pixel for the default camera. High
-            # quality samples every unit for aggressive camera rotations.
-            scan_fill_depth_last.eq(Mux(high_quality, 15, 14)),
             scan_point_last.eq(scan_geometry[0]),
             scan_group_shift.eq(scan_geometry[1]),
             frequency_coordinate.eq(
@@ -950,15 +1003,6 @@ class Spectrogram(wiring.Component):
                 0,
                 Mux(scan_peak[2:6] == 15,
                     15, scan_peak[2:6] + 1))),
-            ridge_intensity.eq(
-                heat_intensity + Const(2, unsigned(5))),
-            surface_intensity.eq(Mux(
-                sweep_terrain_style,
-                Mux(
-                    scan_fill_depth == 0,
-                    Mux(ridge_intensity > 15, 15, ridge_intensity[:4]),
-                    heat_intensity),
-                8 + scan_peak[4:6])),
             scan_peak_next.eq(Mux(
                 scan_history_level > scan_peak,
                 scan_history_level,
@@ -992,6 +1036,36 @@ class Spectrogram(wiring.Component):
             line_word.cmd.eq(point_cmd),
             line_fifo.w_en.eq(0),
             line_fifo.w_data.eq(line_word),
+            triangle_fifo.w_en.eq(0),
+            triangle_fifo.w_data.eq(triangle_word),
+            current_projected_point.x.eq(projected_x),
+            current_projected_point.y.eq(projected_y),
+            current_projected_point.pixel.eq(point_pixel),
+            # Flat-shade each half-cell from its hottest vertex. This preserves
+            # narrow peaks while naturally giving adjacent facets distinct
+            # colors when the surface slopes.
+            triangle_a_intensity.eq(Mux(
+                terrain_previous_left.pixel.intensity >
+                terrain_current_left.pixel.intensity,
+                Mux(terrain_previous_left.pixel.intensity >
+                    current_projected_point.pixel.intensity,
+                    terrain_previous_left.pixel.intensity,
+                    current_projected_point.pixel.intensity),
+                Mux(terrain_current_left.pixel.intensity >
+                    current_projected_point.pixel.intensity,
+                    terrain_current_left.pixel.intensity,
+                    current_projected_point.pixel.intensity))),
+            triangle_b_intensity.eq(Mux(
+                terrain_previous_left.pixel.intensity >
+                current_projected_point.pixel.intensity,
+                Mux(terrain_previous_left.pixel.intensity >
+                    row_read_point.pixel.intensity,
+                    terrain_previous_left.pixel.intensity,
+                    row_read_point.pixel.intensity),
+                Mux(current_projected_point.pixel.intensity >
+                    row_read_point.pixel.intensity,
+                    current_projected_point.pixel.intensity,
+                    row_read_point.pixel.intensity))),
             sweep_hue_limited.eq(sweep_hue[:3]),
             sweep_axis_hue_a.eq(sweep_hue_limited + 2),
             sweep_axis_hue_b.eq(sweep_hue_limited + 4),
@@ -1016,7 +1090,7 @@ class Spectrogram(wiring.Component):
                     m.d.dvi += [
                         scan_slice.eq(0),
                         scan_point.eq(0),
-                        scan_fill_depth.eq(0),
+                        row_bank.eq(0),
                         # Freeze every property that can make one projected
                         # sweep disagree with another. The live analyzer may
                         # continue writing newer columns in the background.
@@ -1085,8 +1159,11 @@ class Spectrogram(wiring.Component):
                         frequency_coordinate.as_signed() - 128),
                     point_amplitude.eq(
                         _dbfs_level_to_height(scan_peak, Const(0))),
-                    point_time.eq(scan_depth - scan_fill_depth),
-                    point_pixel.intensity.eq(surface_intensity),
+                    point_time.eq(scan_depth),
+                    point_pixel.intensity.eq(Mux(
+                        sweep_terrain_style,
+                        heat_intensity,
+                        8 + scan_peak[4:6])),
                     point_pixel.color.eq(sweep_hue_limited),
                     point_cmd.eq(Mux(
                         scan_point == scan_point_last,
@@ -1109,40 +1186,72 @@ class Spectrogram(wiring.Component):
                     projected_x.eq(center_x + (projection_sum_x >> 8)),
                     projected_y.eq(baseline_y + (projection_sum_y >> 8)),
                 ]
-                m.next = "PUSH_POINT"
+                with m.If((point_next == 0) & sweep_terrain_style):
+                    m.next = "TERRAIN_READ_ROW"
+                with m.Else():
+                    m.next = "PUSH_POINT"
+
+            with m.State("TERRAIN_READ_ROW"):
+                # Fetch the matching vertex from the previous frequency row.
+                # Slice zero only primes a row buffer, but sharing this state
+                # keeps the write/advance path identical for every slice.
+                m.d.comb += terrain_row_read_en.eq(scan_slice != 0)
+                m.next = "TERRAIN_LATCH_ROW"
+
+            with m.State("TERRAIN_LATCH_ROW"):
+                m.d.comb += terrain_row_write_en.eq(1)
+                with m.If((scan_slice == 0) | (scan_point == 0)):
+                    m.d.dvi += [
+                        terrain_current_left.eq(current_projected_point),
+                        terrain_previous_left.eq(row_read_point),
+                    ]
+                    m.next = "ADVANCE_SURFACE_POINT"
+                with m.Else():
+                    m.next = "PUSH_TRIANGLE_A"
+
+            with m.State("PUSH_TRIANGLE_A"):
+                # First half of A(previous-left), B(current-left),
+                # C(current-right), D(previous-right).
+                m.d.comb += [
+                    triangle_word.x0.eq(terrain_previous_left.x),
+                    triangle_word.y0.eq(terrain_previous_left.y),
+                    triangle_word.x1.eq(terrain_current_left.x),
+                    triangle_word.y1.eq(terrain_current_left.y),
+                    triangle_word.x2.eq(current_projected_point.x),
+                    triangle_word.y2.eq(current_projected_point.y),
+                    triangle_word.pixel.color.eq(sweep_hue_limited),
+                    triangle_word.pixel.intensity.eq(triangle_a_intensity),
+                    triangle_fifo.w_en.eq(1),
+                ]
+                with m.If(triangle_fifo.w_rdy):
+                    m.next = "PUSH_TRIANGLE_B"
+
+            with m.State("PUSH_TRIANGLE_B"):
+                # Second half closes the cell with D from the previous row.
+                m.d.comb += [
+                    triangle_word.x0.eq(terrain_previous_left.x),
+                    triangle_word.y0.eq(terrain_previous_left.y),
+                    triangle_word.x1.eq(current_projected_point.x),
+                    triangle_word.y1.eq(current_projected_point.y),
+                    triangle_word.x2.eq(row_read_point.x),
+                    triangle_word.y2.eq(row_read_point.y),
+                    triangle_word.pixel.color.eq(sweep_hue_limited),
+                    triangle_word.pixel.intensity.eq(triangle_b_intensity),
+                    triangle_fifo.w_en.eq(1),
+                ]
+                with m.If(triangle_fifo.w_rdy):
+                    m.d.dvi += [
+                        terrain_current_left.eq(current_projected_point),
+                        terrain_previous_left.eq(row_read_point),
+                    ]
+                    m.next = "ADVANCE_SURFACE_POINT"
 
             with m.State("PUSH_POINT"):
                 m.d.comb += line_fifo.w_en.eq(1)
                 with m.If(line_fifo.w_rdy):
                     with m.Switch(point_next):
                         with m.Case(0):
-                            with m.If(scan_point == scan_point_last):
-                                m.d.dvi += scan_point.eq(0)
-                                with m.If(
-                                        sweep_terrain_style &
-                                        (scan_slice != 15) &
-                                        (scan_fill_depth != scan_fill_depth_last)):
-                                    m.d.dvi += scan_fill_depth.eq(
-                                        scan_fill_depth +
-                                        Mux(high_quality, 1, 2))
-                                    m.next = "START_BIN_GROUP"
-                                with m.Elif(scan_slice == 15):
-                                    m.d.dvi += scan_fill_depth.eq(0)
-                                    with m.If(axes_dvi):
-                                        m.next = "AXIS_FREQUENCY_START"
-                                    with m.Else():
-                                        m.next = "WAIT_RENDER_COMPLETE"
-                                with m.Elif(enable_dvi):
-                                    m.d.dvi += [
-                                        scan_slice.eq(scan_slice + 1),
-                                        scan_fill_depth.eq(0),
-                                    ]
-                                    m.next = "START_BIN_GROUP"
-                                with m.Else():
-                                    m.next = "IDLE"
-                            with m.Else():
-                                m.d.dvi += scan_point.eq(scan_point + 1)
-                                m.next = "START_BIN_GROUP"
+                            m.next = "ADVANCE_SURFACE_POINT"
                         with m.Case(1):
                             m.next = "AXIS_FREQUENCY_END"
                         with m.Case(2):
@@ -1156,14 +1265,36 @@ class Spectrogram(wiring.Component):
                         with m.Default():
                             m.next = "WAIT_RENDER_COMPLETE"
 
+            with m.State("ADVANCE_SURFACE_POINT"):
+                with m.If(scan_point == scan_point_last):
+                    m.d.dvi += scan_point.eq(0)
+                    with m.If(scan_slice == 15):
+                        with m.If(axes_dvi):
+                            m.next = "AXIS_FREQUENCY_START"
+                        with m.Else():
+                            m.next = "WAIT_RENDER_COMPLETE"
+                    with m.Elif(enable_dvi):
+                        m.d.dvi += [
+                            scan_slice.eq(scan_slice + 1),
+                            row_bank.eq(~row_bank),
+                        ]
+                        m.next = "START_BIN_GROUP"
+                    with m.Else():
+                        m.next = "IDLE"
+                with m.Else():
+                    m.d.dvi += scan_point.eq(scan_point + 1)
+                    m.next = "START_BIN_GROUP"
+
             with m.State("WAIT_RENDER_COMPLETE"):
                 # First drain commands and Bresenham. Plot requests still pass
                 # through a write-back cache, so this is not yet a safe swap
                 # boundary; the following state performs an explicit fence.
-                with m.If((line_fifo.w_level != 0) | line_busy_dvi):
+                with m.If((line_fifo.w_level != 0) |
+                          (triangle_fifo.w_level != 0) | line_busy_dvi):
                     m.d.dvi += render_activity_seen.eq(1)
                 with m.If(render_activity_seen &
-                          (line_fifo.w_level == 0) & ~line_busy_dvi):
+                          (line_fifo.w_level == 0) &
+                          (triangle_fifo.w_level == 0) & ~line_busy_dvi):
                     m.d.dvi += flush_request.eq(1)
                     m.next = "WAIT_CACHE_FLUSH"
 
@@ -1281,7 +1412,8 @@ class Spectrogram(wiring.Component):
         # renderer state machine by a few cycles.
         m.d.comb += renderer_idle_dvi.eq(
             ~enable_dvi & waterfall_3d_fsm.ongoing("IDLE") &
-            (line_fifo.w_level == 0) & ~line_busy_dvi & ~clear_busy_dvi)
+            (line_fifo.w_level == 0) & (triangle_fifo.w_level == 0) &
+            ~line_busy_dvi & ~clear_busy_dvi)
 
         # WATERFALL contributes no beam-raced trace. Pass the scan stream
         # through unchanged while observing VSync for atomic framebuffer swaps.
