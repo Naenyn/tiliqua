@@ -179,10 +179,30 @@ class TriangleSpanRasterizer(wiring.Component):
         span_x1 = Signal(unsigned(12))
         ridge_at_left = Signal()
         ridge_x = Signal(unsigned(12))
+        ridge_min_y = Signal(signed(12))
+        ridge_max_y = Signal(signed(12))
+        ridge_row_active = Signal()
         ridge_horizontal = Signal()
+        ridge_previous_x = Signal(unsigned(12))
+        ridge_previous_valid = Signal()
+        ridge_span_x0 = Signal(unsigned(12))
+        ridge_span_x1 = Signal(unsigned(12))
         m.d.comb += [
             ridge_x.eq(Mux(ridge_at_left, span_x0, span_x1)),
+            ridge_min_y.eq(Mux(cmd.y1 < cmd.y2, cmd.y1, cmd.y2)),
+            ridge_max_y.eq(Mux(cmd.y1 > cmd.y2, cmd.y1, cmd.y2)),
+            ridge_row_active.eq((y >= ridge_min_y) & (y <= ridge_max_y)),
             ridge_horizontal.eq(edge_dy[1] == 0),
+            ridge_span_x0.eq(Mux(
+                ridge_horizontal,
+                span_x0,
+                Mux(ridge_previous_valid & (ridge_previous_x < ridge_x),
+                    ridge_previous_x, ridge_x))),
+            ridge_span_x1.eq(Mux(
+                ridge_horizontal,
+                span_x1,
+                Mux(ridge_previous_valid & (ridge_previous_x > ridge_x),
+                    ridge_previous_x, ridge_x))),
             self.o.payload.x0.eq(span_x0),
             self.o.payload.x1.eq(span_x1),
             self.o.payload.y.eq(y),
@@ -213,6 +233,7 @@ class TriangleSpanRasterizer(wiring.Component):
                     m.d.sync += [
                         cmd.eq(transformed),
                         cmd_ridge.eq(self.ridge),
+                        ridge_previous_valid.eq(0),
                     ]
                     m.next = "LOAD_BOUNDS"
 
@@ -330,7 +351,7 @@ class TriangleSpanRasterizer(wiring.Component):
                 with m.If(span_seen):
                     m.d.comb += self.o.valid.eq(1)
                     with m.If(self.o.ready):
-                        with m.If(cmd_ridge):
+                        with m.If(cmd_ridge & ridge_row_active):
                             m.next = "EMIT_RIDGE"
                         with m.Else():
                             advance_row()
@@ -338,20 +359,23 @@ class TriangleSpanRasterizer(wiring.Component):
                     advance_row()
 
             with m.State("EMIT_RIDGE"):
-                # Edge 1->2 is WATERFALL's current history ridge.  Emit only
-                # the packed word nearest that edge, directly behind the fill
-                # span in this same FIFO.  Subsequent (nearer) terrain remains
-                # later in the stream and therefore hides rear ridge pixels.
+                # Edge 1->2 is WATERFALL's current history ridge. Connect its
+                # packed-word intersection to the preceding scanline so a
+                # shallow edge remains continuous rather than becoming a row
+                # of isolated dots. The span remains directly behind its fill
+                # in this ordered FIFO, so later (nearer) terrain hides it.
                 m.d.comb += [
                     self.o.valid.eq(1),
-                    self.o.payload.x0.eq(Mux(
-                        ridge_horizontal, span_x0, ridge_x)),
-                    self.o.payload.x1.eq(Mux(
-                        ridge_horizontal, span_x1, ridge_x)),
+                    self.o.payload.x0.eq(ridge_span_x0),
+                    self.o.payload.x1.eq(ridge_span_x1),
                     self.o.payload.pixel.color.eq(0),
                     self.o.payload.pixel.intensity.eq(0),
                 ]
                 with m.If(self.o.ready):
+                    m.d.sync += [
+                        ridge_previous_x.eq(ridge_x),
+                        ridge_previous_valid.eq(1),
+                    ]
                     advance_row()
 
         m.d.comb += self.busy.eq(~fsm.ongoing("IDLE"))

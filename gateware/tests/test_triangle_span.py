@@ -224,15 +224,21 @@ class TriangleSpanRasterizerTests(unittest.TestCase):
         sim.add_testbench(bench)
         sim.run()
         self.assertGreater(len(spans), 0)
-        self.assertEqual(len(spans) % 2, 0)
-        for fill, ridge in zip(spans[0::2], spans[1::2]):
-            self.assertEqual(fill[2], ridge[2])
-            self.assertEqual(fill[3:], (5, 11))
+        fills = [span for span in spans if span[4] == 11]
+        ridges = [span for span in spans if span[4] == 0]
+        self.assertGreater(len(fills), len(ridges))
+        # Only rows crossed by the marked edge 1->2 receive a ridge. Emitting
+        # an endpoint on every triangle row was the visible perforation bug.
+        self.assertEqual([ridge[2] for ridge in ridges], list(range(15, 21)))
+        for ridge in ridges:
             self.assertEqual(ridge[3:], (0, 0))
-            self.assertEqual(ridge[0] >> 2, ridge[1] >> 2)
-            # This triangle has positive winding and a negative edge-1 y
-            # delta, so the marked edge is the right end of every fill span.
-            self.assertEqual(ridge[0] >> 2, fill[1] >> 2)
+            self.assertLessEqual(ridge[0], ridge[1])
+        # Consecutive scanline spans share the preceding edge intersection,
+        # making the projected contour continuous even when it is shallow.
+        for previous, current in zip(ridges, ridges[1:]):
+            self.assertLessEqual(
+                max(previous[0], current[0]),
+                min(previous[1], current[1]))
 
     def test_horizontal_ridge_covers_the_complete_marked_edge(self):
         width = 32
