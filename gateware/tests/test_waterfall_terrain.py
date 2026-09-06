@@ -113,6 +113,11 @@ def test_quiet_terrain_still_emits_complete_contour_commands():
     assert all(command["x0"] == command["x1"] for command in commands)
     assert all(command["y0"] == command["y1"] for command in commands)
     assert all(command["pixel"] == 0 for command in commands)
+    # The first visible strip joins history slices zero and one. Its contour
+    # must replay slice zero (the far edge), not slice one: the latter is the
+    # shared edge that the following strip will repaint. These coordinates
+    # come from the component's default 720p projection at zero level.
+    assert (commands[0]["x0"], commands[0]["y0"]) == (202, 455)
     assert all(
         (left["x2"], left["y2"]) == (right["x0"], right["y0"])
         for left, right in zip(commands, commands[1:])

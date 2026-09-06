@@ -968,7 +968,6 @@ class Spectrogram(wiring.Component):
             row_write_ports.append(row_memory.write_port(domain="dvi"))
         row_bank = Signal()
         row_read_point = Signal(ProjectedPoint)
-        contour_row_point = Signal(ProjectedPoint)
         terrain_current_left = Signal(ProjectedPoint)
         terrain_previous_left = Signal(ProjectedPoint)
         terrain_previous_right = Signal(ProjectedPoint)
@@ -1088,17 +1087,13 @@ class Spectrogram(wiring.Component):
                 row_bank == 0,
                 row_read_ports[1].data,
                 row_read_ports[0].data)),
-            contour_row_point.as_value().eq(Mux(
-                row_bank == 0,
-                row_read_ports[0].data,
-                row_read_ports[1].data)),
         ]
         for index, (read_port, write_port) in enumerate(
                 zip(row_read_ports, row_write_ports)):
             m.d.comb += [
                 read_port.en.eq(
-                    (terrain_row_read_en & (row_bank != index)) |
-                    (contour_row_read_en & (row_bank == index))),
+                    (terrain_row_read_en | contour_row_read_en) &
+                    (row_bank != index)),
                 read_port.addr.eq(Mux(
                     contour_row_read_en, contour_point, scan_point)),
                 write_port.en.eq(
@@ -1493,15 +1488,16 @@ class Spectrogram(wiring.Component):
                     m.next = "ADVANCE_SURFACE_POINT"
 
             with m.State("CONTOUR_ISSUE_LEFT"):
-                # Replay the completed current row only after every cell in
-                # that row has been queued. This prevents later cells in the
-                # same row from erasing pieces of its one-pixel contour.
+                # After filling the strip between the previous and current
+                # rows, replay its *previous* (far) edge. The following strip
+                # shares the current edge, not this one, so it cannot erase
+                # the contour merely by covering a common boundary.
                 m.d.comb += contour_row_read_en.eq(1)
                 m.next = "CONTOUR_LATCH_LEFT"
 
             with m.State("CONTOUR_LATCH_LEFT"):
                 m.d.dvi += [
-                    contour_left.eq(contour_row_point),
+                    contour_left.eq(row_read_point),
                     contour_point.eq(contour_point + 1),
                 ]
                 m.next = "CONTOUR_ISSUE_RIGHT"
@@ -1511,7 +1507,7 @@ class Spectrogram(wiring.Component):
                 m.next = "CONTOUR_LATCH_RIGHT"
 
             with m.State("CONTOUR_LATCH_RIGHT"):
-                m.d.dvi += contour_right.eq(contour_row_point)
+                m.d.dvi += contour_right.eq(row_read_point)
                 m.next = "PUSH_TERRAIN_CONTOUR"
 
             with m.State("PUSH_TERRAIN_CONTOUR"):
