@@ -509,6 +509,7 @@ where
 fn draw_axis_labels<D>(
     display: &mut D,
     range: FrequencyRange,
+    scale: FrequencyScale,
     h_active: u32,
     v_active: u32,
     projection_x: &[i16; 3],
@@ -525,8 +526,22 @@ where
         FrequencyRange::Range12k => "12kHz",
         FrequencyRange::Range24k => "24kHz",
     };
+    // The linear midpoint is half the maximum frequency. The logarithmic
+    // sweep maps its center to FFT bin 16 of 256, or exactly 1/16 of the
+    // selected maximum, independent of terrain quality.
+    let midpoint_label = match (scale, range) {
+        (FrequencyScale::Linear, FrequencyRange::Range3k) => "1.5kHz",
+        (FrequencyScale::Linear, FrequencyRange::Range6k) => "3kHz",
+        (FrequencyScale::Linear, FrequencyRange::Range12k) => "6kHz",
+        (FrequencyScale::Linear, FrequencyRange::Range24k) => "12kHz",
+        (FrequencyScale::Log, FrequencyRange::Range3k) => "188Hz",
+        (FrequencyScale::Log, FrequencyRange::Range6k) => "375Hz",
+        (FrequencyScale::Log, FrequencyRange::Range12k) => "750Hz",
+        (FrequencyScale::Log, FrequencyRange::Range24k) => "1.5kHz",
+    };
     let labels = [
         (127, 0, 0, 6, 10, range_label),
+        (0, 0, 0, 6, 10, midpoint_label),
         (-128, 255, 0, 6, 0, "0dBFS"),
         (-128, 128, 0, 6, 4, "-48"),
         (-128, 0, 0, -8, 13, "new"),
@@ -887,10 +902,11 @@ fn main() -> ! {
                         ui_hue,
                     )
                     .ok();
-                    if opts.display.axis_detail.value == AxisDetail::Labeled {
+                    if opts.display.axis_detail.value == AxisDetail::Labels {
                         draw_axis_labels(
                             &mut display,
                             opts.cascado.range.value,
+                            opts.style.scale.value,
                             h_active,
                             v_active,
                             &projection_x,

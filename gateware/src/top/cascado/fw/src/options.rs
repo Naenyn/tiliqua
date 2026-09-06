@@ -165,7 +165,7 @@ pub enum AxisDetail {
     Lines,
     #[default]
     Ticks,
-    Labeled,
+    Labels,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
@@ -250,7 +250,7 @@ pub struct DisplayOpts {
     #[option]
     pub axes: EnumOption<OnOff>,
     #[option]
-    #[option_name("axis detail")]
+    #[option_name("detail")]
     pub axis_detail: EnumOption<AxisDetail>,
     #[option(0)]
     pub hue: IntOption<HueParams>,
