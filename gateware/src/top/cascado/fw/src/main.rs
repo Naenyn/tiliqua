@@ -14,10 +14,13 @@ use tiliqua_fw::*;
 use tiliqua_hal::dma_framebuffer::DMAFramebuffer;
 use tiliqua_hal::embedded_graphics::prelude::*;
 use tiliqua_hal::embedded_graphics::primitives::{
-    PrimitiveStyle, PrimitiveStyleBuilder, Rectangle,
+    Line, PrimitiveStyle, PrimitiveStyleBuilder, Rectangle,
 };
 use tiliqua_hal::embedded_graphics::{
-    mono_font::{ascii::FONT_9X15_BOLD, MonoTextStyle},
+    mono_font::{
+        ascii::{FONT_6X10, FONT_9X15_BOLD},
+        MonoTextStyle,
+    },
     text::{Alignment, Text},
 };
 use tiliqua_lib::calibration::*;
@@ -429,6 +432,125 @@ fn projection_matrix(rot_x: i8, rot_y: i8, rot_z: i8) -> ([i16; 3], [i16; 3]) {
     (out_x, out_y)
 }
 
+fn project_axis_point(
+    frequency: i32,
+    amplitude: i32,
+    history: i32,
+    h_active: u32,
+    v_active: u32,
+    projection_x: &[i16; 3],
+    projection_y: &[i16; 3],
+) -> Point {
+    let frequency = if h_active >= 1024 {
+        frequency * 2
+    } else {
+        frequency
+    };
+    let coordinates = [frequency, amplitude, history];
+    let mut x = h_active as i32 / 2 - 50;
+    let mut y = v_active as i32 / 2 + 185;
+    for index in 0..3 {
+        x += coordinates[index] * projection_x[index] as i32 >> 8;
+        y += coordinates[index] * projection_y[index] as i32 >> 8;
+    }
+    Point::new(x, y)
+}
+
+fn draw_axis_ticks<D>(
+    display: &mut D,
+    h_active: u32,
+    v_active: u32,
+    projection_x: &[i16; 3],
+    projection_y: &[i16; 3],
+    hue: u8,
+) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = HI8>,
+{
+    // Nine short projected marks cost only about 90 framebuffer pixels per
+    // completed surface. Keeping them out of the already-dense terrain FSM
+    // also leaves FPGA timing independent of this optional display detail.
+    let ticks = [
+        ((-64, 0, 0), (-64, 8, 0)),
+        ((0, 0, 0), (0, 8, 0)),
+        ((64, 0, 0), (64, 8, 0)),
+        ((-128, 64, 0), (-120, 64, 0)),
+        ((-128, 128, 0), (-120, 128, 0)),
+        ((-128, 192, 0), (-120, 192, 0)),
+        ((-128, 0, 60), (-120, 0, 60)),
+        ((-128, 0, 120), (-120, 0, 120)),
+        ((-128, 0, 180), (-120, 0, 180)),
+    ];
+    let style = PrimitiveStyle::with_stroke(HI8::new(hue, 13), 1);
+    for (start, end) in ticks {
+        let start = project_axis_point(
+            start.0,
+            start.1,
+            start.2,
+            h_active,
+            v_active,
+            projection_x,
+            projection_y,
+        );
+        let end = project_axis_point(
+            end.0,
+            end.1,
+            end.2,
+            h_active,
+            v_active,
+            projection_x,
+            projection_y,
+        );
+        Line::new(start, end).into_styled(style).draw(display)?;
+    }
+    Ok(())
+}
+
+fn draw_axis_labels<D>(
+    display: &mut D,
+    range: FrequencyRange,
+    h_active: u32,
+    v_active: u32,
+    projection_x: &[i16; 3],
+    projection_y: &[i16; 3],
+    hue: u8,
+) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = HI8>,
+{
+    let style = MonoTextStyle::new(&FONT_6X10, HI8::new(hue, 15));
+    let range_label = match range {
+        FrequencyRange::Range3k => "3kHz",
+        FrequencyRange::Range6k => "6kHz",
+        FrequencyRange::Range12k => "12kHz",
+        FrequencyRange::Range24k => "24kHz",
+    };
+    let labels = [
+        (127, 0, 0, 6, 10, range_label),
+        (-128, 255, 0, 6, 0, "0dBFS"),
+        (-128, 128, 0, 6, 4, "-48"),
+        (-128, 0, 0, -8, 13, "new"),
+        (-128, 0, 240, 6, 8, "old"),
+    ];
+    for (frequency, amplitude, history, offset_x, offset_y, label) in labels {
+        let anchor = project_axis_point(
+            frequency,
+            amplitude,
+            history,
+            h_active,
+            v_active,
+            projection_x,
+            projection_y,
+        );
+        // Keep horizontal text legible at every camera angle and inside the
+        // circular-display safe area.
+        let x = (anchor.x + offset_x).clamp(8, h_active as i32 - 48);
+        let y = (anchor.y + offset_y).clamp(12, v_active as i32 - 78);
+        Text::new(label, Point::new(x, y), style).draw(display)?;
+    }
+    Ok(())
+}
+
 fn sanitize_options(opts: &mut Opts) {
     if opts.style.quality.value == Quality3d::Low {
         opts.style.quality.value = Quality3d::Medium;
@@ -744,6 +866,40 @@ fn main() -> ! {
                 // erase/redraw loop when no menu is visible.
                 let menu_invalidated_by_3d_swap = framebuffer_swapped && menu_visible;
                 let menu_visibility_changed = menu_visible != menu_slot.is_some();
+                if framebuffer_swapped
+                    && !on_help_page
+                    && opts.display.axes.value == OnOff::On
+                    && opts.display.axis_detail.value != AxisDetail::Lines
+                {
+                    let angles = (
+                        opts.cascado.rot_x.value,
+                        opts.cascado.rot_y.value,
+                        opts.cascado.rot_z.value,
+                    );
+                    let (projection_x, projection_y) =
+                        projection_matrix(angles.0, angles.1, angles.2);
+                    draw_axis_ticks(
+                        &mut display,
+                        h_active,
+                        v_active,
+                        &projection_x,
+                        &projection_y,
+                        ui_hue,
+                    )
+                    .ok();
+                    if opts.display.axis_detail.value == AxisDetail::Labeled {
+                        draw_axis_labels(
+                            &mut display,
+                            opts.cascado.range.value,
+                            h_active,
+                            v_active,
+                            &projection_x,
+                            &projection_y,
+                            ui_hue,
+                        )
+                        .ok();
+                    }
+                }
                 if first || menu_changed || menu_visibility_changed || menu_invalidated_by_3d_swap {
                     if let Some((old_opts, old_x, old_y, _)) = menu_slot.take() {
                         // A swapped-in surface has just been rendered into a

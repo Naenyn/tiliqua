@@ -160,6 +160,15 @@ pub enum YesNo {
 }
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
+#[strum(serialize_all = "kebab-case")]
+pub enum AxisDetail {
+    Lines,
+    #[default]
+    Ticks,
+    Labeled,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 pub enum DisplayNoiseFloor {
     #[default]
     #[strum(serialize = "off")]
@@ -240,6 +249,9 @@ pub struct StyleOpts {
 pub struct DisplayOpts {
     #[option]
     pub axes: EnumOption<OnOff>,
+    #[option]
+    #[option_name("axis detail")]
+    pub axis_detail: EnumOption<AxisDetail>,
     #[option(0)]
     pub hue: IntOption<HueParams>,
     #[option(ColorPalette::Inferno)]

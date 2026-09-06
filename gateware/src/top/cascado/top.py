@@ -27,8 +27,10 @@ All four analog inputs pass directly to their matching outputs:
 CASCADO options select the input, sensitivity, maximum displayed frequency,
 history speed, and camera rotation around the X, Y and Z axes in 15-degree
 steps. STYLE selects a wire or filled terrain mesh, its quality, coloring, age
-fade, and ridge accents. DISPLAY controls the projected reference axes, plot
-hue, palette, a display-only noise floor, and an optional surface-rate readout.
+fade, and ridge accents. DISPLAY controls the projected reference axes and
+their detail: lines alone, projected tick marks, or ticks with compact labels.
+It also contains plot hue, palette, a display-only noise floor, and an optional
+surface-rate readout.
 The noise floor hides low-level display clutter without changing the analyzed
 signal. The Inferno palette
 supports hue rotation while preserving its heatmap gradient; grayscale
