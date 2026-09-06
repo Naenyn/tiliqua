@@ -111,26 +111,6 @@ def _terrain_visibility_level(level, age, age_fade):
     )
 
 
-def _terrain_band_intensity(intensity, history_slice, bands):
-    """Darken alternate history bands without changing their hue.
-
-    The newest band remains at its original intensity. Nonzero low-intensity
-    pixels clamp to one so band contrast cannot punch holes in quiet terrain.
-    """
-    darkened = Mux(intensity > 2, intensity - 2,
-                   Mux(intensity != 0, 1, 0))
-    return Mux(bands & ~history_slice[0], darkened, intensity)
-
-
-def _terrain_band_age_group(age_group, history_slice, bands):
-    """Select the next darker level-palette age group on alternate bands."""
-    return Mux(
-        bands & ~history_slice[0] & (age_group != 7),
-        age_group + 1,
-        age_group,
-    )
-
-
 def _log_frequency_bin_buckets(point_count, n_bins=N_BINS):
     """Return inclusive FFT-bin bounds for an octave-spaced 3D sweep.
 
@@ -441,7 +421,7 @@ class Spectrogram(wiring.Component):
         log_scale: csr.Field(csr.action.W, unsigned(1))
         age_fade: csr.Field(csr.action.W, unsigned(1))
         frequency_color: csr.Field(csr.action.W, unsigned(1))
-        bands: csr.Field(csr.action.W, unsigned(1))
+        ridges: csr.Field(csr.action.W, unsigned(1))
 
     class ProjectionX(csr.Register, access="w"):
         frequency: csr.Field(csr.action.W, signed(10))
@@ -509,7 +489,7 @@ class Spectrogram(wiring.Component):
         log_scale = Signal(init=1)
         age_fade = Signal(init=1)
         frequency_color = Signal()
-        bands = Signal(init=1)
+        ridges = Signal(init=1)
         h_active = Signal(12, init=720)
         v_active = Signal(12, init=720)
         projection_x = [Signal(signed(10), init=value) for value in (384, 0, 90)]
@@ -556,7 +536,7 @@ class Spectrogram(wiring.Component):
                 log_scale.eq(self._config_3d.f.log_scale.w_data),
                 age_fade.eq(self._config_3d.f.age_fade.w_data),
                 frequency_color.eq(self._config_3d.f.frequency_color.w_data),
-                bands.eq(self._config_3d.f.bands.w_data),
+                ridges.eq(self._config_3d.f.ridges.w_data),
             ]
         # ---- audio analysis -------------------------------------------------
         # Match the analyzer sample rate to the selected frequency range. This
@@ -836,7 +816,7 @@ class Spectrogram(wiring.Component):
         log_scale_dvi = Signal()
         age_fade_dvi = Signal()
         frequency_color_dvi = Signal()
-        bands_dvi = Signal()
+        ridges_dvi = Signal()
         rate_dvi = Signal(2)
         hue_dvi = Signal(4)
         noise_floor_dvi = Signal(2)
@@ -857,7 +837,7 @@ class Spectrogram(wiring.Component):
             ("log_scale", log_scale, log_scale_dvi),
             ("age_fade", age_fade, age_fade_dvi),
             ("frequency_color", frequency_color, frequency_color_dvi),
-            ("bands", bands, bands_dvi),
+            ("ridges", ridges, ridges_dvi),
             ("rate", rate_sel, rate_dvi),
             ("h_active", h_active, h_active_dvi),
             ("v_active", v_active, v_active_dvi),
@@ -950,7 +930,7 @@ class Spectrogram(wiring.Component):
         sweep_log_scale = Signal()
         sweep_age_fade = Signal()
         sweep_frequency_color = Signal()
-        sweep_bands = Signal()
+        sweep_ridges = Signal()
         sweep_projection_x = [Signal(signed(10)) for _ in range(3)]
         sweep_projection_y = [Signal(signed(10)) for _ in range(3)]
 
@@ -1052,7 +1032,6 @@ class Spectrogram(wiring.Component):
         terrain_cell_visibility_level_next = Signal(6)
         terrain_cell_visible = Signal()
         terrain_cell_frequency_intensity = Signal(4)
-        terrain_banded_frequency_intensity = Signal(4)
         wire_display_level = Signal(6)
         wire_frequency_intensity = Signal(4)
         # Palette packing has only 64 possible level inputs. Keep both the
@@ -1081,8 +1060,6 @@ class Spectrogram(wiring.Component):
         terrain_level_color = Signal(4)
         wire_level_color = Signal(4)
         terrain_level_intensity = Signal(4)
-        terrain_level_age_group = Signal(3)
-        terrain_banded_age_group = Signal(3)
         wire_level_intensity = Signal(4)
         scan_point_last = Signal(7)
         scan_group_shift = Signal(2)
@@ -1174,6 +1151,7 @@ class Spectrogram(wiring.Component):
             line_fifo.w_data.eq(line_word),
             triangle_fifo.w_en.eq(0),
             triangle_fifo.w_data.eq(triangle_word),
+            triangle_word.ridge.eq(0),
             current_projected_point.x.eq(projected_x),
             current_projected_point.y.eq(projected_y),
             current_projected_point.level.eq(terrain_level),
@@ -1228,12 +1206,6 @@ class Spectrogram(wiring.Component):
                 0,
                 Mux(terrain_cell_display_level >= 60,
                     15, (terrain_cell_display_level + 3) >> 2))),
-            terrain_banded_frequency_intensity.eq(
-                _terrain_band_intensity(
-                    terrain_cell_frequency_intensity,
-                    scan_slice,
-                    sweep_bands,
-                )),
             wire_frequency_intensity.eq(Mux(
                 wire_display_level == 0,
                 0,
@@ -1254,15 +1226,9 @@ class Spectrogram(wiring.Component):
             wire_level_color.eq(Mux(
                 sweep_age_fade,
                 wire_fade_code[:4], wire_full_code[:4])),
-            terrain_level_age_group.eq(scan_history_age[1:4]),
-            terrain_banded_age_group.eq(_terrain_band_age_group(
-                terrain_level_age_group,
-                scan_slice,
-                sweep_bands,
-            )),
             terrain_level_intensity.eq(Mux(
                 sweep_age_fade,
-                Cat(terrain_fade_code[4], terrain_banded_age_group),
+                Cat(terrain_fade_code[4], scan_history_age[1:4]),
                 terrain_full_code[4:6])),
             wire_level_intensity.eq(Mux(
                 sweep_age_fade,
@@ -1310,7 +1276,7 @@ class Spectrogram(wiring.Component):
                         sweep_log_scale.eq(log_scale_dvi),
                         sweep_age_fade.eq(age_fade_dvi),
                         sweep_frequency_color.eq(frequency_color_dvi),
-                        sweep_bands.eq(bands_dvi),
+                        sweep_ridges.eq(ridges_dvi),
                         draw_generation.eq(~visible_generation),
                         render_activity_seen.eq(0),
                         clear_request.eq(1),
@@ -1474,8 +1440,9 @@ class Spectrogram(wiring.Component):
                         terrain_level_color)),
                     triangle_word.pixel.intensity.eq(
                         Mux(sweep_frequency_color,
-                            terrain_banded_frequency_intensity,
+                            terrain_cell_frequency_intensity,
                             terrain_level_intensity)),
+                    triangle_word.ridge.eq(sweep_ridges),
                     triangle_fifo.w_en.eq(terrain_cell_visible),
                 ]
                 # The inactive framebuffer was just cleared. Zero-level and
@@ -1501,7 +1468,7 @@ class Spectrogram(wiring.Component):
                         terrain_level_color)),
                     triangle_word.pixel.intensity.eq(
                         Mux(sweep_frequency_color,
-                            terrain_banded_frequency_intensity,
+                            terrain_cell_frequency_intensity,
                             terrain_level_intensity)),
                     triangle_fifo.w_en.eq(terrain_cell_visible),
                 ]

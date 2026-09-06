@@ -178,6 +178,107 @@ class TriangleSpanRasterizerTests(unittest.TestCase):
                 packed_word_pixels(reference_pixels(vertices, 16, 12), 16),
             )
 
+    def test_ridge_spans_follow_each_fill_and_stay_on_marked_edge(self):
+        """Optional ridges share the ordered span stream with terrain fills."""
+        width = 32
+        height = 24
+        vertices = [(3, 3), (7, 20), (27, 15)]
+        dut = TriangleSpanRasterizer()
+        sim = Simulator(dut)
+        sim.add_clock(1e-6)
+        spans = []
+
+        async def bench(ctx):
+            ctx.set(dut.h_active, width)
+            ctx.set(dut.v_active, height)
+            ctx.set(dut.rotation, Rotation.NORMAL)
+            ctx.set(dut.alternate, 1)
+            ctx.set(dut.o.ready, 1)
+            for index, (x, y) in enumerate(vertices):
+                ctx.set(getattr(dut.i.payload, f"x{index}"), x)
+                ctx.set(getattr(dut.i.payload, f"y{index}"), y)
+            ctx.set(dut.i.payload.pixel.color, 5)
+            ctx.set(dut.i.payload.pixel.intensity, 11)
+            ctx.set(dut.i.payload.ridge, 1)
+            ctx.set(dut.i.valid, 1)
+            while not ctx.get(dut.i.ready):
+                await ctx.tick()
+            await ctx.tick()
+            ctx.set(dut.i.valid, 0)
+
+            for _ in range(4000):
+                if ctx.get(dut.o.valid):
+                    spans.append((
+                        ctx.get(dut.o.payload.x0),
+                        ctx.get(dut.o.payload.x1),
+                        ctx.get(dut.o.payload.y),
+                        ctx.get(dut.o.payload.pixel.color),
+                        ctx.get(dut.o.payload.pixel.intensity),
+                    ))
+                if not ctx.get(dut.busy):
+                    break
+                await ctx.tick()
+            else:
+                self.fail("rasterizer did not finish")
+
+        sim.add_testbench(bench)
+        sim.run()
+        self.assertGreater(len(spans), 0)
+        self.assertEqual(len(spans) % 2, 0)
+        for fill, ridge in zip(spans[0::2], spans[1::2]):
+            self.assertEqual(fill[2], ridge[2])
+            self.assertEqual(fill[3:], (5, 11))
+            self.assertEqual(ridge[3:], (0, 0))
+            self.assertEqual(ridge[0] >> 2, ridge[1] >> 2)
+            self.assertIn(ridge[0] >> 2,
+                          (fill[0] >> 2, fill[1] >> 2))
+
+    def test_horizontal_ridge_covers_the_complete_marked_edge(self):
+        width = 32
+        height = 24
+        vertices = [(3, 3), (7, 16), (27, 16)]
+        dut = TriangleSpanRasterizer()
+        sim = Simulator(dut)
+        sim.add_clock(1e-6)
+        spans = []
+
+        async def bench(ctx):
+            ctx.set(dut.h_active, width)
+            ctx.set(dut.v_active, height)
+            ctx.set(dut.rotation, Rotation.NORMAL)
+            ctx.set(dut.o.ready, 1)
+            for index, (x, y) in enumerate(vertices):
+                ctx.set(getattr(dut.i.payload, f"x{index}"), x)
+                ctx.set(getattr(dut.i.payload, f"y{index}"), y)
+            ctx.set(dut.i.payload.pixel.color, 5)
+            ctx.set(dut.i.payload.pixel.intensity, 11)
+            ctx.set(dut.i.payload.ridge, 1)
+            ctx.set(dut.i.valid, 1)
+            while not ctx.get(dut.i.ready):
+                await ctx.tick()
+            await ctx.tick()
+            ctx.set(dut.i.valid, 0)
+
+            for _ in range(4000):
+                if ctx.get(dut.o.valid):
+                    spans.append((
+                        ctx.get(dut.o.payload.x0),
+                        ctx.get(dut.o.payload.x1),
+                        ctx.get(dut.o.payload.y),
+                        ctx.get(dut.o.payload.pixel.intensity),
+                    ))
+                if not ctx.get(dut.busy):
+                    break
+                await ctx.tick()
+
+        sim.add_testbench(bench)
+        sim.run()
+        fill, ridge = spans[-2:]
+        self.assertEqual(fill[2], 16)
+        self.assertEqual(ridge[2], 16)
+        self.assertEqual(ridge[3], 0)
+        self.assertEqual((ridge[0], ridge[1]), (fill[0], fill[1]))
+
     def test_adjacent_triangles_form_watertight_projected_cells(self):
         """Terrain's two triangles must not crack along their shared edge."""
         width = 32

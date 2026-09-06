@@ -74,7 +74,10 @@ class TriangleSpanRasterizer(wiring.Component):
                         xout.eq(yin),
                         yout.eq(self.v_active - 1 - xin),
                     ]
-        m.d.comb += transformed.pixel.eq(self.i.payload.pixel)
+        m.d.comb += [
+            transformed.pixel.eq(self.i.payload.pixel),
+            transformed.ridge.eq(self.i.payload.ridge),
+        ]
 
         cmd = Signal(TriangleCmd)
         min_x = Signal(signed(12))
@@ -175,7 +178,26 @@ class TriangleSpanRasterizer(wiring.Component):
         span_seen = Signal()
         span_x0 = Signal(unsigned(12))
         span_x1 = Signal(unsigned(12))
+        span_edge_first = Signal(signed(27))
+        span_edge_last = Signal(signed(27))
+        span_edge_first_abs = Signal(unsigned(27))
+        span_edge_last_abs = Signal(unsigned(27))
+        ridge_x = Signal(unsigned(12))
+        ridge_horizontal = Signal()
         m.d.comb += [
+            span_edge_first_abs.eq(Mux(
+                span_edge_first < 0,
+                -span_edge_first,
+                span_edge_first)),
+            span_edge_last_abs.eq(Mux(
+                span_edge_last < 0,
+                -span_edge_last,
+                span_edge_last)),
+            ridge_x.eq(Mux(
+                span_edge_first_abs <= span_edge_last_abs,
+                span_x0,
+                span_x1)),
+            ridge_horizontal.eq(edge_dy[1] == 0),
             self.o.payload.x0.eq(span_x0),
             self.o.payload.x1.eq(span_x1),
             self.o.payload.y.eq(y),
@@ -285,8 +307,15 @@ class TriangleSpanRasterizer(wiring.Component):
             with m.State("SCAN"):
                 with m.If(word_inside):
                     with m.If(~span_seen):
-                        m.d.sync += [span_seen.eq(1), span_x0.eq(x)]
-                    m.d.sync += span_x1.eq(x + 3)
+                        m.d.sync += [
+                            span_seen.eq(1),
+                            span_x0.eq(x),
+                            span_edge_first.eq(edge[1]),
+                        ]
+                    m.d.sync += [
+                        span_x1.eq(x + 3),
+                        span_edge_last.eq(lane_edges[3][1]),
+                    ]
 
                 # A triangle intersects each scanline in one contiguous run.
                 # Once a populated word is followed by an empty one, no later
@@ -307,8 +336,28 @@ class TriangleSpanRasterizer(wiring.Component):
                 with m.If(span_seen):
                     m.d.comb += self.o.valid.eq(1)
                     with m.If(self.o.ready):
-                        advance_row()
+                        with m.If(cmd.ridge):
+                            m.next = "EMIT_RIDGE"
+                        with m.Else():
+                            advance_row()
                 with m.Else():
+                    advance_row()
+
+            with m.State("EMIT_RIDGE"):
+                # Edge 1->2 is WATERFALL's current history ridge.  Emit only
+                # the packed word nearest that edge, directly behind the fill
+                # span in this same FIFO.  Subsequent (nearer) terrain remains
+                # later in the stream and therefore hides rear ridge pixels.
+                m.d.comb += [
+                    self.o.valid.eq(1),
+                    self.o.payload.x0.eq(Mux(
+                        ridge_horizontal, span_x0, ridge_x)),
+                    self.o.payload.x1.eq(Mux(
+                        ridge_horizontal, span_x1, ridge_x)),
+                    self.o.payload.pixel.color.eq(0),
+                    self.o.payload.pixel.intensity.eq(0),
+                ]
+                with m.If(self.o.ready):
                     advance_row()
 
         m.d.comb += self.busy.eq(~fsm.ongoing("IDLE"))

@@ -12,8 +12,6 @@ waterfall_spectrogram = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(waterfall_spectrogram)
 _log_frequency_bin_buckets = waterfall_spectrogram._log_frequency_bin_buckets
 _terrain_visibility_level = waterfall_spectrogram._terrain_visibility_level
-_terrain_band_intensity = waterfall_spectrogram._terrain_band_intensity
-_terrain_band_age_group = waterfall_spectrogram._terrain_band_age_group
 
 
 def test_log_frequency_buckets_cover_positive_spectrum():
@@ -71,52 +69,6 @@ def test_terrain_visibility_culls_quiet_old_facets_without_recoloring():
             ctx.set(age_fade, fade)
             await ctx.delay(1e-9)
             assert ctx.get(visibility) == expected
-
-    sim = Simulator(m)
-    sim.add_testbench(bench)
-    sim.run()
-
-
-def test_terrain_bands_preserve_hue_and_quiet_surface_continuity():
-    m = Module()
-    intensity = Signal(4)
-    age_group = Signal(3)
-    history_slice = Signal(4)
-    bands = Signal()
-    banded_intensity = Signal(4)
-    banded_age_group = Signal(3)
-    m.d.comb += [
-        banded_intensity.eq(
-            _terrain_band_intensity(intensity, history_slice, bands)),
-        banded_age_group.eq(
-            _terrain_band_age_group(age_group, history_slice, bands)),
-    ]
-
-    async def bench(ctx):
-        for source, history, enabled, expected in (
-                (15, 14, 1, 13),
-                (15, 15, 1, 15),
-                (2, 14, 1, 1),
-                (1, 14, 1, 1),
-                (0, 14, 1, 0),
-                (15, 14, 0, 15)):
-            ctx.set(intensity, source)
-            ctx.set(history_slice, history)
-            ctx.set(bands, enabled)
-            await ctx.delay(1e-9)
-            assert ctx.get(banded_intensity) == expected
-
-        for source, history, enabled, expected in (
-                (0, 14, 1, 1),
-                (0, 15, 1, 0),
-                (6, 14, 1, 7),
-                (7, 14, 1, 7),
-                (3, 14, 0, 3)):
-            ctx.set(age_group, source)
-            ctx.set(history_slice, history)
-            ctx.set(bands, enabled)
-            await ctx.delay(1e-9)
-            assert ctx.get(banded_age_group) == expected
 
     sim = Simulator(m)
     sim.add_testbench(bench)

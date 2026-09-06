@@ -25,6 +25,10 @@ class TriangleCmd(data.Struct):
     x2: signed(12)
     y2: signed(12)
     pixel: Pixel
+    # Mark edge 1->2 for an ordered, one-word dark ridge.  The span renderer
+    # emits it immediately after each fill span so later triangles naturally
+    # occlude it without a depth buffer.
+    ridge: unsigned(1)
 
 
 def _min3(a, b, c):
