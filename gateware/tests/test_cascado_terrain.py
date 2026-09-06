@@ -186,7 +186,7 @@ def test_quiet_terrain_still_emits_complete_contour_commands():
 
 
 def test_adaptive_wire_geometry_refines_near_history_only():
-    """Adaptive mode emits 8x64 far points followed by 8x128 near points."""
+    """Adaptive mode uses 64/128 points, then refines the newest row."""
     dut = Spectrogram(fs=192_000)
     m = Module()
     decoder = csr.Decoder(addr_width=28, data_width=8)
@@ -253,5 +253,5 @@ def test_adaptive_wire_geometry_refines_near_history_only():
 
     sim.add_testbench(bench)
     sim.run()
-    assert command_count == 8 * 64 + 8 * 128
-    assert row_lengths == [64] * 8 + [128] * 8
+    assert command_count == 8 * 64 + 7 * 128 + 256
+    assert row_lengths == [64] * 8 + [128] * 7 + [256]
