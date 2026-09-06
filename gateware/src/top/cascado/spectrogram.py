@@ -1230,11 +1230,11 @@ class Spectrogram(wiring.Component):
             line_fifo.w_data.eq(line_word),
             triangle_fifo.w_en.eq(0),
             triangle_fifo.w_data.eq(triangle_word),
-            # Give the live foreground and its three nearest history strips
-            # two-pixel horizontal coverage. Older strips retain the fast,
-            # conservative four-pixel packed-word coverage. Exact one-pixel
-            # facets exposed unstable shared-edge artifacts on real displays.
-            terrain_detail.eq(Mux(scan_history_age <= 3, 1, 0)),
+            # Terrain always uses conservative four-pixel packed-word
+            # coverage. The quality setting still controls the number of
+            # frequency vertices independently; varying fill granularity by
+            # age proved visually unstable at shared facet boundaries.
+            terrain_detail.eq(0),
             current_projected_point.x.eq(projected_x),
             current_projected_point.y.eq(projected_y),
             current_projected_point.level.eq(terrain_level),
@@ -1705,14 +1705,7 @@ class Spectrogram(wiring.Component):
                             # vertex twice, producing a continuous transition.
                             adaptive_transition.eq(1),
                         ]
-                    # The registered slice increments on this edge. Detail
-                    # changes only as the new slice becomes 12 or 15.
-                    with m.If(
-                            sweep_terrain_style &
-                            ((scan_slice == 11) | (scan_slice == 14))):
-                        m.next = "PUSH_TERRAIN_DETAIL"
-                    with m.Else():
-                        m.next = "START_BIN_GROUP"
+                    m.next = "START_BIN_GROUP"
                 with m.Else():
                     m.next = "IDLE"
 
