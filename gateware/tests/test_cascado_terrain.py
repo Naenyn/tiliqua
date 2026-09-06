@@ -6,18 +6,18 @@ from amaranth.sim import Simulator
 from tiliqua.dsp import ASQ
 
 
-WATERFALL_SRC = Path(__file__).parents[1] / "src" / "top" / "waterfall"
+CASCADO_SRC = Path(__file__).parents[1] / "src" / "top" / "cascado"
 spec = importlib.util.spec_from_file_location(
-    "waterfall_terrain_spectrogram", WATERFALL_SRC / "spectrogram.py")
-waterfall_spectrogram = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(waterfall_spectrogram)
-_log_frequency_bin_buckets = waterfall_spectrogram._log_frequency_bin_buckets
-_terrain_visibility_level = waterfall_spectrogram._terrain_visibility_level
-_magnitude_raw_to_dbfs_level = waterfall_spectrogram._magnitude_raw_to_dbfs_level
+    "cascado_terrain_spectrogram", CASCADO_SRC / "spectrogram.py")
+cascado_spectrogram = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(cascado_spectrogram)
+_log_frequency_bin_buckets = cascado_spectrogram._log_frequency_bin_buckets
+_terrain_visibility_level = cascado_spectrogram._terrain_visibility_level
+_magnitude_raw_to_dbfs_level = cascado_spectrogram._magnitude_raw_to_dbfs_level
 _approximate_magnitude_raw_to_dbfs_level = (
-    waterfall_spectrogram._approximate_magnitude_raw_to_dbfs_level)
-Spectrogram = waterfall_spectrogram.Spectrogram
-MagnitudeToDbfs = waterfall_spectrogram.MagnitudeToDbfs
+    cascado_spectrogram._approximate_magnitude_raw_to_dbfs_level)
+Spectrogram = cascado_spectrogram.Spectrogram
+MagnitudeToDbfs = cascado_spectrogram.MagnitudeToDbfs
 
 
 def test_log_frequency_buckets_cover_positive_spectrum():

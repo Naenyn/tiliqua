@@ -6,7 +6,7 @@
 
 The setup path shares one signed multiplier while the pixel path advances
 three edge equations using additions only. This is deliberately optimized for
-the many small, adjacent triangles used by WATERFALL's projected height field.
+the many small, adjacent triangles used by CASCADO's projected height field.
 """
 
 from amaranth import *

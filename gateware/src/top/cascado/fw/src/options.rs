@@ -8,8 +8,8 @@ use tiliqua_lib::palette::ColorPalette;
 #[strum(serialize_all = "SCREAMING-KEBAB-CASE")]
 pub enum Page {
     #[default]
-    Waterfall,
-    View,
+    Cascado,
+    Style,
     Display,
     Menu,
     Misc,
@@ -193,7 +193,7 @@ button_params!(OneShotButtonParams {
 });
 
 #[derive(OptionPage, Clone)]
-pub struct WaterfallOpts {
+pub struct CascadoOpts {
     #[option]
     pub input: EnumOption<InputChannel>,
     #[option(0)]
@@ -202,10 +202,16 @@ pub struct WaterfallOpts {
     pub range: EnumOption<FrequencyRange>,
     #[option]
     pub rate: EnumOption<ScrollRate>,
+    #[option(-15)]
+    pub rot_x: IntOption<AngleParams>,
+    #[option(15)]
+    pub rot_y: IntOption<AngleParams>,
+    #[option(0)]
+    pub rot_z: IntOption<AngleParams>,
 }
 
 #[derive(OptionPage, Clone)]
-pub struct ViewOpts {
+pub struct StyleOpts {
     #[option]
     pub style: EnumOption<SurfaceStyle>,
     #[option]
@@ -220,12 +226,6 @@ pub struct ViewOpts {
     pub age_fade: EnumOption<OnOff>,
     #[option]
     pub ridges: EnumOption<OnOff>,
-    #[option(-15)]
-    pub rot_x: IntOption<AngleParams>,
-    #[option(15)]
-    pub rot_y: IntOption<AngleParams>,
-    #[option(0)]
-    pub rot_z: IntOption<AngleParams>,
 }
 
 #[derive(OptionPage, Clone)]
@@ -272,10 +272,10 @@ pub struct HelpOpts {
 #[derive(Options, Clone)]
 pub struct Opts {
     pub tracker: ScreenTracker<Page>,
-    #[page(Page::Waterfall)]
-    pub waterfall: WaterfallOpts,
-    #[page(Page::View)]
-    pub view: ViewOpts,
+    #[page(Page::Cascado)]
+    pub cascado: CascadoOpts,
+    #[page(Page::Style)]
+    pub style: StyleOpts,
     #[page(Page::Display)]
     pub display: DisplayOpts,
     #[page(Page::Menu)]

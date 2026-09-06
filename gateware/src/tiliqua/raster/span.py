@@ -5,7 +5,7 @@
 """Flat-shaded triangle rasterization into packed framebuffer spans.
 
 This path is intentionally narrower than :mod:`tiliqua.raster.plot`.  It is
-for opaque, flat-shaded geometry such as WATERFALL's terrain: vertices are
+for opaque, flat-shaded geometry such as CASCADO's terrain: vertices are
 rotated once, triangles become horizontal spans, and four identical 8-bit
 pixels are written per 32-bit PSRAM word.  It deliberately omits blending,
 textures, depth and arbitrary per-pixel coordinate transforms.
@@ -190,7 +190,7 @@ class TriangleSpanRasterizer(wiring.Component):
             self.o.payload.exact.eq(0),
         ]
 
-        # A contour command is encoded without widening WATERFALL's
+        # A contour command is encoded without widening CASCADO's
         # timing-sensitive asynchronous command FIFO: vertices 0 and 1 are
         # identical, vertex 2 is the other endpoint, and the pixel is black.
         # Genuine zero-area triangles were already discarded, so this
@@ -599,7 +599,7 @@ class TriangleSpanRenderer(wiring.Component):
             "i": In(stream.Signature(TriangleCmd)),
             "pause": In(1),
             "alternate": In(1),
-            # WATERFALL encodes complete contour segments as otherwise-invalid
+            # CASCADO encodes complete contour segments as otherwise-invalid
             # zero-area triangle commands, avoiding a wider cross-domain FIFO.
             "ridges": In(1),
             "bus": Out(bus_signature),

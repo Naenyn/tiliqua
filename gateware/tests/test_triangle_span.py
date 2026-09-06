@@ -306,7 +306,7 @@ class TriangleSpanRasterizerTests(unittest.TestCase):
         for rotation in Rotation:
             for cell in cells:
                 with self.subTest(rotation=rotation, cell=cell):
-                    # Match WATERFALL's A-B-C and A-C-D split.
+                    # Match CASCADO's A-B-C and A-C-D split.
                     triangles = [
                         (cell[0], cell[1], cell[2]),
                         (cell[0], cell[2], cell[3]),

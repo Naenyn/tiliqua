@@ -249,9 +249,9 @@ fn scale_rgb_like_palette(
     }
 }
 
-/// Program WATERFALL's shared palette. Physical hue zero belongs to UI and
+/// Program CASCADO's shared palette. Physical hue zero belongs to UI and
 /// axes; terrain uses the remaining entries for level/age or frequency/level.
-fn write_waterfall_palette(
+fn write_cascado_palette(
     palette: ColorPalette,
     video: &mut impl DMAFramebuffer,
     frequency_ramp: bool,
@@ -439,8 +439,8 @@ fn projection_matrix(rot_x: i8, rot_y: i8, rot_z: i8) -> ([i16; 3], [i16; 3]) {
 }
 
 fn sanitize_options(opts: &mut Opts) {
-    if opts.view.quality.value == Quality3d::Low {
-        opts.view.quality.value = Quality3d::Medium;
+    if opts.style.quality.value == Quality3d::Low {
+        opts.style.quality.value = Quality3d::Medium;
     }
 }
 
@@ -483,7 +483,7 @@ fn main() -> ! {
     let spiflash = SPIFlash0::new(peripherals.SPIFLASH_CTRL, SPIFLASH_BASE, SPIFLASH_SZ_BYTES);
 
     tiliqua_fw::handlers::logger_init(serial);
-    info!("Hello from Tiliqua WATERFALL!");
+    info!("Hello from Tiliqua CASCADO!");
 
     let bootinfo = unsafe { bootinfo::BootInfo::from_addr(BOOTINFO_BASE) }.unwrap();
     let modeline = bootinfo
@@ -495,7 +495,7 @@ fn main() -> ! {
     // random power-on contents cannot flash as the buffers are exchanged.
     // Firmware begins at +0x200000, immediately after these two regions.
     // Use ordinary RV32 stores rather than the legacy VexRiscv cache-flush
-    // custom instruction: WATERFALL runs on VexiiRiscv, where that instruction
+    // custom instruction: CASCADO runs on VexiiRiscv, where that instruction
     // traps before the framebuffer/DVI peripheral can be enabled. Sequential
     // volatile writes naturally evict the visible portions of both buffers;
     // any final dirty cache lines lie in the unused padding after buffer 1.
@@ -528,10 +528,16 @@ fn main() -> ! {
             None
         };
     sanitize_options(&mut opts);
+    // Page selection is navigation state, not a sound/display preference.
+    // Always open CASCADO on its first page even if options were saved from
+    // another page, and never resume an in-progress edit across a reboot.
+    opts.tracker.page.value = Page::Cascado;
+    opts.tracker.selected = None;
+    opts.tracker.modify = false;
 
     let mut last_palette = opts.display.palette.value;
-    let mut last_color_by = opts.view.color_by.value;
-    let mut last_age_fade = opts.view.age_fade.value;
+    let mut last_color_by = opts.style.color_by.value;
+    let mut last_age_fade = opts.style.age_fade.value;
     let mut last_plot_hue = opts.display.hue.value;
     let mut last_ui_hue = opts.menu.ui_hue.value;
     let mut last_hide = opts.menu.hide.value;
@@ -550,7 +556,7 @@ fn main() -> ! {
         let mut last_help_scroll = 0;
         let mut help_waiting_for_renderer = false;
         // Count completed 3D surface swaps, rather than HDMI scan frames. This
-        // is the user-visible WATERFALL update rate and includes the small cost
+        // is the user-visible CASCADO update rate and includes the small cost
         // of drawing this diagnostic into each newly completed framebuffer.
         let mut fps_window_start_ms = 0u32;
         let mut fps_window_frames = 0u32;
@@ -604,7 +610,7 @@ fn main() -> ! {
             if help_page_entered {
                 help_waiting_for_renderer = true;
             }
-            // Physical hue zero is reserved by write_waterfall_palette for
+            // Physical hue zero is reserved by write_cascado_palette for
             // all software UI. The user's selected hue is baked into that
             // palette column rather than encoded into framebuffer pixels.
             let ui_hue = 0;
@@ -631,7 +637,7 @@ fn main() -> ! {
                 spectro.flags().write(|w| unsafe {
                     w.enable().bit(false);
                     w.axes().bit(opts.display.axes.value == OnOff::On);
-                    w.input_ch().bits(opts.waterfall.input.value.hw_index());
+                    w.input_ch().bits(opts.cascado.input.value.hw_index());
                     w.display_ack().bit(display_buffer)
                 });
             }
@@ -678,23 +684,23 @@ fn main() -> ! {
             last_help_scroll = help_scroll;
 
             if opts.display.palette.value != last_palette
-                || opts.view.color_by.value != last_color_by
-                || opts.view.age_fade.value != last_age_fade
+                || opts.style.color_by.value != last_color_by
+                || opts.style.age_fade.value != last_age_fade
                 || opts.display.hue.value != last_plot_hue
                 || opts.menu.ui_hue.value != last_ui_hue
                 || first
             {
-                write_waterfall_palette(
+                write_cascado_palette(
                     opts.display.palette.value,
                     &mut display,
-                    opts.view.color_by.value == ColorBy::Frequency,
-                    opts.view.age_fade.value == OnOff::On,
+                    opts.style.color_by.value == ColorBy::Frequency,
+                    opts.style.age_fade.value == OnOff::On,
                     opts.display.hue.value,
                     opts.menu.ui_hue.value,
                 );
                 last_palette = opts.display.palette.value;
-                last_color_by = opts.view.color_by.value;
-                last_age_fade = opts.view.age_fade.value;
+                last_color_by = opts.style.color_by.value;
+                last_age_fade = opts.style.age_fade.value;
                 last_plot_hue = opts.display.hue.value;
                 last_ui_hue = opts.menu.ui_hue.value;
             }
@@ -820,18 +826,18 @@ fn main() -> ! {
             spectro.flags().write(|w| unsafe {
                 w.enable().bit(!on_help_page);
                 w.axes().bit(opts.display.axes.value == OnOff::On);
-                w.input_ch().bits(opts.waterfall.input.value.hw_index());
+                w.input_ch().bits(opts.cascado.input.value.hw_index());
                 w.display_ack().bit(display_buffer)
             });
             spectro
                 .gain()
-                .write(|w| unsafe { w.value().bits(opts.waterfall.gain.value) });
+                .write(|w| unsafe { w.value().bits(opts.cascado.gain.value) });
             spectro
                 .range()
-                .write(|w| unsafe { w.value().bits(opts.waterfall.range.value.hw_index()) });
+                .write(|w| unsafe { w.value().bits(opts.cascado.range.value.hw_index()) });
             spectro
                 .rate()
-                .write(|w| unsafe { w.value().bits(opts.waterfall.rate.value.hw_index()) });
+                .write(|w| unsafe { w.value().bits(opts.cascado.rate.value.hw_index()) });
             spectro
                 .hue()
                 .write(|w| unsafe { w.value().bits(opts.display.hue.value) });
@@ -843,9 +849,9 @@ fn main() -> ! {
                 w.v_active().bits(v_active as u16)
             });
             let (projection_x, projection_y) = projection_matrix(
-                opts.view.rot_x.value,
-                opts.view.rot_y.value,
-                opts.view.rot_z.value,
+                opts.cascado.rot_x.value,
+                opts.cascado.rot_y.value,
+                opts.cascado.rot_z.value,
             );
             spectro.projection_x().write(|w| unsafe {
                 w.frequency().bits(projection_x[0] as u16);
@@ -858,12 +864,12 @@ fn main() -> ! {
                 w.time().bits(projection_y[2] as u16)
             });
             spectro.config_3d().write(|w| unsafe {
-                w.quality().bits(opts.view.quality.value.hw_index());
-                w.style().bit(opts.view.style.value == SurfaceStyle::Terrain);
-                w.log_scale().bit(opts.view.scale.value == FrequencyScale::Log);
-                w.age_fade().bit(opts.view.age_fade.value == OnOff::On);
-                w.frequency_color().bit(opts.view.color_by.value == ColorBy::Frequency);
-                w.ridges().bit(opts.view.ridges.value == OnOff::On)
+                w.quality().bits(opts.style.quality.value.hw_index());
+                w.style().bit(opts.style.style.value == SurfaceStyle::Terrain);
+                w.log_scale().bit(opts.style.scale.value == FrequencyScale::Log);
+                w.age_fade().bit(opts.style.age_fade.value == OnOff::On);
+                w.frequency_color().bit(opts.style.color_by.value == ColorBy::Frequency);
+                w.ridges().bit(opts.style.ridges.value == OnOff::On)
             });
 
             first = false;

@@ -364,7 +364,7 @@ class DbfsLevelSmoother(wiring.Component):
             with m.State("READ"):
                 # Isolate the asynchronous distributed-RAM read from the EMA
                 # arithmetic. Keeping the RAM, comparison, rounded shift and
-                # final add in one cycle was WATERFALL's system-clock path.
+                # final add in one cycle was CASCADO's system-clock path.
                 m.d.sync += [
                     previous_level.eq(mem_r.data),
                     rising.eq(input_level >= mem_r.data),
@@ -403,7 +403,7 @@ class DbfsLevelSmoother(wiring.Component):
 class AnalyzerSampleBuffer(wiring.Component):
     """Absorb analyzer back-pressure without interrupting live audio time.
 
-    WATERFALL observes a non-blocking tap of the codec stream, so the producer
+    CASCADO observes a non-blocking tap of the codec stream, so the producer
     cannot hold a sample while the iterative FFT is busy. Buffering the
     already-resampled stream is inexpensive and keeps every analyzer sample
     contiguous through those periodic stalls.
@@ -421,7 +421,7 @@ class AnalyzerSampleBuffer(wiring.Component):
     def elaborate(self, platform):
         m = Module()
         # SyncFIFO's asynchronous read forces this small memory into
-        # distributed RAM rather than consuming one of WATERFALL's full EBRs.
+        # distributed RAM rather than consuming one of CASCADO's full EBRs.
         m.submodules.fifo = sample_fifo = fifo.SyncFIFO(
             width=self.shape.as_shape().width,
             depth=self.depth,
@@ -686,7 +686,7 @@ class Spectrogram(wiring.Component):
         # bypassing the external source, cable, analog front end, and ADC.
         # 1.5kHz is bin-centred in both the 48kHz and 12kHz analyzer streams;
         # its quantized oscillator coefficient is within 0.6Hz of nominal.
-        if os.environ.get("TILIQUA_WATERFALL_TEST_TONE", "0") == "1":
+        if os.environ.get("TILIQUA_CASCADO_TEST_TONE", "0") == "1":
             m.submodules.test_tone = test_tone = dsp.DWO(
                 sq=ASQ,
                 c=math.cos(2 * math.pi * 1500.0 / self.fs),
@@ -1774,7 +1774,7 @@ class Spectrogram(wiring.Component):
             (line_fifo.w_level == 0) & (triangle_fifo.w_level == 0) &
             ~line_busy_dvi & ~clear_busy_dvi)
 
-        # WATERFALL contributes no beam-raced trace. Pass the scan stream
+        # CASCADO contributes no beam-raced trace. Pass the scan stream
         # through unchanged while observing VSync for atomic framebuffer swaps.
         m.d.comb += self.o.eq(self.i)
         return m

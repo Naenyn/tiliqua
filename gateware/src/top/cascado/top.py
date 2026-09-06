@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: CERN-OHL-S-2.0
 
 """
-WATERFALL is a three-dimensional spectrogram for Eurorack signals, with a
+CASCADO is a three-dimensional spectrogram for Eurorack signals, with a
 selectable input and four-channel analog passthrough.
 
 A 512-point Hann-windowed FFT analyzes one selected input. Sixteen spectra form
@@ -24,14 +24,14 @@ All four analog inputs pass directly to their matching outputs:
         in3 ───────────────────────► out3
         in4 ───────────────────────► out4
 
-WATERFALL options select the input, sensitivity, maximum displayed frequency,
-and history speed. VIEW selects a wire or filled terrain mesh, its quality, and
-rotates the camera independently around the X, Y and Z axes in 15-degree steps.
-DISPLAY controls the projected reference axes, plot hue, palette, and a
-display-only noise floor. The noise floor hides low-level display clutter
-without changing the analyzed signal. The Inferno palette supports hue
-rotation while preserving its heatmap gradient; grayscale palettes
-intentionally ignore hue. MISC contains display rotation and settings
+CASCADO options select the input, sensitivity, maximum displayed frequency,
+history speed, and camera rotation around the X, Y and Z axes in 15-degree
+steps. STYLE selects a wire or filled terrain mesh, its quality, coloring, age
+fade, and ridge accents. DISPLAY controls the projected reference axes, plot
+hue, palette, and a display-only noise floor. The noise floor hides low-level
+display clutter without changing the analyzed signal. The Inferno palette
+supports hue rotation while preserving its heatmap gradient; grayscale
+palettes intentionally ignore hue. MISC contains display rotation and settings
 save/reset actions.
 """
 
@@ -56,7 +56,7 @@ from spectrogram import Spectrogram
 
 
 class BackbufferClear(wiring.Component):
-    """Burst-clear the inactive WATERFALL framebuffer region.
+    """Burst-clear the inactive CASCADO framebuffer region.
 
     The 3D renderer draws a complete surface into the framebuffer that is not
     currently being scanned out, then swaps at a VSync boundary. Clearing that
@@ -155,7 +155,7 @@ class BackbufferClear(wiring.Component):
         return m
 
 
-class WaterfallSoc(TiliquaSoc):
+class CascadoSoc(TiliquaSoc):
 
     module_docstring = sys.modules[__name__].__doc__
 
@@ -169,7 +169,7 @@ class WaterfallSoc(TiliquaSoc):
     def __init__(self, **kwargs):
         self.spectrogram = Spectrogram(
             fs=kwargs["clock_settings"].audio_clock.fs())
-        self.waterfall_line_plotter = line._LinePlotter()
+        self.cascado_line_plotter = line._LinePlotter()
 
         super().__init__(
             finalize_csr_bridge=False,
@@ -179,12 +179,12 @@ class WaterfallSoc(TiliquaSoc):
             fb_overlay=self.spectrogram,
             extra_plot_ports=1,
             with_persist=False,
-            # WATERFALL combines every non-CPU PSRAM client below. This keeps
+            # CASCADO combines every non-CPU PSRAM client below. This keeps
             # the timing-critical central arbiter to a CPU-versus-DMA choice.
             attach_framebuffer_masters=False,
             **kwargs,
         )
-        self.waterfall_terrain_renderer = span.TriangleSpanRenderer(
+        self.cascado_terrain_renderer = span.TriangleSpanRenderer(
             bus_signature=self.psram_periph.bus.signature.flip())
         self.backbuffer_clear = BackbufferClear(
             bus_signature=self.psram_periph.bus.signature.flip())
@@ -193,18 +193,18 @@ class WaterfallSoc(TiliquaSoc):
         # backpressure below keeps bulk clear/terrain writes from occupying the
         # local arbiter while its FIFO reserve is being refilled.
         psram_bus = self.psram_periph.bus
-        self.waterfall_dma_arbiter = wishbone.Arbiter(
+        self.cascado_dma_arbiter = wishbone.Arbiter(
             addr_width=psram_bus.addr_width,
             data_width=psram_bus.data_width,
             granularity=psram_bus.granularity,
             features=psram_bus.features,
         )
-        self.waterfall_dma_arbiter.add(self.fb.bus)
-        self.waterfall_dma_arbiter.add(self.framebuffer_plotter.bus)
-        self.waterfall_dma_arbiter.add(self.backbuffer_clear.bus)
-        self.waterfall_dma_arbiter.add(
-            self.waterfall_terrain_renderer.bus)
-        self.psram_periph.add_master(self.waterfall_dma_arbiter.bus)
+        self.cascado_dma_arbiter.add(self.fb.bus)
+        self.cascado_dma_arbiter.add(self.framebuffer_plotter.bus)
+        self.cascado_dma_arbiter.add(self.backbuffer_clear.bus)
+        self.cascado_dma_arbiter.add(
+            self.cascado_terrain_renderer.bus)
+        self.psram_periph.add_master(self.cascado_dma_arbiter.bus)
 
         self.spectrogram_periph_base = 0x00001000
         self.csr_decoder.add(
@@ -217,45 +217,45 @@ class WaterfallSoc(TiliquaSoc):
     def elaborate(self, platform):
         m = Module()
         m.submodules.spectrogram = self.spectrogram
-        m.submodules.waterfall_line_plotter = self.waterfall_line_plotter
-        m.submodules.waterfall_terrain_renderer = self.waterfall_terrain_renderer
+        m.submodules.cascado_line_plotter = self.cascado_line_plotter
+        m.submodules.cascado_terrain_renderer = self.cascado_terrain_renderer
         m.submodules.backbuffer_clear = self.backbuffer_clear
-        m.submodules.waterfall_dma_arbiter = self.waterfall_dma_arbiter
+        m.submodules.cascado_dma_arbiter = self.cascado_dma_arbiter
         m.submodules += super().elaborate(platform)
 
         wiring.connect(
-            m, self.spectrogram.line_o, self.waterfall_line_plotter.i)
+            m, self.spectrogram.line_o, self.cascado_line_plotter.i)
         wiring.connect(
             m, self.spectrogram.triangle_o,
-            self.waterfall_terrain_renderer.i)
+            self.cascado_terrain_renderer.i)
         m.d.comb += self.spectrogram.line_busy.eq(
-            self.waterfall_line_plotter.busy |
-            self.waterfall_terrain_renderer.busy)
+            self.cascado_line_plotter.busy |
+            self.cascado_terrain_renderer.busy)
         m.d.comb += [
-            self.waterfall_line_plotter.alternate.eq(1),
-            self.waterfall_terrain_renderer.alternate.eq(1),
-            self.waterfall_terrain_renderer.ridges.eq(
+            self.cascado_line_plotter.alternate.eq(1),
+            self.cascado_terrain_renderer.alternate.eq(1),
+            self.cascado_terrain_renderer.ridges.eq(
                 self.spectrogram.ridges_enabled),
-            self.waterfall_terrain_renderer.pause.eq(
+            self.cascado_terrain_renderer.pause.eq(
                 self.fb.scanout_urgent),
         ]
         wiring.connect(
             m, wiring.flipped(self.fb.fbp), self.backbuffer_clear.fbp)
         wiring.connect(
             m, wiring.flipped(self.fb.fbp),
-            self.waterfall_terrain_renderer.fbp)
+            self.cascado_terrain_renderer.fbp)
         # Video scanout is the only hard real-time PSRAM client. Backpressure
         # the exact line renderer whenever its FIFO reserve is being refilled;
         # this changes completion latency, not geometry, and prevents complex
         # spectra from starving the visible framebuffer DMA.
-        waterfall_pixels = self.waterfall_line_plotter.o
-        waterfall_plot = self.framebuffer_plotter.i[3]
+        cascado_pixels = self.cascado_line_plotter.o
+        cascado_plot = self.framebuffer_plotter.i[3]
         m.d.comb += [
-            waterfall_plot.payload.eq(waterfall_pixels.payload),
-            waterfall_plot.valid.eq(
-                waterfall_pixels.valid & ~self.fb.scanout_urgent),
-            waterfall_pixels.ready.eq(
-                waterfall_plot.ready & ~self.fb.scanout_urgent),
+            cascado_plot.payload.eq(cascado_pixels.payload),
+            cascado_plot.valid.eq(
+                cascado_pixels.valid & ~self.fb.scanout_urgent),
+            cascado_pixels.ready.eq(
+                cascado_plot.ready & ~self.fb.scanout_urgent),
             self.backbuffer_clear.alternate.eq(1),
             self.backbuffer_clear.pause.eq(self.fb.scanout_urgent),
         ]
@@ -291,7 +291,7 @@ class WaterfallSoc(TiliquaSoc):
 if __name__ == "__main__":
     this_path = os.path.dirname(os.path.realpath(__file__))
     top_level_cli(
-        WaterfallSoc,
+        CascadoSoc,
         path=this_path,
         archiver_callback=lambda archiver: archiver.with_option_storage(),
         # Qualify this dense design with an explicit placement and fail loudly
