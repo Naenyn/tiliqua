@@ -230,8 +230,9 @@ class TriangleSpanRasterizerTests(unittest.TestCase):
             self.assertEqual(fill[3:], (5, 11))
             self.assertEqual(ridge[3:], (0, 0))
             self.assertEqual(ridge[0] >> 2, ridge[1] >> 2)
-            self.assertIn(ridge[0] >> 2,
-                          (fill[0] >> 2, fill[1] >> 2))
+            # This triangle has positive winding and a negative edge-1 y
+            # delta, so the marked edge is the right end of every fill span.
+            self.assertEqual(ridge[0] >> 2, fill[1] >> 2)
 
     def test_horizontal_ridge_covers_the_complete_marked_edge(self):
         width = 32

@@ -178,25 +178,11 @@ class TriangleSpanRasterizer(wiring.Component):
         span_seen = Signal()
         span_x0 = Signal(unsigned(12))
         span_x1 = Signal(unsigned(12))
-        span_edge_first = Signal(signed(27))
-        span_edge_last = Signal(signed(27))
-        span_edge_first_abs = Signal(unsigned(27))
-        span_edge_last_abs = Signal(unsigned(27))
+        ridge_at_left = Signal()
         ridge_x = Signal(unsigned(12))
         ridge_horizontal = Signal()
         m.d.comb += [
-            span_edge_first_abs.eq(Mux(
-                span_edge_first < 0,
-                -span_edge_first,
-                span_edge_first)),
-            span_edge_last_abs.eq(Mux(
-                span_edge_last < 0,
-                -span_edge_last,
-                span_edge_last)),
-            ridge_x.eq(Mux(
-                span_edge_first_abs <= span_edge_last_abs,
-                span_x0,
-                span_x1)),
+            ridge_x.eq(Mux(ridge_at_left, span_x0, span_x1)),
             ridge_horizontal.eq(edge_dy[1] == 0),
             self.o.payload.x0.eq(span_x0),
             self.o.payload.x1.eq(span_x1),
@@ -290,7 +276,17 @@ class TriangleSpanRasterizer(wiring.Component):
                             with m.If(value == 0):
                                 m.next = "IDLE"
                             with m.Else():
-                                m.d.sync += init_step.eq(2)
+                                # ``value`` is the signed triangle area and is
+                                # also the interior sign for edge 1->2.  The
+                                # sign of that edge's x step identifies which
+                                # end of every fill span meets the ridge.  This
+                                # avoids a wide absolute-value comparison on
+                                # every emitted scanline.
+                                m.d.sync += [
+                                    ridge_at_left.eq(
+                                        (value > 0) == (edge_dy[1] > 0)),
+                                    init_step.eq(2),
+                                ]
                                 m.next = "LOAD_SETUP"
                         with m.Case(3):
                             m.d.sync += [edge[0].eq(value), row_edge[0].eq(value),
@@ -310,12 +306,8 @@ class TriangleSpanRasterizer(wiring.Component):
                         m.d.sync += [
                             span_seen.eq(1),
                             span_x0.eq(x),
-                            span_edge_first.eq(edge[1]),
                         ]
-                    m.d.sync += [
-                        span_x1.eq(x + 3),
-                        span_edge_last.eq(lane_edges[3][1]),
-                    ]
+                    m.d.sync += span_x1.eq(x + 3)
 
                 # A triangle intersects each scanline in one contiguous run.
                 # Once a populated word is followed by an empty one, no later
