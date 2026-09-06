@@ -912,15 +912,15 @@ class Spectrogram(wiring.Component):
             setattr(m.submodules, f"{name}_ff", FFSynchronizer(src, dst, o_domain="dvi"))
 
         # Display-only floor. Six-bit levels span -96..0 dBFS, so the three
-        # thresholds are approximately levels 16, 20 and 24. Ease the first
+        # thresholds are approximately levels 20, 22 and 24. Ease the first
         # four levels (~6 dB) above the threshold in from the baseline; above
         # that knee the calibrated amplitude is passed through unchanged.
         noise_floor_threshold_dvi = Signal(6)
         with m.Switch(noise_floor_dvi):
             with m.Case(1):
-                m.d.comb += noise_floor_threshold_dvi.eq(16)  # -72 dBFS
-            with m.Case(2):
                 m.d.comb += noise_floor_threshold_dvi.eq(20)  # -66 dBFS
+            with m.Case(2):
+                m.d.comb += noise_floor_threshold_dvi.eq(22)  # -63 dBFS
             with m.Case(3):
                 m.d.comb += noise_floor_threshold_dvi.eq(24)  # -60 dBFS
             with m.Default():

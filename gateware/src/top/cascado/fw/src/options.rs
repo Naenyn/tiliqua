@@ -124,8 +124,8 @@ pub enum ScrollRate {
     #[strum(serialize = "fast")]
     Fast,
     #[strum(serialize = "medium")]
-    Medium,
     #[default]
+    Medium,
     #[strum(serialize = "slow")]
     Slow,
     #[strum(serialize = "very-slow")]
@@ -164,10 +164,10 @@ pub enum DisplayNoiseFloor {
     #[default]
     #[strum(serialize = "off")]
     Off,
-    #[strum(serialize = "-72dB")]
-    Db72,
     #[strum(serialize = "-66dB")]
     Db66,
+    #[strum(serialize = "-63dB")]
+    Db63,
     #[strum(serialize = "-60dB")]
     Db60,
 }
@@ -176,8 +176,8 @@ impl DisplayNoiseFloor {
     pub fn hw_index(self) -> u8 {
         match self {
             Self::Off => 0,
-            Self::Db72 => 1,
-            Self::Db66 => 2,
+            Self::Db66 => 1,
+            Self::Db63 => 2,
             Self::Db60 => 3,
         }
     }
@@ -232,7 +232,7 @@ pub struct StyleOpts {
     #[option]
     #[option_name("age fade")]
     pub age_fade: EnumOption<OnOff>,
-    #[option]
+    #[option(OnOff::Off)]
     pub ridges: EnumOption<OnOff>,
 }
 
