@@ -1100,7 +1100,6 @@ class Spectrogram(wiring.Component):
         terrain_cell_visibility_level_next = Signal(6)
         terrain_cell_visible = Signal()
         terrain_cell_frequency_intensity = Signal(4)
-        terrain_detail = Signal(2)
         wire_display_level = Signal(6)
         wire_frequency_intensity = Signal(4)
         # Palette packing has only 64 possible level inputs. Keep both the
@@ -1230,11 +1229,6 @@ class Spectrogram(wiring.Component):
             line_fifo.w_data.eq(line_word),
             triangle_fifo.w_en.eq(0),
             triangle_fifo.w_data.eq(triangle_word),
-            # Terrain always uses conservative four-pixel packed-word
-            # coverage. The quality setting still controls the number of
-            # frequency vertices independently; varying fill granularity by
-            # age proved visually unstable at shared facet boundaries.
-            terrain_detail.eq(0),
             current_projected_point.x.eq(projected_x),
             current_projected_point.y.eq(projected_y),
             current_projected_point.level.eq(terrain_level),
@@ -1388,26 +1382,6 @@ class Spectrogram(wiring.Component):
                     m.next = "IDLE"
                 with m.Elif(clear_done_dvi):
                     m.d.dvi += clear_request.eq(0)
-                    with m.If(sweep_terrain_style):
-                        m.next = "PUSH_TERRAIN_DETAIL"
-                    with m.Else():
-                        m.next = "START_BIN_GROUP"
-
-            with m.State("PUSH_TERRAIN_DETAIL"):
-                # A reserved zero-area command changes the span granularity
-                # in FIFO order without widening every triangle command.
-                m.d.comb += [
-                    triangle_word.x0.eq(0),
-                    triangle_word.y0.eq(0),
-                    triangle_word.x1.eq(0),
-                    triangle_word.y1.eq(0),
-                    triangle_word.x2.eq(0),
-                    triangle_word.y2.eq(0),
-                    triangle_word.pixel.color.eq(0),
-                    triangle_word.pixel.intensity.eq(terrain_detail + 1),
-                    triangle_fifo.w_en.eq(1),
-                ]
-                with m.If(triangle_fifo.w_rdy):
                     m.next = "START_BIN_GROUP"
 
             with m.State("START_BIN_GROUP"):

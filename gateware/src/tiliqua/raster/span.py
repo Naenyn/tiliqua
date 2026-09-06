@@ -7,7 +7,7 @@
 This path is intentionally narrower than :mod:`tiliqua.raster.plot`.  It is
 for opaque, flat-shaded geometry such as CASCADO's terrain: vertices are
 rotated once, triangles become horizontal spans, and packed 32-bit PSRAM
-words are written with optional endpoint byte masks. It deliberately omits
+words are written with endpoint byte masks for contours. It deliberately omits
 blending, textures, depth and arbitrary per-pixel coordinate transforms.
 """
 
@@ -29,8 +29,8 @@ class SpanCmd(data.Struct):
     y: unsigned(12)
     pixel: Pixel
     alternate: unsigned(1)
-    # Coarse triangle fills cover complete packed words. Detailed fills and
-    # contours use endpoint byte masks.
+    # Triangle fills cover complete packed words. Contours use endpoint byte
+    # masks so their one-pixel lines remain thin.
     exact: unsigned(1)
 
 
@@ -82,7 +82,6 @@ class TriangleSpanRasterizer(wiring.Component):
 
         cmd = Signal(TriangleCmd)
         cmd_ridge = Signal()
-        fill_detail = Signal(2)
         min_x = Signal(signed(12))
         max_x = Signal(signed(12))
         min_y = Signal(signed(12))
@@ -178,38 +177,6 @@ class TriangleSpanRasterizer(wiring.Component):
             lane_inside[0] | lane_inside[1] |
             lane_inside[2] | lane_inside[3])
 
-        first_inside_lane = Signal(2)
-        last_inside_lane = Signal(2)
-        quantized_first_x = Signal(unsigned(12))
-        quantized_last_x = Signal(unsigned(12))
-        m.d.comb += [
-            first_inside_lane.eq(Mux(
-                lane_inside[0], 0,
-                Mux(lane_inside[1], 1,
-                    Mux(lane_inside[2], 2, 3)))),
-            last_inside_lane.eq(Mux(
-                lane_inside[3], 3,
-                Mux(lane_inside[2], 2,
-                    Mux(lane_inside[1], 1, 0)))),
-            # Detail zero preserves conservative full-word coverage. Detail
-            # one rounds only to two-pixel pairs; detail two retains the exact
-            # covered byte lanes. ``x`` is always word-aligned, so composing
-            # its low bits directly avoids putting two 12-bit adders here.
-            # All modes still inspect four pixels at once.
-            quantized_first_x.eq(Mux(
-                fill_detail == 2,
-                Cat(first_inside_lane, x[2:]),
-                Mux(fill_detail == 1,
-                    Cat(Const(0, 1), first_inside_lane[1], x[2:]),
-                    x))),
-            quantized_last_x.eq(Mux(
-                fill_detail == 2,
-                Cat(last_inside_lane, x[2:]),
-                Mux(fill_detail == 1,
-                    Cat(Const(1, 1), last_inside_lane[1], x[2:]),
-                    Cat(Const(3, 2), x[2:])))),
-        ]
-
         span_seen = Signal()
         span_x0 = Signal(unsigned(12))
         span_x1 = Signal(unsigned(12))
@@ -219,20 +186,7 @@ class TriangleSpanRasterizer(wiring.Component):
             self.o.payload.y.eq(y),
             self.o.payload.pixel.eq(cmd.pixel),
             self.o.payload.alternate.eq(self.alternate),
-            self.o.payload.exact.eq(fill_detail != 0),
-        ]
-
-        # CASCADO changes fill granularity only a few times per surface. A
-        # reserved zero-area command updates that state in-order, avoiding two
-        # extra bits on every entry of the timing-sensitive asynchronous FIFO.
-        encoded_command = Signal()
-        detail_control_command = Signal()
-        m.d.comb += [
-            encoded_command.eq(
-                (cmd.x0 == cmd.x1) & (cmd.y0 == cmd.y1)),
-            detail_control_command.eq(
-                encoded_command & (cmd.pixel.color == 0) &
-                (cmd.pixel.intensity != 0)),
+            self.o.payload.exact.eq(0),
         ]
 
         # A contour command is encoded without widening CASCADO's
@@ -242,7 +196,8 @@ class TriangleSpanRasterizer(wiring.Component):
         # representation is unambiguous to the span renderer.
         contour_command = Signal()
         m.d.comb += contour_command.eq(
-            encoded_command & (cmd.pixel.as_value() == 0))
+            (cmd.x0 == cmd.x1) & (cmd.y0 == cmd.y1) &
+            (cmd.pixel.as_value() == 0))
 
         # Contours use a span-producing Bresenham walk. Consecutive pixels on
         # one physical scanline are coalesced into a single exact span, keeping
@@ -351,10 +306,7 @@ class TriangleSpanRasterizer(wiring.Component):
                     m.next = "LOAD_BOUNDS"
 
             with m.State("LOAD_BOUNDS"):
-                with m.If(detail_control_command):
-                    m.d.sync += fill_detail.eq(cmd.pixel.intensity - 1)
-                    m.next = "IDLE"
-                with m.Elif(contour_command):
+                with m.If(contour_command):
                     with m.If(cmd_ridge):
                         m.d.sync += [
                             line_x.eq(cmd.x1),
@@ -485,9 +437,9 @@ class TriangleSpanRasterizer(wiring.Component):
                     with m.If(~span_seen):
                         m.d.sync += [
                             span_seen.eq(1),
-                            span_x0.eq(quantized_first_x),
+                            span_x0.eq(x),
                         ]
-                    m.d.sync += span_x1.eq(quantized_last_x)
+                    m.d.sync += span_x1.eq(Cat(Const(3, 2), x[2:]))
 
                 # A triangle intersects each scanline in one contiguous run.
                 # Once a populated word is followed by an empty one, no later
@@ -519,8 +471,8 @@ class TriangleSpanRasterizer(wiring.Component):
 class PackedSpanWriter(wiring.Component):
     """Write opaque spans directly to PSRAM in bounded incrementing bursts.
 
-    Coarse terrain spans use conservative four-pixel word coverage. Detailed
-    terrain and contour spans retain byte masks at their endpoints.
+    Terrain spans use conservative four-pixel word coverage. Exact contour
+    spans retain byte masks at their endpoints so they remain one pixel wide.
     """
 
     def __init__(self, *, bus_signature, burst_words=16):

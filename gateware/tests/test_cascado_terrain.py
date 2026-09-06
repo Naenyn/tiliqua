@@ -144,7 +144,6 @@ def test_quiet_terrain_still_emits_complete_contour_commands():
     sim.add_clock(1 / 60_000_000, domain="sync")
     sim.add_clock(1 / 74_250_000, domain="dvi")
     commands = []
-    detail_controls = []
 
     async def bench(ctx):
         # Default terrain/ridge settings with untouched history represent a
@@ -163,14 +162,7 @@ def test_quiet_terrain_still_emits_complete_contour_commands():
                 }
                 command["pixel"] = ctx.get(
                     dut.triangle_o.payload.pixel.as_value())
-                all_vertices_equal = (
-                    command["x0"] == command["x1"] == command["x2"] and
-                    command["y0"] == command["y1"] == command["y2"])
-                if all_vertices_equal and command["pixel"] != 0:
-                    detail_controls.append(ctx.get(
-                        dut.triangle_o.payload.pixel.intensity))
-                else:
-                    commands.append(command)
+                commands.append(command)
                 if len(commands) == 8:
                     return
             await ctx.tick()
@@ -178,10 +170,6 @@ def test_quiet_terrain_still_emits_complete_contour_commands():
 
     sim.add_testbench(bench)
     sim.run()
-    # The far rows request conservative four-pixel fill coverage. The encoded
-    # value is detail + 1 so zero remains the existing contour sentinel.
-    assert detail_controls
-    assert all(detail == 1 for detail in detail_controls)
     assert len(commands) == 8
     assert all(command["x0"] == command["x1"] for command in commands)
     assert all(command["y0"] == command["y1"] for command in commands)

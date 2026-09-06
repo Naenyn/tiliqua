@@ -83,21 +83,6 @@ def reference_line_pixels(start, end, width, height):
 class TriangleSpanRasterizerTests(unittest.TestCase):
 
     @staticmethod
-    async def _set_detail(ctx, dut, detail):
-        for index in range(3):
-            ctx.set(getattr(dut.i.payload, f"x{index}"), 0)
-            ctx.set(getattr(dut.i.payload, f"y{index}"), 0)
-        ctx.set(dut.i.payload.pixel.color, 0)
-        ctx.set(dut.i.payload.pixel.intensity, detail + 1)
-        ctx.set(dut.i.valid, 1)
-        while not ctx.get(dut.i.ready):
-            await ctx.tick()
-        await ctx.tick()
-        ctx.set(dut.i.valid, 0)
-        while ctx.get(dut.busy):
-            await ctx.tick()
-
-    @staticmethod
     async def _send_triangle(ctx, dut, vertices, pixels):
         for index, (x, y) in enumerate(vertices):
             ctx.set(getattr(dut.i.payload, f"x{index}"), x)
@@ -126,33 +111,31 @@ class TriangleSpanRasterizerTests(unittest.TestCase):
         height = 10
         logical = [(1, 2), (8, 3), (4, 8)]
 
-        for detail, block_size in ((0, 4), (1, 2), (2, 1)):
-            for rotation in Rotation:
-                with self.subTest(detail=detail, rotation=rotation):
-                    dut = TriangleSpanRasterizer()
-                    sim = Simulator(dut)
-                    sim.add_clock(1e-6)
-                    actual = set()
+        for rotation in Rotation:
+            with self.subTest(rotation=rotation):
+                dut = TriangleSpanRasterizer()
+                sim = Simulator(dut)
+                sim.add_clock(1e-6)
+                actual = set()
 
-                    async def bench(ctx):
-                        ctx.set(dut.h_active, width)
-                        ctx.set(dut.v_active, height)
-                        ctx.set(dut.rotation, rotation)
-                        ctx.set(dut.alternate, 1)
-                        ctx.set(dut.o.ready, 1)
-                        await self._set_detail(ctx, dut, detail)
-                        await self._send_triangle(ctx, dut, logical, actual)
+                async def bench(ctx):
+                    ctx.set(dut.h_active, width)
+                    ctx.set(dut.v_active, height)
+                    ctx.set(dut.rotation, rotation)
+                    ctx.set(dut.alternate, 1)
+                    ctx.set(dut.o.ready, 1)
+                    await self._send_triangle(ctx, dut, logical, actual)
 
-                    sim.add_testbench(bench)
-                    sim.run()
-                    transformed = transform_triangle(
-                        logical, rotation, width, height)
-                    self.assertEqual(
-                        actual,
-                        granular_pixels(
-                            reference_pixels(transformed, width, height),
-                            width, block_size),
-                    )
+                sim.add_testbench(bench)
+                sim.run()
+                transformed = transform_triangle(
+                    logical, rotation, width, height)
+                self.assertEqual(
+                    actual,
+                    granular_pixels(
+                        reference_pixels(transformed, width, height),
+                        width, 4),
+                )
 
     def test_repeated_small_surfaces_do_not_reemit_old_spans(self):
         """Exercise more than the four frames that broke generation tagging."""
@@ -303,54 +286,51 @@ class TriangleSpanRasterizerTests(unittest.TestCase):
             ((2, 4), (12, 20), (29, 18), (20, 5)),
         ]
 
-        for detail, block_size in ((0, 4), (1, 2), (2, 1)):
-            for rotation in Rotation:
-                for cell in cells:
-                    with self.subTest(
-                            detail=detail, rotation=rotation, cell=cell):
-                        # Match CASCADO's A-B-C and A-C-D split.
-                        triangles = [
-                            (cell[0], cell[1], cell[2]),
-                            (cell[0], cell[2], cell[3]),
-                        ]
-                        dut = TriangleSpanRasterizer()
-                        sim = Simulator(dut)
-                        sim.add_clock(1e-6)
-                        actual = set()
+        for rotation in Rotation:
+            for cell in cells:
+                with self.subTest(rotation=rotation, cell=cell):
+                    # Match CASCADO's A-B-C and A-C-D split.
+                    triangles = [
+                        (cell[0], cell[1], cell[2]),
+                        (cell[0], cell[2], cell[3]),
+                    ]
+                    dut = TriangleSpanRasterizer()
+                    sim = Simulator(dut)
+                    sim.add_clock(1e-6)
+                    actual = set()
 
-                        async def bench(ctx):
-                            ctx.set(dut.h_active, width)
-                            ctx.set(dut.v_active, height)
-                            ctx.set(dut.rotation, rotation)
-                            ctx.set(dut.alternate, 1)
-                            ctx.set(dut.o.ready, 1)
-                            await self._set_detail(ctx, dut, detail)
-                            for triangle in triangles:
-                                await self._send_triangle(
-                                    ctx, dut, triangle, actual)
+                    async def bench(ctx):
+                        ctx.set(dut.h_active, width)
+                        ctx.set(dut.v_active, height)
+                        ctx.set(dut.rotation, rotation)
+                        ctx.set(dut.alternate, 1)
+                        ctx.set(dut.o.ready, 1)
+                        for triangle in triangles:
+                            await self._send_triangle(
+                                ctx, dut, triangle, actual)
 
-                        sim.add_testbench(bench)
-                        sim.run()
-                        transformed = [
-                            transform_triangle(
-                                triangle, rotation, width, height)
-                            for triangle in triangles
-                        ]
-                        expected = set().union(*(
-                            granular_pixels(
-                                reference_pixels(triangle, width, height),
-                                width, block_size)
-                            for triangle in transformed
-                        ))
-                        self.assertEqual(actual, expected)
+                    sim.add_testbench(bench)
+                    sim.run()
+                    transformed = [
+                        transform_triangle(
+                            triangle, rotation, width, height)
+                        for triangle in triangles
+                    ]
+                    expected = set().union(*(
+                        granular_pixels(
+                            reference_pixels(triangle, width, height),
+                            width, 4)
+                        for triangle in transformed
+                    ))
+                    self.assertEqual(actual, expected)
 
-                        # No background pixel may be trapped between filled
-                        # pixels on a scanline of this convex projected cell.
-                        for y in range(height):
-                            xs = sorted(x for x, py in actual if py == y)
-                            if xs:
-                                self.assertEqual(
-                                    xs, list(range(xs[0], xs[-1] + 1)))
+                    # No background pixel may be trapped between filled
+                    # pixels on a scanline of this convex projected cell.
+                    for y in range(height):
+                        xs = sorted(x for x, py in actual if py == y)
+                        if xs:
+                            self.assertEqual(
+                                xs, list(range(xs[0], xs[-1] + 1)))
 
 class PackedSpanWriterTests(unittest.TestCase):
 
