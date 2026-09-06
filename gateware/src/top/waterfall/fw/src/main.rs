@@ -858,7 +858,7 @@ fn main() -> ! {
                 w.log_scale().bit(opts.view.scale.value == FrequencyScale::Log);
                 w.age_fade().bit(opts.view.age_fade.value == OnOff::On);
                 w.frequency_color().bit(opts.view.color_by.value == ColorBy::Frequency);
-                w.contours().bit(opts.view.contours.value == OnOff::On)
+                w.bands().bit(opts.view.bands.value == OnOff::On)
             });
 
             first = false;
