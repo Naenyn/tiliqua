@@ -1,4 +1,5 @@
 import unittest
+from collections import Counter
 
 from amaranth.sim import Simulator
 from amaranth_soc import wishbone
@@ -21,11 +22,26 @@ def transform_triangle(vertices, rotation, width, height):
     return result
 
 
-def reference_pixels(vertices, width, height):
+def reference_pixels(vertices, width, height, *, shared_edge_rule=False):
     def edge(a, b, point):
         return ((point[0] - a[0]) * (b[1] - a[1]) -
                 (point[1] - a[1]) * (b[0] - a[0]))
 
+    area = edge(vertices[0], vertices[1], vertices[2])
+    winding_positive = area > 0
+
+    def owns_edge(a, b):
+        dx = b[0] - a[0]
+        dy = b[1] - a[1]
+        if winding_positive:
+            return dy > 0 or (dy == 0 and dx < 0)
+        return dy < 0 or (dy == 0 and dx > 0)
+
+    owners = [
+        owns_edge(vertices[0], vertices[1]),
+        owns_edge(vertices[1], vertices[2]),
+        owns_edge(vertices[2], vertices[0]),
+    ]
     pixels = set()
     for y in range(height):
         for x in range(width):
@@ -34,8 +50,19 @@ def reference_pixels(vertices, width, height):
                 edge(vertices[1], vertices[2], (x, y)),
                 edge(vertices[2], vertices[0], (x, y)),
             ]
-            if all(value >= 0 for value in values) or \
-                    all(value <= 0 for value in values):
+            if shared_edge_rule:
+                if winding_positive:
+                    inside = all(
+                        value > 0 or (value == 0 and owner)
+                        for value, owner in zip(values, owners))
+                else:
+                    inside = all(
+                        value < 0 or (value == 0 and owner)
+                        for value, owner in zip(values, owners))
+            else:
+                inside = (all(value >= 0 for value in values) or
+                          all(value <= 0 for value in values))
+            if inside:
                 pixels.add((x, y))
     return pixels
 
@@ -150,7 +177,9 @@ class TriangleSpanRasterizerTests(unittest.TestCase):
                     self.assertEqual(
                         actual,
                         granular_pixels(
-                            reference_pixels(transformed, width, height),
+                            reference_pixels(
+                                transformed, width, height,
+                                shared_edge_rule=(detail == 2)),
                             width, block_size),
                     )
 
@@ -338,7 +367,9 @@ class TriangleSpanRasterizerTests(unittest.TestCase):
                         ]
                         expected = set().union(*(
                             granular_pixels(
-                                reference_pixels(triangle, width, height),
+                                reference_pixels(
+                                    triangle, width, height,
+                                    shared_edge_rule=(detail == 2)),
                                 width, block_size)
                             for triangle in transformed
                         ))
@@ -351,6 +382,54 @@ class TriangleSpanRasterizerTests(unittest.TestCase):
                             if xs:
                                 self.assertEqual(
                                     xs, list(range(xs[0], xs[-1] + 1)))
+
+    def test_exact_neighboring_cells_own_shared_pixels_once(self):
+        """A projected terrain strip has no double-painted shared pixels."""
+        width = 40
+        height = 40
+        far = [(3, 5), (11, 4), (20, 6), (29, 3), (37, 5)]
+        near = [(4, 32), (12, 30), (21, 33), (30, 29), (38, 31)]
+        logical = []
+        for index in range(len(far) - 1):
+            a, d = far[index], far[index + 1]
+            b, c = near[index], near[index + 1]
+            logical.extend(((a, b, c), (a, c, d)))
+
+        for rotation in Rotation:
+            with self.subTest(rotation=rotation):
+                dut = TriangleSpanRasterizer()
+                sim = Simulator(dut)
+                sim.add_clock(1e-6)
+                emitted = []
+
+                async def bench(ctx):
+                    ctx.set(dut.h_active, width)
+                    ctx.set(dut.v_active, height)
+                    ctx.set(dut.rotation, rotation)
+                    ctx.set(dut.alternate, 1)
+                    ctx.set(dut.o.ready, 1)
+                    await self._set_detail(ctx, dut, 2)
+                    for triangle in logical:
+                        pixels = set()
+                        await self._send_triangle(ctx, dut, triangle, pixels)
+                        emitted.extend(pixels)
+
+                sim.add_testbench(bench)
+                sim.run()
+                hits = Counter(emitted)
+                self.assertTrue(hits)
+                self.assertEqual(max(hits.values()), 1)
+
+                transformed = [
+                    transform_triangle(triangle, rotation, width, height)
+                    for triangle in logical
+                ]
+                expected = set().union(*(
+                    reference_pixels(
+                        triangle, width, height, shared_edge_rule=True)
+                    for triangle in transformed
+                ))
+                self.assertEqual(set(hits), expected)
 
 
 class PackedSpanWriterTests(unittest.TestCase):
