@@ -1091,6 +1091,7 @@ class Spectrogram(wiring.Component):
         triangle_word = Signal(TriangleCmd)
         current_projected_point = Signal(ProjectedPoint)
         high_quality = Signal()
+        adaptive_transition = Signal()
         terrain_level = Signal(6)
         terrain_cell_sum = Signal(8)
         terrain_cell_level_next = Signal(6)
@@ -1137,6 +1138,7 @@ class Spectrogram(wiring.Component):
         terrain_row_read_en = Signal()
         terrain_row_write_en = Signal()
         contour_row_read_en = Signal()
+        contour_done = Signal()
 
         m.d.comb += [
             terrain_row_read_en.eq(0),
@@ -1144,6 +1146,13 @@ class Spectrogram(wiring.Component):
             contour_row_read_en.eq(0),
             log_bucket_r.en.eq(0),
             log_bucket_r.addr.eq(Cat(scan_point, high_quality)),
+            # contour_point doubles as the previous-row vertex index during
+            # terrain construction. At the adaptive boundary it advances once
+            # per pair of current vertices, so the EBR address itself needs no
+            # wide transition mux.
+            contour_done.eq(
+                (contour_point == scan_point_last) |
+                (adaptive_transition & (contour_point == 63))),
             row_read_point.as_value().eq(Mux(
                 row_bank == 0,
                 row_read_ports[1].data,
@@ -1155,8 +1164,7 @@ class Spectrogram(wiring.Component):
                 read_port.en.eq(
                     (terrain_row_read_en | contour_row_read_en) &
                     (row_bank != index)),
-                read_port.addr.eq(Mux(
-                    contour_row_read_en, contour_point, scan_point)),
+                read_port.addr.eq(contour_point),
                 write_port.en.eq(
                     terrain_row_write_en & (row_bank == index)),
                 write_port.addr.eq(scan_point),
@@ -1164,12 +1172,11 @@ class Spectrogram(wiring.Component):
             ]
 
         m.d.comb += [
-            # Every range now has a matching analyzer sample rate and therefore
+            # Every range has a matching analyzer sample rate and therefore
             # uses all 256 positive-frequency bins. Pool the complete spectrum
-            # into 64 or 128 vertices solely according to the quality setting.
+            # into the 64- or 128-vertex geometry latched for this history row.
             # The previous range-dependent geometry was inherited from the old
             # fixed-rate analyzer and truncated the 6kHz and 3kHz views.
-            high_quality.eq(sweep_quality_3d == 2),
             scan_point_last.eq(scan_geometry[0]),
             scan_group_shift.eq(scan_geometry[1]),
             frequency_coordinate.eq(
@@ -1334,7 +1341,12 @@ class Spectrogram(wiring.Component):
                     m.d.dvi += [
                         scan_slice.eq(0),
                         scan_point.eq(0),
+                        contour_point.eq(0),
                         row_bank.eq(0),
+                        # Higher uses 128 points throughout. Adaptive begins
+                        # with 64-point rows and switches at history row eight.
+                        high_quality.eq(quality_3d_dvi == 2),
+                        adaptive_transition.eq(0),
                         # Freeze every property that can make one projected
                         # sweep disagree with another. The live analyzer may
                         # continue writing newer columns in the background.
@@ -1588,7 +1600,7 @@ class Spectrogram(wiring.Component):
                     triangle_fifo.w_en.eq(1),
                 ]
                 with m.If(triangle_fifo.w_rdy):
-                    with m.If(contour_point == scan_point_last):
+                    with m.If(contour_done):
                         m.next = "ADVANCE_SURFACE_SLICE"
                     with m.Else():
                         m.d.dvi += [
@@ -1625,11 +1637,23 @@ class Spectrogram(wiring.Component):
                     with m.Else():
                         m.next = "ADVANCE_SURFACE_SLICE"
                 with m.Else():
-                    m.d.dvi += scan_point.eq(scan_point + 1)
+                    m.d.dvi += [
+                        scan_point.eq(scan_point + 1),
+                        # Normal rows advance one previous vertex per current
+                        # vertex. The first 128-point adaptive row advances
+                        # only after each odd point, mapping 0,0,1,1,... onto
+                        # the preceding 64-point row without an address mux.
+                        contour_point.eq(
+                            contour_point + Mux(
+                                adaptive_transition, scan_point[0], 1)),
+                    ]
                     m.next = "START_BIN_GROUP"
 
             with m.State("ADVANCE_SURFACE_SLICE"):
-                m.d.dvi += scan_point.eq(0)
+                m.d.dvi += [
+                    scan_point.eq(0),
+                    contour_point.eq(0),
+                ]
                 with m.If(scan_slice == 15):
                     with m.If(axes_dvi):
                         m.next = "AXIS_FREQUENCY_START"
@@ -1639,7 +1663,22 @@ class Spectrogram(wiring.Component):
                     m.d.dvi += [
                         scan_slice.eq(scan_slice + 1),
                         row_bank.eq(~row_bank),
+                        # The transition flag is asserted for only row eight.
+                        # high_quality deliberately retains its value after
+                        # the midpoint so the nearer half remains at 128
+                        # points without re-decoding the mode on every row.
+                        adaptive_transition.eq(0),
                     ]
+                    with m.If(
+                            (sweep_quality_3d == 0) & (scan_slice == 7)):
+                        m.d.dvi += [
+                            high_quality.eq(1),
+                            # Row eight connects 128 current vertices to the
+                            # preceding 64-point row. Halving only the
+                            # previous-row read address duplicates each far
+                            # vertex twice, producing a continuous transition.
+                            adaptive_transition.eq(1),
+                        ]
                     m.next = "START_BIN_GROUP"
                 with m.Else():
                     m.next = "IDLE"

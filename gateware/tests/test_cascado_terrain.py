@@ -3,7 +3,10 @@ from pathlib import Path
 
 from amaranth import Module, Signal
 from amaranth.sim import Simulator
+from amaranth_soc import csr
+from amaranth_soc.csr import wishbone as csr_wishbone
 from tiliqua.dsp import ASQ
+from tiliqua.test import csr as csr_util
 
 
 CASCADO_SRC = Path(__file__).parents[1] / "src" / "top" / "cascado"
@@ -18,6 +21,7 @@ _approximate_magnitude_raw_to_dbfs_level = (
     cascado_spectrogram._approximate_magnitude_raw_to_dbfs_level)
 Spectrogram = cascado_spectrogram.Spectrogram
 MagnitudeToDbfs = cascado_spectrogram.MagnitudeToDbfs
+LineStripCmd = cascado_spectrogram.LineStripCmd
 
 
 def test_log_frequency_buckets_cover_positive_spectrum():
@@ -179,3 +183,75 @@ def test_quiet_terrain_still_emits_complete_contour_commands():
         (left["x2"], left["y2"]) == (right["x0"], right["y0"])
         for left, right in zip(commands, commands[1:])
     )
+
+
+def test_adaptive_wire_geometry_refines_near_history_only():
+    """Adaptive mode emits 8x64 far points followed by 8x128 near points."""
+    dut = Spectrogram(fs=192_000)
+    m = Module()
+    decoder = csr.Decoder(addr_width=28, data_width=8)
+    decoder.add(dut.bus, addr=0, name="dut")
+    bridge = csr_wishbone.WishboneCSRBridge(decoder.bus, data_width=32)
+    m.submodules += [dut, decoder, bridge]
+    sim = Simulator(m)
+    sim.add_clock(1 / 60_000_000, domain="sync")
+    sim.add_clock(1 / 74_250_000, domain="dvi")
+    command_count = 0
+    completed_rows = 0
+    row_lengths = []
+    current_row_length = 0
+
+    async def write_flags(ctx, enable, axes):
+        await csr_util.wb_csr_w_dict(ctx, dut.bus, bridge.wb_bus, "flags", {
+            "enable": enable,
+            "axes": axes,
+            "input_ch": 0,
+            "display_ack": 0,
+        })
+
+    async def bench(ctx):
+        nonlocal command_count, completed_rows, current_row_length
+        ctx.set(dut.clear_done, 1)
+        ctx.set(dut.flush_done, 1)
+        ctx.set(dut.line_busy, 0)
+        ctx.set(dut.line_o.ready, 1)
+        ctx.set(dut.triangle_o.ready, 1)
+
+        # Stop the power-on default sweep before configuring a deterministic
+        # wire-only adaptive frame.
+        await write_flags(ctx, 0, 0)
+        for _ in range(100_000):
+            if ctx.get(dut._status.f.renderer_idle.r_data):
+                break
+            await ctx.tick()
+        else:
+            raise AssertionError("renderer did not stop for adaptive test")
+
+        await csr_util.wb_csr_w_dict(
+            ctx, dut.bus, bridge.wb_bus, "config_3d", {
+                "quality": 0,
+                "style": 0,
+                "log_scale": 0,
+                "age_fade": 0,
+                "frequency_color": 0,
+                "ridges": 0,
+            })
+        await write_flags(ctx, 1, 0)
+
+        for _ in range(150_000):
+            if ctx.get(dut.line_o.valid):
+                command_count += 1
+                current_row_length += 1
+                if ctx.get(dut.line_o.payload.cmd) == LineStripCmd.END:
+                    row_lengths.append(current_row_length)
+                    current_row_length = 0
+                    completed_rows += 1
+                    if completed_rows == 16:
+                        return
+            await ctx.tick()
+        raise AssertionError("adaptive wire frame did not finish")
+
+    sim.add_testbench(bench)
+    sim.run()
+    assert command_count == 8 * 64 + 8 * 128
+    assert row_lengths == [64] * 8 + [128] * 8

@@ -25,9 +25,10 @@ All four analog inputs pass directly to their matching outputs:
         in4 ───────────────────────► out4
 
 CASCADO options select the input, sensitivity, maximum displayed frequency,
-history speed, and camera rotation around the X, Y and Z axes in 15-degree
-steps. STYLE selects a wire or filled terrain mesh, its quality, coloring, age
-fade, and ridge accents. DISPLAY controls the projected reference axes and
+history speed, and camera rotation around the X, Y and Z axes in 5-degree
+steps. STYLE selects a wire or filled terrain mesh, including lower, adaptive,
+and higher frequency detail, coloring, age fade, and ridge accents. DISPLAY
+controls the projected reference axes and
 their detail: lines alone, projected tick marks, or ticks with compact labels.
 It also contains plot hue, palette, a display-only noise floor, and an optional
 surface-rate readout.

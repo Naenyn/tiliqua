@@ -19,10 +19,10 @@ pub enum Page {
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 #[strum(serialize_all = "kebab-case")]
 pub enum Quality3d {
-    // Retain the old serialized discriminant so saved values migrate cleanly.
-    #[strum(disabled)]
-    Low,
+    // Reuse the retired legacy-low discriminant so existing saved lower and
+    // higher values keep their meaning while old low values gain the new LOD.
     #[default]
+    Adaptive,
     #[strum(serialize = "lower")]
     Medium,
     #[strum(serialize = "higher")]
@@ -32,7 +32,8 @@ pub enum Quality3d {
 impl Quality3d {
     pub fn hw_index(self) -> u8 {
         match self {
-            Self::Low | Self::Medium => 1,
+            Self::Adaptive => 0,
+            Self::Medium => 1,
             Self::High => 2,
         }
     }
@@ -202,7 +203,7 @@ pub enum EditHide {
 
 int_params!(GainParams<u8>   { step: 1, min: 0, max: 12 });
 int_params!(HueParams<u8>    { step: 1, min: 0, max: 15 });
-int_params!(AngleParams<i8>  { step: 15, min: -90, max: 90 });
+int_params!(AngleParams<i8>  { step: 5, min: -90, max: 90 });
 int_params!(ScrollParams<u8> { step: 1, min: 0, max: 125 });
 int_params!(HideParams<u8>   { step: 1, min: 2, max: 16, format: IntFormat::Scaled { divisor: 2, precision: 1, suffix: "s" } });
 button_params!(OneShotButtonParams {

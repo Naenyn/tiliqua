@@ -566,12 +566,6 @@ where
     Ok(())
 }
 
-fn sanitize_options(opts: &mut Opts) {
-    if opts.style.quality.value == Quality3d::Low {
-        opts.style.quality.value = Quality3d::Medium;
-    }
-}
-
 struct App {
     ui: ui::UI<Encoder0, EurorackPmod0, I2c0, Opts>,
 }
@@ -649,7 +643,6 @@ fn main() -> ! {
             warn!("No option storage region: disable persistent storage");
             None
         };
-    sanitize_options(&mut opts);
     // Page selection is navigation state, not a sound/display preference.
     // Always open CASCADO on its first page even if options were saved from
     // another page, and never resume an in-progress edit across a reboot.
@@ -708,7 +701,6 @@ fn main() -> ! {
             let (opts, draw_options, save_opts, wipe_opts, uptime_ms) =
                 critical_section::with(|cs| {
                     let mut app = app.borrow_ref_mut(cs);
-                    sanitize_options(&mut app.ui.opts);
                     let save_opts = app.ui.opts.misc.save_opts.poll();
                     let wipe_opts = app.ui.opts.misc.wipe_opts.poll();
                     (
@@ -997,7 +989,6 @@ fn main() -> ! {
                     let mut app = app.borrow_ref_mut(cs);
                     app.ui.opts = Opts::default();
                     app.ui.opts.misc.rotation.value = modeline.rotate.clone();
-                    sanitize_options(&mut app.ui.opts);
                     if let Some(ref mut flash_persist) = flash_persist_opt {
                         flash_persist.erase_all().unwrap();
                     }
