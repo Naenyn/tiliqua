@@ -295,5 +295,5 @@ if __name__ == "__main__":
         # Qualify this dense design with an explicit placement and fail loudly
         # if a source or toolchain change no longer meets every clock. The seed
         # identifies this build recipe; timing is still rechecked on each build.
-        nextpnr_opts="--seed 1",
+        nextpnr_opts="--seed 3",
     )
