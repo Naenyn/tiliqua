@@ -182,8 +182,6 @@ class TriangleSpanRasterizer(wiring.Component):
 
         first_inside_lane = Signal(2)
         last_inside_lane = Signal(2)
-        first_inside_x = Signal(unsigned(12))
-        last_inside_x = Signal(unsigned(12))
         quantized_first_x = Signal(unsigned(12))
         quantized_last_x = Signal(unsigned(12))
         m.d.comb += [
@@ -195,23 +193,23 @@ class TriangleSpanRasterizer(wiring.Component):
                 lane_inside[3], 3,
                 Mux(lane_inside[2], 2,
                     Mux(lane_inside[1], 1, 0)))),
-            first_inside_x.eq(x + first_inside_lane),
-            last_inside_x.eq(x + last_inside_lane),
             # Detail zero preserves conservative full-word coverage. Detail
             # one rounds only to two-pixel pairs; detail two retains the exact
-            # covered byte lanes. All modes still inspect four pixels at once.
+            # covered byte lanes. ``x`` is always word-aligned, so composing
+            # its low bits directly avoids putting two 12-bit adders here.
+            # All modes still inspect four pixels at once.
             quantized_first_x.eq(Mux(
                 cmd.detail == 2,
-                first_inside_x,
+                Cat(first_inside_lane, x[2:]),
                 Mux(cmd.detail == 1,
-                    Cat(Const(0, 1), first_inside_x[1:]),
+                    Cat(Const(0, 1), first_inside_lane[1], x[2:]),
                     x))),
             quantized_last_x.eq(Mux(
                 cmd.detail == 2,
-                last_inside_x,
+                Cat(last_inside_lane, x[2:]),
                 Mux(cmd.detail == 1,
-                    Cat(Const(1, 1), last_inside_x[1:]),
-                    x + 3))),
+                    Cat(Const(1, 1), last_inside_lane[1], x[2:]),
+                    Cat(Const(3, 2), x[2:])))),
         ]
 
         span_seen = Signal()
