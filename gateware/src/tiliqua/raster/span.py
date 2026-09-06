@@ -179,29 +179,30 @@ class TriangleSpanRasterizer(wiring.Component):
         span_x1 = Signal(unsigned(12))
         ridge_at_left = Signal()
         ridge_x = Signal(unsigned(12))
-        ridge_min_y = Signal(signed(12))
-        ridge_max_y = Signal(signed(12))
         ridge_row_active = Signal()
         ridge_horizontal = Signal()
         ridge_previous_x = Signal(unsigned(12))
         ridge_previous_valid = Signal()
+        ridge_moves_right = Signal()
         ridge_span_x0 = Signal(unsigned(12))
         ridge_span_x1 = Signal(unsigned(12))
         m.d.comb += [
             ridge_x.eq(Mux(ridge_at_left, span_x0, span_x1)),
-            ridge_min_y.eq(Mux(cmd.y1 < cmd.y2, cmd.y1, cmd.y2)),
-            ridge_max_y.eq(Mux(cmd.y1 > cmd.y2, cmd.y1, cmd.y2)),
-            ridge_row_active.eq((y >= ridge_min_y) & (y <= ridge_max_y)),
+            ridge_row_active.eq(Mux(
+                edge_dy[1] >= 0,
+                (y >= cmd.y1) & (y <= cmd.y2),
+                (y >= cmd.y2) & (y <= cmd.y1))),
             ridge_horizontal.eq(edge_dy[1] == 0),
+            ridge_moves_right.eq(ridge_previous_x < ridge_x),
             ridge_span_x0.eq(Mux(
                 ridge_horizontal,
                 span_x0,
-                Mux(ridge_previous_valid & (ridge_previous_x < ridge_x),
+                Mux(ridge_previous_valid & ridge_moves_right,
                     ridge_previous_x, ridge_x))),
             ridge_span_x1.eq(Mux(
                 ridge_horizontal,
                 span_x1,
-                Mux(ridge_previous_valid & (ridge_previous_x > ridge_x),
+                Mux(ridge_previous_valid & ~ridge_moves_right,
                     ridge_previous_x, ridge_x))),
             self.o.payload.x0.eq(span_x0),
             self.o.payload.x1.eq(span_x1),
