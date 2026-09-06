@@ -238,8 +238,6 @@ class CascadoSoc(TiliquaSoc):
         m.d.comb += [
             self.cascado_line_plotter.alternate.eq(1),
             self.cascado_terrain_renderer.alternate.eq(1),
-            self.cascado_terrain_renderer.ridges.eq(
-                self.spectrogram.ridges_enabled),
             self.cascado_terrain_renderer.pause.eq(
                 self.fb.scanout_urgent),
         ]

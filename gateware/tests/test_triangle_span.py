@@ -212,7 +212,6 @@ class TriangleSpanRasterizerTests(unittest.TestCase):
                         ctx.set(getattr(dut.i.payload, f"y{index}"), y)
                     ctx.set(dut.i.payload.pixel.color, 0)
                     ctx.set(dut.i.payload.pixel.intensity, 0)
-                    ctx.set(dut.ridge, 1)
                     ctx.set(dut.i.valid, 1)
                     while not ctx.get(dut.i.ready):
                         await ctx.tick()
@@ -244,35 +243,52 @@ class TriangleSpanRasterizerTests(unittest.TestCase):
                         transformed[1], transformed[2], width, height),
                 )
 
-    def test_disabled_contour_command_emits_nothing(self):
+    def test_colored_foreground_contour_is_exact_without_history_ridges(self):
+        """A live colored outline is independent of optional black ridges."""
         dut = TriangleSpanRasterizer()
         sim = Simulator(dut)
         sim.add_clock(1e-6)
-        emitted = []
+        actual = set()
+        expected_pixel = 9 | (12 << 4)
 
         async def bench(ctx):
             ctx.set(dut.h_active, 32)
             ctx.set(dut.v_active, 24)
             ctx.set(dut.rotation, Rotation.NORMAL)
+            ctx.set(dut.alternate, 1)
             ctx.set(dut.o.ready, 1)
-            for index, (x, y) in enumerate(((3, 4), (3, 4), (27, 16))):
+            start = (4, 18)
+            end = (28, 11)
+            for index, (x, y) in enumerate((start, start, end)):
                 ctx.set(getattr(dut.i.payload, f"x{index}"), x)
                 ctx.set(getattr(dut.i.payload, f"y{index}"), y)
-            ctx.set(dut.ridge, 0)
+            ctx.set(dut.i.payload.pixel.color, 9)
+            ctx.set(dut.i.payload.pixel.intensity, 12)
             ctx.set(dut.i.valid, 1)
             while not ctx.get(dut.i.ready):
                 await ctx.tick()
             await ctx.tick()
             ctx.set(dut.i.valid, 0)
-            for _ in range(100):
-                emitted.append(ctx.get(dut.o.valid))
+
+            for _ in range(4000):
+                if ctx.get(dut.o.valid):
+                    assert ctx.get(dut.o.payload.exact) == 1
+                    assert ctx.get(dut.o.payload.pixel.as_value()) == expected_pixel
+                    y = ctx.get(dut.o.payload.y)
+                    for x in range(ctx.get(dut.o.payload.x0),
+                                   ctx.get(dut.o.payload.x1) + 1):
+                        actual.add((x, y))
                 if not ctx.get(dut.busy):
-                    break
+                    return
                 await ctx.tick()
+            raise AssertionError("colored contour rasterizer did not finish")
 
         sim.add_testbench(bench)
         sim.run()
-        self.assertFalse(any(emitted))
+        self.assertEqual(
+            actual,
+            reference_line_pixels((4, 18), (28, 11), 32, 24),
+        )
 
     def test_adjacent_triangles_form_watertight_projected_cells(self):
         """Terrain's two triangles must not crack along their shared edge."""

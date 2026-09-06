@@ -48,7 +48,6 @@ class TriangleSpanRasterizer(wiring.Component):
     v_active: In(unsigned(12))
     rotation: In(Rotation)
     alternate: In(1)
-    ridge: In(1)
     busy: Out(1)
 
     def elaborate(self, platform):
@@ -81,7 +80,6 @@ class TriangleSpanRasterizer(wiring.Component):
         m.d.comb += transformed.pixel.eq(self.i.payload.pixel)
 
         cmd = Signal(TriangleCmd)
-        cmd_ridge = Signal()
         min_x = Signal(signed(12))
         max_x = Signal(signed(12))
         min_y = Signal(signed(12))
@@ -191,13 +189,14 @@ class TriangleSpanRasterizer(wiring.Component):
 
         # A contour command is encoded without widening CASCADO's
         # timing-sensitive asynchronous command FIFO: vertices 0 and 1 are
-        # identical, vertex 2 is the other endpoint, and the pixel is black.
-        # Genuine zero-area triangles were already discarded, so this
-        # representation is unambiguous to the span renderer.
+        # identical and vertex 2 is the other endpoint. Black contours are
+        # the optional history ridges; palette-colored contours sharpen only
+        # the live foreground edge and are always enabled. Genuine zero-area
+        # triangles were already discarded, so this representation is
+        # unambiguous to the span renderer.
         contour_command = Signal()
         m.d.comb += contour_command.eq(
-            (cmd.x0 == cmd.x1) & (cmd.y0 == cmd.y1) &
-            (cmd.pixel.as_value() == 0))
+            (cmd.x0 == cmd.x1) & (cmd.y0 == cmd.y1))
 
         # Contours use a span-producing Bresenham walk. Consecutive pixels on
         # one physical scanline are coalesced into a single exact span, keeping
@@ -299,25 +298,19 @@ class TriangleSpanRasterizer(wiring.Component):
             with m.State("IDLE"):
                 m.d.comb += self.i.ready.eq(1)
                 with m.If(self.i.valid):
-                    m.d.sync += [
-                        cmd.eq(transformed),
-                        cmd_ridge.eq(self.ridge),
-                    ]
+                    m.d.sync += cmd.eq(transformed)
                     m.next = "LOAD_BOUNDS"
 
             with m.State("LOAD_BOUNDS"):
                 with m.If(contour_command):
-                    with m.If(cmd_ridge):
-                        m.d.sync += [
-                            line_x.eq(cmd.x1),
-                            line_y.eq(cmd.y1),
-                            line_target_x.eq(cmd.x2),
-                            line_target_y.eq(cmd.y2),
-                            line_run_valid.eq(0),
-                        ]
-                        m.next = "LINE_SETUP"
-                    with m.Else():
-                        m.next = "IDLE"
+                    m.d.sync += [
+                        line_x.eq(cmd.x1),
+                        line_y.eq(cmd.y1),
+                        line_target_x.eq(cmd.x2),
+                        line_target_y.eq(cmd.y2),
+                        line_run_valid.eq(0),
+                    ]
+                    m.next = "LINE_SETUP"
                 with m.Else():
                     m.d.sync += [
                         # Align the scan origin to the packed word boundary.
@@ -367,8 +360,7 @@ class TriangleSpanRasterizer(wiring.Component):
                         self.o.payload.x0.eq(line_emit_x0),
                         self.o.payload.x1.eq(line_emit_x1),
                         self.o.payload.y.eq(line_y),
-                        self.o.payload.pixel.color.eq(0),
-                        self.o.payload.pixel.intensity.eq(0),
+                        self.o.payload.pixel.eq(cmd.pixel),
                         self.o.payload.exact.eq(1),
                     ]
                     with m.If(self.o.ready):
@@ -603,7 +595,6 @@ class TriangleSpanRenderer(wiring.Component):
             "alternate": In(1),
             # CASCADO encodes complete contour segments as otherwise-invalid
             # zero-area triangle commands, avoiding a wider cross-domain FIFO.
-            "ridges": In(1),
             "bus": Out(bus_signature),
             "fbp": In(DMAFramebuffer.Properties()),
             "busy": Out(1),
@@ -629,7 +620,6 @@ class TriangleSpanRenderer(wiring.Component):
             rasterizer.v_active.eq(self.fbp.timings.v_active),
             rasterizer.rotation.eq(self.fbp.rotation),
             rasterizer.alternate.eq(self.alternate),
-            rasterizer.ridge.eq(self.ridges),
             span_fifo.w_en.eq(rasterizer.o.valid & span_fifo.w_rdy),
             span_fifo.w_data.eq(rasterizer.o.payload.as_value()),
             rasterizer.o.ready.eq(span_fifo.w_rdy),

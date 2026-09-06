@@ -1554,6 +1554,42 @@ class Spectrogram(wiring.Component):
                     triangle_fifo.w_en.eq(terrain_cell_visible),
                 ]
                 with m.If(~terrain_cell_visible | triangle_fifo.w_rdy):
+                    # The live edge gets one exact palette-colored outline
+                    # after its packed-word facets. This improves foreground
+                    # definition without reintroducing fine-grained fill (and
+                    # its coverage holes) throughout the terrain history.
+                    with m.If(terrain_cell_visible & (scan_slice == 15)):
+                        m.next = "PUSH_FOREGROUND_CONTOUR"
+                    with m.Else():
+                        m.d.dvi += [
+                            terrain_current_left.eq(current_projected_point),
+                            terrain_previous_left.eq(terrain_previous_right),
+                        ]
+                        m.next = "ADVANCE_SURFACE_POINT"
+
+            with m.State("PUSH_FOREGROUND_CONTOUR"):
+                # Repeated vertex zero selects the exact Bresenham path in
+                # the span renderer. Unlike the optional black history
+                # ridges, this foreground contour inherits the cell palette
+                # and remains visible regardless of the ridges setting.
+                m.d.comb += [
+                    triangle_word.x0.eq(terrain_current_left.x),
+                    triangle_word.y0.eq(terrain_current_left.y),
+                    triangle_word.x1.eq(terrain_current_left.x),
+                    triangle_word.y1.eq(terrain_current_left.y),
+                    triangle_word.x2.eq(current_projected_point.x),
+                    triangle_word.y2.eq(current_projected_point.y),
+                    triangle_word.pixel.color.eq(Mux(
+                        sweep_frequency_color,
+                        sweep_frequency_hue,
+                        terrain_level_color)),
+                    triangle_word.pixel.intensity.eq(Mux(
+                        sweep_frequency_color,
+                        terrain_cell_frequency_intensity,
+                        terrain_level_intensity)),
+                    triangle_fifo.w_en.eq(1),
+                ]
+                with m.If(triangle_fifo.w_rdy):
                     m.d.dvi += [
                         terrain_current_left.eq(current_projected_point),
                         terrain_previous_left.eq(terrain_previous_right),
