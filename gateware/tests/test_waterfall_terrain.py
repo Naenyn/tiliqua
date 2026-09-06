@@ -3,6 +3,7 @@ from pathlib import Path
 
 from amaranth import Module, Signal
 from amaranth.sim import Simulator
+from tiliqua.dsp import ASQ
 
 
 WATERFALL_SRC = Path(__file__).parents[1] / "src" / "top" / "waterfall"
@@ -12,7 +13,11 @@ waterfall_spectrogram = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(waterfall_spectrogram)
 _log_frequency_bin_buckets = waterfall_spectrogram._log_frequency_bin_buckets
 _terrain_visibility_level = waterfall_spectrogram._terrain_visibility_level
+_magnitude_raw_to_dbfs_level = waterfall_spectrogram._magnitude_raw_to_dbfs_level
+_approximate_magnitude_raw_to_dbfs_level = (
+    waterfall_spectrogram._approximate_magnitude_raw_to_dbfs_level)
 Spectrogram = waterfall_spectrogram.Spectrogram
+MagnitudeToDbfs = waterfall_spectrogram.MagnitudeToDbfs
 
 
 def test_log_frequency_buckets_cover_positive_spectrum():
@@ -44,6 +49,58 @@ def test_log_frequency_buckets_give_octaves_equal_space():
                      for bin_index in (4, 8, 16, 32, 64, 128)]
     octave_widths = [b - a for a, b in zip(octave_points, octave_points[1:])]
     assert max(octave_widths) - min(octave_widths) <= 1
+
+
+def test_log_magnitude_approximation_is_monotonic_and_accurate():
+    """The compact LUT must not step backward at exponent boundaries."""
+    previous = 0
+    maximum_error = 0
+    for raw in range(1, 1 << 16):
+        approximate = _approximate_magnitude_raw_to_dbfs_level(raw)
+        exact = _magnitude_raw_to_dbfs_level(raw)
+        assert approximate >= previous
+        maximum_error = max(maximum_error, abs(approximate - exact))
+        previous = approximate
+
+    assert maximum_error <= 1
+
+
+def test_hardware_log_magnitude_matches_fractional_lut_model():
+    dut = MagnitudeToDbfs(ASQ)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+
+    async def bench(ctx):
+        ctx.set(dut.o.ready, 1)
+        # Exercise both sides of every exponent transition as well as full
+        # scale. The old independently rounded tables stepped backward at
+        # 1023 -> 1024 even though the input magnitude increased.
+        raw_values = [1]
+        for exponent in range(1, ASQ.as_shape().width):
+            boundary = 1 << exponent
+            raw_values.extend((boundary - 1, boundary))
+        raw_values.append((1 << ASQ.as_shape().width) - 1)
+
+        previous = 0
+        for raw in raw_values:
+            ctx.set(dut.i.payload.sample.as_value(), raw)
+            ctx.set(dut.i.valid, 1)
+            while not ctx.get(dut.i.ready):
+                await ctx.tick()
+            await ctx.tick()
+            ctx.set(dut.i.valid, 0)
+            while not ctx.get(dut.o.valid):
+                await ctx.tick()
+
+            actual = ctx.get(dut.o.payload.sample)
+            expected = _approximate_magnitude_raw_to_dbfs_level(raw)
+            assert actual == expected
+            assert actual >= previous
+            previous = actual
+            await ctx.tick()
+
+    sim.add_testbench(bench)
+    sim.run()
 
 
 def test_terrain_visibility_culls_quiet_old_facets_without_recoloring():

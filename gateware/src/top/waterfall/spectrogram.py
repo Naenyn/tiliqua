@@ -29,6 +29,10 @@ HISTORY_COL_BITS = (HISTORY_COLS - 1).bit_length()
 HISTORY_ADDR_BITS = HISTORY_COL_BITS + 8
 SPECTRUM_DB_FLOOR = -96.0
 SPECTRUM_CORDIC_GAIN = dsp.cordic.RectToPolarCordic.K
+# Preserve fractional display levels while combining the logarithm's exponent
+# and mantissa terms. Rounding each term independently can make the result fall
+# by one level at a power-of-two boundary even though magnitude increased.
+MAGNITUDE_LOG_LEVEL_FRAC_BITS = 3
 
 
 class ProjectedPoint(data.Struct):
@@ -39,8 +43,8 @@ class ProjectedPoint(data.Struct):
     level: unsigned(6)
 
 
-def _magnitude_raw_to_dbfs_level(raw, *, f_bits=ASQ.f_bits):
-    """Convert an uncorrected Hann/FFT/CORDIC magnitude to 0..63 dBFS.
+def _magnitude_raw_to_dbfs_position(raw, *, f_bits=ASQ.f_bits):
+    """Convert an uncorrected Hann/FFT/CORDIC magnitude to a dBFS position.
 
     The forward FFT is normalized by 1/N. A real, bin-centred full-scale
     sinusoid contributes half its amplitude to the positive spectrum and the
@@ -49,11 +53,61 @@ def _magnitude_raw_to_dbfs_level(raw, *, f_bits=ASQ.f_bits):
     a factor of ``4/K`` to become conventional single-sided amplitude.
     """
     if raw <= 0:
-        return 0
+        return 0.0
     amplitude = (raw / (1 << f_bits)) * (4.0 / SPECTRUM_CORDIC_GAIN)
     dbfs = 20.0 * math.log10(amplitude)
-    normalized = (dbfs - SPECTRUM_DB_FLOOR) / -SPECTRUM_DB_FLOOR
-    return max(0, min(63, round(normalized * 63)))
+    return (dbfs - SPECTRUM_DB_FLOOR) / -SPECTRUM_DB_FLOOR * 63
+
+
+def _magnitude_raw_to_dbfs_level(raw, *, f_bits=ASQ.f_bits):
+    """Convert an uncorrected Hann/FFT/CORDIC magnitude to 0..63 dBFS."""
+    position = _magnitude_raw_to_dbfs_position(raw, f_bits=f_bits)
+    return max(0, min(63, round(position)))
+
+
+def _magnitude_log_tables(shape=ASQ):
+    """Build fractional exponent and mantissa contributions for the log LUT."""
+    width = shape.as_shape().width
+    exponent_bits = (width - 1).bit_length()
+    scale = 1 << MAGNITUDE_LOG_LEVEL_FRAC_BITS
+    maximum = 63 * scale
+
+    exponent_table = []
+    for exponent_value in range(1 << exponent_bits):
+        representative = (1 << exponent_value) * (1.0 + 0.5 / 16.0)
+        position = _magnitude_raw_to_dbfs_position(
+            representative, f_bits=shape.f_bits)
+        exponent_table.append(max(0, min(maximum, round(position * scale))))
+
+    mantissa_table = []
+    mantissa_base = 1.0 + 0.5 / 16.0
+    for mantissa_value in range(16):
+        ratio = (1.0 + (mantissa_value + 0.5) / 16.0) / mantissa_base
+        correction_db = 20.0 * math.log10(ratio)
+        mantissa_table.append(round(correction_db * 63 / 96 * scale))
+
+    return exponent_table, mantissa_table
+
+
+def _approximate_magnitude_raw_to_dbfs_level(raw, shape=ASQ):
+    """Software model of :class:`MagnitudeToDbfs`, used by accuracy tests."""
+    if raw <= 0:
+        return 0
+
+    exponent_table, mantissa_table = _magnitude_log_tables(shape)
+    exponent = raw.bit_length() - 1
+    if exponent >= 4:
+        mantissa = (raw >> (exponent - 4)) & 0xf
+    elif exponent > 0:
+        mantissa = (raw & ((1 << exponent) - 1)) << (4 - exponent)
+    else:
+        mantissa = 0
+
+    fractional_level = exponent_table[exponent] + mantissa_table[mantissa]
+    rounded_level = (
+        fractional_level + (1 << (MAGNITUDE_LOG_LEVEL_FRAC_BITS - 1))
+    ) >> MAGNITUDE_LOG_LEVEL_FRAC_BITS
+    return min(63, rounded_level)
 
 
 def _dbfs_level_q4_to_height(level_q4, tall):
@@ -161,26 +215,25 @@ class MagnitudeToDbfs(wiring.Component):
         # Array containing every exponent/mantissa combination. Each entry
         # represents the midpoint of its four-bit mantissa interval; this is
         # comfortably finer than the display's 1.52dB level quantization.
-        exponent_table = []
-        for exponent_value in range(1 << exponent_bits):
-            representative = (1 << exponent_value) * (1.0 + 0.5 / 16.0)
-            exponent_table.append(_magnitude_raw_to_dbfs_level(
-                representative, f_bits=self.shape.f_bits))
-        mantissa_table = []
-        mantissa_base = 1.0 + 0.5 / 16.0
-        for mantissa_value in range(16):
-            ratio = (1.0 + (mantissa_value + 0.5) / 16.0) / mantissa_base
-            correction_db = 20.0 * math.log10(ratio)
-            mantissa_table.append(round(correction_db * 63 / 96))
-        exponent_levels = Array(Const(level, 6) for level in exponent_table)
-        mantissa_levels = Array(Const(level, 3) for level in mantissa_table)
+        exponent_table, mantissa_table = _magnitude_log_tables(self.shape)
+        fractional_maximum = 63 << MAGNITUDE_LOG_LEVEL_FRAC_BITS
+        exponent_level_bits = max(exponent_table).bit_length()
+        mantissa_level_bits = max(mantissa_table).bit_length()
+        exponent_levels = Array(
+            Const(level, exponent_level_bits) for level in exponent_table)
+        mantissa_levels = Array(
+            Const(level, mantissa_level_bits) for level in mantissa_table)
 
         lookup_exponent = Signal.like(exponent)
         lookup_mantissa = Signal.like(mantissa)
         input_zero = Signal()
         output_first = Signal()
         output_level = Signal(6)
-        level_sum = Signal(7)
+        level_sum = Signal(range(
+            max(exponent_table) + max(mantissa_table) + 1))
+        rounded_level = Signal(range(
+            ((max(exponent_table) + max(mantissa_table))
+             >> MAGNITUDE_LOG_LEVEL_FRAC_BITS) + 2))
 
         m.d.comb += [
             raw.eq(self.i.payload.sample.as_value()),
@@ -189,6 +242,10 @@ class MagnitudeToDbfs(wiring.Component):
             level_sum.eq(
                 exponent_levels[lookup_exponent]
                 + mantissa_levels[lookup_mantissa]),
+            rounded_level.eq(
+                (level_sum
+                 + (1 << (MAGNITUDE_LOG_LEVEL_FRAC_BITS - 1)))
+                >> MAGNITUDE_LOG_LEVEL_FRAC_BITS),
         ]
 
         # Priority-encode the leading one and collect the next four bits as a
@@ -225,7 +282,9 @@ class MagnitudeToDbfs(wiring.Component):
                     m.next = "LOOKUP"
             with m.State("LOOKUP"):
                 m.d.sync += output_level.eq(Mux(
-                    input_zero, 0, Mux(level_sum > 63, 63, level_sum)))
+                    input_zero,
+                    0,
+                    Mux(level_sum >= fractional_maximum, 63, rounded_level)))
                 m.next = "OUTPUT"
             with m.State("OUTPUT"):
                 m.d.comb += [
@@ -798,8 +857,6 @@ class Spectrogram(wiring.Component):
                     bin_index.eq(1),
                     accept_latched.eq(accept_now),
                 ]
-                with m.If(enable & accept_now):
-                    m.d.sync += render_ack_sync.eq(render_token_sync)
             with m.Else():
                 m.d.sync += bin_index.eq(bin_index + 1)
 
@@ -807,6 +864,10 @@ class Spectrogram(wiring.Component):
                 m.d.sync += [
                     newest_col.eq(write_col),
                     write_col.eq(write_col - 1),
+                    # Acknowledge only after the complete spectrum has been
+                    # committed, so the renderer can never observe a partial
+                    # history column if capture and drawing rates change.
+                    render_ack_sync.eq(render_token_sync),
                 ]
 
 

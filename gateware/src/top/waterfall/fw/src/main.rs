@@ -391,7 +391,12 @@ fn sin_cos_q8(angle: i8) -> (i32, i32) {
 }
 
 fn mul_q8(a: i32, b: i32) -> i32 {
-    (a * b) >> 8
+    let product = a * b;
+    // Arithmetic right shift floors negative products. Round both signs to
+    // the nearest Q8 value instead so rotations do not acquire a directional
+    // bias from repeated matrix multiplies.
+    let correction = if product < 0 { 127 } else { 128 };
+    (product + correction) >> 8
 }
 
 /// Build two rows of an Euler-rotated orthographic camera matrix. The base
