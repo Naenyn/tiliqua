@@ -113,6 +113,10 @@ From `gateware/`:
 | REZOMO | `pdm run rezomo build --fs-192khz` | `pdm run rezomo_round build --fs-192khz` |
 | STREZO | `pdm run strezo build --fs-192khz` | `pdm run strezo_round build --fs-192khz` |
 
+Add `--spread-spectrum 0.0` to any build command to disable external video-PLL
+spread spectrum. The selected value is recorded in the archive manifest; when
+the option is omitted, the default remains `0.01`.
+
 The target matrix supplies the qualified default placement seed for each
 product and display. Set `TILIQUA_REZO_FAMILY_SEED` only when deliberately
 testing another route.

@@ -75,6 +75,9 @@ def top_level_cli(
                                   "For SoC bitstreams, on HW R4+ it is not required, as the video mode "
                                   "is dynamically inferred by the bootloader and passed to bitstreams.")
                             )
+        parser.add_argument('--spread-spectrum', type=float, default=0.01,
+                            help=("External video PLL spread-spectrum fraction "
+                                  "(default: 0.01; use 0.0 to disable)."))
 
     if sim_ports or issubclass(fragment, TiliquaSoc):
         simulation_supported = True
@@ -241,7 +244,7 @@ def top_level_cli(
             clk0_hz=kwargs["clock_settings"].frequencies.audio,
             clk1_hz=kwargs["clock_settings"].frequencies.dvi,
             clk1_inherit=kwargs["clock_settings"].dynamic_modeline,
-            spread_spectrum=0.01)
+            spread_spectrum=args.spread_spectrum)
         # Ensure PnR/LPF constraints match the external PLL settings above
         hw_platform.resources[('clkex', 0)].clock.frequency = archiver.external_pll_config.clk0_hz
         hw_platform.resources[('clkex', 1)].clock.frequency = archiver.external_pll_config.clk1_hz
