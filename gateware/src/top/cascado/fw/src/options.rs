@@ -152,6 +152,14 @@ pub enum OnOff {
 }
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
+#[strum(serialize_all = "kebab-case")]
+pub enum YesNo {
+    #[default]
+    No,
+    Yes,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 pub enum DisplayNoiseFloor {
     #[default]
     #[strum(serialize = "off")]
@@ -239,6 +247,9 @@ pub struct DisplayOpts {
     #[option]
     #[option_name("noise floor")]
     pub noise_floor: EnumOption<DisplayNoiseFloor>,
+    #[option]
+    #[option_name("show fps")]
+    pub show_fps: EnumOption<YesNo>,
 }
 
 #[derive(OptionPage, Clone)]

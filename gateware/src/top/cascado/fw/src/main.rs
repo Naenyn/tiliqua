@@ -8,8 +8,8 @@ use irq::handler;
 use log::{info, warn};
 use riscv_rt::entry;
 
-use opts::Options;
 use opts::persistence::{FlashOptionsPersistence, OptionsPersistence};
+use opts::Options;
 use tiliqua_fw::*;
 use tiliqua_hal::dma_framebuffer::DMAFramebuffer;
 use tiliqua_hal::embedded_graphics::prelude::*;
@@ -18,7 +18,7 @@ use tiliqua_hal::embedded_graphics::primitives::{
 };
 use tiliqua_hal::embedded_graphics::{
     mono_font::{ascii::FONT_9X15_BOLD, MonoTextStyle},
-    text::Text,
+    text::{Alignment, Text},
 };
 use tiliqua_lib::calibration::*;
 use tiliqua_lib::color::HI8;
@@ -53,22 +53,15 @@ fn clear_3d_framebuffers() {
     clear_framebuffer_region(PSRAM_FB_BASE + FRAMEBUFFER_REGION_BYTES);
 }
 
-fn clear_help_text_window<D>(
-    display: &mut D,
-    h_active: u32,
-    v_active: u32,
-) -> Result<(), D::Error>
+fn clear_help_text_window<D>(display: &mut D, h_active: u32, v_active: u32) -> Result<(), D::Error>
 where
     D: DrawTarget<Color = HI8>,
 {
     let x = h_active / 2 - 292;
     let y = v_active / 2 - 172;
-    Rectangle::new(
-        Point::new(x as i32, y as i32),
-        Size::new(584, 390),
-    )
-    .into_styled(PrimitiveStyle::with_fill(HI8::BLACK))
-    .draw(display)
+    Rectangle::new(Point::new(x as i32, y as i32), Size::new(584, 390))
+        .into_styled(PrimitiveStyle::with_fill(HI8::BLACK))
+        .draw(display)
 }
 
 fn menu_panel_rect(pos_x: u32, pos_y: u32) -> Rectangle {
@@ -104,12 +97,7 @@ where
     draw::draw_options(display, opts, pos_x, pos_y, hue)
 }
 
-fn erase_menu<D>(
-    display: &mut D,
-    opts: &Opts,
-    pos_x: u32,
-    pos_y: u32,
-) -> Result<(), D::Error>
+fn erase_menu<D>(display: &mut D, opts: &Opts, pos_x: u32, pos_y: u32) -> Result<(), D::Error>
 where
     D: DrawTarget<Color = HI8>,
 {
@@ -126,16 +114,19 @@ fn draw_fps<D>(
     display: &mut D,
     fps_tenths: u32,
     hue: u8,
+    center_x: u32,
+    baseline_y: u32,
 ) -> Result<(), D::Error>
 where
     D: DrawTarget<Color = HI8>,
 {
     let mut label: String<16> = String::new();
     write!(label, "{}.{:01} FPS", fps_tenths / 10, fps_tenths % 10).ok();
-    Text::new(
+    Text::with_alignment(
         &label,
-        Point::new(16, 24),
+        Point::new(center_x as i32, baseline_y as i32),
         MonoTextStyle::new(&FONT_9X15_BOLD, HI8::new(hue, 15)),
+        Alignment::Center,
     )
     .draw(display)
     .map(|_| ())
@@ -222,7 +213,11 @@ fn scale_rgb_visible((r, g, b): (u8, u8, u8), intensity: u8) -> (u8, u8, u8) {
 
 fn max3(a: u8, b: u8, c: u8) -> u8 {
     let ab = if a > b { a } else { b };
-    if ab > c { ab } else { c }
+    if ab > c {
+        ab
+    } else {
+        c
+    }
 }
 
 fn scale_rgb_to_level((r, g, b): (u8, u8, u8), target_level: u8) -> (u8, u8, u8) {
@@ -237,11 +232,7 @@ fn scale_rgb_to_level((r, g, b): (u8, u8, u8), target_level: u8) -> (u8, u8, u8)
     )
 }
 
-fn scale_rgb_like_palette(
-    palette: ColorPalette,
-    rgb: (u8, u8, u8),
-    intensity: u8,
-) -> (u8, u8, u8) {
+fn scale_rgb_like_palette(palette: ColorPalette, rgb: (u8, u8, u8), intensity: u8) -> (u8, u8, u8) {
     if let Some((r, g, b)) = palette.heatmap_color(intensity) {
         scale_rgb_to_level(rgb, max3(r, g, b))
     } else {
@@ -312,8 +303,8 @@ fn write_cascado_palette(
                     ),
                 };
                 let interpolate = |a: u8, b: u8| -> u8 {
-                    (((a as u32 * (29 - fraction) as u32)
-                        + (b as u32 * fraction as u32) + 14) / 29) as u8
+                    (((a as u32 * (29 - fraction) as u32) + (b as u32 * fraction as u32) + 14) / 29)
+                        as u8
                 };
                 let rgb = (
                     interpolate(lo.0, hi.0),
@@ -358,8 +349,8 @@ fn write_cascado_palette(
                 ),
             };
             let interpolate = |a: u8, b: u8| -> u8 {
-                (((a as u32 * (59 - fraction) as u32)
-                    + (b as u32 * fraction as u32) + 29) / 59) as u8
+                (((a as u32 * (59 - fraction) as u32) + (b as u32 * fraction as u32) + 29) / 59)
+                    as u8
             };
             let rgb = (
                 interpolate(lo.0, hi.0),
@@ -457,14 +448,8 @@ impl App {
         let pmod = EurorackPmod0::new(peripherals.PMOD0_PERIPH);
         let hide_ms = menu_hide_ms(opts.menu.hide.value);
         let hide_while_editing = opts.menu.edit_hide.value == EditHide::On;
-        let mut ui = ui::UI::new_with_fade(
-            opts,
-            TIMER0_ISR_PERIOD_MS,
-            hide_ms,
-            encoder,
-            pca9635,
-            pmod,
-        );
+        let mut ui =
+            ui::UI::new_with_fade(opts, TIMER0_ISR_PERIOD_MS, hide_ms, encoder, pca9635, pmod);
         ui.set_hide_while_editing(hide_while_editing);
         Self { ui }
     }
@@ -542,6 +527,7 @@ fn main() -> ! {
     let mut last_ui_hue = opts.menu.ui_hue.value;
     let mut last_hide = opts.menu.hide.value;
     let mut last_edit_hide = opts.menu.edit_hide.value;
+    let mut last_rotation = None;
     let app = Mutex::new(RefCell::new(App::new(opts)));
     handler!(timer0 = || timer0_handler(&app));
 
@@ -567,25 +553,42 @@ fn main() -> ! {
         // rectangle through the pixel plotter.
         let mut menu_fb0: Option<(Opts, u32, u32, u32)> = None;
         let mut menu_fb1: Option<(Opts, u32, u32, u32)> = None;
+        // The firmware loop runs much faster than the surface renderer. Cache
+        // values already published to gateware so an unchanged UI does not
+        // continuously consume CPU/CSR bandwidth while PSRAM is busy drawing
+        // a dense surface.
+        let mut last_flags: Option<(bool, bool, u8, bool)> = None;
+        let mut last_gain: Option<u8> = None;
+        let mut last_range: Option<u8> = None;
+        let mut last_rate: Option<u8> = None;
+        let mut last_hue: Option<u8> = None;
+        let mut last_noise_floor: Option<u8> = None;
+        let mut last_timings: Option<(u16, u16)> = None;
+        let mut last_angles: Option<(i8, i8, i8)> = None;
+        let mut last_config_3d: Option<(u8, bool, bool, bool, bool, bool)> = None;
 
         loop {
-            let (opts, draw_options, save_opts, wipe_opts, uptime_ms) = critical_section::with(|cs| {
-                let mut app = app.borrow_ref_mut(cs);
-                sanitize_options(&mut app.ui.opts);
-                let save_opts = app.ui.opts.misc.save_opts.poll();
-                let wipe_opts = app.ui.opts.misc.wipe_opts.poll();
-                (
-                    app.ui.opts.clone(),
-                    app.ui.draw(),
-                    save_opts,
-                    wipe_opts,
-                    app.ui.uptime_ms,
-                )
-            });
+            let (opts, draw_options, save_opts, wipe_opts, uptime_ms) =
+                critical_section::with(|cs| {
+                    let mut app = app.borrow_ref_mut(cs);
+                    sanitize_options(&mut app.ui.opts);
+                    let save_opts = app.ui.opts.misc.save_opts.poll();
+                    let wipe_opts = app.ui.opts.misc.wipe_opts.poll();
+                    (
+                        app.ui.opts.clone(),
+                        app.ui.draw(),
+                        save_opts,
+                        wipe_opts,
+                        app.ui.uptime_ms,
+                    )
+                });
             // Apply the selected framebuffer rotation before asking for the
             // logical drawing dimensions. Gateware receives the same rotation
             // below so the projected surface and software UI remain aligned.
-            display.rotate(&opts.misc.rotation.value);
+            if last_rotation != Some(opts.misc.rotation.value) {
+                display.rotate(&opts.misc.rotation.value);
+                last_rotation = Some(opts.misc.rotation.value);
+            }
             let h_active = display.size().width;
             let v_active = display.size().height;
             let on_help_page = opts.tracker.page.value == Page::Help;
@@ -601,9 +604,9 @@ fn main() -> ! {
             }
             if opts.menu.edit_hide.value != last_edit_hide || first {
                 critical_section::with(|cs| {
-                    app.borrow_ref_mut(cs).ui.set_hide_while_editing(
-                        opts.menu.edit_hide.value == EditHide::On,
-                    );
+                    app.borrow_ref_mut(cs)
+                        .ui
+                        .set_hide_while_editing(opts.menu.edit_hide.value == EditHide::On);
                 });
                 last_edit_hide = opts.menu.edit_hide.value;
             }
@@ -627,22 +630,30 @@ fn main() -> ! {
             let display_buffer = if on_help_page {
                 current_fb_base != PSRAM_FB_BASE as u32
             } else {
-                surface_status.surface_valid().bit()
-                    && surface_status.display_buffer().bit()
+                surface_status.surface_valid().bit() && surface_status.display_buffer().bit()
             };
             // Publish a Help stop request before touching either framebuffer.
             // Normal 3D display acknowledgements remain below, after menu
             // drawing, so scanout can never reveal a half-drawn menu.
             if on_help_page {
-                spectro.flags().write(|w| unsafe {
-                    w.enable().bit(false);
-                    w.axes().bit(opts.display.axes.value == OnOff::On);
-                    w.input_ch().bits(opts.cascado.input.value.hw_index());
-                    w.display_ack().bit(display_buffer)
-                });
+                let flags = (
+                    false,
+                    opts.display.axes.value == OnOff::On,
+                    opts.cascado.input.value.hw_index(),
+                    display_buffer,
+                );
+                if last_flags != Some(flags) {
+                    spectro.flags().write(|w| unsafe {
+                        w.enable().bit(flags.0);
+                        w.axes().bit(flags.1);
+                        w.input_ch().bits(flags.2);
+                        w.display_ack().bit(flags.3)
+                    });
+                    last_flags = Some(flags);
+                }
             }
-            let desired_fb_base = PSRAM_FB_BASE as u32
-                + if display_buffer { 0x0010_0000 } else { 0 };
+            let desired_fb_base =
+                PSRAM_FB_BASE as u32 + if display_buffer { 0x0010_0000 } else { 0 };
             let framebuffer_swapped = desired_fb_base != current_fb_base;
             if framebuffer_swapped {
                 display.update_fb_base(desired_fb_base);
@@ -666,11 +677,9 @@ fn main() -> ! {
             // full clear for help scrolling; only the text viewport changes.
             let help_scroll_changed =
                 on_help_page && (!last_on_help_page || help_scroll != last_help_scroll);
-            let fullscreen_layer_changed =
-                first ||
-                ((on_help_page != last_on_help_page) &&
-                    (!on_help_page || help_renderer_ready)) ||
-                help_page_became_ready;
+            let fullscreen_layer_changed = first
+                || ((on_help_page != last_on_help_page) && (!on_help_page || help_renderer_ready))
+                || help_page_became_ready;
             if fullscreen_layer_changed {
                 clear_3d_framebuffers();
                 menu_fb0 = None;
@@ -722,31 +731,32 @@ fn main() -> ! {
                 } else {
                     &mut menu_fb0
                 };
-                let menu_changed = menu_slot.as_ref().map(
-                    |(_, old_x, old_y, old_hash)| {
-                        *old_x != menu_x || *old_y != menu_y ||
-                            *old_hash != menu_hash
-                    }).unwrap_or(menu_visible);
+                let menu_changed = menu_slot
+                    .as_ref()
+                    .map(|(_, old_x, old_y, old_hash)| {
+                        *old_x != menu_x || *old_y != menu_y || *old_hash != menu_hash
+                    })
+                    .unwrap_or(menu_visible);
                 // In 3D, each completed surface starts by clearing the back
                 // buffer. After the swap, the current physical buffer may no
                 // longer contain the cached menu even if its fingerprint matches.
                 // Redraw visible menus on 3D swaps, but avoid the old unconditional
                 // erase/redraw loop when no menu is visible.
-                let menu_invalidated_by_3d_swap =
-                    framebuffer_swapped && menu_visible;
-                let menu_visibility_changed =
-                    menu_visible != menu_slot.is_some();
-                if first || menu_changed || menu_visibility_changed ||
-                        menu_invalidated_by_3d_swap {
+                let menu_invalidated_by_3d_swap = framebuffer_swapped && menu_visible;
+                let menu_visibility_changed = menu_visible != menu_slot.is_some();
+                if first || menu_changed || menu_visibility_changed || menu_invalidated_by_3d_swap {
                     if let Some((old_opts, old_x, old_y, _)) = menu_slot.take() {
-                        erase_menu(
-                            &mut display, &old_opts, old_x, old_y).ok();
+                        // A swapped-in surface has just been rendered into a
+                        // fully cleared physical framebuffer. Erasing its old
+                        // cached menu again only duplicates every glyph and
+                        // border write before the new menu is drawn.
+                        if !framebuffer_swapped {
+                            erase_menu(&mut display, &old_opts, old_x, old_y).ok();
+                        }
                     }
                     if menu_visible {
-                        draw_menu(
-                            &mut display, &opts, menu_x, menu_y, ui_hue).ok();
-                        *menu_slot = Some((
-                            opts.clone(), menu_x, menu_y, menu_hash));
+                        draw_menu(&mut display, &opts, menu_x, menu_y, ui_hue).ok();
+                        *menu_slot = Some((opts.clone(), menu_x, menu_y, menu_hash));
                     }
                 }
                 if draw_options || on_help_page || first || framebuffer_swapped {
@@ -761,19 +771,21 @@ fn main() -> ! {
                     )
                     .ok();
                 }
-                if framebuffer_swapped && !on_help_page {
-                    draw_fps(&mut display, fps_tenths, ui_hue).ok();
+                if framebuffer_swapped && !on_help_page && opts.display.show_fps.value == YesNo::Yes
+                {
+                    draw_fps(
+                        &mut display,
+                        fps_tenths,
+                        ui_hue,
+                        h_active / 2,
+                        v_active - 68,
+                    )
+                    .ok();
                 }
 
                 if on_help_page {
-                    if help_page_entered || help_page_became_ready ||
-                            help_scroll_changed || first {
-                        clear_help_text_window(
-                            &mut display,
-                            h_active,
-                            v_active,
-                        )
-                        .ok();
+                    if help_page_entered || help_page_became_ready || help_scroll_changed || first {
+                        clear_help_text_window(&mut display, h_active, v_active).ok();
                         draw::draw_help(
                             &mut display,
                             h_active / 2 - 280,
@@ -823,54 +835,96 @@ fn main() -> ! {
             // In normal 3D operation this acknowledgement deliberately comes
             // after menu drawing. The renderer waits for it before swapping at
             // VSync, so the next front buffer always contains a complete menu.
-            spectro.flags().write(|w| unsafe {
-                w.enable().bit(!on_help_page);
-                w.axes().bit(opts.display.axes.value == OnOff::On);
-                w.input_ch().bits(opts.cascado.input.value.hw_index());
-                w.display_ack().bit(display_buffer)
-            });
-            spectro
-                .gain()
-                .write(|w| unsafe { w.value().bits(opts.cascado.gain.value) });
-            spectro
-                .range()
-                .write(|w| unsafe { w.value().bits(opts.cascado.range.value.hw_index()) });
-            spectro
-                .rate()
-                .write(|w| unsafe { w.value().bits(opts.cascado.rate.value.hw_index()) });
-            spectro
-                .hue()
-                .write(|w| unsafe { w.value().bits(opts.display.hue.value) });
-            spectro.noise_floor().write(|w| unsafe {
-                w.value().bits(opts.display.noise_floor.value.hw_index())
-            });
-            spectro.timings().write(|w| unsafe {
-                w.h_active().bits(h_active as u16);
-                w.v_active().bits(v_active as u16)
-            });
-            let (projection_x, projection_y) = projection_matrix(
+            if !on_help_page {
+                let flags = (
+                    true,
+                    opts.display.axes.value == OnOff::On,
+                    opts.cascado.input.value.hw_index(),
+                    display_buffer,
+                );
+                if last_flags != Some(flags) {
+                    spectro.flags().write(|w| unsafe {
+                        w.enable().bit(flags.0);
+                        w.axes().bit(flags.1);
+                        w.input_ch().bits(flags.2);
+                        w.display_ack().bit(flags.3)
+                    });
+                    last_flags = Some(flags);
+                }
+            }
+            let gain = opts.cascado.gain.value;
+            if last_gain != Some(gain) {
+                spectro.gain().write(|w| unsafe { w.value().bits(gain) });
+                last_gain = Some(gain);
+            }
+            let range = opts.cascado.range.value.hw_index();
+            if last_range != Some(range) {
+                spectro.range().write(|w| unsafe { w.value().bits(range) });
+                last_range = Some(range);
+            }
+            let rate = opts.cascado.rate.value.hw_index();
+            if last_rate != Some(rate) {
+                spectro.rate().write(|w| unsafe { w.value().bits(rate) });
+                last_rate = Some(rate);
+            }
+            let hue = opts.display.hue.value;
+            if last_hue != Some(hue) {
+                spectro.hue().write(|w| unsafe { w.value().bits(hue) });
+                last_hue = Some(hue);
+            }
+            let noise_floor = opts.display.noise_floor.value.hw_index();
+            if last_noise_floor != Some(noise_floor) {
+                spectro
+                    .noise_floor()
+                    .write(|w| unsafe { w.value().bits(noise_floor) });
+                last_noise_floor = Some(noise_floor);
+            }
+            let timings = (h_active as u16, v_active as u16);
+            if last_timings != Some(timings) {
+                spectro.timings().write(|w| unsafe {
+                    w.h_active().bits(timings.0);
+                    w.v_active().bits(timings.1)
+                });
+                last_timings = Some(timings);
+            }
+            let angles = (
                 opts.cascado.rot_x.value,
                 opts.cascado.rot_y.value,
                 opts.cascado.rot_z.value,
             );
-            spectro.projection_x().write(|w| unsafe {
-                w.frequency().bits(projection_x[0] as u16);
-                w.amplitude().bits(projection_x[1] as u16);
-                w.time().bits(projection_x[2] as u16)
-            });
-            spectro.projection_y().write(|w| unsafe {
-                w.frequency().bits(projection_y[0] as u16);
-                w.amplitude().bits(projection_y[1] as u16);
-                w.time().bits(projection_y[2] as u16)
-            });
-            spectro.config_3d().write(|w| unsafe {
-                w.quality().bits(opts.style.quality.value.hw_index());
-                w.style().bit(opts.style.style.value == SurfaceStyle::Terrain);
-                w.log_scale().bit(opts.style.scale.value == FrequencyScale::Log);
-                w.age_fade().bit(opts.style.age_fade.value == OnOff::On);
-                w.frequency_color().bit(opts.style.color_by.value == ColorBy::Frequency);
-                w.ridges().bit(opts.style.ridges.value == OnOff::On)
-            });
+            if last_angles != Some(angles) {
+                let (projection_x, projection_y) = projection_matrix(angles.0, angles.1, angles.2);
+                spectro.projection_x().write(|w| unsafe {
+                    w.frequency().bits(projection_x[0] as u16);
+                    w.amplitude().bits(projection_x[1] as u16);
+                    w.time().bits(projection_x[2] as u16)
+                });
+                spectro.projection_y().write(|w| unsafe {
+                    w.frequency().bits(projection_y[0] as u16);
+                    w.amplitude().bits(projection_y[1] as u16);
+                    w.time().bits(projection_y[2] as u16)
+                });
+                last_angles = Some(angles);
+            }
+            let config_3d = (
+                opts.style.quality.value.hw_index(),
+                opts.style.style.value == SurfaceStyle::Terrain,
+                opts.style.scale.value == FrequencyScale::Log,
+                opts.style.age_fade.value == OnOff::On,
+                opts.style.color_by.value == ColorBy::Frequency,
+                opts.style.ridges.value == OnOff::On,
+            );
+            if last_config_3d != Some(config_3d) {
+                spectro.config_3d().write(|w| unsafe {
+                    w.quality().bits(config_3d.0);
+                    w.style().bit(config_3d.1);
+                    w.log_scale().bit(config_3d.2);
+                    w.age_fade().bit(config_3d.3);
+                    w.frequency_color().bit(config_3d.4);
+                    w.ridges().bit(config_3d.5)
+                });
+                last_config_3d = Some(config_3d);
+            }
 
             first = false;
         }
