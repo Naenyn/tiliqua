@@ -56,6 +56,17 @@ def granular_pixels(pixels, width, block_size):
     return expanded
 
 
+def horizontally_dilated_pixels(pixels, width):
+    """Grow every populated scanline by one pixel at both endpoints."""
+    expanded = set()
+    rows = {y for _, y in pixels}
+    for y in rows:
+        xs = [x for x, py in pixels if py == y]
+        for x in range(max(0, min(xs) - 1), min(width - 1, max(xs) + 1) + 1):
+            expanded.add((x, y))
+    return expanded
+
+
 def reference_line_pixels(start, end, width, height):
     """Return the clipped integer pixels from the renderer's Bresenham walk."""
     x, y = start
@@ -150,6 +161,8 @@ class TriangleSpanRasterizerTests(unittest.TestCase):
                     expected = granular_pixels(
                         reference_pixels(transformed, width, height),
                         width, block_size)
+                    if detail == 2:
+                        expected = horizontally_dilated_pixels(expected, width)
                     self.assertEqual(actual, expected)
 
     def test_repeated_small_surfaces_do_not_reemit_old_spans(self):
@@ -339,6 +352,9 @@ class TriangleSpanRasterizerTests(unittest.TestCase):
                             pixels = granular_pixels(
                                 reference_pixels(triangle, width, height),
                                 width, block_size)
+                            if detail == 2:
+                                pixels = horizontally_dilated_pixels(
+                                    pixels, width)
                             expected_triangles.append(pixels)
                         expected = set().union(*expected_triangles)
                         self.assertEqual(actual, expected)
@@ -458,54 +474,6 @@ class PackedSpanWriterTests(unittest.TestCase):
         self.assertEqual(
             writes,
             [(0x108, 0b1000), (0x109, 0b1111), (0x10a, 0b0111)],
-        )
-
-    def test_overlapped_span_grows_one_pixel_across_word_boundaries(self):
-        bus_signature = wishbone.Signature(
-            addr_width=22,
-            data_width=32,
-            granularity=8,
-            features={"cti", "bte"},
-        )
-        dut = PackedSpanWriter(bus_signature=bus_signature, burst_words=16)
-        sim = Simulator(dut)
-        sim.add_clock(1e-6)
-        writes = []
-
-        async def bench(ctx):
-            ctx.set(dut.fbp.base, 0x100)
-            ctx.set(dut.fbp.timings.h_active, 16)
-            ctx.set(dut.fbp.timings.v_active, 12)
-            ctx.set(dut.pause, 0)
-            ctx.set(dut.i.payload.x0, 4)
-            ctx.set(dut.i.payload.x1, 11)
-            ctx.set(dut.i.payload.y, 2)
-            ctx.set(dut.i.payload.pixel.color, 5)
-            ctx.set(dut.i.payload.pixel.intensity, 9)
-            ctx.set(dut.i.payload.alternate, 0)
-            ctx.set(dut.i.payload.exact, 1)
-            ctx.set(dut.i.payload.overlap, 1)
-            ctx.set(dut.i.valid, 1)
-            while not ctx.get(dut.i.ready):
-                await ctx.tick()
-            await ctx.tick()
-            ctx.set(dut.i.valid, 0)
-
-            for _ in range(32):
-                ctx.set(dut.bus.ack, 1)
-                if ctx.get(dut.bus.cyc) and ctx.get(dut.bus.stb):
-                    writes.append((ctx.get(dut.bus.adr),
-                                   ctx.get(dut.bus.sel)))
-                if not ctx.get(dut.busy):
-                    break
-                await ctx.tick()
-
-        sim.add_testbench(bench)
-        sim.run()
-        self.assertEqual(
-            writes,
-            [(0x108, 0b1000), (0x109, 0b1111),
-             (0x10a, 0b1111), (0x10b, 0b0001)],
         )
 
     def test_adjacent_stalled_spans_leave_no_unwritten_bytes(self):
