@@ -83,7 +83,6 @@ class TriangleSpanRasterizer(wiring.Component):
         cmd = Signal(TriangleCmd)
         cmd_ridge = Signal()
         fill_detail = Signal(2)
-        winding_positive = Signal()
         min_x = Signal(signed(12))
         max_x = Signal(signed(12))
         min_y = Signal(signed(12))
@@ -178,20 +177,6 @@ class TriangleSpanRasterizer(wiring.Component):
         m.d.comb += word_inside.eq(
             lane_inside[0] | lane_inside[1] |
             lane_inside[2] | lane_inside[3])
-
-        # Exact foreground facets use a half-open shared-edge rule. Bias an
-        # unowned zero edge by one during setup so the scan loop retains its
-        # original, timing-friendly sign comparisons.
-        edge_owned = [Signal(name=f"edge_{n}_owned") for n in range(3)]
-        for n in range(3):
-            positive_owner = (
-                (edge_dy[n] > 0) |
-                ((edge_dy[n] == 0) & (edge_dx[n] < 0)))
-            negative_owner = (
-                (edge_dy[n] < 0) |
-                ((edge_dy[n] == 0) & (edge_dx[n] > 0)))
-            m.d.comb += edge_owned[n].eq(Mux(
-                winding_positive, positive_owner, negative_owner))
 
         first_inside_lane = Signal(2)
         last_inside_lane = Signal(2)
@@ -478,33 +463,21 @@ class TriangleSpanRasterizer(wiring.Component):
                             with m.If(value == 0):
                                 m.next = "IDLE"
                             with m.Else():
-                                m.d.sync += [
-                                    winding_positive.eq(value > 0),
-                                    init_step.eq(2),
-                                ]
+                                m.d.sync += init_step.eq(2)
                                 m.next = "LOAD_SETUP"
                         with m.Case(3):
-                            adjusted = Mux(
-                                (fill_detail != 2) | edge_owned[0], value,
-                                Mux(winding_positive, value - 1, value + 1))
-                            m.d.sync += [edge[0].eq(adjusted),
-                                         row_edge[0].eq(adjusted),
+                            m.d.sync += [edge[0].eq(value),
+                                         row_edge[0].eq(value),
                                          init_step.eq(4)]
                             m.next = "LOAD_SETUP"
                         with m.Case(5):
-                            adjusted = Mux(
-                                (fill_detail != 2) | edge_owned[1], value,
-                                Mux(winding_positive, value - 1, value + 1))
-                            m.d.sync += [edge[1].eq(adjusted),
-                                         row_edge[1].eq(adjusted),
+                            m.d.sync += [edge[1].eq(value),
+                                         row_edge[1].eq(value),
                                          init_step.eq(6)]
                             m.next = "LOAD_SETUP"
                         with m.Default():
-                            adjusted = Mux(
-                                (fill_detail != 2) | edge_owned[2], value,
-                                Mux(winding_positive, value - 1, value + 1))
-                            m.d.sync += [edge[2].eq(adjusted),
-                                         row_edge[2].eq(adjusted)]
+                            m.d.sync += [edge[2].eq(value),
+                                         row_edge[2].eq(value)]
                             m.next = "SCAN"
 
             with m.State("SCAN"):

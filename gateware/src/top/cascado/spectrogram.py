@@ -1230,13 +1230,11 @@ class Spectrogram(wiring.Component):
             line_fifo.w_data.eq(line_word),
             triangle_fifo.w_en.eq(0),
             triangle_fifo.w_data.eq(triangle_word),
-            # Preserve exact byte-lane edges only at the live foreground.
-            # Recently aged strips round to two-pixel pairs; the remainder
-            # retain the fast, conservative four-pixel packed-word coverage.
-            terrain_detail.eq(Mux(
-                scan_history_age == 0,
-                2,
-                Mux(scan_history_age <= 3, 1, 0))),
+            # Give the live foreground and its three nearest history strips
+            # two-pixel horizontal coverage. Older strips retain the fast,
+            # conservative four-pixel packed-word coverage. Exact one-pixel
+            # facets exposed unstable shared-edge artifacts on real displays.
+            terrain_detail.eq(Mux(scan_history_age <= 3, 1, 0)),
             current_projected_point.x.eq(projected_x),
             current_projected_point.y.eq(projected_y),
             current_projected_point.level.eq(terrain_level),
