@@ -461,6 +461,7 @@ class Spectrogram(wiring.Component):
             "bus": In(csr.Signature(addr_width=regs.addr_width, data_width=regs.data_width)),
             "line_o": Out(stream.Signature(LineCmd)),
             "triangle_o": Out(stream.Signature(TriangleCmd)),
+            "ridges_enabled": Out(1),
             "line_busy": In(1),
             "flush_request": Out(1),
             "flush_done": In(1),
@@ -494,6 +495,8 @@ class Spectrogram(wiring.Component):
         v_active = Signal(12, init=720)
         projection_x = [Signal(signed(10), init=value) for value in (384, 0, 90)]
         projection_y = [Signal(signed(10), init=value) for value in (0, -320, -96)]
+
+        m.d.comb += self.ridges_enabled.eq(ridges)
 
         with m.If(self._flags.element.w_stb):
             m.d.sync += [
@@ -816,7 +819,6 @@ class Spectrogram(wiring.Component):
         log_scale_dvi = Signal()
         age_fade_dvi = Signal()
         frequency_color_dvi = Signal()
-        ridges_dvi = Signal()
         rate_dvi = Signal(2)
         hue_dvi = Signal(4)
         noise_floor_dvi = Signal(2)
@@ -837,7 +839,6 @@ class Spectrogram(wiring.Component):
             ("log_scale", log_scale, log_scale_dvi),
             ("age_fade", age_fade, age_fade_dvi),
             ("frequency_color", frequency_color, frequency_color_dvi),
-            ("ridges", ridges, ridges_dvi),
             ("rate", rate_sel, rate_dvi),
             ("h_active", h_active, h_active_dvi),
             ("v_active", v_active, v_active_dvi),
@@ -930,7 +931,6 @@ class Spectrogram(wiring.Component):
         sweep_log_scale = Signal()
         sweep_age_fade = Signal()
         sweep_frequency_color = Signal()
-        sweep_ridges = Signal()
         sweep_projection_x = [Signal(signed(10)) for _ in range(3)]
         sweep_projection_y = [Signal(signed(10)) for _ in range(3)]
 
@@ -1151,7 +1151,6 @@ class Spectrogram(wiring.Component):
             line_fifo.w_data.eq(line_word),
             triangle_fifo.w_en.eq(0),
             triangle_fifo.w_data.eq(triangle_word),
-            triangle_word.ridge.eq(0),
             current_projected_point.x.eq(projected_x),
             current_projected_point.y.eq(projected_y),
             current_projected_point.level.eq(terrain_level),
@@ -1276,7 +1275,6 @@ class Spectrogram(wiring.Component):
                         sweep_log_scale.eq(log_scale_dvi),
                         sweep_age_fade.eq(age_fade_dvi),
                         sweep_frequency_color.eq(frequency_color_dvi),
-                        sweep_ridges.eq(ridges_dvi),
                         draw_generation.eq(~visible_generation),
                         render_activity_seen.eq(0),
                         clear_request.eq(1),
@@ -1442,7 +1440,6 @@ class Spectrogram(wiring.Component):
                         Mux(sweep_frequency_color,
                             terrain_cell_frequency_intensity,
                             terrain_level_intensity)),
-                    triangle_word.ridge.eq(sweep_ridges),
                     triangle_fifo.w_en.eq(terrain_cell_visible),
                 ]
                 # The inactive framebuffer was just cleared. Zero-level and

@@ -45,6 +45,7 @@ class TriangleSpanRasterizer(wiring.Component):
     v_active: In(unsigned(12))
     rotation: In(Rotation)
     alternate: In(1)
+    ridge: In(1)
     busy: Out(1)
 
     def elaborate(self, platform):
@@ -74,12 +75,10 @@ class TriangleSpanRasterizer(wiring.Component):
                         xout.eq(yin),
                         yout.eq(self.v_active - 1 - xin),
                     ]
-        m.d.comb += [
-            transformed.pixel.eq(self.i.payload.pixel),
-            transformed.ridge.eq(self.i.payload.ridge),
-        ]
+        m.d.comb += transformed.pixel.eq(self.i.payload.pixel)
 
         cmd = Signal(TriangleCmd)
+        cmd_ridge = Signal()
         min_x = Signal(signed(12))
         max_x = Signal(signed(12))
         min_y = Signal(signed(12))
@@ -211,7 +210,10 @@ class TriangleSpanRasterizer(wiring.Component):
             with m.State("IDLE"):
                 m.d.comb += self.i.ready.eq(1)
                 with m.If(self.i.valid):
-                    m.d.sync += cmd.eq(transformed)
+                    m.d.sync += [
+                        cmd.eq(transformed),
+                        cmd_ridge.eq(self.ridge),
+                    ]
                     m.next = "LOAD_BOUNDS"
 
             with m.State("LOAD_BOUNDS"):
@@ -328,7 +330,7 @@ class TriangleSpanRasterizer(wiring.Component):
                 with m.If(span_seen):
                     m.d.comb += self.o.valid.eq(1)
                     with m.If(self.o.ready):
-                        with m.If(cmd.ridge):
+                        with m.If(cmd_ridge):
                             m.next = "EMIT_RIDGE"
                         with m.Else():
                             advance_row()
@@ -467,6 +469,11 @@ class TriangleSpanRenderer(wiring.Component):
             "i": In(stream.Signature(TriangleCmd)),
             "pause": In(1),
             "alternate": In(1),
+            # WATERFALL sends every visible terrain cell as an A/B triangle
+            # pair. Mark edge 1->2 of each A triangle without widening the
+            # timing-sensitive cross-domain command FIFO.
+            "ridges": In(1),
+            "frame_start": In(1),
             "bus": Out(bus_signature),
             "fbp": In(DMAFramebuffer.Properties()),
             "busy": Out(1),
@@ -484,6 +491,12 @@ class TriangleSpanRenderer(wiring.Component):
             burst_words=self.burst_words,
         )
 
+        triangle_phase = Signal()
+        with m.If(self.frame_start):
+            m.d.sync += triangle_phase.eq(0)
+        with m.Elif(rasterizer.i.valid & rasterizer.i.ready):
+            m.d.sync += triangle_phase.eq(~triangle_phase)
+
         wiring.connect(m, wiring.flipped(self.i), rasterizer.i)
         wiring.connect(m, wiring.flipped(self.fbp), writer.fbp)
         wiring.connect(m, writer.bus, wiring.flipped(self.bus))
@@ -492,6 +505,7 @@ class TriangleSpanRenderer(wiring.Component):
             rasterizer.v_active.eq(self.fbp.timings.v_active),
             rasterizer.rotation.eq(self.fbp.rotation),
             rasterizer.alternate.eq(self.alternate),
+            rasterizer.ridge.eq(self.ridges & ~triangle_phase),
             span_fifo.w_en.eq(rasterizer.o.valid & span_fifo.w_rdy),
             span_fifo.w_data.eq(rasterizer.o.payload.as_value()),
             rasterizer.o.ready.eq(span_fifo.w_rdy),

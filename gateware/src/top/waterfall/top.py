@@ -234,6 +234,8 @@ class WaterfallSoc(TiliquaSoc):
         m.d.comb += [
             self.waterfall_line_plotter.alternate.eq(1),
             self.waterfall_terrain_renderer.alternate.eq(1),
+            self.waterfall_terrain_renderer.ridges.eq(
+                self.spectrogram.ridges_enabled),
             self.waterfall_terrain_renderer.pause.eq(
                 self.fb.scanout_urgent),
         ]
@@ -273,6 +275,8 @@ class WaterfallSoc(TiliquaSoc):
             self.spectrogram.flush_done.eq(
                 self.framebuffer_plotter.flush_done),
             self.backbuffer_clear.start.eq(clear_request_sync),
+            self.waterfall_terrain_renderer.frame_start.eq(
+                clear_request_sync),
             self.spectrogram.clear_done.eq(self.backbuffer_clear.done),
             self.spectrogram.clear_busy.eq(self.backbuffer_clear.busy),
         ]

@@ -199,7 +199,7 @@ class TriangleSpanRasterizerTests(unittest.TestCase):
                 ctx.set(getattr(dut.i.payload, f"y{index}"), y)
             ctx.set(dut.i.payload.pixel.color, 5)
             ctx.set(dut.i.payload.pixel.intensity, 11)
-            ctx.set(dut.i.payload.ridge, 1)
+            ctx.set(dut.ridge, 1)
             ctx.set(dut.i.valid, 1)
             while not ctx.get(dut.i.ready):
                 await ctx.tick()
@@ -253,7 +253,7 @@ class TriangleSpanRasterizerTests(unittest.TestCase):
                 ctx.set(getattr(dut.i.payload, f"y{index}"), y)
             ctx.set(dut.i.payload.pixel.color, 5)
             ctx.set(dut.i.payload.pixel.intensity, 11)
-            ctx.set(dut.i.payload.ridge, 1)
+            ctx.set(dut.ridge, 1)
             ctx.set(dut.i.valid, 1)
             while not ctx.get(dut.i.ready):
                 await ctx.tick()
