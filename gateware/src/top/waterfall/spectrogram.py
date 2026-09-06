@@ -95,16 +95,18 @@ def _three_d_frequency_coordinate(point, high_quality):
 
 
 def _terrain_visibility_level(level, age, age_fade):
-    """Return the post-age level used solely to cull invisible facets.
+    """Return the post-age level used for fading and visibility culling.
 
     Level-colored terrain keeps its original amplitude color while the palette
     fades RGB brightness with age.  Applying the same age envelope separately
     here lets sufficiently quiet old facets disappear without moving surviving
-    facets through the amplitude palette.
+    facets through the amplitude palette. Two display levels per history step
+    make the complete depth range legible without changing hue.
     """
+    age_penalty = age << 1
     return Mux(
         age_fade,
-        Mux(level > age, level - age, 0),
+        Mux(level > age_penalty, level - age_penalty, 0),
         level,
     )
 
@@ -419,6 +421,7 @@ class Spectrogram(wiring.Component):
         log_scale: csr.Field(csr.action.W, unsigned(1))
         age_fade: csr.Field(csr.action.W, unsigned(1))
         frequency_color: csr.Field(csr.action.W, unsigned(1))
+        contours: csr.Field(csr.action.W, unsigned(1))
 
     class ProjectionX(csr.Register, access="w"):
         frequency: csr.Field(csr.action.W, signed(10))
@@ -486,6 +489,7 @@ class Spectrogram(wiring.Component):
         log_scale = Signal(init=1)
         age_fade = Signal(init=1)
         frequency_color = Signal()
+        contours = Signal(init=1)
         h_active = Signal(12, init=720)
         v_active = Signal(12, init=720)
         projection_x = [Signal(signed(10), init=value) for value in (384, 0, 90)]
@@ -532,6 +536,7 @@ class Spectrogram(wiring.Component):
                 log_scale.eq(self._config_3d.f.log_scale.w_data),
                 age_fade.eq(self._config_3d.f.age_fade.w_data),
                 frequency_color.eq(self._config_3d.f.frequency_color.w_data),
+                contours.eq(self._config_3d.f.contours.w_data),
             ]
         # ---- audio analysis -------------------------------------------------
         # Match the analyzer sample rate to the selected frequency range. This
@@ -811,6 +816,7 @@ class Spectrogram(wiring.Component):
         log_scale_dvi = Signal()
         age_fade_dvi = Signal()
         frequency_color_dvi = Signal()
+        contours_dvi = Signal()
         rate_dvi = Signal(2)
         hue_dvi = Signal(4)
         noise_floor_dvi = Signal(2)
@@ -831,6 +837,7 @@ class Spectrogram(wiring.Component):
             ("log_scale", log_scale, log_scale_dvi),
             ("age_fade", age_fade, age_fade_dvi),
             ("frequency_color", frequency_color, frequency_color_dvi),
+            ("contours", contours, contours_dvi),
             ("rate", rate_sel, rate_dvi),
             ("h_active", h_active, h_active_dvi),
             ("v_active", v_active, v_active_dvi),
@@ -923,6 +930,8 @@ class Spectrogram(wiring.Component):
         sweep_log_scale = Signal()
         sweep_age_fade = Signal()
         sweep_frequency_color = Signal()
+        sweep_contours = Signal()
+        terrain_contour_pass = Signal()
         sweep_projection_x = [Signal(signed(10)) for _ in range(3)]
         sweep_projection_y = [Signal(signed(10)) for _ in range(3)]
 
@@ -1162,11 +1171,12 @@ class Spectrogram(wiring.Component):
             # instead encodes age as a separate palette dimension below; its
             # amplitude-selected color must not move through the heat map.
             terrain_cell_display_level_next.eq(Mux(
-                sweep_age_fade & sweep_frequency_color,
-                Mux(
-                    terrain_cell_level_next > scan_history_age,
-                    terrain_cell_level_next - scan_history_age,
-                    0),
+                sweep_frequency_color,
+                _terrain_visibility_level(
+                    terrain_cell_level_next,
+                    scan_history_age,
+                    sweep_age_fade,
+                ),
                 terrain_cell_level_next)),
             # Keep culling independent from shading. In level-color mode the
             # facet retains its original amplitude-selected hue while this
@@ -1181,9 +1191,12 @@ class Spectrogram(wiring.Component):
                     sweep_age_fade,
                 )),
             wire_display_level.eq(Mux(
-                sweep_age_fade & sweep_frequency_color,
-                Mux(scan_peak > scan_history_age,
-                    scan_peak - scan_history_age, 0),
+                sweep_frequency_color,
+                _terrain_visibility_level(
+                    scan_peak,
+                    scan_history_age,
+                    sweep_age_fade,
+                ),
                 scan_peak)),
             # Frequency coloring has only four amplitude bits. Round nonzero
             # six-bit levels upward so quiet history does not become black,
@@ -1263,6 +1276,8 @@ class Spectrogram(wiring.Component):
                         sweep_log_scale.eq(log_scale_dvi),
                         sweep_age_fade.eq(age_fade_dvi),
                         sweep_frequency_color.eq(frequency_color_dvi),
+                        sweep_contours.eq(contours_dvi),
+                        terrain_contour_pass.eq(0),
                         draw_generation.eq(~visible_generation),
                         render_activity_seen.eq(0),
                         clear_request.eq(1),
@@ -1352,13 +1367,19 @@ class Spectrogram(wiring.Component):
                 with m.If(point_next == 0):
                     m.d.dvi += [
                         point_pixel.intensity.eq(Mux(
-                            sweep_frequency_color,
-                            wire_frequency_intensity,
-                            wire_level_intensity)),
+                            terrain_contour_pass,
+                            0,
+                            Mux(
+                                sweep_frequency_color,
+                                wire_frequency_intensity,
+                                wire_level_intensity))),
                         point_pixel.color.eq(Mux(
-                            sweep_frequency_color,
-                            sweep_frequency_hue,
-                            wire_level_color)),
+                            terrain_contour_pass,
+                            0,
+                            Mux(
+                                sweep_frequency_color,
+                                sweep_frequency_hue,
+                                wire_level_color))),
                     ]
                 for index, coordinate in enumerate(
                         (point_frequency, point_amplitude, point_time)):
@@ -1373,7 +1394,8 @@ class Spectrogram(wiring.Component):
                     projected_x.eq(center_x + (projection_sum_x >> 8)),
                     projected_y.eq(baseline_y + (projection_sum_y >> 8)),
                 ]
-                with m.If((point_next == 0) & sweep_terrain_style):
+                with m.If((point_next == 0) & sweep_terrain_style &
+                          ~terrain_contour_pass):
                     m.next = "TERRAIN_READ_ROW"
                 with m.Else():
                     m.next = "PUSH_POINT"
@@ -1487,7 +1509,14 @@ class Spectrogram(wiring.Component):
                 with m.If(scan_point == scan_point_last):
                     m.d.dvi += scan_point.eq(0)
                     with m.If(scan_slice == 15):
-                        with m.If(axes_dvi):
+                        with m.If(sweep_terrain_style & sweep_contours &
+                                  ~terrain_contour_pass):
+                            # Filled facets and contour lines share PSRAM but
+                            # use independent rasterizers. Drain the terrain
+                            # completely before beginning the overlay so no
+                            # later triangle can erase a contour segment.
+                            m.next = "WAIT_TERRAIN_FOR_CONTOURS"
+                        with m.Elif(axes_dvi):
                             m.next = "AXIS_FREQUENCY_START"
                         with m.Else():
                             m.next = "WAIT_RENDER_COMPLETE"
@@ -1501,6 +1530,17 @@ class Spectrogram(wiring.Component):
                         m.next = "IDLE"
                 with m.Else():
                     m.d.dvi += scan_point.eq(scan_point + 1)
+                    m.next = "START_BIN_GROUP"
+
+            with m.State("WAIT_TERRAIN_FOR_CONTOURS"):
+                with m.If(~enable_dvi):
+                    m.next = "IDLE"
+                with m.Elif((triangle_fifo.w_level == 0) & ~line_busy_dvi):
+                    m.d.dvi += [
+                        scan_slice.eq(0),
+                        scan_point.eq(0),
+                        terrain_contour_pass.eq(1),
+                    ]
                     m.next = "START_BIN_GROUP"
 
             with m.State("WAIT_RENDER_COMPLETE"):

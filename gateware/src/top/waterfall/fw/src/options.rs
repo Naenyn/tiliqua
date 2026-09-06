@@ -218,6 +218,8 @@ pub struct ViewOpts {
     #[option]
     #[option_name("age fade")]
     pub age_fade: EnumOption<OnOff>,
+    #[option]
+    pub contours: EnumOption<OnOff>,
     #[option(-15)]
     pub rot_x: IntOption<AngleParams>,
     #[option(15)]

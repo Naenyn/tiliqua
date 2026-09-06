@@ -59,9 +59,10 @@ def test_terrain_visibility_culls_quiet_old_facets_without_recoloring():
                 (0, 15, 1, 0),
                 (6, 15, 1, 0),
                 (15, 15, 1, 0),
-                (16, 15, 1, 1),
-                (24, 15, 1, 9),
-                (24, 7, 1, 17),
+                (24, 15, 1, 0),
+                (31, 15, 1, 1),
+                (40, 15, 1, 10),
+                (24, 7, 1, 10),
                 (6, 15, 0, 6)):
             ctx.set(level, source_level)
             ctx.set(age, source_age)

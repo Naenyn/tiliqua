@@ -292,8 +292,9 @@ fn write_waterfall_palette(
 
     if age_fade {
         // The 240 renderer entries provide 30 amplitude colors x 8 age-
-        // brightness steps. Age scales RGB uniformly, so an old surface keeps
-        // the same amplitude color rather than sliding through the heat map.
+        // brightness steps. Age scales RGB uniformly across almost the full
+        // brightness range, so an old surface keeps the same amplitude color
+        // rather than sliding through the heat map while depth remains clear.
         for intensity in 0..16u8 {
             for hue in 1..16u8 {
                 let level = (intensity & 1) * 15 + (hue - 1);
@@ -324,7 +325,7 @@ fn write_waterfall_palette(
                 } else {
                     rgb
                 };
-                let brightness = 15 - age;
+                let brightness = 15 - age * 2;
                 video.set_palette_rgb(
                     intensity,
                     hue,
@@ -856,7 +857,8 @@ fn main() -> ! {
                 w.style().bit(opts.view.style.value == SurfaceStyle::Terrain);
                 w.log_scale().bit(opts.view.scale.value == FrequencyScale::Log);
                 w.age_fade().bit(opts.view.age_fade.value == OnOff::On);
-                w.frequency_color().bit(opts.view.color_by.value == ColorBy::Frequency)
+                w.frequency_color().bit(opts.view.color_by.value == ColorBy::Frequency);
+                w.contours().bit(opts.view.contours.value == OnOff::On)
             });
 
             first = false;
