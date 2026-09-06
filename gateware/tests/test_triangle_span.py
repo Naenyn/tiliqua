@@ -83,13 +83,27 @@ def reference_line_pixels(start, end, width, height):
 class TriangleSpanRasterizerTests(unittest.TestCase):
 
     @staticmethod
-    async def _send_triangle(ctx, dut, vertices, pixels, detail=0):
+    async def _set_detail(ctx, dut, detail):
+        for index in range(3):
+            ctx.set(getattr(dut.i.payload, f"x{index}"), 0)
+            ctx.set(getattr(dut.i.payload, f"y{index}"), 0)
+        ctx.set(dut.i.payload.pixel.color, 0)
+        ctx.set(dut.i.payload.pixel.intensity, detail + 1)
+        ctx.set(dut.i.valid, 1)
+        while not ctx.get(dut.i.ready):
+            await ctx.tick()
+        await ctx.tick()
+        ctx.set(dut.i.valid, 0)
+        while ctx.get(dut.busy):
+            await ctx.tick()
+
+    @staticmethod
+    async def _send_triangle(ctx, dut, vertices, pixels):
         for index, (x, y) in enumerate(vertices):
             ctx.set(getattr(dut.i.payload, f"x{index}"), x)
             ctx.set(getattr(dut.i.payload, f"y{index}"), y)
         ctx.set(dut.i.payload.pixel.color, 5)
         ctx.set(dut.i.payload.pixel.intensity, 11)
-        ctx.set(dut.i.payload.detail, detail)
         ctx.set(dut.i.valid, 1)
         while not ctx.get(dut.i.ready):
             await ctx.tick()
@@ -126,31 +140,8 @@ class TriangleSpanRasterizerTests(unittest.TestCase):
                         ctx.set(dut.rotation, rotation)
                         ctx.set(dut.alternate, 1)
                         ctx.set(dut.o.ready, 1)
-                        for index, (x, y) in enumerate(logical):
-                            ctx.set(getattr(dut.i.payload, f"x{index}"), x)
-                            ctx.set(getattr(dut.i.payload, f"y{index}"), y)
-                        ctx.set(dut.i.payload.pixel.color, 5)
-                        ctx.set(dut.i.payload.pixel.intensity, 11)
-                        ctx.set(dut.i.payload.detail, detail)
-                        ctx.set(dut.i.valid, 1)
-                        while not ctx.get(dut.i.ready):
-                            await ctx.tick()
-                        await ctx.tick()
-                        ctx.set(dut.i.valid, 0)
-
-                        for _ in range(2000):
-                            if ctx.get(dut.o.valid):
-                                x0 = ctx.get(dut.o.payload.x0)
-                                x1 = ctx.get(dut.o.payload.x1)
-                                y = ctx.get(dut.o.payload.y)
-                                self.assertLessEqual(x0, x1)
-                                for x in range(x0, x1 + 1):
-                                    actual.add((x, y))
-                            if not ctx.get(dut.busy):
-                                break
-                            await ctx.tick()
-                        else:
-                            self.fail("rasterizer did not finish")
+                        await self._set_detail(ctx, dut, detail)
+                        await self._send_triangle(ctx, dut, logical, actual)
 
                     sim.add_testbench(bench)
                     sim.run()
@@ -333,9 +324,10 @@ class TriangleSpanRasterizerTests(unittest.TestCase):
                             ctx.set(dut.rotation, rotation)
                             ctx.set(dut.alternate, 1)
                             ctx.set(dut.o.ready, 1)
+                            await self._set_detail(ctx, dut, detail)
                             for triangle in triangles:
                                 await self._send_triangle(
-                                    ctx, dut, triangle, actual, detail)
+                                    ctx, dut, triangle, actual)
 
                         sim.add_testbench(bench)
                         sim.run()

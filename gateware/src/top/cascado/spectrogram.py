@@ -1237,7 +1237,6 @@ class Spectrogram(wiring.Component):
                 scan_history_age == 0,
                 2,
                 Mux(scan_history_age <= 3, 1, 0))),
-            triangle_word.detail.eq(terrain_detail),
             current_projected_point.x.eq(projected_x),
             current_projected_point.y.eq(projected_y),
             current_projected_point.level.eq(terrain_level),
@@ -1391,6 +1390,26 @@ class Spectrogram(wiring.Component):
                     m.next = "IDLE"
                 with m.Elif(clear_done_dvi):
                     m.d.dvi += clear_request.eq(0)
+                    with m.If(sweep_terrain_style):
+                        m.next = "PUSH_TERRAIN_DETAIL"
+                    with m.Else():
+                        m.next = "START_BIN_GROUP"
+
+            with m.State("PUSH_TERRAIN_DETAIL"):
+                # A reserved zero-area command changes the span granularity
+                # in FIFO order without widening every triangle command.
+                m.d.comb += [
+                    triangle_word.x0.eq(0),
+                    triangle_word.y0.eq(0),
+                    triangle_word.x1.eq(0),
+                    triangle_word.y1.eq(0),
+                    triangle_word.x2.eq(0),
+                    triangle_word.y2.eq(0),
+                    triangle_word.pixel.color.eq(0),
+                    triangle_word.pixel.intensity.eq(terrain_detail + 1),
+                    triangle_fifo.w_en.eq(1),
+                ]
+                with m.If(triangle_fifo.w_rdy):
                     m.next = "START_BIN_GROUP"
 
             with m.State("START_BIN_GROUP"):
@@ -1688,7 +1707,14 @@ class Spectrogram(wiring.Component):
                             # vertex twice, producing a continuous transition.
                             adaptive_transition.eq(1),
                         ]
-                    m.next = "START_BIN_GROUP"
+                    # The registered slice increments on this edge. Detail
+                    # changes only as the new slice becomes 12 or 15.
+                    with m.If(
+                            sweep_terrain_style &
+                            ((scan_slice == 11) | (scan_slice == 14))):
+                        m.next = "PUSH_TERRAIN_DETAIL"
+                    with m.Else():
+                        m.next = "START_BIN_GROUP"
                 with m.Else():
                     m.next = "IDLE"
 

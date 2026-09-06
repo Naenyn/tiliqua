@@ -78,13 +78,11 @@ class TriangleSpanRasterizer(wiring.Component):
                         xout.eq(yin),
                         yout.eq(self.v_active - 1 - xin),
                     ]
-        m.d.comb += [
-            transformed.pixel.eq(self.i.payload.pixel),
-            transformed.detail.eq(self.i.payload.detail),
-        ]
+        m.d.comb += transformed.pixel.eq(self.i.payload.pixel)
 
         cmd = Signal(TriangleCmd)
         cmd_ridge = Signal()
+        fill_detail = Signal(2)
         min_x = Signal(signed(12))
         max_x = Signal(signed(12))
         min_y = Signal(signed(12))
@@ -199,15 +197,15 @@ class TriangleSpanRasterizer(wiring.Component):
             # its low bits directly avoids putting two 12-bit adders here.
             # All modes still inspect four pixels at once.
             quantized_first_x.eq(Mux(
-                cmd.detail == 2,
+                fill_detail == 2,
                 Cat(first_inside_lane, x[2:]),
-                Mux(cmd.detail == 1,
+                Mux(fill_detail == 1,
                     Cat(Const(0, 1), first_inside_lane[1], x[2:]),
                     x))),
             quantized_last_x.eq(Mux(
-                cmd.detail == 2,
+                fill_detail == 2,
                 Cat(last_inside_lane, x[2:]),
-                Mux(cmd.detail == 1,
+                Mux(fill_detail == 1,
                     Cat(Const(1, 1), last_inside_lane[1], x[2:]),
                     Cat(Const(3, 2), x[2:])))),
         ]
@@ -221,7 +219,20 @@ class TriangleSpanRasterizer(wiring.Component):
             self.o.payload.y.eq(y),
             self.o.payload.pixel.eq(cmd.pixel),
             self.o.payload.alternate.eq(self.alternate),
-            self.o.payload.exact.eq(cmd.detail != 0),
+            self.o.payload.exact.eq(fill_detail != 0),
+        ]
+
+        # CASCADO changes fill granularity only a few times per surface. A
+        # reserved zero-area command updates that state in-order, avoiding two
+        # extra bits on every entry of the timing-sensitive asynchronous FIFO.
+        encoded_command = Signal()
+        detail_control_command = Signal()
+        m.d.comb += [
+            encoded_command.eq(
+                (cmd.x0 == cmd.x1) & (cmd.y0 == cmd.y1)),
+            detail_control_command.eq(
+                encoded_command & (cmd.pixel.color == 0) &
+                (cmd.pixel.intensity != 0)),
         ]
 
         # A contour command is encoded without widening CASCADO's
@@ -231,8 +242,7 @@ class TriangleSpanRasterizer(wiring.Component):
         # representation is unambiguous to the span renderer.
         contour_command = Signal()
         m.d.comb += contour_command.eq(
-            (cmd.x0 == cmd.x1) & (cmd.y0 == cmd.y1) &
-            (cmd.pixel.as_value() == 0))
+            encoded_command & (cmd.pixel.as_value() == 0))
 
         # Contours use a span-producing Bresenham walk. Consecutive pixels on
         # one physical scanline are coalesced into a single exact span, keeping
@@ -341,7 +351,10 @@ class TriangleSpanRasterizer(wiring.Component):
                     m.next = "LOAD_BOUNDS"
 
             with m.State("LOAD_BOUNDS"):
-                with m.If(contour_command):
+                with m.If(detail_control_command):
+                    m.d.sync += fill_detail.eq(cmd.pixel.intensity - 1)
+                    m.next = "IDLE"
+                with m.Elif(contour_command):
                     with m.If(cmd_ridge):
                         m.d.sync += [
                             line_x.eq(cmd.x1),
