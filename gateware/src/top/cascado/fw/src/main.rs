@@ -370,17 +370,17 @@ fn write_cascado_palette(
     }
 }
 
-/// Integer sine/cosine for the 15-degree camera steps, in Q8 format.
+/// Integer sine/cosine for the 5-degree camera steps, in Q8 format.
 fn sin_cos_q8(angle: i8) -> (i32, i32) {
-    let (sin, cos) = match angle.abs() {
-        0 => (0, 256),
-        15 => (66, 247),
-        30 => (128, 222),
-        45 => (181, 181),
-        60 => (222, 128),
-        75 => (247, 66),
-        _ => (256, 0),
-    };
+    // round(256 * sin(theta)) for theta = 0, 5, ... 90 degrees. Cosine is
+    // the same quarter-wave table read in reverse. AngleParams constrains all
+    // UI values to this grid; clamping also makes a damaged saved value safe.
+    const SIN_Q8: [i32; 19] = [
+        0, 22, 44, 66, 88, 108, 128, 147, 165, 181, 196, 210, 222, 232, 241, 247, 252, 255, 256,
+    ];
+    let index = core::cmp::min(angle.unsigned_abs() as usize / 5, SIN_Q8.len() - 1);
+    let sin = SIN_Q8[index];
+    let cos = SIN_Q8[SIN_Q8.len() - 1 - index];
     (if angle < 0 { -sin } else { sin }, cos)
 }
 
