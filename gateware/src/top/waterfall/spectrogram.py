@@ -968,9 +968,13 @@ class Spectrogram(wiring.Component):
             row_write_ports.append(row_memory.write_port(domain="dvi"))
         row_bank = Signal()
         row_read_point = Signal(ProjectedPoint)
+        contour_row_point = Signal(ProjectedPoint)
         terrain_current_left = Signal(ProjectedPoint)
         terrain_previous_left = Signal(ProjectedPoint)
         terrain_previous_right = Signal(ProjectedPoint)
+        contour_left = Signal(ProjectedPoint)
+        contour_right = Signal(ProjectedPoint)
+        contour_point = Signal(7)
         # Complete surfaces alternate between two physical framebuffers. The
         # old multi-bit generation tags existed only for SONORO persistence.
         visible_generation = Signal()
@@ -1072,23 +1076,31 @@ class Spectrogram(wiring.Component):
         scan_geometry = _three_d_scan_geometry(high_quality)
         terrain_row_read_en = Signal()
         terrain_row_write_en = Signal()
+        contour_row_read_en = Signal()
 
         m.d.comb += [
             terrain_row_read_en.eq(0),
             terrain_row_write_en.eq(0),
+            contour_row_read_en.eq(0),
             log_bucket_r.en.eq(0),
             log_bucket_r.addr.eq(Cat(scan_point, high_quality)),
             row_read_point.as_value().eq(Mux(
                 row_bank == 0,
                 row_read_ports[1].data,
                 row_read_ports[0].data)),
+            contour_row_point.as_value().eq(Mux(
+                row_bank == 0,
+                row_read_ports[0].data,
+                row_read_ports[1].data)),
         ]
         for index, (read_port, write_port) in enumerate(
                 zip(row_read_ports, row_write_ports)):
             m.d.comb += [
                 read_port.en.eq(
-                    terrain_row_read_en & (row_bank != index)),
-                read_port.addr.eq(scan_point),
+                    (terrain_row_read_en & (row_bank != index)) |
+                    (contour_row_read_en & (row_bank == index))),
+                read_port.addr.eq(Mux(
+                    contour_row_read_en, contour_point, scan_point)),
                 write_port.en.eq(
                     terrain_row_write_en & (row_bank == index)),
                 write_port.addr.eq(scan_point),
@@ -1474,39 +1486,59 @@ class Spectrogram(wiring.Component):
                     triangle_fifo.w_en.eq(terrain_cell_visible),
                 ]
                 with m.If(~terrain_cell_visible | triangle_fifo.w_rdy):
-                    with m.If(sweep_ridges):
-                        m.next = "PUSH_TERRAIN_RIDGE"
-                    with m.Else():
-                        m.d.dvi += [
-                            terrain_current_left.eq(current_projected_point),
-                            terrain_previous_left.eq(terrain_previous_right),
-                        ]
-                        m.next = "ADVANCE_SURFACE_POINT"
-
-            with m.State("PUSH_TERRAIN_RIDGE"):
-                # Append the current history boundary directly after its A/B
-                # cell fills. Vertices 0 and 1 intentionally match: the span
-                # renderer recognizes this otherwise-invalid triangle as an
-                # exact one-pixel contour segment. Quiet or age-culled cells
-                # still emit their boundary, while the next (nearer) history
-                # row remains later in the same ordered stream and occludes it.
-                m.d.comb += [
-                    triangle_word.x0.eq(terrain_current_left.x),
-                    triangle_word.y0.eq(terrain_current_left.y),
-                    triangle_word.x1.eq(terrain_current_left.x),
-                    triangle_word.y1.eq(terrain_current_left.y),
-                    triangle_word.x2.eq(current_projected_point.x),
-                    triangle_word.y2.eq(current_projected_point.y),
-                    triangle_word.pixel.color.eq(0),
-                    triangle_word.pixel.intensity.eq(0),
-                    triangle_fifo.w_en.eq(1),
-                ]
-                with m.If(triangle_fifo.w_rdy):
                     m.d.dvi += [
                         terrain_current_left.eq(current_projected_point),
                         terrain_previous_left.eq(terrain_previous_right),
                     ]
                     m.next = "ADVANCE_SURFACE_POINT"
+
+            with m.State("CONTOUR_ISSUE_LEFT"):
+                # Replay the completed current row only after every cell in
+                # that row has been queued. This prevents later cells in the
+                # same row from erasing pieces of its one-pixel contour.
+                m.d.comb += contour_row_read_en.eq(1)
+                m.next = "CONTOUR_LATCH_LEFT"
+
+            with m.State("CONTOUR_LATCH_LEFT"):
+                m.d.dvi += [
+                    contour_left.eq(contour_row_point),
+                    contour_point.eq(contour_point + 1),
+                ]
+                m.next = "CONTOUR_ISSUE_RIGHT"
+
+            with m.State("CONTOUR_ISSUE_RIGHT"):
+                m.d.comb += contour_row_read_en.eq(1)
+                m.next = "CONTOUR_LATCH_RIGHT"
+
+            with m.State("CONTOUR_LATCH_RIGHT"):
+                m.d.dvi += contour_right.eq(contour_row_point)
+                m.next = "PUSH_TERRAIN_CONTOUR"
+
+            with m.State("PUSH_TERRAIN_CONTOUR"):
+                # Vertices 0 and 1 intentionally match: the span renderer
+                # recognizes this otherwise-invalid triangle as an exact
+                # one-pixel contour segment. The next, nearer history row is
+                # still later in this FIFO and therefore occludes it naturally.
+                m.d.comb += [
+                    triangle_word.x0.eq(contour_left.x),
+                    triangle_word.y0.eq(contour_left.y),
+                    triangle_word.x1.eq(contour_left.x),
+                    triangle_word.y1.eq(contour_left.y),
+                    triangle_word.x2.eq(contour_right.x),
+                    triangle_word.y2.eq(contour_right.y),
+                    triangle_word.pixel.color.eq(0),
+                    triangle_word.pixel.intensity.eq(0),
+                    triangle_fifo.w_en.eq(1),
+                ]
+                with m.If(triangle_fifo.w_rdy):
+                    with m.If(contour_point == scan_point_last):
+                        m.next = "ADVANCE_SURFACE_SLICE"
+                    with m.Else():
+                        m.d.dvi += [
+                            contour_left.eq(contour_right),
+                            contour_point.eq(contour_point + 1),
+                        ]
+                        m.next = "CONTOUR_ISSUE_RIGHT"
 
             with m.State("PUSH_POINT"):
                 m.d.comb += line_fifo.w_en.eq(1)
@@ -1529,23 +1561,31 @@ class Spectrogram(wiring.Component):
 
             with m.State("ADVANCE_SURFACE_POINT"):
                 with m.If(scan_point == scan_point_last):
-                    m.d.dvi += scan_point.eq(0)
-                    with m.If(scan_slice == 15):
-                        with m.If(axes_dvi):
-                            m.next = "AXIS_FREQUENCY_START"
-                        with m.Else():
-                            m.next = "WAIT_RENDER_COMPLETE"
-                    with m.Elif(enable_dvi):
-                        m.d.dvi += [
-                            scan_slice.eq(scan_slice + 1),
-                            row_bank.eq(~row_bank),
-                        ]
-                        m.next = "START_BIN_GROUP"
+                    with m.If(sweep_terrain_style & sweep_ridges &
+                              (scan_slice != 0)):
+                        m.d.dvi += contour_point.eq(0)
+                        m.next = "CONTOUR_ISSUE_LEFT"
                     with m.Else():
-                        m.next = "IDLE"
+                        m.next = "ADVANCE_SURFACE_SLICE"
                 with m.Else():
                     m.d.dvi += scan_point.eq(scan_point + 1)
                     m.next = "START_BIN_GROUP"
+
+            with m.State("ADVANCE_SURFACE_SLICE"):
+                m.d.dvi += scan_point.eq(0)
+                with m.If(scan_slice == 15):
+                    with m.If(axes_dvi):
+                        m.next = "AXIS_FREQUENCY_START"
+                    with m.Else():
+                        m.next = "WAIT_RENDER_COMPLETE"
+                with m.Elif(enable_dvi):
+                    m.d.dvi += [
+                        scan_slice.eq(scan_slice + 1),
+                        row_bank.eq(~row_bank),
+                    ]
+                    m.next = "START_BIN_GROUP"
+                with m.Else():
+                    m.next = "IDLE"
 
             with m.State("WAIT_RENDER_COMPLETE"):
                 # First drain commands and Bresenham. Plot requests still pass

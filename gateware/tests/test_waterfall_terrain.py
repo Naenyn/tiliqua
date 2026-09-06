@@ -77,7 +77,7 @@ def test_terrain_visibility_culls_quiet_old_facets_without_recoloring():
 
 
 def test_quiet_terrain_still_emits_complete_contour_commands():
-    """Ridges must not inherit the terrain facet visibility threshold."""
+    """A culled row still emits one ordered, connected contour."""
     dut = Spectrogram(fs=192_000)
     sim = Simulator(dut)
     sim.add_clock(1 / 60_000_000, domain="sync")
@@ -113,3 +113,7 @@ def test_quiet_terrain_still_emits_complete_contour_commands():
     assert all(command["x0"] == command["x1"] for command in commands)
     assert all(command["y0"] == command["y1"] for command in commands)
     assert all(command["pixel"] == 0 for command in commands)
+    assert all(
+        (left["x2"], left["y2"]) == (right["x0"], right["y0"])
+        for left, right in zip(commands, commands[1:])
+    )
