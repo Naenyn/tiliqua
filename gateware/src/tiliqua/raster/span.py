@@ -32,6 +32,9 @@ class SpanCmd(data.Struct):
     # Coarse triangle fills cover complete packed words. Detailed fills and
     # contours use endpoint byte masks.
     exact: unsigned(1)
+    # Fine foreground terrain grows one pixel beyond each exact horizontal
+    # endpoint. Contours remain truly exact.
+    overlap: unsigned(1)
 
 
 class TriangleSpanRasterizer(wiring.Component):
@@ -216,23 +219,14 @@ class TriangleSpanRasterizer(wiring.Component):
         span_seen = Signal()
         span_x0 = Signal(unsigned(12))
         span_x1 = Signal(unsigned(12))
-        detailed_first_x = Signal(unsigned(12))
-        detailed_last_x = Signal(unsigned(12))
         m.d.comb += [
-            detailed_first_x.eq(Mux(
-                quantized_first_x == 0,
-                0,
-                quantized_first_x - 1)),
-            detailed_last_x.eq(Mux(
-                quantized_last_x >= screen_max_x,
-                screen_max_x,
-                quantized_last_x + 1)),
             self.o.payload.x0.eq(span_x0),
             self.o.payload.x1.eq(span_x1),
             self.o.payload.y.eq(y),
             self.o.payload.pixel.eq(cmd.pixel),
             self.o.payload.alternate.eq(self.alternate),
             self.o.payload.exact.eq(fill_detail != 0),
+            self.o.payload.overlap.eq(fill_detail == 2),
         ]
 
         # CASCADO changes fill granularity only a few times per surface. A
@@ -431,6 +425,7 @@ class TriangleSpanRasterizer(wiring.Component):
                         self.o.payload.pixel.color.eq(0),
                         self.o.payload.pixel.intensity.eq(0),
                         self.o.payload.exact.eq(1),
+                        self.o.payload.overlap.eq(0),
                     ]
                     with m.If(self.o.ready):
                         advance_line()
@@ -495,15 +490,9 @@ class TriangleSpanRasterizer(wiring.Component):
                     with m.If(~span_seen):
                         m.d.sync += [
                             span_seen.eq(1),
-                            span_x0.eq(Mux(
-                                fill_detail == 2,
-                                detailed_first_x,
-                                quantized_first_x)),
+                            span_x0.eq(quantized_first_x),
                         ]
-                    m.d.sync += span_x1.eq(Mux(
-                        fill_detail == 2,
-                        detailed_last_x,
-                        quantized_last_x))
+                    m.d.sync += span_x1.eq(quantized_last_x)
 
                 # A triangle intersects each scanline in one contiguous run.
                 # Once a populated word is followed by an empty one, no later
@@ -593,8 +582,17 @@ class PackedSpanWriter(wiring.Component):
             with m.State("IDLE"):
                 m.d.comb += self.i.ready.eq(~self.pause)
                 with m.If(self.i.valid & ~self.pause):
-                    first = self.i.payload.x0 >> 2
-                    last = self.i.payload.x1 >> 2
+                    write_x0 = Mux(
+                        self.i.payload.overlap & (self.i.payload.x0 != 0),
+                        self.i.payload.x0 - 1,
+                        self.i.payload.x0)
+                    write_x1 = Mux(
+                        self.i.payload.overlap &
+                        (self.i.payload.x1 < self.fbp.timings.h_active - 1),
+                        self.i.payload.x1 + 1,
+                        self.i.payload.x1)
+                    first = write_x0 >> 2
+                    last = write_x1 >> 2
                     m.d.sync += [
                         address.eq(
                             (self.fbp.base ^
@@ -608,11 +606,11 @@ class PackedSpanWriter(wiring.Component):
                         first_select.eq(Array(
                             Const(mask, 4)
                             for mask in (0b1111, 0b1110, 0b1100, 0b1000)
-                        )[self.i.payload.x0[:2]]),
+                        )[write_x0[:2]]),
                         last_select.eq(Array(
                             Const(mask, 4)
                             for mask in (0b0001, 0b0011, 0b0111, 0b1111)
-                        )[self.i.payload.x1[:2]]),
+                        )[write_x1[:2]]),
                         burst_count.eq(0),
                     ]
                     m.next = "BURST"
