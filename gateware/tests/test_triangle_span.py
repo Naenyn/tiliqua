@@ -51,6 +51,30 @@ def packed_word_pixels(pixels, width):
     return expanded
 
 
+def reference_line_pixels(start, end, width, height):
+    """Return the clipped integer pixels from the renderer's Bresenham walk."""
+    x, y = start
+    target_x, target_y = end
+    dx = abs(target_x - x)
+    dy = abs(target_y - y)
+    sx = 1 if target_x >= x else -1
+    sy = 1 if target_y >= y else -1
+    error = dx - dy
+    pixels = set()
+    while True:
+        if 0 <= x < width and 0 <= y < height:
+            pixels.add((x, y))
+        if x == target_x and y == target_y:
+            return pixels
+        doubled = error * 2
+        if doubled > -dy:
+            error -= dy
+            x += sx
+        if doubled < dx:
+            error += dx
+            y += sy
+
+
 class TriangleSpanRasterizerTests(unittest.TestCase):
 
     @staticmethod
@@ -178,113 +202,94 @@ class TriangleSpanRasterizerTests(unittest.TestCase):
                 packed_word_pixels(reference_pixels(vertices, 16, 12), 16),
             )
 
-    def test_ridge_spans_follow_each_fill_and_stay_on_marked_edge(self):
-        """Optional ridges share the ordered span stream with terrain fills."""
+    def test_contour_command_emits_a_complete_exact_line_in_every_rotation(self):
+        """Encoded contour segments become clipped, one-pixel line spans."""
         width = 32
         height = 24
-        vertices = [(3, 3), (7, 20), (27, 15)]
+        start = (7, 20)
+        end = (27, 15)
+
+        for rotation in Rotation:
+            with self.subTest(rotation=rotation):
+                dut = TriangleSpanRasterizer()
+                sim = Simulator(dut)
+                sim.add_clock(1e-6)
+                actual = set()
+
+                async def bench(ctx):
+                    ctx.set(dut.h_active, width)
+                    ctx.set(dut.v_active, height)
+                    ctx.set(dut.rotation, rotation)
+                    ctx.set(dut.alternate, 1)
+                    ctx.set(dut.o.ready, 1)
+                    # Repeating vertex zero encodes a contour segment without
+                    # adding a mode bit to the asynchronous command FIFO.
+                    for index, (x, y) in enumerate((start, start, end)):
+                        ctx.set(getattr(dut.i.payload, f"x{index}"), x)
+                        ctx.set(getattr(dut.i.payload, f"y{index}"), y)
+                    ctx.set(dut.i.payload.pixel.color, 0)
+                    ctx.set(dut.i.payload.pixel.intensity, 0)
+                    ctx.set(dut.ridge, 1)
+                    ctx.set(dut.i.valid, 1)
+                    while not ctx.get(dut.i.ready):
+                        await ctx.tick()
+                    await ctx.tick()
+                    ctx.set(dut.i.valid, 0)
+
+                    for _ in range(4000):
+                        if ctx.get(dut.o.valid):
+                            self.assertEqual(ctx.get(dut.o.payload.exact), 1)
+                            self.assertEqual(
+                                ctx.get(dut.o.payload.pixel.as_value()), 0)
+                            y = ctx.get(dut.o.payload.y)
+                            for x in range(ctx.get(dut.o.payload.x0),
+                                           ctx.get(dut.o.payload.x1) + 1):
+                                actual.add((x, y))
+                        if not ctx.get(dut.busy):
+                            break
+                        await ctx.tick()
+                    else:
+                        self.fail("contour rasterizer did not finish")
+
+                sim.add_testbench(bench)
+                sim.run()
+                transformed = transform_triangle(
+                    (start, start, end), rotation, width, height)
+                self.assertEqual(
+                    actual,
+                    reference_line_pixels(
+                        transformed[1], transformed[2], width, height),
+                )
+
+    def test_disabled_contour_command_emits_nothing(self):
         dut = TriangleSpanRasterizer()
         sim = Simulator(dut)
         sim.add_clock(1e-6)
-        spans = []
+        emitted = []
 
         async def bench(ctx):
-            ctx.set(dut.h_active, width)
-            ctx.set(dut.v_active, height)
+            ctx.set(dut.h_active, 32)
+            ctx.set(dut.v_active, 24)
             ctx.set(dut.rotation, Rotation.NORMAL)
-            ctx.set(dut.alternate, 1)
             ctx.set(dut.o.ready, 1)
-            for index, (x, y) in enumerate(vertices):
+            for index, (x, y) in enumerate(((3, 4), (3, 4), (27, 16))):
                 ctx.set(getattr(dut.i.payload, f"x{index}"), x)
                 ctx.set(getattr(dut.i.payload, f"y{index}"), y)
-            ctx.set(dut.i.payload.pixel.color, 5)
-            ctx.set(dut.i.payload.pixel.intensity, 11)
-            ctx.set(dut.ridge, 1)
+            ctx.set(dut.ridge, 0)
             ctx.set(dut.i.valid, 1)
             while not ctx.get(dut.i.ready):
                 await ctx.tick()
             await ctx.tick()
             ctx.set(dut.i.valid, 0)
-
-            for _ in range(4000):
-                if ctx.get(dut.o.valid):
-                    spans.append((
-                        ctx.get(dut.o.payload.x0),
-                        ctx.get(dut.o.payload.x1),
-                        ctx.get(dut.o.payload.y),
-                        ctx.get(dut.o.payload.pixel.color),
-                        ctx.get(dut.o.payload.pixel.intensity),
-                    ))
-                if not ctx.get(dut.busy):
-                    break
-                await ctx.tick()
-            else:
-                self.fail("rasterizer did not finish")
-
-        sim.add_testbench(bench)
-        sim.run()
-        self.assertGreater(len(spans), 0)
-        fills = [span for span in spans if span[4] == 11]
-        ridges = [span for span in spans if span[4] == 0]
-        self.assertGreater(len(fills), len(ridges))
-        # Only rows crossed by the marked edge 1->2 receive a ridge. Emitting
-        # an endpoint on every triangle row was the visible perforation bug.
-        self.assertEqual([ridge[2] for ridge in ridges], list(range(15, 21)))
-        for ridge in ridges:
-            self.assertEqual(ridge[3:], (0, 0))
-            self.assertLessEqual(ridge[0], ridge[1])
-        # Consecutive scanline spans share the preceding edge intersection,
-        # making the projected contour continuous even when it is shallow.
-        for previous, current in zip(ridges, ridges[1:]):
-            self.assertLessEqual(
-                max(previous[0], current[0]),
-                min(previous[1], current[1]))
-
-    def test_horizontal_ridge_covers_the_complete_marked_edge(self):
-        width = 32
-        height = 24
-        vertices = [(3, 3), (7, 16), (27, 16)]
-        dut = TriangleSpanRasterizer()
-        sim = Simulator(dut)
-        sim.add_clock(1e-6)
-        spans = []
-
-        async def bench(ctx):
-            ctx.set(dut.h_active, width)
-            ctx.set(dut.v_active, height)
-            ctx.set(dut.rotation, Rotation.NORMAL)
-            ctx.set(dut.o.ready, 1)
-            for index, (x, y) in enumerate(vertices):
-                ctx.set(getattr(dut.i.payload, f"x{index}"), x)
-                ctx.set(getattr(dut.i.payload, f"y{index}"), y)
-            ctx.set(dut.i.payload.pixel.color, 5)
-            ctx.set(dut.i.payload.pixel.intensity, 11)
-            ctx.set(dut.ridge, 1)
-            ctx.set(dut.i.valid, 1)
-            while not ctx.get(dut.i.ready):
-                await ctx.tick()
-            await ctx.tick()
-            ctx.set(dut.i.valid, 0)
-
-            for _ in range(4000):
-                if ctx.get(dut.o.valid):
-                    spans.append((
-                        ctx.get(dut.o.payload.x0),
-                        ctx.get(dut.o.payload.x1),
-                        ctx.get(dut.o.payload.y),
-                        ctx.get(dut.o.payload.pixel.intensity),
-                    ))
+            for _ in range(100):
+                emitted.append(ctx.get(dut.o.valid))
                 if not ctx.get(dut.busy):
                     break
                 await ctx.tick()
 
         sim.add_testbench(bench)
         sim.run()
-        fill, ridge = spans[-2:]
-        self.assertEqual(fill[2], 16)
-        self.assertEqual(ridge[2], 16)
-        self.assertEqual(ridge[3], 0)
-        self.assertEqual((ridge[0], ridge[1]), (fill[0], fill[1]))
+        self.assertFalse(any(emitted))
 
     def test_adjacent_triangles_form_watertight_projected_cells(self):
         """Terrain's two triangles must not crack along their shared edge."""
@@ -404,6 +409,52 @@ class PackedSpanWriterTests(unittest.TestCase):
                 (0x10a, 0b1111, packed_pixel * 0x01010101,
                  wishbone.CycleType.END_OF_BURST.value),
             ],
+        )
+
+    def test_exact_span_masks_only_its_endpoint_lanes(self):
+        bus_signature = wishbone.Signature(
+            addr_width=22,
+            data_width=32,
+            granularity=8,
+            features={"cti", "bte"},
+        )
+        dut = PackedSpanWriter(bus_signature=bus_signature, burst_words=16)
+        sim = Simulator(dut)
+        sim.add_clock(1e-6)
+        writes = []
+
+        async def bench(ctx):
+            ctx.set(dut.fbp.base, 0x100)
+            ctx.set(dut.fbp.timings.h_active, 16)
+            ctx.set(dut.fbp.timings.v_active, 12)
+            ctx.set(dut.pause, 0)
+            ctx.set(dut.i.payload.x0, 3)
+            ctx.set(dut.i.payload.x1, 10)
+            ctx.set(dut.i.payload.y, 2)
+            ctx.set(dut.i.payload.pixel.color, 0)
+            ctx.set(dut.i.payload.pixel.intensity, 0)
+            ctx.set(dut.i.payload.alternate, 0)
+            ctx.set(dut.i.payload.exact, 1)
+            ctx.set(dut.i.valid, 1)
+            while not ctx.get(dut.i.ready):
+                await ctx.tick()
+            await ctx.tick()
+            ctx.set(dut.i.valid, 0)
+
+            for _ in range(32):
+                ctx.set(dut.bus.ack, 1)
+                if ctx.get(dut.bus.cyc) and ctx.get(dut.bus.stb):
+                    writes.append((ctx.get(dut.bus.adr),
+                                   ctx.get(dut.bus.sel)))
+                if not ctx.get(dut.busy):
+                    break
+                await ctx.tick()
+
+        sim.add_testbench(bench)
+        sim.run()
+        self.assertEqual(
+            writes,
+            [(0x108, 0b1000), (0x109, 0b1111), (0x10a, 0b0111)],
         )
 
     def test_adjacent_stalled_spans_leave_no_unwritten_bytes(self):

@@ -12,6 +12,7 @@ waterfall_spectrogram = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(waterfall_spectrogram)
 _log_frequency_bin_buckets = waterfall_spectrogram._log_frequency_bin_buckets
 _terrain_visibility_level = waterfall_spectrogram._terrain_visibility_level
+Spectrogram = waterfall_spectrogram.Spectrogram
 
 
 def test_log_frequency_buckets_cover_positive_spectrum():
@@ -73,3 +74,42 @@ def test_terrain_visibility_culls_quiet_old_facets_without_recoloring():
     sim = Simulator(m)
     sim.add_testbench(bench)
     sim.run()
+
+
+def test_quiet_terrain_still_emits_complete_contour_commands():
+    """Ridges must not inherit the terrain facet visibility threshold."""
+    dut = Spectrogram(fs=192_000)
+    sim = Simulator(dut)
+    sim.add_clock(1 / 60_000_000, domain="sync")
+    sim.add_clock(1 / 74_250_000, domain="dvi")
+    commands = []
+
+    async def bench(ctx):
+        # Default terrain/ridge settings with untouched history represent a
+        # completely quiet, fully culled surface.
+        ctx.set(dut.clear_done, 1)
+        ctx.set(dut.flush_done, 1)
+        ctx.set(dut.line_busy, 0)
+        ctx.set(dut.line_o.ready, 1)
+        ctx.set(dut.triangle_o.ready, 1)
+
+        for _ in range(30_000):
+            if ctx.get(dut.triangle_o.valid):
+                command = {
+                    name: ctx.get(getattr(dut.triangle_o.payload, name))
+                    for name in ("x0", "y0", "x1", "y1", "x2", "y2")
+                }
+                command["pixel"] = ctx.get(
+                    dut.triangle_o.payload.pixel.as_value())
+                commands.append(command)
+                if len(commands) == 8:
+                    return
+            await ctx.tick()
+        raise AssertionError("quiet terrain emitted no contour commands")
+
+    sim.add_testbench(bench)
+    sim.run()
+    assert len(commands) == 8
+    assert all(command["x0"] == command["x1"] for command in commands)
+    assert all(command["y0"] == command["y1"] for command in commands)
+    assert all(command["pixel"] == 0 for command in commands)

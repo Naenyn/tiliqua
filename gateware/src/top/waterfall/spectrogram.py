@@ -819,6 +819,7 @@ class Spectrogram(wiring.Component):
         log_scale_dvi = Signal()
         age_fade_dvi = Signal()
         frequency_color_dvi = Signal()
+        ridges_dvi = Signal()
         rate_dvi = Signal(2)
         hue_dvi = Signal(4)
         noise_floor_dvi = Signal(2)
@@ -839,6 +840,7 @@ class Spectrogram(wiring.Component):
             ("log_scale", log_scale, log_scale_dvi),
             ("age_fade", age_fade, age_fade_dvi),
             ("frequency_color", frequency_color, frequency_color_dvi),
+            ("ridges", ridges, ridges_dvi),
             ("rate", rate_sel, rate_dvi),
             ("h_active", h_active, h_active_dvi),
             ("v_active", v_active, v_active_dvi),
@@ -931,6 +933,7 @@ class Spectrogram(wiring.Component):
         sweep_log_scale = Signal()
         sweep_age_fade = Signal()
         sweep_frequency_color = Signal()
+        sweep_ridges = Signal()
         sweep_projection_x = [Signal(signed(10)) for _ in range(3)]
         sweep_projection_y = [Signal(signed(10)) for _ in range(3)]
 
@@ -1275,6 +1278,7 @@ class Spectrogram(wiring.Component):
                         sweep_log_scale.eq(log_scale_dvi),
                         sweep_age_fade.eq(age_fade_dvi),
                         sweep_frequency_color.eq(frequency_color_dvi),
+                        sweep_ridges.eq(ridges_dvi),
                         draw_generation.eq(~visible_generation),
                         render_activity_seen.eq(0),
                         clear_request.eq(1),
@@ -1470,6 +1474,34 @@ class Spectrogram(wiring.Component):
                     triangle_fifo.w_en.eq(terrain_cell_visible),
                 ]
                 with m.If(~terrain_cell_visible | triangle_fifo.w_rdy):
+                    with m.If(sweep_ridges):
+                        m.next = "PUSH_TERRAIN_RIDGE"
+                    with m.Else():
+                        m.d.dvi += [
+                            terrain_current_left.eq(current_projected_point),
+                            terrain_previous_left.eq(terrain_previous_right),
+                        ]
+                        m.next = "ADVANCE_SURFACE_POINT"
+
+            with m.State("PUSH_TERRAIN_RIDGE"):
+                # Append the current history boundary directly after its A/B
+                # cell fills. Vertices 0 and 1 intentionally match: the span
+                # renderer recognizes this otherwise-invalid triangle as an
+                # exact one-pixel contour segment. Quiet or age-culled cells
+                # still emit their boundary, while the next (nearer) history
+                # row remains later in the same ordered stream and occludes it.
+                m.d.comb += [
+                    triangle_word.x0.eq(terrain_current_left.x),
+                    triangle_word.y0.eq(terrain_current_left.y),
+                    triangle_word.x1.eq(terrain_current_left.x),
+                    triangle_word.y1.eq(terrain_current_left.y),
+                    triangle_word.x2.eq(current_projected_point.x),
+                    triangle_word.y2.eq(current_projected_point.y),
+                    triangle_word.pixel.color.eq(0),
+                    triangle_word.pixel.intensity.eq(0),
+                    triangle_fifo.w_en.eq(1),
+                ]
+                with m.If(triangle_fifo.w_rdy):
                     m.d.dvi += [
                         terrain_current_left.eq(current_projected_point),
                         terrain_previous_left.eq(terrain_previous_right),

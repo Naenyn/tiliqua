@@ -275,8 +275,6 @@ class WaterfallSoc(TiliquaSoc):
             self.spectrogram.flush_done.eq(
                 self.framebuffer_plotter.flush_done),
             self.backbuffer_clear.start.eq(clear_request_sync),
-            self.waterfall_terrain_renderer.frame_start.eq(
-                clear_request_sync),
             self.spectrogram.clear_done.eq(self.backbuffer_clear.done),
             self.spectrogram.clear_busy.eq(self.backbuffer_clear.busy),
         ]
