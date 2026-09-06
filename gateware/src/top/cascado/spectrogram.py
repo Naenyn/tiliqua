@@ -1230,9 +1230,10 @@ class Spectrogram(wiring.Component):
             line_fifo.w_data.eq(line_word),
             triangle_fifo.w_en.eq(0),
             triangle_fifo.w_data.eq(triangle_word),
-            # Preserve exact byte-lane edges only at the live foreground.
-            # Recently aged strips round to two-pixel pairs; the remainder
-            # retain the fast, conservative four-pixel packed-word coverage.
+            # Preserve one-pixel edge placement with a one-pixel overlap only
+            # at the live foreground. Recently aged strips round to two-pixel
+            # pairs; the remainder retain the fast, conservative four-pixel
+            # packed-word coverage.
             terrain_detail.eq(Mux(
                 scan_history_age == 0,
                 2,

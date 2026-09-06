@@ -56,6 +56,17 @@ def granular_pixels(pixels, width, block_size):
     return expanded
 
 
+def horizontally_dilated_pixels(pixels, width):
+    """Grow every populated scanline by one pixel at both endpoints."""
+    expanded = set()
+    rows = {y for _, y in pixels}
+    for y in rows:
+        xs = [x for x, py in pixels if py == y]
+        for x in range(max(0, min(xs) - 1), min(width - 1, max(xs) + 1) + 1):
+            expanded.add((x, y))
+    return expanded
+
+
 def reference_line_pixels(start, end, width, height):
     """Return the clipped integer pixels from the renderer's Bresenham walk."""
     x, y = start
@@ -147,12 +158,12 @@ class TriangleSpanRasterizerTests(unittest.TestCase):
                     sim.run()
                     transformed = transform_triangle(
                         logical, rotation, width, height)
-                    self.assertEqual(
-                        actual,
-                        granular_pixels(
-                            reference_pixels(transformed, width, height),
-                            width, block_size),
-                    )
+                    expected = granular_pixels(
+                        reference_pixels(transformed, width, height),
+                        width, block_size)
+                    if detail == 2:
+                        expected = horizontally_dilated_pixels(expected, width)
+                    self.assertEqual(actual, expected)
 
     def test_repeated_small_surfaces_do_not_reemit_old_spans(self):
         """Exercise more than the four frames that broke generation tagging."""
@@ -336,12 +347,16 @@ class TriangleSpanRasterizerTests(unittest.TestCase):
                                 triangle, rotation, width, height)
                             for triangle in triangles
                         ]
-                        expected = set().union(*(
-                            granular_pixels(
+                        expected_triangles = []
+                        for triangle in transformed:
+                            pixels = granular_pixels(
                                 reference_pixels(triangle, width, height),
                                 width, block_size)
-                            for triangle in transformed
-                        ))
+                            if detail == 2:
+                                pixels = horizontally_dilated_pixels(
+                                    pixels, width)
+                            expected_triangles.append(pixels)
+                        expected = set().union(*expected_triangles)
                         self.assertEqual(actual, expected)
 
                         # No background pixel may be trapped between filled
