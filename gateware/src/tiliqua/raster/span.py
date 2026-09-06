@@ -192,13 +192,10 @@ class TriangleSpanRasterizer(wiring.Component):
                 Mux(lane_inside[2], 2,
                     Mux(lane_inside[1], 1, 0)))),
             # Detail zero preserves conservative full-word coverage. Detail
-            # one rounds to two-pixel pairs. Detail two keeps one-pixel edge
-            # placement, but grows each triangle span by one horizontal pixel
-            # below. That tiny overlap closes subpixel cracks between the many
-            # independently projected foreground facets without returning to
-            # visibly blocky two- or four-pixel edges. ``x`` is word-aligned,
-            # so composing its low bits directly keeps the common endpoint
-            # selection path free of wide adders.
+            # one rounds only to two-pixel pairs; detail two retains the exact
+            # covered byte lanes. ``x`` is always word-aligned, so composing
+            # its low bits directly avoids putting two 12-bit adders here.
+            # All modes still inspect four pixels at once.
             quantized_first_x.eq(Mux(
                 fill_detail == 2,
                 Cat(first_inside_lane, x[2:]),
@@ -216,17 +213,7 @@ class TriangleSpanRasterizer(wiring.Component):
         span_seen = Signal()
         span_x0 = Signal(unsigned(12))
         span_x1 = Signal(unsigned(12))
-        detailed_first_x = Signal(unsigned(12))
-        detailed_last_x = Signal(unsigned(12))
         m.d.comb += [
-            detailed_first_x.eq(Mux(
-                quantized_first_x == 0,
-                0,
-                quantized_first_x - 1)),
-            detailed_last_x.eq(Mux(
-                quantized_last_x >= screen_max_x,
-                screen_max_x,
-                quantized_last_x + 1)),
             self.o.payload.x0.eq(span_x0),
             self.o.payload.x1.eq(span_x1),
             self.o.payload.y.eq(y),
@@ -495,15 +482,9 @@ class TriangleSpanRasterizer(wiring.Component):
                     with m.If(~span_seen):
                         m.d.sync += [
                             span_seen.eq(1),
-                            span_x0.eq(Mux(
-                                fill_detail == 2,
-                                detailed_first_x,
-                                quantized_first_x)),
+                            span_x0.eq(quantized_first_x),
                         ]
-                    m.d.sync += span_x1.eq(Mux(
-                        fill_detail == 2,
-                        detailed_last_x,
-                        quantized_last_x))
+                    m.d.sync += span_x1.eq(quantized_last_x)
 
                 # A triangle intersects each scanline in one contiguous run.
                 # Once a populated word is followed by an empty one, no later
