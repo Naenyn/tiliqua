@@ -42,12 +42,17 @@ def reference_pixels(vertices, width, height):
 
 def packed_word_pixels(pixels, width):
     """Expand touched pixels to the opaque four-pixel words we store."""
+    return granular_pixels(pixels, width, 4)
+
+
+def granular_pixels(pixels, width, block_size):
+    """Expand touched pixels to aligned blocks of the requested width."""
     expanded = set()
     for x, y in pixels:
-        word_x = x & ~3
-        for lane in range(4):
-            if word_x + lane < width:
-                expanded.add((word_x + lane, y))
+        block_x = x & ~(block_size - 1)
+        for lane in range(block_size):
+            if block_x + lane < width:
+                expanded.add((block_x + lane, y))
     return expanded
 
 
@@ -78,12 +83,13 @@ def reference_line_pixels(start, end, width, height):
 class TriangleSpanRasterizerTests(unittest.TestCase):
 
     @staticmethod
-    async def _send_triangle(ctx, dut, vertices, pixels):
+    async def _send_triangle(ctx, dut, vertices, pixels, detail=0):
         for index, (x, y) in enumerate(vertices):
             ctx.set(getattr(dut.i.payload, f"x{index}"), x)
             ctx.set(getattr(dut.i.payload, f"y{index}"), y)
         ctx.set(dut.i.payload.pixel.color, 5)
         ctx.set(dut.i.payload.pixel.intensity, 11)
+        ctx.set(dut.i.payload.detail, detail)
         ctx.set(dut.i.valid, 1)
         while not ctx.get(dut.i.ready):
             await ctx.tick()
@@ -106,53 +112,56 @@ class TriangleSpanRasterizerTests(unittest.TestCase):
         height = 10
         logical = [(1, 2), (8, 3), (4, 8)]
 
-        for rotation in Rotation:
-            with self.subTest(rotation=rotation):
-                dut = TriangleSpanRasterizer()
-                sim = Simulator(dut)
-                sim.add_clock(1e-6)
-                actual = set()
+        for detail, block_size in ((0, 4), (1, 2), (2, 1)):
+            for rotation in Rotation:
+                with self.subTest(detail=detail, rotation=rotation):
+                    dut = TriangleSpanRasterizer()
+                    sim = Simulator(dut)
+                    sim.add_clock(1e-6)
+                    actual = set()
 
-                async def bench(ctx):
-                    ctx.set(dut.h_active, width)
-                    ctx.set(dut.v_active, height)
-                    ctx.set(dut.rotation, rotation)
-                    ctx.set(dut.alternate, 1)
-                    ctx.set(dut.o.ready, 1)
-                    for index, (x, y) in enumerate(logical):
-                        ctx.set(getattr(dut.i.payload, f"x{index}"), x)
-                        ctx.set(getattr(dut.i.payload, f"y{index}"), y)
-                    ctx.set(dut.i.payload.pixel.color, 5)
-                    ctx.set(dut.i.payload.pixel.intensity, 11)
-                    ctx.set(dut.i.valid, 1)
-                    while not ctx.get(dut.i.ready):
+                    async def bench(ctx):
+                        ctx.set(dut.h_active, width)
+                        ctx.set(dut.v_active, height)
+                        ctx.set(dut.rotation, rotation)
+                        ctx.set(dut.alternate, 1)
+                        ctx.set(dut.o.ready, 1)
+                        for index, (x, y) in enumerate(logical):
+                            ctx.set(getattr(dut.i.payload, f"x{index}"), x)
+                            ctx.set(getattr(dut.i.payload, f"y{index}"), y)
+                        ctx.set(dut.i.payload.pixel.color, 5)
+                        ctx.set(dut.i.payload.pixel.intensity, 11)
+                        ctx.set(dut.i.payload.detail, detail)
+                        ctx.set(dut.i.valid, 1)
+                        while not ctx.get(dut.i.ready):
+                            await ctx.tick()
                         await ctx.tick()
-                    await ctx.tick()
-                    ctx.set(dut.i.valid, 0)
+                        ctx.set(dut.i.valid, 0)
 
-                    for _ in range(2000):
-                        if ctx.get(dut.o.valid):
-                            x0 = ctx.get(dut.o.payload.x0)
-                            x1 = ctx.get(dut.o.payload.x1)
-                            y = ctx.get(dut.o.payload.y)
-                            self.assertLessEqual(x0, x1)
-                            for x in range(x0, x1 + 1):
-                                actual.add((x, y))
-                        if not ctx.get(dut.busy):
-                            break
-                        await ctx.tick()
-                    else:
-                        self.fail("rasterizer did not finish")
+                        for _ in range(2000):
+                            if ctx.get(dut.o.valid):
+                                x0 = ctx.get(dut.o.payload.x0)
+                                x1 = ctx.get(dut.o.payload.x1)
+                                y = ctx.get(dut.o.payload.y)
+                                self.assertLessEqual(x0, x1)
+                                for x in range(x0, x1 + 1):
+                                    actual.add((x, y))
+                            if not ctx.get(dut.busy):
+                                break
+                            await ctx.tick()
+                        else:
+                            self.fail("rasterizer did not finish")
 
-                sim.add_testbench(bench)
-                sim.run()
-                transformed = transform_triangle(
-                    logical, rotation, width, height)
-                self.assertEqual(
-                    actual,
-                    packed_word_pixels(
-                        reference_pixels(transformed, width, height), width),
-                )
+                    sim.add_testbench(bench)
+                    sim.run()
+                    transformed = transform_triangle(
+                        logical, rotation, width, height)
+                    self.assertEqual(
+                        actual,
+                        granular_pixels(
+                            reference_pixels(transformed, width, height),
+                            width, block_size),
+                    )
 
     def test_repeated_small_surfaces_do_not_reemit_old_spans(self):
         """Exercise more than the four frames that broke generation tagging."""
@@ -303,50 +312,53 @@ class TriangleSpanRasterizerTests(unittest.TestCase):
             ((2, 4), (12, 20), (29, 18), (20, 5)),
         ]
 
-        for rotation in Rotation:
-            for cell in cells:
-                with self.subTest(rotation=rotation, cell=cell):
-                    # Match CASCADO's A-B-C and A-C-D split.
-                    triangles = [
-                        (cell[0], cell[1], cell[2]),
-                        (cell[0], cell[2], cell[3]),
-                    ]
-                    dut = TriangleSpanRasterizer()
-                    sim = Simulator(dut)
-                    sim.add_clock(1e-6)
-                    actual = set()
+        for detail, block_size in ((0, 4), (1, 2), (2, 1)):
+            for rotation in Rotation:
+                for cell in cells:
+                    with self.subTest(
+                            detail=detail, rotation=rotation, cell=cell):
+                        # Match CASCADO's A-B-C and A-C-D split.
+                        triangles = [
+                            (cell[0], cell[1], cell[2]),
+                            (cell[0], cell[2], cell[3]),
+                        ]
+                        dut = TriangleSpanRasterizer()
+                        sim = Simulator(dut)
+                        sim.add_clock(1e-6)
+                        actual = set()
 
-                    async def bench(ctx):
-                        ctx.set(dut.h_active, width)
-                        ctx.set(dut.v_active, height)
-                        ctx.set(dut.rotation, rotation)
-                        ctx.set(dut.alternate, 1)
-                        ctx.set(dut.o.ready, 1)
-                        for triangle in triangles:
-                            await self._send_triangle(
-                                ctx, dut, triangle, actual)
+                        async def bench(ctx):
+                            ctx.set(dut.h_active, width)
+                            ctx.set(dut.v_active, height)
+                            ctx.set(dut.rotation, rotation)
+                            ctx.set(dut.alternate, 1)
+                            ctx.set(dut.o.ready, 1)
+                            for triangle in triangles:
+                                await self._send_triangle(
+                                    ctx, dut, triangle, actual, detail)
 
-                    sim.add_testbench(bench)
-                    sim.run()
-                    transformed = [
-                        transform_triangle(
-                            triangle, rotation, width, height)
-                        for triangle in triangles
-                    ]
-                    expected = set().union(*(
-                        packed_word_pixels(
-                            reference_pixels(triangle, width, height), width)
-                        for triangle in transformed
-                    ))
-                    self.assertEqual(actual, expected)
+                        sim.add_testbench(bench)
+                        sim.run()
+                        transformed = [
+                            transform_triangle(
+                                triangle, rotation, width, height)
+                            for triangle in triangles
+                        ]
+                        expected = set().union(*(
+                            granular_pixels(
+                                reference_pixels(triangle, width, height),
+                                width, block_size)
+                            for triangle in transformed
+                        ))
+                        self.assertEqual(actual, expected)
 
-                    # No background pixel may be trapped between filled
-                    # pixels on a scanline of this convex projected cell.
-                    for y in range(height):
-                        xs = sorted(x for x, py in actual if py == y)
-                        if xs:
-                            self.assertEqual(
-                                xs, list(range(xs[0], xs[-1] + 1)))
+                        # No background pixel may be trapped between filled
+                        # pixels on a scanline of this convex projected cell.
+                        for y in range(height):
+                            xs = sorted(x for x, py in actual if py == y)
+                            if xs:
+                                self.assertEqual(
+                                    xs, list(range(xs[0], xs[-1] + 1)))
 
 
 class PackedSpanWriterTests(unittest.TestCase):

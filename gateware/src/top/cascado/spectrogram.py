@@ -974,9 +974,7 @@ class Spectrogram(wiring.Component):
         # naturally overwrite distant cells without a Z buffer. Wire mode emits
         # frequency ridges; terrain mode joins adjacent rows with filled cells.
         scan_slice = Signal(4)
-        # Adaptive/high rendering refines only the newest row to 256 visual
-        # vertices. All earlier rows retain their 64/128-point workload.
-        scan_point = Signal(8)
+        scan_point = Signal(7)
         scan_group_base = Signal(8)
         scan_group_last = Signal(3)
         scan_bin_last = Signal(8)
@@ -1094,9 +1092,6 @@ class Spectrogram(wiring.Component):
         current_projected_point = Signal(ProjectedPoint)
         high_quality = Signal()
         adaptive_transition = Signal()
-        fine_foreground = Signal()
-        fine_cached_level = Signal(6)
-        point_level = Signal(6)
         terrain_level = Signal(6)
         terrain_cell_sum = Signal(8)
         terrain_cell_level_next = Signal(6)
@@ -1105,6 +1100,7 @@ class Spectrogram(wiring.Component):
         terrain_cell_visibility_level_next = Signal(6)
         terrain_cell_visible = Signal()
         terrain_cell_frequency_intensity = Signal(4)
+        terrain_detail = Signal(2)
         wire_display_level = Signal(6)
         wire_frequency_intensity = Signal(4)
         # Palette packing has only 64 possible level inputs. Keep both the
@@ -1134,12 +1130,9 @@ class Spectrogram(wiring.Component):
         wire_level_color = Signal(4)
         terrain_level_intensity = Signal(4)
         wire_level_intensity = Signal(4)
-        scan_point_last = Signal(8)
+        scan_point_last = Signal(7)
         scan_group_shift = Signal(2)
         frequency_coordinate = Signal(9)
-        scan_source_point = Signal(7)
-        scan_render_level = Signal(6)
-        fine_level_sum = Signal(7)
         sweep_frequency_position = Signal(4)
         sweep_frequency_hue = Signal(4)
         scan_geometry = _three_d_scan_geometry(high_quality)
@@ -1153,29 +1146,14 @@ class Spectrogram(wiring.Component):
             terrain_row_write_en.eq(0),
             contour_row_read_en.eq(0),
             log_bucket_r.en.eq(0),
-            # Fine foreground points interpolate the existing 128-point
-            # analysis. Odd points fetch the next source value while even
-            # points reuse the value cached by the preceding odd point.
-            scan_source_point.eq(Mux(
-                fine_foreground,
-                Mux(scan_point == 0, 0,
-                    Mux(scan_point == 255, 127,
-                        (scan_point >> 1) + 1)),
-                scan_point[:7],
-            )),
-            log_bucket_r.addr.eq(Mux(
-                fine_foreground,
-                128 + scan_source_point,
-                Cat(scan_point[:7], high_quality),
-            )),
+            log_bucket_r.addr.eq(Cat(scan_point, high_quality)),
             # contour_point doubles as the previous-row vertex index during
             # terrain construction. At the adaptive boundary it advances once
             # per pair of current vertices, so the EBR address itself needs no
             # wide transition mux.
             contour_done.eq(
                 (contour_point == scan_point_last) |
-                (adaptive_transition &
-                 (contour_point == Mux(fine_foreground, 127, 63)))),
+                (adaptive_transition & (contour_point == 63))),
             row_read_point.as_value().eq(Mux(
                 row_bank == 0,
                 row_read_ports[1].data,
@@ -1189,8 +1167,7 @@ class Spectrogram(wiring.Component):
                     (row_bank != index)),
                 read_port.addr.eq(contour_point),
                 write_port.en.eq(
-                    terrain_row_write_en & (row_bank == index) &
-                    ~fine_foreground),
+                    terrain_row_write_en & (row_bank == index)),
                 write_port.addr.eq(scan_point),
                 write_port.data.eq(current_projected_point),
             ]
@@ -1201,22 +1178,14 @@ class Spectrogram(wiring.Component):
             # into the 64- or 128-vertex geometry latched for this history row.
             # The previous range-dependent geometry was inherited from the old
             # fixed-rate analyzer and truncated the 6kHz and 3kHz views.
-            scan_point_last.eq(Mux(
-                fine_foreground, 255, scan_geometry[0])),
+            scan_point_last.eq(scan_geometry[0]),
             scan_group_shift.eq(scan_geometry[1]),
-            frequency_coordinate.eq(Mux(
-                fine_foreground,
-                scan_point,
-                _three_d_frequency_coordinate(scan_point[:7], high_quality),
-            )),
+            frequency_coordinate.eq(
+                _three_d_frequency_coordinate(scan_point, high_quality)),
             scan_history_age.eq(Const(15, 4) - scan_slice),
             # Consecutive captures are spread across the full visual Z depth.
             scan_depth.eq(scan_history_age << 4),
-            scan_group_base.eq(Mux(
-                fine_foreground,
-                scan_source_point << 1,
-                scan_point << scan_group_shift,
-            )),
+            scan_group_base.eq(scan_point << scan_group_shift),
             scan_group_last.eq(Mux(
                 scan_group_shift == 0, 0,
                 Mux(scan_group_shift == 1, 1,
@@ -1225,19 +1194,7 @@ class Spectrogram(wiring.Component):
             # framebuffer palette has room for 64 amplitude steps and four
             # simultaneous hue rotations, so discarding the low bit here only
             # created visible plateaus in dense terrain.
-            fine_level_sum.eq(fine_cached_level + scan_peak + 1),
-            # The final endpoint repeats source vertex 127. Interior odd
-            # vertices are rounded midpoints; even vertices retain the
-            # original analyzed level, so this is visual tessellation rather
-            # than additional spectral resolution.
-            scan_render_level.eq(Mux(
-                fine_foreground & (scan_point == 255),
-                fine_cached_level,
-                Mux(fine_foreground & scan_point[0],
-                    fine_level_sum >> 1,
-                    scan_peak),
-            )),
-            terrain_level.eq(point_level),
+            terrain_level.eq(scan_peak),
             scan_peak_next.eq(Mux(
                 scan_history_level > scan_peak,
                 scan_history_level,
@@ -1273,6 +1230,14 @@ class Spectrogram(wiring.Component):
             line_fifo.w_data.eq(line_word),
             triangle_fifo.w_en.eq(0),
             triangle_fifo.w_data.eq(triangle_word),
+            # Preserve exact byte-lane edges only at the live foreground.
+            # Recently aged strips round to two-pixel pairs; the remainder
+            # retain the fast, conservative four-pixel packed-word coverage.
+            terrain_detail.eq(Mux(
+                scan_history_age == 0,
+                2,
+                Mux(scan_history_age <= 3, 1, 0))),
+            triangle_word.detail.eq(terrain_detail),
             current_projected_point.x.eq(projected_x),
             current_projected_point.y.eq(projected_y),
             current_projected_point.level.eq(terrain_level),
@@ -1314,11 +1279,11 @@ class Spectrogram(wiring.Component):
             wire_display_level.eq(Mux(
                 sweep_frequency_color,
                 _terrain_visibility_level(
-                    point_level,
+                    scan_peak,
                     scan_history_age,
                     sweep_age_fade,
                 ),
-                point_level)),
+                scan_peak)),
             # Frequency coloring has only four amplitude bits. Round nonzero
             # six-bit levels upward so quiet history does not become black,
             # and saturate the top four codes instead of wrapping at 64.
@@ -1356,13 +1321,12 @@ class Spectrogram(wiring.Component):
                 Cat(wire_fade_code[4], scan_history_age[1:4]),
                 wire_full_code[4:6])),
             sweep_frequency_position.eq(
-                Mux(fine_foreground, scan_point >> 4,
-                    Mux(high_quality, scan_point >> 3, scan_point >> 2))
+                Mux(high_quality, scan_point >> 3, scan_point >> 2)
                 + sweep_hue),
             sweep_frequency_hue.eq(
                 frequency_hues[sweep_frequency_position]),
             palette_wire_r.en.eq(0),
-            palette_wire_r.addr.eq(scan_render_level),
+            palette_wire_r.addr.eq(scan_peak),
             palette_terrain_r.en.eq(0),
             palette_terrain_r.addr.eq(terrain_cell_display_level_next),
         ]
@@ -1392,9 +1356,6 @@ class Spectrogram(wiring.Component):
                         # with 64-point rows and switches at history row eight.
                         high_quality.eq(quality_3d_dvi == 2),
                         adaptive_transition.eq(0),
-                        fine_foreground.eq(0),
-                        fine_cached_level.eq(0),
-                        point_level.eq(0),
                         # Freeze every property that can make one projected
                         # sweep disagree with another. The live analyzer may
                         # continue writing newer columns in the background.
@@ -1433,15 +1394,7 @@ class Spectrogram(wiring.Component):
                     m.next = "START_BIN_GROUP"
 
             with m.State("START_BIN_GROUP"):
-                # Every even refined point after zero reuses the source level
-                # fetched for the preceding midpoint. Point 255 repeats the
-                # final source level to close the complete frequency axis.
-                with m.If(fine_foreground &
-                          (((scan_point != 0) & ~scan_point[0]) |
-                           (scan_point == 255))):
-                    m.d.dvi += scan_peak.eq(fine_cached_level)
-                    m.next = "LOAD_HISTORY_POINT"
-                with m.Elif(sweep_log_scale):
+                with m.If(sweep_log_scale):
                     m.d.comb += log_bucket_r.en.eq(1)
                     m.next = "LATCH_LOG_BIN_GROUP"
                 with m.Else():
@@ -1488,21 +1441,13 @@ class Spectrogram(wiring.Component):
                     point_frequency_base.eq(
                         frequency_coordinate.as_signed() - 128),
                     point_amplitude.eq(
-                        _dbfs_level_to_height(scan_render_level, Const(0))),
-                    point_level.eq(scan_render_level),
+                        _dbfs_level_to_height(scan_peak, Const(0))),
                     point_time.eq(scan_depth),
                     point_cmd.eq(Mux(
                         scan_point == scan_point_last,
                         LineStripCmd.END, LineStripCmd.CONTINUE)),
                     point_next.eq(0),
                 ]
-                # Point zero seeds interpolation. Each subsequent odd point
-                # fetches the next analyzed source level, then preserves it
-                # for the following exact even point.
-                with m.If(fine_foreground &
-                          ((scan_point == 0) |
-                           (scan_point[0] & (scan_point != 255)))):
-                    m.d.dvi += fine_cached_level.eq(scan_peak)
                 m.next = "MULTIPLY_POINT"
 
             with m.State("MULTIPLY_POINT"):
@@ -1732,7 +1677,6 @@ class Spectrogram(wiring.Component):
                         # the midpoint so the nearer half remains at 128
                         # points without re-decoding the mode on every row.
                         adaptive_transition.eq(0),
-                        fine_foreground.eq(0),
                     ]
                     with m.If(
                             (sweep_quality_3d == 0) & (scan_slice == 7)):
@@ -1742,16 +1686,6 @@ class Spectrogram(wiring.Component):
                             # preceding 64-point row. Halving only the
                             # previous-row read address duplicates each far
                             # vertex twice, producing a continuous transition.
-                            adaptive_transition.eq(1),
-                        ]
-                    # Adaptive and higher modes refine only the terminal
-                    # foreground row. Its 256 current vertices connect to the
-                    # preceding 128-point row with the same 2:1 transition
-                    # mapping, and need not be retained in a row buffer.
-                    with m.If(
-                            (sweep_quality_3d != 1) & (scan_slice == 14)):
-                        m.d.dvi += [
-                            fine_foreground.eq(1),
                             adaptive_transition.eq(1),
                         ]
                     m.next = "START_BIN_GROUP"

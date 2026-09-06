@@ -25,6 +25,10 @@ class TriangleCmd(data.Struct):
     x2: signed(12)
     y2: signed(12)
     pixel: Pixel
+    # Filled-span endpoint granularity: 0 = packed 4-pixel words,
+    # 1 = 2-pixel pairs, 2 = exact pixels. Pixel-at-a-time consumers may
+    # ignore this rendering hint.
+    detail: unsigned(2)
 
 
 def _min3(a, b, c):
