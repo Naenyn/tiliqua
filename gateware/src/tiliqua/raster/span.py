@@ -6,9 +6,9 @@
 
 This path is intentionally narrower than :mod:`tiliqua.raster.plot`.  It is
 for opaque, flat-shaded geometry such as CASCADO's terrain: vertices are
-rotated once, triangles become horizontal spans, and packed 32-bit PSRAM
-words are written with endpoint byte masks for contours. It deliberately omits
-blending, textures, depth and arbitrary per-pixel coordinate transforms.
+rotated once, triangles become horizontal spans, and four identical 8-bit
+pixels are written per 32-bit PSRAM word. It deliberately omits blending,
+textures, depth and arbitrary per-pixel coordinate transforms.
 """
 
 from amaranth import *
@@ -29,9 +29,6 @@ class SpanCmd(data.Struct):
     y: unsigned(12)
     pixel: Pixel
     alternate: unsigned(1)
-    # Triangle fills cover complete packed words. Contours use endpoint byte
-    # masks so their one-pixel lines remain thin.
-    exact: unsigned(1)
 
 
 class TriangleSpanRasterizer(wiring.Component):
@@ -184,99 +181,7 @@ class TriangleSpanRasterizer(wiring.Component):
             self.o.payload.y.eq(y),
             self.o.payload.pixel.eq(cmd.pixel),
             self.o.payload.alternate.eq(self.alternate),
-            self.o.payload.exact.eq(0),
         ]
-
-        # A contour command is encoded without widening CASCADO's
-        # timing-sensitive asynchronous command FIFO: vertices 0 and 1 are
-        # identical and vertex 2 is the other endpoint. Black contours are
-        # the optional history ridges; palette-colored contours sharpen only
-        # the live foreground edge and are always enabled. Genuine zero-area
-        # triangles were already discarded, so this representation is
-        # unambiguous to the span renderer.
-        contour_command = Signal()
-        m.d.comb += contour_command.eq(
-            (cmd.x0 == cmd.x1) & (cmd.y0 == cmd.y1))
-
-        # Contours use a span-producing Bresenham walk. Consecutive pixels on
-        # one physical scanline are coalesced into a single exact span, keeping
-        # the full history boundary much cheaper than the old pixel-at-a-time
-        # overlay while preserving true one-pixel edges.
-        line_x = Signal(signed(12))
-        line_y = Signal(signed(12))
-        line_target_x = Signal(signed(12))
-        line_target_y = Signal(signed(12))
-        line_dx = Signal(signed(14))
-        line_dy = Signal(signed(14))
-        line_sx = Signal(signed(2))
-        line_sy = Signal(signed(2))
-        line_err = Signal(signed(15))
-        line_e2 = Signal(signed(16))
-        line_step_x = Signal()
-        line_step_y = Signal()
-        line_next_x = Signal(signed(12))
-        line_next_y = Signal(signed(12))
-        line_next_err = Signal(signed(15))
-        line_at_target = Signal()
-        line_visible = Signal()
-        line_row_end = Signal()
-        line_run_valid = Signal()
-        line_run_x0 = Signal(unsigned(12))
-        line_run_x1 = Signal(unsigned(12))
-        line_candidate_x0 = Signal(unsigned(12))
-        line_candidate_x1 = Signal(unsigned(12))
-        line_emit_x0 = Signal(unsigned(12))
-        line_emit_x1 = Signal(unsigned(12))
-        line_emit_needed = Signal()
-        m.d.comb += [
-            line_e2.eq(line_err << 1),
-            line_step_x.eq(line_e2 > -line_dy),
-            line_step_y.eq(line_e2 < line_dx),
-            line_next_x.eq(line_x + Mux(line_step_x, line_sx, 0)),
-            line_next_y.eq(line_y + Mux(line_step_y, line_sy, 0)),
-            line_next_err.eq(
-                line_err - Mux(line_step_x, line_dy, 0)
-                + Mux(line_step_y, line_dx, 0)),
-            line_at_target.eq(
-                (line_x == line_target_x) & (line_y == line_target_y)),
-            line_visible.eq(
-                (line_x >= 0) & (line_x <= screen_max_x) &
-                (line_y >= 0) & (line_y <= screen_max_y)),
-            line_row_end.eq(line_at_target | line_step_y),
-            line_candidate_x0.eq(Mux(
-                line_run_valid,
-                Mux(line_x < line_run_x0, line_x, line_run_x0),
-                line_x)),
-            line_candidate_x1.eq(Mux(
-                line_run_valid,
-                Mux(line_x > line_run_x1, line_x, line_run_x1),
-                line_x)),
-            line_emit_x0.eq(Mux(
-                line_visible, line_candidate_x0, line_run_x0)),
-            line_emit_x1.eq(Mux(
-                line_visible, line_candidate_x1, line_run_x1)),
-            line_emit_needed.eq(
-                line_row_end & (line_run_valid | line_visible)),
-        ]
-
-        def advance_line():
-            with m.If(line_at_target):
-                m.d.sync += line_run_valid.eq(0)
-                m.next = "IDLE"
-            with m.Else():
-                m.d.sync += [
-                    line_x.eq(line_next_x),
-                    line_y.eq(line_next_y),
-                    line_err.eq(line_next_err),
-                ]
-                with m.If(line_row_end):
-                    m.d.sync += line_run_valid.eq(0)
-                with m.Elif(line_visible):
-                    m.d.sync += [
-                        line_run_valid.eq(1),
-                        line_run_x0.eq(line_candidate_x0),
-                        line_run_x1.eq(line_candidate_x1),
-                    ]
 
         def advance_row():
             with m.If(y == max_y):
@@ -302,71 +207,27 @@ class TriangleSpanRasterizer(wiring.Component):
                     m.next = "LOAD_BOUNDS"
 
             with m.State("LOAD_BOUNDS"):
-                with m.If(contour_command):
-                    m.d.sync += [
-                        line_x.eq(cmd.x1),
-                        line_y.eq(cmd.y1),
-                        line_target_x.eq(cmd.x2),
-                        line_target_y.eq(cmd.y2),
-                        line_run_valid.eq(0),
-                    ]
-                    m.next = "LINE_SETUP"
-                with m.Else():
-                    m.d.sync += [
-                        # Align the scan origin to the packed word boundary.
-                        # Any leading lanes outside the actual triangle are
-                        # rejected by the parallel edge tests above.
-                        min_x.eq(Mux(
-                            raw_min_x < 0,
-                            0,
-                            Cat(Const(0, 2), raw_min_x[2:]))),
-                        max_x.eq(Mux(raw_max_x > screen_max_x,
-                                     screen_max_x, raw_max_x)),
-                        min_y.eq(Mux(raw_min_y < 0, 0, raw_min_y)),
-                        max_y.eq(Mux(raw_max_y > screen_max_y,
-                                     screen_max_y, raw_max_y)),
-                        edge_dx[0].eq(cmd.x1 - cmd.x0),
-                        edge_dy[0].eq(cmd.y1 - cmd.y0),
-                        edge_dx[1].eq(cmd.x2 - cmd.x1),
-                        edge_dy[1].eq(cmd.y2 - cmd.y1),
-                        edge_dx[2].eq(cmd.x0 - cmd.x2),
-                        edge_dy[2].eq(cmd.y0 - cmd.y2),
-                    ]
-                    m.next = "CHECK_BOUNDS"
-
-            with m.State("LINE_SETUP"):
                 m.d.sync += [
-                    line_dx.eq(Mux(
-                        line_target_x >= line_x,
-                        line_target_x - line_x,
-                        line_x - line_target_x)),
-                    line_dy.eq(Mux(
-                        line_target_y >= line_y,
-                        line_target_y - line_y,
-                        line_y - line_target_y)),
-                    line_sx.eq(Mux(line_target_x >= line_x, 1, -1)),
-                    line_sy.eq(Mux(line_target_y >= line_y, 1, -1)),
+                    # Align the scan origin to the packed word boundary. Any
+                    # leading lanes outside the actual triangle are rejected
+                    # by the parallel edge tests above.
+                    min_x.eq(Mux(
+                        raw_min_x < 0,
+                        0,
+                        Cat(Const(0, 2), raw_min_x[2:]))),
+                    max_x.eq(Mux(raw_max_x > screen_max_x,
+                                 screen_max_x, raw_max_x)),
+                    min_y.eq(Mux(raw_min_y < 0, 0, raw_min_y)),
+                    max_y.eq(Mux(raw_max_y > screen_max_y,
+                                 screen_max_y, raw_max_y)),
+                    edge_dx[0].eq(cmd.x1 - cmd.x0),
+                    edge_dy[0].eq(cmd.y1 - cmd.y0),
+                    edge_dx[1].eq(cmd.x2 - cmd.x1),
+                    edge_dy[1].eq(cmd.y2 - cmd.y1),
+                    edge_dx[2].eq(cmd.x0 - cmd.x2),
+                    edge_dy[2].eq(cmd.y0 - cmd.y2),
                 ]
-                m.next = "LINE_START"
-
-            with m.State("LINE_START"):
-                m.d.sync += line_err.eq(line_dx - line_dy)
-                m.next = "LINE_STEP"
-
-            with m.State("LINE_STEP"):
-                with m.If(line_emit_needed):
-                    m.d.comb += [
-                        self.o.valid.eq(1),
-                        self.o.payload.x0.eq(line_emit_x0),
-                        self.o.payload.x1.eq(line_emit_x1),
-                        self.o.payload.y.eq(line_y),
-                        self.o.payload.pixel.eq(cmd.pixel),
-                        self.o.payload.exact.eq(1),
-                    ]
-                    with m.If(self.o.ready):
-                        advance_line()
-                with m.Else():
-                    advance_line()
+                m.next = "CHECK_BOUNDS"
 
             with m.State("CHECK_BOUNDS"):
                 with m.If((min_x > max_x) | (min_y > max_y) |
@@ -463,8 +324,10 @@ class TriangleSpanRasterizer(wiring.Component):
 class PackedSpanWriter(wiring.Component):
     """Write opaque spans directly to PSRAM in bounded incrementing bursts.
 
-    Terrain spans use conservative four-pixel word coverage. Exact contour
-    spans retain byte masks at their endpoints so they remain one pixel wide.
+    Spans use conservative four-pixel word coverage. CASCADO renders a
+    continuous opaque surface into a freshly cleared backbuffer, so allowing
+    neighboring facets to overlap by at most three horizontal pixels is both
+    harmless and preferable to leaving partial-byte cracks between them.
     """
 
     def __init__(self, *, bus_signature, burst_words=16):
@@ -487,31 +350,17 @@ class PackedSpanWriter(wiring.Component):
 
         address = Signal(bus.addr_width)
         word_index = Signal(unsigned(10))
-        first_word = Signal(unsigned(10))
         last_word = Signal(unsigned(10))
         pixel = Signal(Pixel)
-        exact = Signal()
-        first_select = Signal(4)
-        last_select = Signal(4)
         burst_count = Signal(range(self.burst_words))
 
         final_word = Signal()
         end_burst = Signal()
-        word_select = Signal(4)
         m.d.comb += [
             final_word.eq(word_index == last_word),
             end_burst.eq(final_word |
                          (burst_count == self.burst_words - 1) |
                          self.pause),
-            word_select.eq(Mux(
-                ~exact,
-                0b1111,
-                Mux(
-                    word_index == first_word,
-                    Mux(final_word,
-                        first_select & last_select,
-                        first_select),
-                    Mux(final_word, last_select, 0b1111)))),
         ]
 
         fb_words_per_line = Signal(unsigned(12))
@@ -529,18 +378,8 @@ class PackedSpanWriter(wiring.Component):
                              Mux(self.i.payload.alternate, 0x40000, 0)) +
                             self.i.payload.y * fb_words_per_line + first),
                         word_index.eq(first),
-                        first_word.eq(first),
                         last_word.eq(last),
                         pixel.eq(self.i.payload.pixel),
-                        exact.eq(self.i.payload.exact),
-                        first_select.eq(Array(
-                            Const(mask, 4)
-                            for mask in (0b1111, 0b1110, 0b1100, 0b1000)
-                        )[self.i.payload.x0[:2]]),
-                        last_select.eq(Array(
-                            Const(mask, 4)
-                            for mask in (0b0001, 0b0011, 0b0111, 0b1111)
-                        )[self.i.payload.x1[:2]]),
                         burst_count.eq(0),
                     ]
                     m.next = "BURST"
@@ -552,7 +391,7 @@ class PackedSpanWriter(wiring.Component):
                     bus.we.eq(1),
                     bus.adr.eq(address),
                     bus.dat_w.eq(Cat([pixel] * pixels_per_word)),
-                    bus.sel.eq(word_select),
+                    bus.sel.eq(0b1111),
                     bus.cti.eq(Mux(
                         end_burst,
                         wishbone.CycleType.END_OF_BURST,
@@ -593,8 +432,6 @@ class TriangleSpanRenderer(wiring.Component):
             "i": In(stream.Signature(TriangleCmd)),
             "pause": In(1),
             "alternate": In(1),
-            # CASCADO encodes complete contour segments as otherwise-invalid
-            # zero-area triangle commands, avoiding a wider cross-domain FIFO.
             "bus": Out(bus_signature),
             "fbp": In(DMAFramebuffer.Properties()),
             "busy": Out(1),

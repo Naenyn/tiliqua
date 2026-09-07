@@ -995,6 +995,7 @@ class Spectrogram(wiring.Component):
         sweep_age_fade = Signal()
         sweep_frequency_color = Signal()
         sweep_ridges = Signal()
+        terrain_ridge_pass = Signal()
         sweep_projection_x = [Signal(signed(10)) for _ in range(3)]
         sweep_projection_y = [Signal(signed(10)) for _ in range(3)]
 
@@ -1032,9 +1033,7 @@ class Spectrogram(wiring.Component):
         terrain_current_left = Signal(ProjectedPoint)
         terrain_previous_left = Signal(ProjectedPoint)
         terrain_previous_right = Signal(ProjectedPoint)
-        contour_left = Signal(ProjectedPoint)
-        contour_right = Signal(ProjectedPoint)
-        contour_point = Signal(7)
+        previous_point = Signal(7)
         # Complete surfaces alternate between two physical framebuffers. The
         # old multi-bit generation tags existed only for SONORO persistence.
         visible_generation = Signal()
@@ -1137,22 +1136,12 @@ class Spectrogram(wiring.Component):
         scan_geometry = _three_d_scan_geometry(high_quality)
         terrain_row_read_en = Signal()
         terrain_row_write_en = Signal()
-        contour_row_read_en = Signal()
-        contour_done = Signal()
 
         m.d.comb += [
             terrain_row_read_en.eq(0),
             terrain_row_write_en.eq(0),
-            contour_row_read_en.eq(0),
             log_bucket_r.en.eq(0),
             log_bucket_r.addr.eq(Cat(scan_point, high_quality)),
-            # contour_point doubles as the previous-row vertex index during
-            # terrain construction. At the adaptive boundary it advances once
-            # per pair of current vertices, so the EBR address itself needs no
-            # wide transition mux.
-            contour_done.eq(
-                (contour_point == scan_point_last) |
-                (adaptive_transition & (contour_point == 63))),
             row_read_point.as_value().eq(Mux(
                 row_bank == 0,
                 row_read_ports[1].data,
@@ -1162,9 +1151,8 @@ class Spectrogram(wiring.Component):
                 zip(row_read_ports, row_write_ports)):
             m.d.comb += [
                 read_port.en.eq(
-                    (terrain_row_read_en | contour_row_read_en) &
-                    (row_bank != index)),
-                read_port.addr.eq(contour_point),
+                    terrain_row_read_en & (row_bank != index)),
+                read_port.addr.eq(previous_point),
                 write_port.en.eq(
                     terrain_row_write_en & (row_bank == index)),
                 write_port.addr.eq(scan_point),
@@ -1341,7 +1329,7 @@ class Spectrogram(wiring.Component):
                     m.d.dvi += [
                         scan_slice.eq(0),
                         scan_point.eq(0),
-                        contour_point.eq(0),
+                        previous_point.eq(0),
                         row_bank.eq(0),
                         # Higher uses 128 points throughout. Adaptive begins
                         # with 64-point rows and switches at history row eight.
@@ -1359,6 +1347,7 @@ class Spectrogram(wiring.Component):
                         sweep_age_fade.eq(age_fade_dvi),
                         sweep_frequency_color.eq(frequency_color_dvi),
                         sweep_ridges.eq(ridges_dvi),
+                        terrain_ridge_pass.eq(0),
                         draw_generation.eq(~visible_generation),
                         render_activity_seen.eq(0),
                         clear_request.eq(1),
@@ -1448,13 +1437,19 @@ class Spectrogram(wiring.Component):
                 with m.If(point_next == 0):
                     m.d.dvi += [
                         point_pixel.intensity.eq(Mux(
-                            sweep_frequency_color,
-                            wire_frequency_intensity,
-                            wire_level_intensity)),
+                            terrain_ridge_pass,
+                            0,
+                            Mux(
+                                sweep_frequency_color,
+                                wire_frequency_intensity,
+                                wire_level_intensity))),
                         point_pixel.color.eq(Mux(
-                            sweep_frequency_color,
-                            sweep_frequency_hue,
-                            wire_level_color)),
+                            terrain_ridge_pass,
+                            0,
+                            Mux(
+                                sweep_frequency_color,
+                                sweep_frequency_hue,
+                                wire_level_color))),
                     ]
                 for index, coordinate in enumerate(
                         (point_frequency, point_amplitude, point_time)):
@@ -1469,7 +1464,8 @@ class Spectrogram(wiring.Component):
                     projected_x.eq(center_x + (projection_sum_x >> 8)),
                     projected_y.eq(baseline_y + (projection_sum_y >> 8)),
                 ]
-                with m.If((point_next == 0) & sweep_terrain_style):
+                with m.If((point_next == 0) & sweep_terrain_style &
+                          ~terrain_ridge_pass):
                     m.next = "TERRAIN_READ_ROW"
                 with m.Else():
                     m.next = "PUSH_POINT"
@@ -1554,96 +1550,11 @@ class Spectrogram(wiring.Component):
                     triangle_fifo.w_en.eq(terrain_cell_visible),
                 ]
                 with m.If(~terrain_cell_visible | triangle_fifo.w_rdy):
-                    # The live edge gets one exact palette-colored outline
-                    # after its packed-word facets. This improves foreground
-                    # definition without reintroducing fine-grained fill (and
-                    # its coverage holes) throughout the terrain history.
-                    with m.If(terrain_cell_visible & (scan_slice == 15)):
-                        m.next = "PUSH_FOREGROUND_CONTOUR"
-                    with m.Else():
-                        m.d.dvi += [
-                            terrain_current_left.eq(current_projected_point),
-                            terrain_previous_left.eq(terrain_previous_right),
-                        ]
-                        m.next = "ADVANCE_SURFACE_POINT"
-
-            with m.State("PUSH_FOREGROUND_CONTOUR"):
-                # Repeated vertex zero selects the exact Bresenham path in
-                # the span renderer. Unlike the optional black history
-                # ridges, this foreground contour inherits the cell palette
-                # and remains visible regardless of the ridges setting.
-                m.d.comb += [
-                    triangle_word.x0.eq(terrain_current_left.x),
-                    triangle_word.y0.eq(terrain_current_left.y),
-                    triangle_word.x1.eq(terrain_current_left.x),
-                    triangle_word.y1.eq(terrain_current_left.y),
-                    triangle_word.x2.eq(current_projected_point.x),
-                    triangle_word.y2.eq(current_projected_point.y),
-                    triangle_word.pixel.color.eq(Mux(
-                        sweep_frequency_color,
-                        sweep_frequency_hue,
-                        terrain_level_color)),
-                    triangle_word.pixel.intensity.eq(Mux(
-                        sweep_frequency_color,
-                        terrain_cell_frequency_intensity,
-                        terrain_level_intensity)),
-                    triangle_fifo.w_en.eq(1),
-                ]
-                with m.If(triangle_fifo.w_rdy):
                     m.d.dvi += [
                         terrain_current_left.eq(current_projected_point),
                         terrain_previous_left.eq(terrain_previous_right),
                     ]
                     m.next = "ADVANCE_SURFACE_POINT"
-
-            with m.State("CONTOUR_ISSUE_LEFT"):
-                # After filling the strip between the previous and current
-                # rows, replay its *previous* (far) edge. The following strip
-                # shares the current edge, not this one, so it cannot erase
-                # the contour merely by covering a common boundary.
-                m.d.comb += contour_row_read_en.eq(1)
-                m.next = "CONTOUR_LATCH_LEFT"
-
-            with m.State("CONTOUR_LATCH_LEFT"):
-                m.d.dvi += [
-                    contour_left.eq(row_read_point),
-                    contour_point.eq(contour_point + 1),
-                ]
-                m.next = "CONTOUR_ISSUE_RIGHT"
-
-            with m.State("CONTOUR_ISSUE_RIGHT"):
-                m.d.comb += contour_row_read_en.eq(1)
-                m.next = "CONTOUR_LATCH_RIGHT"
-
-            with m.State("CONTOUR_LATCH_RIGHT"):
-                m.d.dvi += contour_right.eq(row_read_point)
-                m.next = "PUSH_TERRAIN_CONTOUR"
-
-            with m.State("PUSH_TERRAIN_CONTOUR"):
-                # Vertices 0 and 1 intentionally match: the span renderer
-                # recognizes this otherwise-invalid triangle as an exact
-                # one-pixel contour segment. The next, nearer history row is
-                # still later in this FIFO and therefore occludes it naturally.
-                m.d.comb += [
-                    triangle_word.x0.eq(contour_left.x),
-                    triangle_word.y0.eq(contour_left.y),
-                    triangle_word.x1.eq(contour_left.x),
-                    triangle_word.y1.eq(contour_left.y),
-                    triangle_word.x2.eq(contour_right.x),
-                    triangle_word.y2.eq(contour_right.y),
-                    triangle_word.pixel.color.eq(0),
-                    triangle_word.pixel.intensity.eq(0),
-                    triangle_fifo.w_en.eq(1),
-                ]
-                with m.If(triangle_fifo.w_rdy):
-                    with m.If(contour_done):
-                        m.next = "ADVANCE_SURFACE_SLICE"
-                    with m.Else():
-                        m.d.dvi += [
-                            contour_left.eq(contour_right),
-                            contour_point.eq(contour_point + 1),
-                        ]
-                        m.next = "CONTOUR_ISSUE_RIGHT"
 
             with m.State("PUSH_POINT"):
                 m.d.comb += line_fifo.w_en.eq(1)
@@ -1666,12 +1577,7 @@ class Spectrogram(wiring.Component):
 
             with m.State("ADVANCE_SURFACE_POINT"):
                 with m.If(scan_point == scan_point_last):
-                    with m.If(sweep_terrain_style & sweep_ridges &
-                              (scan_slice != 0)):
-                        m.d.dvi += contour_point.eq(0)
-                        m.next = "CONTOUR_ISSUE_LEFT"
-                    with m.Else():
-                        m.next = "ADVANCE_SURFACE_SLICE"
+                    m.next = "ADVANCE_SURFACE_SLICE"
                 with m.Else():
                     m.d.dvi += [
                         scan_point.eq(scan_point + 1),
@@ -1679,8 +1585,8 @@ class Spectrogram(wiring.Component):
                         # vertex. The first 128-point adaptive row advances
                         # only after each odd point, mapping 0,0,1,1,... onto
                         # the preceding 64-point row without an address mux.
-                        contour_point.eq(
-                            contour_point + Mux(
+                        previous_point.eq(
+                            previous_point + Mux(
                                 adaptive_transition, scan_point[0], 1)),
                     ]
                     m.next = "START_BIN_GROUP"
@@ -1688,10 +1594,18 @@ class Spectrogram(wiring.Component):
             with m.State("ADVANCE_SURFACE_SLICE"):
                 m.d.dvi += [
                     scan_point.eq(0),
-                    contour_point.eq(0),
+                    previous_point.eq(0),
                 ]
                 with m.If(scan_slice == 15):
-                    with m.If(axes_dvi):
+                    with m.If(sweep_terrain_style & sweep_ridges &
+                              ~terrain_ridge_pass):
+                        # Draw only the newest ridge, and draw it after every
+                        # packed terrain facet has drained. This preserves the
+                        # continuous one-pixel line-strip appearance without
+                        # replaying all sixteen history rows or leaving black
+                        # fragments embedded in later terrain fills.
+                        m.next = "WAIT_TERRAIN_FOR_RIDGE"
+                    with m.Elif(axes_dvi):
                         m.next = "AXIS_FREQUENCY_START"
                     with m.Else():
                         m.next = "WAIT_RENDER_COMPLETE"
@@ -1718,6 +1632,20 @@ class Spectrogram(wiring.Component):
                     m.next = "START_BIN_GROUP"
                 with m.Else():
                     m.next = "IDLE"
+
+            with m.State("WAIT_TERRAIN_FOR_RIDGE"):
+                with m.If(~enable_dvi):
+                    m.next = "IDLE"
+                with m.Elif((triangle_fifo.w_level == 0) & ~line_busy_dvi):
+                    m.d.dvi += [
+                        # Slice fifteen is the newest row. Re-projecting just
+                        # this row costs 64 or 128 points instead of the old
+                        # full-history overlay's 1024--2048 points.
+                        scan_slice.eq(15),
+                        scan_point.eq(0),
+                        terrain_ridge_pass.eq(1),
+                    ]
+                    m.next = "START_BIN_GROUP"
 
             with m.State("WAIT_RENDER_COMPLETE"):
                 # First drain commands and Bresenham. Plot requests still pass

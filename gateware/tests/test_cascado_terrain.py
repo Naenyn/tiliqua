@@ -137,52 +137,82 @@ def test_terrain_visibility_culls_quiet_old_facets_without_recoloring():
     sim.run()
 
 
-def test_quiet_terrain_still_emits_complete_contour_commands():
-    """A culled row still emits one ordered, connected contour."""
+def test_terrain_ridges_replay_only_the_newest_row_after_the_fill():
+    """Terrain ridges are one post-fill line strip, not embedded fragments."""
     dut = Spectrogram(fs=192_000)
-    sim = Simulator(dut)
+    m = Module()
+    decoder = csr.Decoder(addr_width=28, data_width=8)
+    decoder.add(dut.bus, addr=0, name="dut")
+    bridge = csr_wishbone.WishboneCSRBridge(decoder.bus, data_width=32)
+    m.submodules += [dut, decoder, bridge]
+    sim = Simulator(m)
     sim.add_clock(1 / 60_000_000, domain="sync")
     sim.add_clock(1 / 74_250_000, domain="dvi")
-    commands = []
+    line_commands = []
+    triangle_commands = 0
+
+    async def write_flags(ctx, enable, axes):
+        await csr_util.wb_csr_w_dict(ctx, dut.bus, bridge.wb_bus, "flags", {
+            "enable": enable,
+            "axes": axes,
+            "input_ch": 0,
+            "display_ack": 0,
+        })
 
     async def bench(ctx):
-        # Default terrain/ridge settings with untouched history represent a
-        # completely quiet, fully culled surface.
+        nonlocal triangle_commands
         ctx.set(dut.clear_done, 1)
         ctx.set(dut.flush_done, 1)
         ctx.set(dut.line_busy, 0)
         ctx.set(dut.line_o.ready, 1)
         ctx.set(dut.triangle_o.ready, 1)
 
-        for _ in range(30_000):
+        # Stop the power-on sweep before configuring an axis-free adaptive
+        # terrain frame. Untouched history is quiet, so no fill triangles are
+        # needed; the optional ridge must nevertheless replay the complete
+        # newest projected row through the independent line renderer.
+        await write_flags(ctx, 0, 0)
+        for _ in range(100_000):
+            if ctx.get(dut._status.f.renderer_idle.r_data):
+                break
+            await ctx.tick()
+        else:
+            raise AssertionError("renderer did not stop for ridge test")
+
+        await csr_util.wb_csr_w_dict(
+            ctx, dut.bus, bridge.wb_bus, "config_3d", {
+                "quality": 0,
+                "style": 1,
+                "log_scale": 0,
+                "age_fade": 0,
+                "frequency_color": 0,
+                "ridges": 1,
+            })
+        await write_flags(ctx, 1, 0)
+
+        for _ in range(150_000):
             if ctx.get(dut.triangle_o.valid):
-                command = {
-                    name: ctx.get(getattr(dut.triangle_o.payload, name))
-                    for name in ("x0", "y0", "x1", "y1", "x2", "y2")
-                }
-                command["pixel"] = ctx.get(
-                    dut.triangle_o.payload.pixel.as_value())
-                commands.append(command)
-                if len(commands) == 8:
+                triangle_commands += 1
+            if ctx.get(dut.line_o.valid):
+                line_commands.append({
+                    "x": ctx.get(dut.line_o.payload.x),
+                    "y": ctx.get(dut.line_o.payload.y),
+                    "pixel": ctx.get(dut.line_o.payload.pixel.as_value()),
+                    "cmd": ctx.get(dut.line_o.payload.cmd),
+                })
+                if line_commands[-1]["cmd"] == LineStripCmd.END:
                     return
             await ctx.tick()
-        raise AssertionError("quiet terrain emitted no contour commands")
+        raise AssertionError("terrain emitted no completed newest-row ridge")
 
     sim.add_testbench(bench)
     sim.run()
-    assert len(commands) == 8
-    assert all(command["x0"] == command["x1"] for command in commands)
-    assert all(command["y0"] == command["y1"] for command in commands)
-    assert all(command["pixel"] == 0 for command in commands)
-    # The first visible strip joins history slices zero and one. Its contour
-    # must replay slice zero (the far edge), not slice one: the latter is the
-    # shared edge that the following strip will repaint. These coordinates
-    # come from the component's default 720p projection at zero level.
-    assert (commands[0]["x0"], commands[0]["y0"]) == (202, 455)
-    assert all(
-        (left["x2"], left["y2"]) == (right["x0"], right["y0"])
-        for left, right in zip(commands, commands[1:])
-    )
+    assert triangle_commands == 0
+    assert len(line_commands) == 128
+    assert all(command["pixel"] == 0 for command in line_commands)
+    assert all(command["cmd"] == LineStripCmd.CONTINUE
+               for command in line_commands[:-1])
+    assert line_commands[-1]["cmd"] == LineStripCmd.END
 
 
 def test_adaptive_wire_geometry_refines_near_history_only():
