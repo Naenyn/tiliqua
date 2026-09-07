@@ -137,8 +137,8 @@ def test_terrain_visibility_culls_quiet_old_facets_without_recoloring():
     sim.run()
 
 
-def test_terrain_ridges_replay_only_the_newest_row_after_the_fill():
-    """Terrain ridges are one post-fill line strip, not embedded fragments."""
+def test_terrain_ridges_replay_only_the_first_history_row_after_the_fill():
+    """The ridge is one post-fill strip immediately behind the live row."""
     dut = Spectrogram(fs=192_000)
     m = Module()
     decoder = csr.Decoder(addr_width=28, data_width=8)
@@ -170,7 +170,7 @@ def test_terrain_ridges_replay_only_the_newest_row_after_the_fill():
         # Stop the power-on sweep before configuring an axis-free adaptive
         # terrain frame. Untouched history is quiet, so no fill triangles are
         # needed; the optional ridge must nevertheless replay the complete
-        # newest projected row through the independent line renderer.
+        # first historical row through the independent line renderer.
         await write_flags(ctx, 0, 0)
         for _ in range(100_000):
             if ctx.get(dut._status.f.renderer_idle.r_data):
@@ -203,7 +203,7 @@ def test_terrain_ridges_replay_only_the_newest_row_after_the_fill():
                 if line_commands[-1]["cmd"] == LineStripCmd.END:
                     return
             await ctx.tick()
-        raise AssertionError("terrain emitted no completed newest-row ridge")
+        raise AssertionError("terrain emitted no completed historical ridge")
 
     sim.add_testbench(bench)
     sim.run()
@@ -213,6 +213,10 @@ def test_terrain_ridges_replay_only_the_newest_row_after_the_fill():
     assert all(command["cmd"] == LineStripCmd.CONTINUE
                for command in line_commands[:-1])
     assert line_commands[-1]["cmd"] == LineStripCmd.END
+    # At the default projection, the first 3D point of slice fourteen is
+    # displaced by its one-step history depth. Slice fifteen (the live ridge)
+    # would begin at (118, 545), so this also verifies the selected row.
+    assert (line_commands[0]["x"], line_commands[0]["y"]) == (123, 539)
 
 
 def test_adaptive_wire_geometry_refines_near_history_only():

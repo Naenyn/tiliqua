@@ -1599,11 +1599,11 @@ class Spectrogram(wiring.Component):
                 with m.If(scan_slice == 15):
                     with m.If(sweep_terrain_style & sweep_ridges &
                               ~terrain_ridge_pass):
-                        # Draw only the newest ridge, and draw it after every
-                        # packed terrain facet has drained. This preserves the
-                        # continuous one-pixel line-strip appearance without
-                        # replaying all sixteen history rows or leaving black
-                        # fragments embedded in later terrain fills.
+                        # Draw only the first historical ridge, and draw it
+                        # after every packed terrain facet has drained. This
+                        # places a continuous separator at the back edge of the
+                        # live strip without replaying all sixteen history rows
+                        # or leaving black fragments embedded in later fills.
                         m.next = "WAIT_TERRAIN_FOR_RIDGE"
                     with m.Elif(axes_dvi):
                         m.next = "AXIS_FREQUENCY_START"
@@ -1638,10 +1638,10 @@ class Spectrogram(wiring.Component):
                     m.next = "IDLE"
                 with m.Elif((triangle_fifo.w_level == 0) & ~line_busy_dvi):
                     m.d.dvi += [
-                        # Slice fifteen is the newest row. Re-projecting just
-                        # this row costs 64 or 128 points instead of the old
-                        # full-history overlay's 1024--2048 points.
-                        scan_slice.eq(15),
+                        # Slice fourteen is immediately behind the newest row.
+                        # Re-projecting just this row costs 64 or 128 points
+                        # instead of the old full-history overlay's 1024--2048.
+                        scan_slice.eq(14),
                         scan_point.eq(0),
                         terrain_ridge_pass.eq(1),
                     ]
