@@ -190,7 +190,8 @@ def test_terrain_ridges_replay_only_the_first_history_row_after_the_fill():
             })
         await write_flags(ctx, 1, 0)
 
-        for _ in range(150_000):
+        cycles_after_first_end = None
+        for _ in range(180_000):
             if ctx.get(dut.triangle_o.valid):
                 triangle_commands += 1
             if ctx.get(dut.line_o.valid):
@@ -201,6 +202,13 @@ def test_terrain_ridges_replay_only_the_first_history_row_after_the_fill():
                     "cmd": ctx.get(dut.line_o.payload.cmd),
                 })
                 if line_commands[-1]["cmd"] == LineStripCmd.END:
+                    if cycles_after_first_end is None:
+                        cycles_after_first_end = 0
+            if cycles_after_first_end is not None:
+                cycles_after_first_end += 1
+                # A mistaken fall-through from history row fourteen into the
+                # live row emits its second strip well inside this interval.
+                if cycles_after_first_end >= 20_000:
                     return
             await ctx.tick()
         raise AssertionError("terrain emitted no completed historical ridge")

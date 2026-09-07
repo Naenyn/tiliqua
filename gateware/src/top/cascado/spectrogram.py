@@ -1577,6 +1577,11 @@ class Spectrogram(wiring.Component):
 
             with m.State("ADVANCE_SURFACE_POINT"):
                 with m.If(scan_point == scan_point_last):
+                    # Make the single-row ridge replay take the existing final
+                    # slice exit below after projecting history row fourteen.
+                    # The row address has already been consumed at this point.
+                    with m.If(terrain_ridge_pass):
+                        m.d.dvi += scan_slice.eq(15)
                     m.next = "ADVANCE_SURFACE_SLICE"
                 with m.Else():
                     m.d.dvi += [
