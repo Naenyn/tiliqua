@@ -63,7 +63,7 @@ class DMAFramebuffer(wiring.Component):
 
     def __init__(self, *, palette, addr_width=22, fifo_depth=512,
                  burst_threshold_words=128, fixed_modeline=None, overlay=None,
-                 pipeline_palette_output=False):
+                 pipeline_palette_output=False, frame_exchange=None):
 
         self.fifo_depth = fifo_depth
         assert (Pixel.as_shape().size % 8) == 0
@@ -73,6 +73,11 @@ class DMAFramebuffer(wiring.Component):
         self.palette = palette
         self._overlay = overlay
         self.pipeline_palette_output = pipeline_palette_output
+        # Opt-in reader-owned background acquisition. Existing bitstreams keep
+        # their original path until coordinated scene publication is integrated.
+        self.frame_exchange = frame_exchange
+        if frame_exchange is not None:
+            assert 0 < burst_threshold_words < fifo_depth
 
         super().__init__({
             # Backing store
@@ -114,8 +119,14 @@ class DMAFramebuffer(wiring.Component):
 
         # Present framebuffer base changes only at vertical sync so a scan can
         # never contain rows from two different buffers.
-        with m.If(phy_vsync_sync):
-            m.d.sync += scan_base.eq(self.fbp.base)
+        if self.frame_exchange is None:
+            with m.If(phy_vsync_sync):
+                m.d.sync += scan_base.eq(self.fbp.base)
+        else:
+            m.submodules.frame_exchange = self.frame_exchange
+            previous_vsync = Signal()
+            m.d.sync += previous_vsync.eq(phy_vsync_sync)
+            frame_start = phy_vsync_sync & ~previous_vsync
 
         # DMA bus master -> FIFO state machine
         # Burst until FIFO is full, then wait until half empty.
@@ -125,8 +136,11 @@ class DMAFramebuffer(wiring.Component):
         # Read to FIFO in sync domain
         with m.FSM() as fsm:
             with m.State('WAIT-VSYNC'):
-                with m.If(phy_vsync_sync):
+                with m.If(phy_vsync_sync if self.frame_exchange is None else frame_start):
                     m.d.sync += dma_addr.eq(0)
+                    if self.frame_exchange is not None:
+                        m.d.comb += self.frame_exchange.acquire.eq(1)
+                        m.d.sync += scan_base.eq(self.frame_exchange.next_base)
                     m.next = 'WAIT'
             with m.State('BURST'):
                 m.d.comb += [
@@ -147,16 +161,27 @@ class DMAFramebuffer(wiring.Component):
                         dma_addr.eq(dma_addr+1),
                     ]
 
-                with m.If((fifo.w_level == (self.fifo_depth-1)) |
-                          (burst_cnt == self.burst_threshold_words)):
-                    m.d.comb += bus.cti.eq(
-                            wishbone.CycleType.END_OF_BURST)
-                    m.next = 'WAIT'
-
-                with m.If(dma_addr == (fb_size_words-1)):
-                    m.d.comb += bus.cti.eq(
-                            wishbone.CycleType.END_OF_BURST)
-                    m.next = 'WAIT-VSYNC'
+                if self.frame_exchange is None:
+                    with m.If((fifo.w_level == (self.fifo_depth-1)) |
+                              (burst_cnt == self.burst_threshold_words)):
+                        m.d.comb += bus.cti.eq(wishbone.CycleType.END_OF_BURST)
+                        m.next = 'WAIT'
+                    with m.If(dma_addr == (fb_size_words-1)):
+                        m.d.comb += bus.cti.eq(wishbone.CycleType.END_OF_BURST)
+                        m.next = 'WAIT-VSYNC'
+                else:
+                    # WAIT reserves a whole burst's FIFO capacity. Termination
+                    # depends on counters, not a changing FIFO level, so CTI and
+                    # address stay stable during arbitrarily delayed bus ACKs.
+                    last_word = dma_addr == (fb_size_words - 1)
+                    end_burst = burst_cnt == (self.burst_threshold_words - 1)
+                    with m.If(last_word | end_burst):
+                        m.d.comb += bus.cti.eq(wishbone.CycleType.END_OF_BURST)
+                        with m.If(bus.ack):
+                            with m.If(last_word):
+                                m.next = 'WAIT-VSYNC'
+                            with m.Else():
+                                m.next = 'WAIT'
 
             with m.State('WAIT'):
                 with m.If(fifo.w_level < self.fifo_depth-self.burst_threshold_words):
@@ -171,7 +196,8 @@ class DMAFramebuffer(wiring.Component):
         last_word   = Signal(32)
         with m.If(dvi_tgen.ctrl.vsync):
             m.d.dvi += bytecounter.eq(0)
-        with m.Elif(dvi_tgen.ctrl.de & fifo.r_rdy):
+        word_available = fifo.r_rdy if self.frame_exchange is None else (fifo.r_rdy | (bytecounter != 0))
+        with m.Elif(dvi_tgen.ctrl.de & word_available):
             m.d.comb += fifo.r_en.eq(bytecounter == 0),
             m.d.dvi += bytecounter.eq(bytecounter+1)
             with m.If(bytecounter == 0):
@@ -200,10 +226,18 @@ class DMAFramebuffer(wiring.Component):
             first_input.hsync.eq(dvi_tgen.ctrl_phy.hsync),
             first_input.vsync.eq(dvi_tgen.ctrl_phy.vsync),
         ]
+        if self.frame_exchange is not None:
+            # Align active/sync flags with the registered pixel and coordinates.
+            de, hs, vs = Signal(), Signal(), Signal()
+            m.d.dvi += [de.eq(dvi_tgen.ctrl_phy.de), hs.eq(dvi_tgen.ctrl_phy.hsync),
+                        vs.eq(dvi_tgen.ctrl_phy.vsync)]
+            m.d.comb += [first_input.de.eq(de), first_input.hsync.eq(hs),
+                        first_input.vsync.eq(vs)]
 
         # Stage 2/3: Palette and DVI PHY / simulation output
         if sim.is_hw(platform):
-            m.submodules.dvi_gen = dvi_gen = dvi.DVIPHY()
+            m.submodules.dvi_gen = dvi_gen = dvi.DVIPHY(
+                circular_shift=getattr(self, "serializer_circular_shift", False))
             if self.pipeline_palette_output:
                 # Opt-in timing stage for dense designs: keep RGB and control
                 # aligned while breaking the palette RAM -> TMDS critical path.

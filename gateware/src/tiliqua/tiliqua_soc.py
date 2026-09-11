@@ -66,9 +66,14 @@ class TiliquaSoc(Component):
                  fw_location=None, fw_offset=None, cpu_variant="tiliqua_rv32im",
                  extra_cpu_regions=[], fb_overlay=None,
                  pipeline_palette_output=False, with_persistence=True,
-                 with_raster_engines=True):
+                 with_raster_engines=True, isolate_cpu_peripherals=False):
 
         super().__init__({})
+        # Opt-in for lean instruments with no uncached sprite-memory window.
+        # Keep the historical unified map for software introspection.
+        self.isolate_cpu_peripherals = isolate_cpu_peripherals
+        if isolate_cpu_peripherals:
+            assert not with_raster_engines and not extra_cpu_regions
 
         self.ui_name = ui_name
         self.ui_tag  = ui_tag
@@ -286,6 +291,20 @@ class TiliquaSoc(Component):
 
         self.wb_to_csr = WishboneCSRBridge(self.csr_decoder.bus, data_width=32)
         self.wb_decoder.add(self.wb_to_csr.wb_bus, addr=self.csr_base, sparse=False, name="wb_to_csr")
+        if self.isolate_cpu_peripherals:
+            self.memory_decoder = wishbone.Decoder(
+                addr_width=30, data_width=32, granularity=8, alignment=0,
+                features={"cti", "bte", "err"})
+            self.peripheral_decoder = wishbone.Decoder(
+                addr_width=30, data_width=32, granularity=8, alignment=0,
+                features={"cti", "bte", "err"})
+            for bus, address, name in [
+                    (self.mainram.bus, self.mainram_base, "blockram"),
+                    (self.spiflash_periph.bus, self.spiflash_base, "spiflash"),
+                    (self.psram_periph.bus, self.psram_base, "psram")]:
+                self.memory_decoder.add(bus, addr=address, name=name)
+            self.peripheral_decoder.add(self.wb_to_csr.wb_bus, addr=self.csr_base,
+                                        sparse=False, name="wb_to_csr")
 
     def add_rust_constant(self, line):
         self.extra_rust_constants.append(line)
@@ -301,14 +320,19 @@ class TiliquaSoc(Component):
 
         # bus
         m.submodules.wb_arbiter = self.wb_arbiter
-        m.submodules.wb_decoder = self.wb_decoder
-        wiring.connect(m, self.wb_arbiter.bus, self.wb_decoder.bus)
+        memory_decoder = self.memory_decoder if self.isolate_cpu_peripherals else self.wb_decoder
+        m.submodules.wb_decoder = memory_decoder
+        wiring.connect(m, self.wb_arbiter.bus, memory_decoder.bus)
 
         # cpu
         m.submodules.cpu = self.cpu
         self.wb_arbiter.add(self.cpu.ibus)
         self.wb_arbiter.add(self.cpu.dbus)
-        self.wb_arbiter.add(self.cpu.pbus) # TODO: isolate pbus from ibus/dbus
+        if self.isolate_cpu_peripherals:
+            m.submodules.peripheral_decoder = self.peripheral_decoder
+            wiring.connect(m, self.cpu.pbus, self.peripheral_decoder.bus)
+        else:
+            self.wb_arbiter.add(self.cpu.pbus)
 
         # interrupt controller
         m.submodules.interrupt_controller = self.interrupt_controller

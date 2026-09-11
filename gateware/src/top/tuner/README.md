@@ -1,6 +1,10 @@
 # TUNER proof of concept
 
-This bitstream measures a selected monophonic audio input and displays:
+See [detector accuracy baseline](ACCURACY.md) for measured synthetic-signal
+limits and the low-level/DC-filter correction. Four-channel acquisition is
+implemented; general fundamental estimation is not.
+
+This bitstream continuously measures all four monophonic audio inputs and displays:
 
 - nearest chromatic note and octave;
 - cents offset, referenced to configurable A4 (440 Hz by default);
@@ -8,33 +12,160 @@ This bitstream measures a selected monophonic audio input and displays:
 - calibrated input Vrms and peak-to-peak voltage; and
 - the pitch on octave-radius rings (low octaves inside, high octaves outside).
 
-Output 1 can optionally emit a calibrated 1 Vpp sine reference. It can remain
-off, follow the configured A4 reference, or follow the nearest equal-tempered
-note to the detected input. Its 32-bit phase accumulator is clocked by accepted
-DAC samples, so FIFO backpressure does not detune it.
+The reference-tone feature has been removed from production firmware and
+gateware. All outputs remain at calibrated zero unless an explicitly started
+calibration sweep or corrected-note verification owns one. A4 remains configurable as a tuning reference,
+not an audio output.
 
-Outputs 2-4 are held at calibrated zero. The bitstream does not yet emit a
-reference CV and contains no oscillator calibration or quantization.
+All channel labels follow the physical panel's 0–3 numbering.
+The bitstream does not yet emit a
+general-purpose reference CV or quantization. CAL now exposes an explicitly
+started -5..+5 V oscillator tracking sweep with up to 121 points; see
+[calibration status and hardware test](CALIBRATION.md). VERIFY can apply the
+RAM profile to a requested note name/octave and cents offset, showing measured error
+against that target (fixed A4=440 Hz). It uses the successful calibration's
+route, requires Run to start, and stops on leaving VERIFY or a range/output
+error. No external-CV playback yet. Otherwise outputs remain at zero, including
+while sitting on CAL before a run.
 
 ## Controls
 
 Press the encoder to open an OSCIO/SONORO-style boxed menu over the live tuner.
 Rotate to navigate, press to begin editing, rotate to change the selected value,
 and press again to finish. Select the page heading to switch between TUNER,
-SETTINGS, and HELP. The menu hides after five seconds of inactivity and exposes
-input, display mode, reference-tone mode, A4 reference, and option persistence.
+CAL, VERIFY, PROFILES, SETTINGS, and HELP. CAL contains four visible rows: input,
+output, 0v note, and run. Every sweep uses nominal semitone voltage spacing,
+up to 121 points across -5..+5 V, scanning upward from low to high.
+Unmeasurable edges and qualified boundary plateaus can produce a limited-range
+profile; internal tracking failures remain errors.
+Coverage depends on the oscillator and detector; 10 V does not guarantee ten
+measurable octaves. Existing saved density settings are ignored.
+CAL's `0v note` sets the nominal 0 V note
+(default C4) for the displayed 1 V/oct voltage; this is distinct from the
+profile-corrected output voltage. The menu hides after five seconds of inactivity and exposes
+focus, display mode, A4 reference, and option persistence.
+Each boot restores saved instrument settings but starts navigation at the TUNER
+page heading, outside edit mode. The menu remains hidden until the encoder press.
+
+After a successful calibration, an out-of-range VERIFY target is replaced with
+a whole note near the middle of the measured range (an already-valid target is
+retained). Output remains zero until Run. VERIFY also displays rolling MEAN
+deviation and SPAN (maximum minus minimum) over up to 16 fresh qualified pitches,
+at most 500 ms old. The instantaneous deviation remains visible; statistics
+never adjust output or calibration data and reset when the target changes.
+
+VERIFY's `mode` selects MANUAL (default) or SCAN. With the calibration patch
+unchanged and a calibrated or loaded profile, select SCAN and Run to check all
+whole notes and 50-cent midpoints inside its measured range.
+SCAN ignores the manual note/cents controls. It waits for fresh, settled samples
+at each corrected output
+and retains up to four seconds of distinct readings so slow low-frequency
+publication can satisfy the eight-reading minimum (manual statistics retain
+their half-second window). The per-target timeout remains five seconds.
+It then shows the tested/total count, worst signed mean
+error and its target, and maximum within-target pitch span. These are measured
+results, not an automatic pass/fail threshold. A two-octave profile typically
+has 48–49 targets and takes about a minute, depending on detector windows.
+Completion restores zero; Run again, exiting VERIFY, or changing verification
+mode also stops output. Missing/unstable input times out after five seconds per
+target. Partial results remain visible but are not a complete scan. No scan
+result changes or saves the calibration curve. Results are not retained on boot.
+
+VERIFY's POINTS mode instead replays each stored calibration voltage and compares
+the new measured pitch with the pitch recorded there. This includes the exact
+0 V endpoint and avoids interpolation. It shares SCAN's freshness, stability,
+timeout and cancellation rules. Results include worst error and its stored
+voltage, plus `P0` and `P1` errors for the first two recorded points. For a
+low-end discrepancy, load the existing profile and run POINTS without recalibrating
+or moving the oscillator's tuning knob. Disagreement at stored points indicates
+acquisition/repeatability/drift somewhere in the measurement/output/oscillator
+chain; disagreement only between them points toward interpolation or local
+response nonlinearity. Neither test alone identifies which physical component
+is responsible. POINTS never changes the saved curve.
+
+SCAN also repeats measurements at the worst target and its two surrounding
+stored points. The result includes local refinement advice on-screen and over
+serial. REFINE reacquires those measurements, proposes one interior point, and
+compares the candidate with the original at independent pitches. ACCEPT changes
+RAM only; DISCARD retains the original, and saving is always separate. A full
+121-point profile refuses refinement rather than removing original anchors.
+Advice and local comparison are not a full-range accuracy certificate: verify
+the accepted profile again before saving. Recalibrate rather than fitting
+corrections to a shifted or unstable oscillator response.
+
+## Oscillator profiles
+
+PROFILES provides four saved slots inside TUNER's existing settings storage.
+After calibration, select a slot and Save. Set `name pos` (1–24) and `letter`
+to edit the name draft; a space removes trailing characters. Save replaces the
+selected slot and confirms `SAVED SLOT n - READBACK OK` beneath the menu after
+reading back and comparing the stored record. Settings/Save is not
+required for profiles. Load validates and restores the curve, name, routing and
+nominal 0 V note, confirming `LOADED SLOT n - OUTPUT OFF`; the active RAM profile
+name, point count, and routing appear beneath that confirmation. It never starts
+output. Empty/invalid slots leave the current
+RAM profile untouched. Boot remains on TUNER without automatically loading or
+enabling a profile. Settings/Reset preserves saved profiles.
+
+To test persistence, save, reload the bitstream, select the same profile slot
+and Load, then test VERIFY. Keep oscillator tuning and patching unchanged and
+allow the oscillator to warm up: a saved curve cannot compensate for moving its
+tuning knob or arbitrary temperature drift. External-CV playback is still pending.
+For Settings/Save, the save row shows `saved` for about two seconds. A failed write
+shows `failed`; missing option storage shows `no flash`. These messages report
+the save result, not merely the encoder click.
+
+Display offers ARC, VISUALIZER, and LINEAR. Both spiral modes show four colored
+pitch markers; VISUALIZER adds emphasis to the focused channel. LINEAR shows
+four simultaneous cents rulers, each with note, frequency and voltage readings.
+Channel colors are orange, green, cyan and purple for inputs 0–3. The input
+setting (now labeled `focus`) chooses the spiral detail readout,
+not which inputs are acquired. Each cursor maps -50..+50 cents onto its ruler;
+the center is the nearest note. Backgrounds are cached in the two reserved PSRAM buffers. The
+unused view is prepared in small idle-time chunks after boot; if selected before
+ready, `PREPARING VIEW` appears while the old tuner view stays live. Once cached,
+switching does not redraw the backgrounds. Text and cursor switch with the
+background, and the same menu overlays either view. The text-only CAL screen
+uses an atomically published blank backdrop instead of clearing/rebuilding a
+framebuffer. Entering or leaving CAL retains the cached tuner background and
+normally takes one UI update plus a video-frame boundary, not a multi-second
+background preparation. CAL no longer draws the decorative outer border.
+
+The main view uses 9x15 glyphs on a centered, 12-pixel horizontal pitch (previously
+16 pixels). Its 45-column text area spans logical x=90..629, leaving the circular
+edges free. Main-view labels are positioned for this pitch; the established
+OSCIO/SONORO menu geometry and font spacing are unchanged.
 
 ## Detector
 
 The first detector is intentionally oscillator-oriented. Gateware removes slow
-DC, applies hysteresis, and counts positive-going cycles over at least 50 ms.
+DC, applies hysteresis, and counts positive-going cycles over at least 20 ms.
+The DC tracker uses approximately the same 21 ms time constant at 48 and
+192 kHz, so the standard build does not take four times longer to settle.
 This is small, has good resolution for waveforms with one positive crossing per
 period, and supplies the measurements needed by a first hardware evaluation.
 
-It is not yet a general fundamental estimator. Signals with several crossings
-per period, strong subharmonics, noise, or a louder harmonic than fundamental
-can produce an octave or harmonic error. A YIN/autocorrelation detector remains
-the expected next step after validating input level behavior and the UI.
+A bounded waveform-repetition verifier checks the crossing period and up to
+four multiples against a 2048-sample capture at 24 kHz on both the standard
+48 kHz and optional 192 kHz codec builds. It chooses the shortest matching
+period, allowing some harmonic-rich oscillator signals to be corrected without
+blindly halving ordinary notes. Checks run independently of audio and rendering.
+
+This is still not a general fundamental estimator or a calibration-confidence
+test. Insufficient history, poor matches and crossing estimates above 4 kHz
+remain unverified and use the original crossing result. Weak fundamentals,
+complex/noisy signals and transitions may still produce harmonic errors. A new
+input needs about 85 ms of capture before verification. One shared verifier
+visits each input for eight UI frames (nominally 160 ms), giving a nominal
+640 ms round trip. Basic crossing measurements continue on all four channels
+throughout; complex-waveform corrections can take a visit to settle. No "verified" status
+is exposed in the UI yet. See [accuracy qualification](ACCURACY.md).
+
+The supported priority is accurate basic oscillator waveforms (sine, triangle,
+saw and ordinary square), with best-effort handling of complex shapes. Very
+narrow pulses, evolving waveshapers and atonal outputs are not guaranteed to
+track. Tune from a basic output when available; the module cannot infer an
+oscillator's hidden core frequency from an ambiguous output.
 
 ## Runtime architecture
 
@@ -45,17 +176,25 @@ RAM, and the live loop consumes only a small copyable control snapshot. This is
 intentional: calibration profiles and quantizer scales must not enlarge the
 real-time stack as their menus grow.
 
-The firmware also retains a four-entry measurement bank. The current gateware
-still publishes only the selected channel, but future detector lanes and a
-four-color display can populate that stable interface without restructuring the
-foreground loop again.
+Four independent measurement lanes populate a retained four-entry bank through
+a foreground-owned CSR read selector. Selecting a read bank does not reset any
+lane. Only the bounded harmonic verifier is time-shared; its history is cleared
+when it changes channels. The renderer remains shared.
 
 ## Build and test
+
+The reusable renderer migration, compatibility boundary, tests and remaining
+work are documented in [RENDERER.md](RENDERER.md). The integrated renderer
+shares the tuner/menu text pipeline and publishes double-buffered text,
+marker and menu state together at a blanking boundary. Deploy matching
+firmware/gateware archives; firmware now explicitly commits each display update.
 
 From `gateware/`:
 
 ```sh
 PYTHONPATH=src pdm run pytest tests/test_tuner.py -q
+PYTHONPATH=src pdm run pytest tests/test_tuner_display.py tests/test_tuner_renderer.py -q
+PYTHONPATH=src pdm run pytest tests/test_tuner_frames.py -q
 PYTHONPATH=src pdm tuner build --hw r5
 PYTHONPATH=src pdm tuner_round build --hw r5
 ```
@@ -66,5 +205,6 @@ production-panel target and compensates for the display's physical 90-degree
 mounting. Keeping these as explicit artifacts prevents mutable bootloader video
 state from selecting the wrong UI transform.
 
-Add `--fs-192khz` to evaluate the higher codec sample rate. Building does not
-flash the archive; flashing is a separate, explicit operation.
+Both TUNER targets default to 192 kHz codec sampling for the 20 Hz–20 kHz
+measurement target. This default is local to TUNER, not other bitstreams.
+Building does not flash the archive; flashing is a separate operation.

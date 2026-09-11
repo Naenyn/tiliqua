@@ -1,11 +1,11 @@
 # Copyright (c) 2026
 #
 # SPDX-License-Identifier: CERN-OHL-S-2.0
-"""Monophonic audio tuner proof of concept.
+"""Four-channel audio tuner proof of concept.
 
-One selected audio input is measured in gateware. Firmware displays its
-fundamental pitch, chromatic note/cents offset, octave, Vrms and Vpp. Outputs
-remain silent in this first proof of concept.
+Four monophonic inputs are measured continuously in gateware. Firmware displays
+pitch, chromatic note/cents offset, octave, Vrms and Vpp. Outputs remain at
+calibrated zero unless an explicitly started calibration sweep owns one.
 """
 
 import os
@@ -21,8 +21,10 @@ from tiliqua.tiliqua_soc import TiliquaSoc
 
 try:
     from .display import Peripheral as TunerDisplayPeripheral
+    from .background import BackgroundLayout
 except ImportError:
     from display import Peripheral as TunerDisplayPeripheral
+    from background import BackgroundLayout
 
 
 class TunerSoc(TiliquaSoc):
@@ -33,8 +35,8 @@ class TunerSoc(TiliquaSoc):
     module_docstring = sys.modules[__name__].__doc__
     bitstream_help = BitstreamHelp(
         brief="Monophonic tuner proof of concept.",
-        io_left=["audio input 1", "audio input 2", "audio input 3",
-                 "audio input 4", "reference sine", "silent", "silent", "silent"],
+        io_left=["audio input 0", "audio input 1", "audio input 2",
+                 "audio input 3", "calibration CV", "calibration CV", "calibration CV", "calibration CV"],
         io_right=["navigate / select", "", "video out", "", "", ""],
     )
 
@@ -44,7 +46,8 @@ class TunerSoc(TiliquaSoc):
         round_display = modeline.h_active == 720 and modeline.v_active == 720
         self.tuner_display = TunerDisplayPeripheral(
             h_active=modeline.h_active,
-            rotate_left=round_display)
+            rotate_left=round_display,
+            scene_layout=BackgroundLayout(modeline.h_active, modeline.v_active))
         # The firmware's retained UI/options state gives main() a roughly
         # 7.25-KiB stack frame before nested calls and interrupt frames. 8 KiB
         # silently corrupts the stack as soon as the timer ISR begins; retain
@@ -55,9 +58,18 @@ class TunerSoc(TiliquaSoc):
                          pipeline_palette_output=True,
                          with_persistence=False,
                          with_raster_engines=False,
+                         isolate_cpu_peripherals=True,
                          **kwargs)
+        # Enable the opt-in transaction-safe DMA only for this instrument.
+        # Ordinary frame commits preserve the background; a future scene writer
+        # must initialize/flush the inactive PSRAM buffer before requesting swap.
+        assert self.fw_base - self.psram_base >= 0x200000
+        self.fb.frame_exchange = self.tuner_display.exchange
+        self.fb.serializer_circular_shift = True
         self.tuner_periph = TunerPeripheral(
             sample_rate=self.clock_settings.audio_clock.fs(),
+            multichannel=True,
+            with_reference=False,
             # A 50ms observation window limited new pitch estimates to 20Hz.
             # 20ms still gives sub-cent resolution at the normal 192kHz audio
             # rate while responding much more promptly to oscillator changes.
@@ -77,27 +89,28 @@ class TunerSoc(TiliquaSoc):
         pmod = self.pmod0_periph.pmod
         wiring.connect(m, pmod.o_cal, self.tuner_periph.i)
 
-        # Output 1 optionally carries the calibrated 1 Vpp reference sine.
-        # The remaining outputs stay at calibrated zero. Advancing the NCO only
-        # when the DAC stream accepts a sample preserves its exact frequency
-        # through any FIFO backpressure.
+        # No reference oscillator: idle outputs are always calibrated zero.
+        # Keep DAC acceptance connected for calibration command acknowledgments.
         m.d.comb += pmod.i_cal.valid.eq(1)
         m.d.comb += [
             self.tuner_periph.reference_advance.eq(pmod.i_cal.ready),
-            pmod.i_cal.payload[0].as_value().eq(Mux(
-                self.tuner_periph.reference_enabled,
-                self.tuner_periph.reference.as_value(), 0)),
         ]
-        for channel in range(1, 4):
-            m.d.comb += pmod.i_cal.payload[channel].as_value().eq(0)
+        for channel in range(4):
+            m.d.comb += pmod.i_cal.payload[channel].as_value().eq(Mux(
+                self.tuner_periph.cal_fault, 0, Mux(self.tuner_periph.cal_active,
+                Mux(self.tuner_periph.cal_channel == channel, self.tuner_periph.cal_value, 0),
+                0)))
 
         return m
 
 
 if __name__ == "__main__":
     this_path = os.path.dirname(os.path.realpath(__file__))
-    seed = int(os.getenv("TILIQUA_TUNER_SEED", "13"))
     modeline = os.getenv("TILIQUA_TUNER_MODELINE", "1280x720p60")
+    # Qualified placements for the shared-text renderer. The serializer has a
+    # tighter routing constraint on the high-clock HDMI target.
+    default_seed = "13" if modeline == "720x720p60r2" else "15"
+    seed = int(os.getenv("TILIQUA_TUNER_SEED", default_seed))
     name = os.getenv("TILIQUA_TUNER_NAME", "TUNER")
     top_level_cli(
         TunerSoc,
@@ -107,9 +120,9 @@ if __name__ == "__main__":
         # preview; tuner_round.py explicitly selects the physically rotated
         # production panel.  Do not infer this from mutable bootloader state.
         argparse_callback=lambda parser: parser.set_defaults(
-            modeline=modeline, name=name),
-        archiver_callback=lambda archiver: archiver.with_option_storage(),
-        # Seed 13 closes every clock with the required 16-KiB CPU RAM on the
-        # fixed 1280x720 renderer. Keep release placement reproducible.
-        nextpnr_opts=f"--timing-allow-fail --seed {seed}",
+            modeline=modeline, name=name, fs_192khz=True),
+        archiver_callback=lambda archiver: archiver.with_option_storage(size=24576),
+        # A generated archive must not silently contain timing-failed logic.
+        # TILIQUA_TUNER_SEED permits explicit, reproducible qualification runs.
+        nextpnr_opts=f"--seed {seed}",
     )

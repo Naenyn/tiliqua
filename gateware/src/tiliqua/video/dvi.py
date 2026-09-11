@@ -127,6 +127,10 @@ class DVIPHY(wiring.Component):
 
     i: In(DVIPixel)
 
+    def __init__(self, *, circular_shift=False):
+        self.circular_shift = circular_shift
+        super().__init__()
+
     def elaborate(self, platform):
         m = Module()
 
@@ -190,9 +194,12 @@ class DVIPHY(wiring.Component):
             ]
         with m.Else():
             m.d.dvi5x += [
-                tmds_ch0_shift.eq(Cat(tmds_ch0_shift[2:10], Const(0, 2))),
-                tmds_ch1_shift.eq(Cat(tmds_ch1_shift[2:10], Const(0, 2))),
-                tmds_ch2_shift.eq(Cat(tmds_ch2_shift[2:10], Const(0, 2)))
+                # All five pairs are consumed before reload. Vacated high bits
+                # cannot affect the current symbol. Recirculation avoids a
+                # shared synchronous-clear net at the 371 MHz serial clock.
+                tmds_ch0_shift.eq(Cat(tmds_ch0_shift[2:10], tmds_ch0_shift[:2] if self.circular_shift else Const(0, 2))),
+                tmds_ch1_shift.eq(Cat(tmds_ch1_shift[2:10], tmds_ch1_shift[:2] if self.circular_shift else Const(0, 2))),
+                tmds_ch2_shift.eq(Cat(tmds_ch2_shift[2:10], tmds_ch2_shift[:2] if self.circular_shift else Const(0, 2)))
             ]
 
         if sim.is_hw(platform):

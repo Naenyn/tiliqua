@@ -1,11 +1,10 @@
 # Copyright (c) 2026
 #
 # SPDX-License-Identifier: CERN-OHL-S-2.0
-"""CPU-controlled, framebuffer-independent tuner scanline renderer.
+"""Tuner compatibility adapter around the shared instrument text compositor.
 
-Firmware writes a small character plane and the current pitch-marker position.
-The renderer regenerates the complete image on every DVI scan; no pixel history,
-framebuffer clearing, or raster-engine completion is involved.
+CPU-authored static pixels arrive from the retained PSRAM framebuffer. Live
+markers and text are composited on scanout, without phosphor/persistence engines.
 """
 
 from amaranth import *
@@ -14,14 +13,20 @@ from amaranth.lib.cdc import FFSynchronizer
 from amaranth.lib.memory import Memory
 from amaranth.lib.wiring import In, Out
 from amaranth_soc import csr
-from math import cos, isqrt, pi, sin
+from math import cos, pi, sin
 
 from tiliqua.video.types import Pixel, ScanPixel
 
 try:
     from .font_9x15 import MENU_FONT_BOLD, MENU_FONT_NORMAL
+    from .renderer import FrameExchange, Panel, TextCompositor, TextPlane
+    from .sprites import ScanlineSprites
+    from .background import SceneExchange
 except ImportError:
     from font_9x15 import MENU_FONT_BOLD, MENU_FONT_NORMAL
+    from renderer import FrameExchange, Panel, TextCompositor, TextPlane
+    from sprites import ScanlineSprites
+    from background import SceneExchange
 
 
 # A deliberately small 5x7 font. Unsupported characters render as spaces.
@@ -80,16 +85,23 @@ FONT_INIT = [row for char in FONT_CHARS for row in (*FONT[char], 0)]
 
 
 class TunerOverlay(wiring.Component):
+    FRAME_FIELDS = ("marker_x", "marker_y", "marker_hue", "marker_lens_base",
+                    "marker_lens_bank", "marker_valid", "marker_visualizer", "menu_active",
+                    "marker1", "marker2", "marker3", "blank_background")
+    LATENCY = 4 + TextCompositor.LATENCY
     PANEL_W = 720
     PANEL_H = 720
     COLS = 45
     ROWS = 45
     CELL = 16
+    MAIN_TEXT_X = 90
+    MAIN_TEXT_PITCH = 12
 
-    # Exact OSCIO/SONORO overlay geometry on the logical 720x720 canvas.
-    MENU_X = 454
+    # OSCIO/SONORO text placement, with enough left padding for SETTINGS.
+    # Grow leftward only: text, divider and the right edge stay in place.
+    MENU_X = 448
     MENU_Y = 342
-    MENU_W = 250
+    MENU_W = 256
     MENU_H = 160
     MENU_TEXT_X = 455
     MENU_TEXT_Y = 349
@@ -98,11 +110,13 @@ class TunerOverlay(wiring.Component):
     MENU_ROW_PITCH = 18
 
     def __init__(self, tile_memory, menu_memory, *, h_active=720,
-                 rotate_left=False):
+                 rotate_left=False, double_buffered=False, ascii_text=False):
         self.tile_memory = tile_memory
         self.menu_memory = menu_memory
         self.x_offset = 0 if rotate_left else max(0, (h_active - self.PANEL_W) // 2)
         self.rotate_left = rotate_left
+        self.double_buffered = double_buffered
+        self.ascii_text = ascii_text
         super().__init__({
             "i": In(ScanPixel),
             "o": Out(ScanPixel),
@@ -114,502 +128,163 @@ class TunerOverlay(wiring.Component):
             "marker_valid": In(1),
             "marker_visualizer": In(1),
             "menu_active": In(1),
+            "front_bank": In(1),
+            "blank_background": In(1),
+            # Additional arcs: x10/y10/orientation5/hue4/valid1. Slot zero
+            # retains the legacy ABI and its optional visualizer halo.
+            "marker1": In(30), "marker2": In(30), "marker3": In(30),
         })
 
     def elaborate(self, platform):
         m = Module()
 
-        # Synchronize the compact CPU-owned state. It is sampled into a stable
-        # frame snapshot only during vertical sync, preventing mid-frame motion.
-        marker_x_cdc = Signal(12)
-        marker_y_cdc = Signal(12)
-        marker_hue_cdc = Signal(4)
-        marker_lens_base_cdc = Signal(14)
-        marker_lens_bank_cdc = Signal(2)
-        marker_valid_cdc = Signal()
-        marker_visualizer_cdc = Signal()
-        menu_active_cdc = Signal()
-        for name, source, target in (
-            ("marker_x", self.marker_x, marker_x_cdc),
-            ("marker_y", self.marker_y, marker_y_cdc),
-            ("marker_hue", self.marker_hue, marker_hue_cdc),
-            ("marker_lens_base", self.marker_lens_base, marker_lens_base_cdc),
-            ("marker_lens_bank", self.marker_lens_bank, marker_lens_bank_cdc),
-            ("marker_valid", self.marker_valid, marker_valid_cdc),
-            ("marker_visualizer", self.marker_visualizer, marker_visualizer_cdc),
-            ("menu_active", self.menu_active, menu_active_cdc),
-        ):
-            m.submodules[name + "_ff"] = FFSynchronizer(
-                source, target, o_domain="dvi")
+        # Production inputs are one acknowledged frame snapshot, already in
+        # dvi. The unbuffered mode is retained for standalone raster tests only.
+        state = {}
+        for name in self.FRAME_FIELDS:
+            source = getattr(self, name)
+            if self.double_buffered:
+                state[name] = source
+                continue
+            crossed = Signal.like(source)
+            state[name] = Signal.like(source)
+            m.submodules[name + "_ff"] = FFSynchronizer(source, crossed, o_domain="dvi")
+            with m.If(self.i.vsync):
+                m.d.dvi += state[name].eq(crossed)
 
-        marker_x = Signal(12)
-        marker_y = Signal(12)
-        marker_hue = Signal(4)
-        marker_lens_base = Signal(14)
-        marker_lens_bank = Signal(2)
-        marker_valid = Signal()
-        marker_visualizer = Signal()
-        menu_active = Signal()
-        with m.If(self.i.vsync):
-            m.d.dvi += [
-                marker_x.eq(marker_x_cdc),
-                marker_y.eq(marker_y_cdc),
-                marker_hue.eq(marker_hue_cdc),
-                marker_lens_base.eq(marker_lens_base_cdc),
-                marker_lens_bank.eq(marker_lens_bank_cdc),
-                marker_valid.eq(marker_valid_cdc),
-                marker_visualizer.eq(marker_visualizer_cdc),
-                menu_active.eq(menu_active_cdc),
+        # Transform once, and delay logical coordinates alongside physical scan
+        # timing. Neither the sprite nor text compositor knows a modeline.
+        x = Signal(signed(12))
+        y = Signal(signed(12))
+        if self.rotate_left:
+            m.d.comb += [x.eq(self.i.y), y.eq(719 - self.i.x)]
+        else:
+            m.d.comb += [x.eq(self.i.x - self.x_offset), y.eq(self.i.y)]
+        active = self.i.de & (x >= 0) & (x < 720) & (y >= 0) & (y < 720)
+        xs = [x] + [Signal.like(x) for _ in range(4)]
+        ys = [y] + [Signal.like(y) for _ in range(4)]
+        for n in range(4):
+            m.d.dvi += [xs[n+1].eq(xs[n]), ys[n+1].eq(ys[n])]
+
+        # One row-wide atlas, fetched in blanking rather than once per pixel.
+        # Rotate bitmap samples as well as marker positions for the round panel.
+        bitmaps = []
+        for orientation in range(32):
+            angle = orientation * pi / 32
+            rows = []
+            for py in range(-16, 17):
+                row = 0
+                for px in range(-16, 17):
+                    lx, ly = (py, -px) if self.rotate_left else (px, py)
+                    tangent = lx * cos(angle) + ly * sin(angle)
+                    normal = -lx * sin(angle) + ly * cos(angle)
+                    row |= int(tangent * tangent * 49 + normal * normal * 256
+                               <= 16 * 16 * 49) << (px + 16)
+                rows.append(row)
+            bitmaps.append(rows)
+        m.submodules.sprites = sprites = ScanlineSprites(
+            bitmaps, slots=4 if self.ascii_text else 1)
+        orientation = Signal(5)
+        shape_valid = Signal()
+        # Compatibility with the current firmware ABI, without a divider.
+        for n in range(32):
+            with m.If((state["marker_lens_bank"] == n // 11) &
+                      (state["marker_lens_base"] == (n % 11) * 1089)):
+                m.d.comb += [orientation.eq(n), shape_valid.eq(1)]
+        m.d.comb += [sprites.i.eq(self.i), sprites.row.eq(self.i.y),
+                    sprites.prepare.eq((self.i.x == -16) & ~self.i.de),
+                    sprites.shape0.eq(orientation),
+                    sprites.color0.eq(Cat(state["marker_hue"], Const(12 if self.ascii_text else 15, 4))),
+                    sprites.enable0.eq(state["marker_valid"] & shape_valid &
+                                       ~state["marker_visualizer"])]
+        # Generic text/overlay-only view, published with the same atomic frame
+        # snapshot as its text. Keep the cached framebuffer untouched underneath.
+        with m.If(state["blank_background"]):
+            m.d.comb += sprites.i.pixel.eq(0)
+        if self.rotate_left:
+            m.d.comb += [sprites.x0.eq(719 - state["marker_y"] - 16),
+                        sprites.y0.eq(state["marker_x"] - 16)]
+        else:
+            m.d.comb += [sprites.x0.eq(state["marker_x"] + self.x_offset - 16),
+                        sprites.y0.eq(state["marker_y"] - 16)]
+        for slot in range(1, sprites.slots):
+            descriptor = state[f"marker{slot}"]
+            mx, my = descriptor[:10], descriptor[10:20]
+            m.d.comb += [
+                getattr(sprites, f"shape{slot}").eq(descriptor[20:25]),
+                getattr(sprites, f"color{slot}").eq(Cat(descriptor[25:29], Const(12, 4))),
+                getattr(sprites, f"enable{slot}").eq(descriptor[29] & (mx < 720) & (my < 720)),
+                getattr(sprites, f"x{slot}").eq(
+                    719 - my - 16 if self.rotate_left else mx + self.x_offset - 16),
+                getattr(sprites, f"y{slot}").eq(mx - 16 if self.rotate_left else my - 16),
             ]
+        sprite3, sprite4 = Signal(ScanPixel), Signal(ScanPixel)
+        m.d.dvi += [sprite3.eq(sprites.o), sprite4.eq(sprite3)]
 
-        # Character plane: one byte per 16x16 cell. A synchronous tile lookup
-        # followed by a synchronous glyph-row lookup forms a short fixed pixel
-        # pipeline; timing/control and procedural geometry follow the same path.
-        tile_r = self.tile_memory.read_port(domain="dvi")
-        font_mem = Memory(shape=unsigned(5), depth=len(FONT_INIT), init=FONT_INIT)
-        font_r = font_mem.read_port(domain="dvi")
-        m.submodules.font_mem = font_mem
+        dx = Signal(signed(13))
+        dy = Signal(signed(13))
+        m.d.comb += [dx.eq(x - state["marker_x"]), dy.eq(y - state["marker_y"])]
+        ax1, ay1 = Signal(13), Signal(13)
+        valid1 = Signal()
+        hue1 = Signal(4)
+        visual1 = Signal()
+        m.d.dvi += [
+            ax1.eq(Mux(dx < 0, -dx, dx)), ay1.eq(Mux(dy < 0, -dy, dy)),
+            valid1.eq(active & state["marker_valid"]),
+            hue1.eq(state["marker_hue"]), visual1.eq(state["marker_visualizer"]),
+        ]
+        halo2 = Signal(4)
+        hue2 = Signal(4)
+        distance = Mux(ax1 > ay1, ax1 + (ay1 >> 1), ay1 + (ax1 >> 1))
+        m.d.dvi += [
+            hue2.eq(hue1),
+            halo2.eq(Mux(valid1 & visual1,
+                         Mux(distance <= 5, 15, Mux(distance <= 12, 8,
+                             Mux(distance <= 22, 3, 0))), 0)),
+        ]
+        halo3 = Signal(4)
+        hue3 = Signal(4)
+        m.d.dvi += [halo3.eq(halo2), hue3.eq(hue2)]
+        intensity4 = Signal(4)
+        hue4 = Signal(4)
+        m.d.dvi += [
+            intensity4.eq(halo3),
+            hue4.eq(hue3),
+        ]
+        marked = Signal(ScanPixel)
+        m.d.comb += marked.eq(sprite4)
+        with m.If(intensity4 != 0):
+            m.d.comb += [marked.pixel.color.eq(hue4), marked.pixel.intensity.eq(intensity4)]
 
-        # Menus in XBEAM, OSCIO, and SONORO use embedded-graphics' exact 9x15
-        # normal/bold fonts. Keep a dedicated compact plane so the tuner can
-        # retain its larger display lettering without approximating the menu.
-        menu_r = self.menu_memory.read_port(domain="dvi")
-        # Lay glyph rows out on power-of-two address boundaries so the live
-        # address is only Cat(row, glyph, bold), not glyph*15 plus a bank add.
-        menu_font_init = [0] * 4096
+        # One atlas and one glyph fetch for BOTH text layers. Legacy tuner
+        # lettering fits in unused normal-font addresses; the menu keeps the
+        # exact normal/bold 9x15 assets from OSCIO/SONORO.
+        atlas = [0] * 4096
         for bold, font in enumerate((MENU_FONT_NORMAL, MENU_FONT_BOLD)):
             for glyph in range(95):
                 for row in range(15):
-                    menu_font_init[row | (glyph << 4) | (bold << 11)] = \
-                        font[glyph * 15 + row]
-        menu_font_mem = Memory(
-            shape=unsigned(9), depth=len(menu_font_init), init=menu_font_init,
-            attrs={"ram_style": "block"})
-        menu_font_r = menu_font_mem.read_port(domain="dvi")
-        m.submodules.menu_font_mem = menu_font_mem
-
-        # The Snail-style analytical marker is a compact filled lens, not a
-        # widened copy of a scanline interval. Thirty-two unoriented axes cover
-        # 180 degrees at 5.625-degree resolution (an ellipse at angle + 180
-        # degrees is identical), giving an isotropic, rounded silhouette while
-        # keeping the live pixel path free of multipliers. Its major axis is
-        # tangent to the local spiral and its 15-pixel thickness stays well
-        # inside the 22-pixel octave spacing.
-        lens_half = 16
-        lens_size = lens_half * 2 + 1
-        orientations_per_bank = 11
-        lens_bank_init = [[], [], []]
-        for orientation in range(32):
-            angle = orientation * pi / 32
-            tangent_x = cos(angle)
-            tangent_y = sin(angle)
-            for lens_y in range(-lens_half, lens_half + 1):
-                for lens_x in range(-lens_half, lens_half + 1):
-                    tangent = lens_x * tangent_x + lens_y * tangent_y
-                    normal = -lens_x * tangent_y + lens_y * tangent_x
-                    lens_bank_init[orientation // orientations_per_bank].append(int(
-                        (tangent * tangent * 49 + normal * normal * 256)
-                        <= (16 * 16 * 49)))
-        # Keep the three blocks explicit. Inferring one 35Kx1 memory causes
-        # nextpnr to cascade EBRs with a combinational bank selector whose
-        # address is one pixel newer than their synchronous data, fragmenting
-        # the marker during a real raster scan.
-        lens_ports = []
-        for bank, init in enumerate(lens_bank_init):
-            lens_mem = Memory(
-                shape=unsigned(1), depth=len(init), init=init,
-                attrs={"ram_style": "block"})
-            lens_ports.append(lens_mem.read_port(domain="dvi"))
-            m.submodules[f"lens_mem_{bank}"] = lens_mem
-
-        # One upright 720x720 UI canvas serves both targets. Standard HDMI
-        # centers it horizontally; the official circular panel uses REZO's
-        # inverse mount rotation so the authored UI remains upright.
-        sx0 = self.i.x
-        sy0 = self.i.y
-        x0 = Signal(signed(12))
-        y0 = Signal(signed(12))
-        if self.rotate_left:
-            m.d.comb += [x0.eq(sy0), y0.eq((self.PANEL_H - 1) - sx0)]
-        else:
-            m.d.comb += [x0.eq(sx0 - self.x_offset), y0.eq(sy0)]
-        active0 = self.i.de & (x0 >= 0) & (x0 < self.PANEL_W) & \
-            (y0 >= 0) & (y0 < self.PANEL_H)
-        cell_x0 = Signal(6)
-        cell_y0 = Signal(6)
+                    atlas[row | (glyph << 4) | (bold << 11)] = font[glyph * 15 + row]
+        atlas[1536:1536 + len(FONT_INIT)] = FONT_INIT
+        planes = [
+            (TextPlane(self.MAIN_TEXT_X, 0, self.COLS, self.ROWS,
+                       pitch_x=self.MAIN_TEXT_PITCH, cell_color=True) if self.ascii_text else
+             TextPlane(0, 0, self.COLS, self.ROWS, glyph_width=5, glyph_height=7,
+                       scale=2, row_bits=3, glyph_bits=6, font_base=1536, bold_bit=None)),
+            TextPlane(self.MENU_TEXT_X, self.MENU_TEXT_Y, self.MENU_COLS, self.MENU_ROWS,
+                      pitch_x=9, pitch_y=self.MENU_ROW_PITCH, color=0xA9),
+        ]
+        panels = [None, Panel(self.MENU_X, self.MENU_Y, self.MENU_W, self.MENU_H,
+                              rule_x=85, rule_y=8, rule_height=54)]
+        m.submodules.text = text = TextCompositor(
+            [self.tile_memory, self.menu_memory], planes, atlas, panels=panels,
+            double_buffered=self.double_buffered)
         m.d.comb += [
-            cell_x0.eq(x0.as_unsigned()[4:10]),
-            cell_y0.eq(y0.as_unsigned()[4:10]),
-            tile_r.addr.eq(
-                (cell_y0 << 5) + (cell_y0 << 3) +
-                (cell_y0 << 2) + cell_y0 + cell_x0),
-            tile_r.en.eq(active0 & (cell_x0 < self.COLS) & (cell_y0 < self.ROWS)),
-        ]
-
-        # Predecode the non-power-of-two 9x15 font grid into two tiny ROMs.
-        # This reproduces embedded-graphics placement without putting division
-        # or modulo operators on the DVI pixel path.
-        menu_xmap = []
-        menu_ymap = []
-        for pixel_x in range(self.PANEL_W):
-            relative = pixel_x - self.MENU_TEXT_X
-            valid = 0 <= relative < self.MENU_COLS * 9
-            column = relative // 9 if valid else 0
-            glyph_column = relative % 9 if valid else 0
-            menu_xmap.append(column | (glyph_column << 5) | (int(valid) << 9))
-        for pixel_y in range(self.PANEL_H):
-            relative = pixel_y - self.MENU_TEXT_Y
-            row = relative // self.MENU_ROW_PITCH if relative >= 0 else 0
-            glyph_row = relative % self.MENU_ROW_PITCH if relative >= 0 else 0
-            valid = (0 <= row < self.MENU_ROWS) and glyph_row < 15
-            menu_ymap.append(
-                (row * self.MENU_COLS) | (glyph_row << 8) | (int(valid) << 12))
-        menu_xmap_mem = Memory(
-            shape=unsigned(10), depth=self.PANEL_W, init=menu_xmap,
-            attrs={"ram_style": "block"})
-        menu_ymap_mem = Memory(
-            shape=unsigned(13), depth=self.PANEL_H, init=menu_ymap,
-            attrs={"ram_style": "block"})
-        menu_xmap_r = menu_xmap_mem.read_port(domain="dvi")
-        menu_ymap_r = menu_ymap_mem.read_port(domain="dvi")
-        m.submodules.menu_xmap_mem = menu_xmap_mem
-        m.submodules.menu_ymap_mem = menu_ymap_mem
-        m.d.comb += [
-            menu_xmap_r.addr.eq(x0.as_unsigned()[:10]),
-            menu_xmap_r.en.eq(active0),
-            menu_ymap_r.addr.eq(y0.as_unsigned()[:10]),
-            menu_ymap_r.en.eq(active0),
-        ]
-
-        # Static viewport, chromatic divisions, and spiral now live in the
-        # PSRAM framebuffer. This overlay only composites live state, text, and
-        # the modal menu; no duplicate guide geometry is stored in FPGA EBR.
-        spiral_ports = []
-        spoke_ports = []
-        dx2_0 = Signal(11)
-        m.d.comb += dx2_0.eq(0)
-
-        scan1 = Signal(ScanPixel)
-        scan2 = Signal(ScanPixel)
-        scan3 = Signal(ScanPixel)
-        scan4 = Signal(ScanPixel)
-        glyph_col1 = Signal(3)
-        glyph_row1 = Signal(3)
-        active1 = Signal()
-        dx2_1 = Signal.like(dx2_0)
-        x_rel1 = Signal(9)
-        x_rel_valid1 = Signal()
-        menu_inside1 = Signal()
-        menu_border1 = Signal()
-        menu_rule1 = Signal()
-
-        # Use the established right-side 250x160 menu placement verbatim.
-        menu_inside0 = active0 & (x0 >= self.MENU_X) & \
-            (x0 < self.MENU_X + self.MENU_W) & (y0 >= self.MENU_Y) & \
-            (y0 < self.MENU_Y + self.MENU_H)
-        menu_border0 = menu_inside0 & (
-            (x0 < self.MENU_X + 2) | (x0 >= self.MENU_X + self.MENU_W - 2) |
-            (y0 < self.MENU_Y + 2) | (y0 >= self.MENU_Y + self.MENU_H - 2))
-        # Match OSCIO/SONORO's page gutter: page name on the left, option
-        # names and values on the right, separated by one quiet vertical rule.
-        menu_rule0 = menu_inside0 & (x0 >= self.MENU_X + 79) & \
-            (x0 < self.MENU_X + 80) & (y0 >= self.MENU_Y + 8) & \
-            (y0 < self.MENU_Y + 62)
-
-        # Cheap polar approximation. It is deliberately generated every scan,
-        # so guide pixels never need to be stored, erased, or repaired. The
-        # coordinate normalization is registered before radial classification.
-        dx0 = Signal(signed(13))
-        dy0 = Signal(signed(13))
-        ax0 = Signal(13)
-        ay0 = Signal(13)
-        mdx0 = Signal(signed(13))
-        mdy0 = Signal(signed(13))
-        m.d.comb += [
-            dx0.eq(x0 - 360),
-            dy0.eq(y0 - 360),
-            ax0.eq(Mux(dx0 < 0, -dx0, dx0)),
-            ay0.eq(Mux(dy0 < 0, -dy0, dy0)),
-            mdx0.eq(x0 - marker_x),
-            mdy0.eq(y0 - marker_y),
-        ]
-        lens_valid0 = Signal()
-        m.d.comb += [
-            lens_valid0.eq(
-                active0 & marker_valid & ~marker_visualizer &
-                (mdx0 >= -lens_half) & (mdx0 <= lens_half) &
-                (mdy0 >= -lens_half) & (mdy0 <= lens_half)),
-        ]
-        ax1 = Signal.like(ax0)
-        ay1 = Signal.like(ay0)
-        amdx1 = Signal(13)
-        amdy1 = Signal(13)
-        lens_valid1 = Signal()
-        lens_x1 = Signal(6)
-        lens_y1 = Signal(6)
-        lens_base1 = Signal(14)
-        lens_bank1 = Signal(2)
-        m.d.dvi += [
-            scan1.eq(self.i),
-            glyph_col1.eq(x0.as_unsigned()[1:4]),
-            glyph_row1.eq(y0.as_unsigned()[1:4]),
-            active1.eq(active0),
-            dx2_1.eq(dx2_0),
-            x_rel1.eq(x0 - 128),
-            x_rel_valid1.eq((x0 >= 128) & (x0 < 640)),
-            menu_inside1.eq(menu_inside0),
-            menu_border1.eq(menu_border0),
-            menu_rule1.eq(menu_rule0),
-            ax1.eq(ax0), ay1.eq(ay0),
-            amdx1.eq(Mux(mdx0 < 0, -mdx0, mdx0)),
-            amdy1.eq(Mux(mdy0 < 0, -mdy0, mdy0)),
-            lens_valid1.eq(lens_valid0),
-            lens_x1.eq(mdx0 + lens_half),
-            lens_y1.eq(mdy0 + lens_half),
-            lens_base1.eq(marker_lens_base),
-            lens_bank1.eq(marker_lens_bank),
-        ]
-
-        menu_valid1 = Signal()
-        menu_glyph_col1 = Signal(4)
-        menu_glyph_row1 = Signal(4)
-        menu_cell_addr1 = Signal(range(self.MENU_COLS * self.MENU_ROWS))
-        m.d.comb += [
-            menu_valid1.eq(menu_xmap_r.data[9] & menu_ymap_r.data[12]),
-            menu_glyph_col1.eq(menu_xmap_r.data[5:9]),
-            menu_glyph_row1.eq(menu_ymap_r.data[8:12]),
-            menu_cell_addr1.eq(menu_ymap_r.data[:8] + menu_xmap_r.data[:5]),
-            menu_r.addr.eq(menu_cell_addr1),
-            menu_r.en.eq(menu_active & menu_valid1),
-        ]
-
-        # Split coordinate normalization from the ROM address addition. The
-        # extra register keeps the large lens memory physically off the path
-        # from the live DVI pixel counters.
-        lens_addr1 = Signal(14)
-        m.d.comb += lens_addr1.eq(
-            lens_base1 + (lens_y1 << 5) + lens_y1 + lens_x1)
-
-        circle_inside1 = active1
-        circle_edge1 = Const(0)
-        marker_min1 = Signal(13)
-        marker_max1 = Signal(13)
-        marker_distance1 = Signal(14)
-        m.d.comb += [
-            marker_min1.eq(Mux(amdx1 < amdy1, amdx1, amdy1)),
-            marker_max1.eq(Mux(amdx1 > amdy1, amdx1, amdy1)),
-            # max + min/2 is a rounded, multiplier-free Euclidean distance.
-            marker_distance1.eq(marker_max1 + (marker_min1 >> 1)),
-        ]
-
-        exact_spoke_hits = []
-        for spoke_port in spoke_ports:
-            lower = spoke_port.data[:9]
-            upper = spoke_port.data[9:18]
-            exact_spoke_hits.append((ax1 >= lower) & (ax1 <= upper))
-
-        # Stored character bytes are direct FONT_CHARS indices, keeping the
-        # pixel path free of an ASCII decoder.
-        font_addr = Signal(range(len(FONT_INIT)))
-        m.d.comb += [
-            font_addr.eq((tile_r.data << 3) + glyph_row1),
-            font_r.addr.eq(font_addr),
-        ]
-        glyph_col2 = Signal.like(glyph_col1)
-        circle_inside2 = Signal()
-        circle_edge2 = Signal()
-        marker2 = Signal()
-        marker_halo2 = Signal(2)
-        marker_distance2 = Signal.like(marker_distance1)
-        lens_addr2 = Signal.like(lens_addr1)
-        lens_valid2 = Signal()
-        lens_bank2 = Signal(2)
-        spiral_bounds2 = [Signal(18, name=f"spiral_bounds2_{index}")
-                          for index in range(len(spiral_ports))]
-        x_rel2 = Signal.like(x_rel1)
-        x_rel_valid2 = Signal()
-        spoke_hits2 = Signal(1)
-        menu_inside2 = Signal()
-        menu_border2 = Signal()
-        menu_rule2 = Signal()
-        menu_valid2 = Signal()
-        menu_glyph_col2 = Signal(4)
-        menu_glyph_row2 = Signal(4)
-        m.d.dvi += [
-            scan2.eq(scan1),
-            glyph_col2.eq(glyph_col1),
-            circle_inside2.eq(circle_inside1),
-            circle_edge2.eq(circle_edge1),
-            marker2.eq(marker_valid & marker_visualizer &
-                       (marker_distance1 <= 5)),
-            marker_distance2.eq(marker_distance1),
-            lens_addr2.eq(lens_addr1),
-            lens_valid2.eq(lens_valid1),
-            lens_bank2.eq(lens_bank1),
-            x_rel2.eq(x_rel1),
-            x_rel_valid2.eq(x_rel_valid1),
-            marker_halo2.eq(Mux(
-                marker_valid & marker_visualizer &
-                (marker_distance1 <= 12), 2,
-                Mux(marker_valid & marker_visualizer &
-                    (marker_distance1 <= 22), 1, 0))),
-            spoke_hits2.eq(0),
-            menu_inside2.eq(menu_inside1),
-            menu_border2.eq(menu_border1),
-            menu_rule2.eq(menu_rule1),
-            menu_valid2.eq(menu_valid1),
-            menu_glyph_col2.eq(menu_glyph_col1),
-            menu_glyph_row2.eq(menu_glyph_row1),
-        ]
-        for bounds, spiral_port in zip(spiral_bounds2, spiral_ports):
-            m.d.dvi += bounds.eq(spiral_port.data)
-        for lens_port in lens_ports:
-            m.d.comb += [
-                lens_port.addr.eq(lens_addr2),
-                lens_port.en.eq(lens_valid2),
-            ]
-
-        text_hit2 = Signal()
-        glyph_bit = Signal(3)
-        m.d.comb += [
-            glyph_bit.eq(Mux(glyph_col2 < 5, 4 - glyph_col2, 0)),
-            text_hit2.eq(
-                circle_inside2 & (glyph_col2 < 5) &
-                font_r.data.bit_select(glyph_bit, 1)),
-        ]
-
-
-        menu_font_addr2 = Signal(12)
-        m.d.comb += [
-            menu_font_addr2.eq(Cat(
-                menu_glyph_row2, menu_r.data[:7], menu_r.data[7])),
-            menu_font_r.addr.eq(menu_font_addr2),
-            menu_font_r.en.eq(menu_active & menu_valid2),
-        ]
-
-        # Keep normalization, radial classification, and final color selection
-        # in separate pixel-clock stages. This is deliberately a few pixels of
-        # latency: the scan stream is delayed alongside it, and the shorter
-        # paths leave comfortable margin at the 74.25 MHz preview clock.
-        circle_edge3 = Signal()
-        marker3 = Signal()
-        marker_halo3 = Signal(2)
-        lens_valid3 = Signal()
-        lens_bank3 = Signal(2)
-        text_hit3 = Signal()
-        spiral3 = Signal()
-        arc3 = Signal()
-        spoke3 = Signal()
-        menu_inside3 = Signal()
-        menu_border3 = Signal()
-        menu_rule3 = Signal()
-        menu_valid3 = Signal()
-        menu_glyph_col3 = Signal(4)
-        menu_bold3 = Signal()
-        m.d.dvi += [
-            scan3.eq(scan2),
-            circle_edge3.eq(circle_edge2),
-            marker3.eq(marker2),
-            marker_halo3.eq(marker_halo2),
-            lens_valid3.eq(lens_valid2),
-            lens_bank3.eq(lens_bank2),
-            text_hit3.eq(text_hit2),
-            spiral3.eq(0),
-            arc3.eq(0),
-            spoke3.eq(0),
-            menu_inside3.eq(menu_inside2),
-            menu_border3.eq(menu_border2),
-            menu_rule3.eq(menu_rule2),
-            menu_valid3.eq(menu_valid2),
-            menu_glyph_col3.eq(menu_glyph_col2),
-            menu_bold3.eq(menu_r.data[7]),
-        ]
-
-        menu_text_hit3 = Signal()
-        menu_font_bit3 = Signal(4)
-        m.d.comb += [
-            menu_font_bit3.eq(8 - menu_glyph_col3),
-            menu_text_hit3.eq(
-                menu_active & menu_valid3 &
-                menu_font_r.data.bit_select(menu_font_bit3, 1)),
-        ]
-
-        guide3 = Signal()
-        m.d.comb += [
-            guide3.eq(spiral3),
-        ]
-
-        # 0 black, 1 pitch spiral, 2 marker core, 3 viewport edge,
-        # 4 radial guide, 5 analytical arc, 6/7 visualizer halo.
-        geometry4 = Signal(3)
-        text_hit4 = Signal()
-        menu_inside4 = Signal()
-        menu_border4 = Signal()
-        menu_rule4 = Signal()
-        menu_text_hit4 = Signal()
-        menu_bold4 = Signal()
-        analytical_lens3 = Signal()
-        selected_lens_data3 = Signal()
-        m.d.comb += selected_lens_data3.eq(
-            Array(port.data for port in lens_ports)[lens_bank3])
-        m.d.comb += analytical_lens3.eq(
-            marker_valid & ~marker_visualizer & lens_valid3 &
-            (lens_bank3 < len(lens_ports)) & selected_lens_data3)
-        m.d.dvi += [
-            scan4.eq(scan3),
-            geometry4.eq(Mux(marker3 | analytical_lens3, 2,
-                         Mux(arc3, 5,
-                         Mux(marker_halo3 == 2, 6,
-                         Mux(marker_halo3 == 1, 7,
-                         Mux(guide3, 1,
-                         Mux(spoke3, 4, Mux(circle_edge3, 3, 0)))))))),
-            text_hit4.eq(text_hit3),
-            menu_inside4.eq(menu_inside3),
-            menu_border4.eq(menu_border3),
-            menu_rule4.eq(menu_rule3),
-            menu_text_hit4.eq(menu_text_hit3),
-            menu_bold4.eq(menu_bold3),
-        ]
-
-        pixel = Signal(Pixel)
-        m.d.comb += pixel.eq(scan4.pixel)
-        with m.If(geometry4 == 1):
-            m.d.comb += [pixel.color.eq(9), pixel.intensity.eq(5)]
-        with m.If(geometry4 == 2):
-            m.d.comb += [pixel.color.eq(marker_hue), pixel.intensity.eq(15)]
-        with m.If(geometry4 == 3):
-            m.d.comb += [pixel.color.eq(9), pixel.intensity.eq(2)]
-        with m.If(geometry4 == 4):
-            m.d.comb += [pixel.color.eq(9), pixel.intensity.eq(2)]
-        with m.If(geometry4 == 5):
-            m.d.comb += [pixel.color.eq(marker_hue), pixel.intensity.eq(15)]
-        with m.If(geometry4 == 6):
-            m.d.comb += [pixel.color.eq(marker_hue), pixel.intensity.eq(8)]
-        with m.If(geometry4 == 7):
-            m.d.comb += [pixel.color.eq(marker_hue), pixel.intensity.eq(3)]
-        # The menu is an opaque modal panel over the continuously rendered
-        # tuner, rather than a separate full-screen page. Its procedural fill
-        # guarantees that old pixels cannot show through between text updates.
-        with m.If(menu_active & menu_inside4):
-            m.d.comb += pixel.eq(0)
-            with m.If(menu_border4):
-                m.d.comb += [pixel.color.eq(9), pixel.intensity.eq(10)]
-            with m.Elif(menu_rule4):
-                m.d.comb += [pixel.color.eq(9), pixel.intensity.eq(3)]
-        with m.If(text_hit4 & ~(menu_active & menu_inside4)):
-            m.d.comb += [pixel.color.eq(9), pixel.intensity.eq(13)]
-        with m.If(menu_text_hit4):
-            m.d.comb += [
-                pixel.color.eq(9),
-                pixel.intensity.eq(Mux(menu_bold4, 15, 10)),
-            ]
-
-        m.d.comb += [
-            self.o.eq(scan4),
-            self.o.pixel.eq(Mux(scan4.de, pixel, 0)),
+            text.i.eq(marked), text.x.eq(xs[4]), text.y.eq(ys[4]),
+            text.enable.eq(Cat(Const(1), state["menu_active"])),
+            text.bank.eq(self.front_bank),
+            self.o.eq(text.o),
         ]
         return m
-
 
 class Peripheral(wiring.Component):
     """CSR state and tile writer for :class:`TunerOverlay`."""
@@ -624,7 +299,9 @@ class Peripheral(wiring.Component):
 
     class TileWrite(csr.Register, access="w"):
         address: csr.Field(csr.action.W, unsigned(12))
-        glyph: csr.Field(csr.action.W, unsigned(6))
+        glyph: csr.Field(csr.action.W, unsigned(7))
+        bold: csr.Field(csr.action.W, unsigned(1))
+        color: csr.Field(csr.action.W, unsigned(8))
 
     class MarkerShape(csr.Register, access="w"):
         # Firmware selects one explicit EBR and supplies its local sprite base,
@@ -632,24 +309,51 @@ class Peripheral(wiring.Component):
         base: csr.Field(csr.action.W, unsigned(14))
         bank: csr.Field(csr.action.W, unsigned(2))
 
-    def __init__(self, *, h_active=1280, rotate_left=False):
+    class Frame(csr.Register, access="rw"):
+        commit: csr.Field(csr.action.W, unsigned(1))
+        busy: csr.Field(csr.action.R, unsigned(1))
+        back_bank: csr.Field(csr.action.R, unsigned(1))
+        swap_background: csr.Field(csr.action.W, unsigned(1))
+        background_back: csr.Field(csr.action.R, unsigned(1))
+
+    class ExtraMarker(csr.Register, access="w"):
+        x: csr.Field(csr.action.W, unsigned(10))
+        y: csr.Field(csr.action.W, unsigned(10))
+        orientation: csr.Field(csr.action.W, unsigned(5))
+        hue: csr.Field(csr.action.W, unsigned(4))
+        valid: csr.Field(csr.action.W, unsigned(1))
+
+    class Backdrop(csr.Register, access="w"):
+        blank: csr.Field(csr.action.W, unsigned(1))
+
+    def __init__(self, *, h_active=1280, rotate_left=False, scene_layout=None):
+        self.scene_layout = scene_layout
         self.tile_memory = Memory(
-            shape=unsigned(6), depth=TunerOverlay.COLS * TunerOverlay.ROWS,
-            init=[0] * (TunerOverlay.COLS * TunerOverlay.ROWS))
+            shape=unsigned(16), depth=4096, init=[])
         # Bits 0..6 select printable ASCII; bit 7 selects the bold face used
         # by draw_options for the active page or option.
         self.menu_memory = Memory(
-            shape=unsigned(8), depth=TunerOverlay.MENU_COLS * TunerOverlay.MENU_ROWS,
-            init=[0] * (TunerOverlay.MENU_COLS * TunerOverlay.MENU_ROWS))
+            shape=unsigned(8), depth=512, init=[])
         self.overlay = TunerOverlay(
             self.tile_memory, self.menu_memory,
-            h_active=h_active, rotate_left=rotate_left)
+            h_active=h_active, rotate_left=rotate_left, double_buffered=True,
+            ascii_text=True)
+        self.staging = {name: Signal.like(getattr(self.overlay, name))
+                        for name in TunerOverlay.FRAME_FIELDS}
+        payload_width = sum(len(field) for field in self.staging.values())
+        self.exchange = (FrameExchange(payload_width) if scene_layout is None else
+                         SceneExchange(scene_layout, payload_width))
 
-        regs = csr.Builder(addr_width=4, data_width=8)
+        regs = csr.Builder(addr_width=5, data_width=8)
         self._marker = regs.add("marker", self.Marker(), offset=0x0)
         self._tile_write = regs.add("tile_write", self.TileWrite(), offset=0x4)
+        self._frame = regs.add("frame", self.Frame(), offset=0x8)
         self._marker_shape = regs.add(
             "marker_shape", self.MarkerShape(), offset=0xc)
+        self._extra_markers = [regs.add(f"marker{slot}", self.ExtraMarker(),
+                                       offset=0x10 + (slot - 1) * 4)
+                               for slot in range(1, 4)]
+        self._backdrop = regs.add("backdrop", self.Backdrop(), offset=0x1c)
         self._bridge = csr.Bridge(regs.as_memory_map())
         super().__init__({
             "bus": In(csr.Signature(addr_width=regs.addr_width, data_width=regs.data_width)),
@@ -662,39 +366,72 @@ class Peripheral(wiring.Component):
         m.submodules.overlay = self.overlay
         m.submodules.tile_memory = self.tile_memory
         m.submodules.menu_memory = self.menu_memory
+        exchange = self.exchange
+        if self.scene_layout is None:
+            m.submodules.exchange = exchange
+        else:
+            # SceneExchange is owned by the DMA, which supplies its acquire
+            # event. This peripheral supplies CPU staging and visible boundary.
+            m.d.comb += [exchange.swap_background.eq(self._frame.f.swap_background.w_data),
+                        self._frame.f.background_back.r_data.eq(exchange.draw_base != 0)]
         wiring.connect(m, wiring.flipped(self.bus), self._bridge.bus)
+        with m.If(self._backdrop.element.w_stb & ~exchange.busy):
+            m.d.sync += self.staging["blank_background"].eq(self._backdrop.f.blank.w_data)
+
+        m.d.comb += [
+            exchange.payload.eq(Cat(*self.staging.values())),
+            exchange.submit.eq(self._frame.element.w_stb & self._frame.f.commit.w_data),
+            self._frame.f.busy.r_data.eq(exchange.busy),
+            self._frame.f.back_bank.r_data.eq(exchange.back_bank),
+            # Last blank line, independent of modeline sync polarity. There
+            # is a full scanline for publication to settle before visible y=0.
+            exchange.boundary.eq((self.overlay.i.y == -1) &
+                                 (self.overlay.i.x == 0) & ~self.overlay.i.de),
+            self.overlay.front_bank.eq(exchange.front_bank),
+            Cat(*(getattr(self.overlay, name) for name in TunerOverlay.FRAME_FIELDS)).eq(exchange.published),
+        ]
 
         tile_w = self.tile_memory.write_port(domain="sync")
         menu_w = self.menu_memory.write_port(domain="sync")
         m.d.comb += [
-            tile_w.addr.eq(self._tile_write.f.address.w_data),
-            tile_w.data.eq(self._tile_write.f.glyph.w_data),
+            tile_w.addr.eq(Cat(self._tile_write.f.address.w_data[:11], exchange.back_bank)),
+            tile_w.data.eq(Cat(self._tile_write.f.glyph.w_data,
+                               self._tile_write.f.bold.w_data,
+                               self._tile_write.f.color.w_data)),
             tile_w.en.eq(
                 self._tile_write.element.w_stb &
+                ~exchange.busy & (self._tile_write.f.address.w_data[:11] < 2025) &
                 ~self._tile_write.f.address.w_data[11]),
-            menu_w.addr.eq(self._tile_write.f.address.w_data[:8]),
+            menu_w.addr.eq(Cat(self._tile_write.f.address.w_data[:8], exchange.back_bank)),
             menu_w.data.eq(Cat(
-                self._tile_write.f.glyph.w_data,
+                self._tile_write.f.glyph.w_data[:6],
                 self._tile_write.f.address.w_data[9],
                 self._tile_write.f.address.w_data[10])),
             menu_w.en.eq(
                 self._tile_write.element.w_stb &
+                ~exchange.busy & (self._tile_write.f.address.w_data[:8] < 252) &
                 self._tile_write.f.address.w_data[11]),
         ]
-        with m.If(self._marker.element.w_stb):
+        with m.If(self._marker.element.w_stb & ~exchange.busy):
             m.d.sync += [
-                self.overlay.marker_x.eq(self._marker.f.x.w_data),
-                self.overlay.marker_y.eq(self._marker.f.y.w_data),
-                self.overlay.marker_hue.eq(self._marker.f.hue.w_data),
-                self.overlay.marker_valid.eq(self._marker.f.valid.w_data),
-                self.overlay.marker_visualizer.eq(self._marker.f.visualizer.w_data),
-                self.overlay.menu_active.eq(self._marker.f.menu_active.w_data),
+                self.staging["marker_x"].eq(self._marker.f.x.w_data),
+                self.staging["marker_y"].eq(self._marker.f.y.w_data),
+                self.staging["marker_hue"].eq(self._marker.f.hue.w_data),
+                self.staging["marker_valid"].eq(self._marker.f.valid.w_data),
+                self.staging["marker_visualizer"].eq(self._marker.f.visualizer.w_data),
+                self.staging["menu_active"].eq(self._marker.f.menu_active.w_data),
             ]
-        with m.If(self._marker_shape.element.w_stb):
+        with m.If(self._marker_shape.element.w_stb & ~exchange.busy):
             m.d.sync += [
-                self.overlay.marker_lens_base.eq(
+                self.staging["marker_lens_base"].eq(
                     self._marker_shape.f.base.w_data),
-                self.overlay.marker_lens_bank.eq(
+                self.staging["marker_lens_bank"].eq(
                     self._marker_shape.f.bank.w_data),
             ]
+        for slot, register in enumerate(self._extra_markers, 1):
+            with m.If(register.element.w_stb & ~exchange.busy):
+                m.d.sync += self.staging[f"marker{slot}"].eq(Cat(
+                    register.f.x.w_data, register.f.y.w_data,
+                    register.f.orientation.w_data, register.f.hue.w_data,
+                    register.f.valid.w_data))
         return m

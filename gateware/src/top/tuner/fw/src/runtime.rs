@@ -4,7 +4,7 @@
 //! scale tables, and renderer state must not become part of the foreground
 //! loop's stack frame just because the menu grows.
 
-use crate::options::{DisplayMode, Opts, ReferenceTone};
+use crate::options::{DisplayMode, Opts};
 
 pub const TUNER_CHANNELS: usize = 4;
 
@@ -13,6 +13,8 @@ pub enum OperatingMode {
     #[default]
     Tuner,
     Calibrator,
+    Verify,
+    Profiles,
     Quantizer,
 }
 
@@ -22,17 +24,34 @@ pub struct RuntimeControls {
     pub mode: OperatingMode,
     pub tuner_input: u8,
     pub display_mode: DisplayMode,
-    pub reference_mode: ReferenceTone,
     pub reference_hz: u16,
+    pub calibration_input: u8,
+    pub calibration_output: u8,
+    pub target_millicents: i32,
+    pub verify_scan: bool,
+    pub verify_points: bool,
+    pub zero_note: u8,
 }
 
 impl RuntimeControls {
     pub fn from_options(opts: &Opts) -> Self {
         Self {
-            mode: OperatingMode::Tuner,
+            verify_scan: opts.verify.mode.value!=crate::options::VerifyMode::Manual,
+            verify_points: opts.verify.mode.value==crate::options::VerifyMode::Points,
+            zero_note: opts.calibrate.zero_note.value.clamp(12,108),
+            mode: if opts.tracker.page.value == crate::options::Page::Calibrate {
+                OperatingMode::Calibrator
+            } else if opts.tracker.page.value == crate::options::Page::Verify {
+                OperatingMode::Verify
+            } else if opts.tracker.page.value == crate::options::Page::Profiles {
+                OperatingMode::Profiles
+            } else { OperatingMode::Tuner },
+            target_millicents: opts.verify.note.value as i32 * 100000
+                + opts.verify.cents.value as i32 * 1000,
+            calibration_input: opts.calibrate.input.value,
+            calibration_output: opts.calibrate.output.value,
             tuner_input: opts.tuner.input.value,
             display_mode: opts.tuner.display.value,
-            reference_mode: opts.tuner.reference_tone.value,
             reference_hz: opts.settings.reference.value,
         }
     }
@@ -44,13 +63,16 @@ pub struct ChannelMeasurement {
     pub vrms: f32,
     pub vpp: f32,
     pub valid: bool,
+    pub sequence: u16,
+    pub window_age_ms: u32,
+    pub end_age_ms: u32,
+    pub qualified: bool,
 }
 
 /// Retained measurements for every physical input.
 ///
-/// The current gateware publishes only the selected channel. Keeping the bank
-/// here makes that limitation explicit and gives the future four-lane detector
-/// and renderer a stable interface without growing `main()` locals again.
+/// Four independent gateware lanes populate this bank each UI iteration.
+/// Keeping it retained avoids growing `main()` locals as instrument views grow.
 #[derive(Clone, Copy, Default)]
 pub struct MeasurementBank {
     channels: [ChannelMeasurement; TUNER_CHANNELS],
