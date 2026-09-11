@@ -13,6 +13,7 @@ pub enum Page {
     Profiles,
     Settings,
     Help,
+    Play,
 }
 
 #[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default,
@@ -79,6 +80,10 @@ pub struct CalibrateOpts {
     pub zero_note: IntOption<NoteParams>,
     #[option(false)]
     pub run: ButtonOption<OneShotButtonParams>,
+    #[option(false)]
+    pub accept: ButtonOption<OneShotButtonParams>,
+    #[option(false)]
+    pub discard: ButtonOption<OneShotButtonParams>,
 }
 
 #[derive(OptionPage, Clone)]
@@ -86,6 +91,21 @@ pub struct HelpOpts {
     #[option(0)]
     pub scroll: IntOption<ScrollParams>,
 }
+
+#[derive(OptionPage, Clone)]
+pub struct PlayOpts {
+    #[option(1)]
+    pub input: IntOption<InputParams>,
+    #[option(false)]
+    pub run: ButtonOption<OneShotButtonParams>,
+    #[option]
+    pub quantize: EnumOption<QuantizeMode>,
+}
+
+#[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default,
+         Serialize, Deserialize)]
+#[strum(serialize_all = "SCREAMING-KEBAB-CASE")]
+pub enum QuantizeMode { #[default] Off, Chromatic }
 
 #[derive(OptionPage, Clone)]
 pub struct VerifyOpts {
@@ -134,4 +154,6 @@ pub struct Opts {
     pub settings: SettingsOpts,
     #[page(Page::Help)]
     pub help: HelpOpts,
+    #[page(Page::Play)]
+    pub play: PlayOpts,
 }

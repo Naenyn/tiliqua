@@ -11,6 +11,8 @@ use crate::oscillator_calibration::verification_scan::Scan;
 pub struct Live {
     sweep: Option<Sweep>,
     pub profile: Option<Profile>,
+    pub pending_profile: Option<Profile>,
+    pending_route: Option<Route>,
     pub profile_route: Option<Route>,
     pub verifying: bool,
     pub scan: Option<Scan>,
@@ -42,7 +44,7 @@ pub struct Live {
 impl Live {
     #[inline(never)]
     pub fn new() -> Self {
-        Self { sweep:None,profile:None,profile_route:None,verifying:false,scan:None,refinement:None,
+        Self { sweep:None,profile:None,pending_profile:None,pending_route:None,profile_route:None,verifying:false,scan:None,refinement:None,
             target_millicents:0,error_cents:None,verify_command:0,verify_started:0,verify_token:0,
             deviation:None,statistics:Deviation::new(),suggested_note:None,
             status:"READY - RUN IN MENU",zero_error_cents:None,tracking_failure:None,rejected_detector:None,rejected_verifier:None,input:0,output:1,
@@ -50,7 +52,7 @@ impl Live {
     }
     pub fn take_suggested_note(&mut self)->Option<u8> {self.suggested_note.take()}
     pub fn recall(&mut self,record:crate::oscillator_calibration::storage::Recalled)->bool {
-        if self.active() {return false;}
+        if self.active() || self.pending_profile.is_some() {return false;}
         self.scan=None;
         self.refinement=None;
         self.input=record.route.input();self.output=record.route.output();
@@ -61,8 +63,25 @@ impl Live {
         self.status="LOADED - OUTPUT STOPPED";true
     }
     pub fn active(&self) -> bool { self.sweep.is_some() || self.verifying }
+    pub fn accept_scan(&mut self,tuner:&pac::TUNER_PERIPH) {
+        if self.active() || tuner.cal_status().read().value().bits()&768!=0 {
+            self.status="BUSY - STOP OUTPUT FIRST";return;
+        }
+        if let Some(profile)=self.pending_profile.take() {
+            self.suggested_note=profile.suggested_note();
+            self.profile=Some(profile);self.profile_route=self.pending_route.take();
+            self.status="ACCEPTED IN RAM - SAVE PROFILE";
+        } else {self.status="NO SCAN TO ACCEPT";}
+    }
+    pub fn discard_scan(&mut self) {
+        if self.active() {self.status="BUSY - STOP OUTPUT FIRST";return;}
+        if self.pending_profile.take().is_some() {
+            self.pending_route=None;self.status="DISCARDED - PRIOR PROFILE KEPT";
+        } else {self.status="NO SCAN TO DISCARD";}
+    }
     #[inline(never)]
     pub fn start_refinement(&mut self,tuner:&pac::TUNER_PERIPH,c:RuntimeControls,now:u64) {
+        if self.pending_profile.is_some() {self.status="ACCEPT OR DISCARD CAL FIRST";return;}
         if self.active() {self.status="BUSY - STOP OUTPUT FIRST";return;}
         if self.refinement.as_ref().is_some_and(|r|r.stage==crate::oscillator_calibration::refinement::Stage::Ready) {
             self.status="ACCEPT OR DISCARD FIRST";return;
@@ -105,6 +124,7 @@ impl Live {
         self.statistics.clear();self.deviation=None;
     }
     pub fn toggle_verify(&mut self,tuner:&pac::TUNER_PERIPH,controls:RuntimeControls,now:u64) {
+        if self.pending_profile.is_some() {self.status="ACCEPT OR DISCARD CAL FIRST";return;}
         if self.verifying {self.stop_verify(tuner,"STOPPED - OUTPUT ZERO");return;}
         if self.sweep.is_some() || controls.mode != OperatingMode::Verify {return;}
         if self.refinement.as_ref().is_some_and(|r|r.stage==crate::oscillator_calibration::refinement::Stage::Ready) {
@@ -179,6 +199,8 @@ impl Live {
         }
         if self.verifying {self.stop_verify(tuner,"STOPPED - OUTPUT ZERO");}
         if let Some(s)=self.sweep.as_mut() { s.cancel(); return; }
+        // RUN during review explicitly rescans; it never accepts the candidate.
+        self.pending_profile=None;self.pending_route=None;
         self.scan=None;
         self.refinement=None;
         self.input=controls.calibration_input; self.output=controls.calibration_output;
@@ -342,15 +364,12 @@ impl Live {
                     profile.limited_low=curve.limited_low;profile.limited_high=curve.limited_high;
                     limited=profile.limited_low||profile.limited_high;
                     self.point=profile.points().len() as u8;self.point_count=self.point;
-                    if profile.voltage_for_pitch(controls.target_millicents).is_err() {
-                        self.suggested_note=profile.suggested_note();
-                    }
-                    self.profile=Some(profile);
-                    self.profile_route=Route::new(self.input,self.output).ok();
+                    self.pending_profile=Some(profile);
+                    self.pending_route=Route::new(self.input,self.output).ok();
                 }
                 self.status=match outcome {
-                    Outcome::Complete if limited=>"DONE - LIMITED RANGE",
-                    Outcome::Complete=>"DONE - PROFILE IN RAM",
+                    Outcome::Complete if limited=>"REVIEW LIMITED RANGE - ACCEPT?",
+                    Outcome::Complete=>"REVIEW RANGE - ACCEPT?",
                     Outcome::Cancelled=>"CANCELLED - OUTPUT ZERO",
                     Outcome::Failed(Failure::NoOrigin)=>"FAILED - ZERO PITCH LOST",
                     Outcome::Failed(Failure::OriginChanged)=>"FAILED - ZERO PITCH CHANGED",

@@ -36,6 +36,38 @@ mod pac {
 
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn completed_scan_requires_review_and_keeps_prior_until_accept() {
+        for accept in [false,true] {
+            let p=pac::TUNER_PERIPH::default();let mut live=ready();let c=controls();
+            let old=live.profile.as_ref().unwrap().points().to_vec();
+            live.toggle(&p,c,0);let mut now=0;
+            for seq in 0..10000u16 {
+                now+=20;p.ack();let v=p.command.get() as u16 as i16 as f64/4000.0;
+                live.tick(&p,ChannelMeasurement{sequence:seq,window_age_ms:180,end_age_ms:1,
+                    valid:true,qualified:true,frequency_hz:(357.8*2.0f64.powf(v)) as f32},c,now);
+                if !live.active(){break;}
+            }
+            assert!(live.pending_profile.is_some());assert!(!live.active());
+            assert_eq!(live.profile.as_ref().unwrap().points(),old);
+            assert_eq!(p.command.get()&(1<<18),0);
+            let mut verify=c;verify.mode=OperatingMode::Verify;
+            live.toggle_verify(&p,verify,now);assert!(!live.verifying);
+            let mut report=String::new();serial_report::verification(&mut report,&live).unwrap();
+            assert!(report.contains("CAL REVIEW POINTS=121"));
+            assert!(report.contains("RETUNING REQUIRES RESCAN"));
+            if accept {
+                p.status.set(256);live.accept_scan(&p);
+                assert!(live.pending_profile.is_some());
+                p.status.set(0);live.accept_scan(&p);
+                assert!(live.pending_profile.is_none());
+                assert_ne!(live.profile.as_ref().unwrap().points(),old);
+                assert_eq!(live.status,"ACCEPTED IN RAM - SAVE PROFILE");
+            } else {
+                live.discard_scan();assert!(live.pending_profile.is_none());
+                assert_eq!(live.profile.as_ref().unwrap().points(),old);
+            }
+        }
+    }
     use runtime::*;
     fn controls()->RuntimeControls{RuntimeControls{mode:OperatingMode::Calibrator,calibration_input:2,calibration_output:3,target_millicents:6000000,verify_scan:false,verify_points:false}}
     #[test] fn serial_reports_match_points_and_scan_results_without_changing_them() {
@@ -393,7 +425,7 @@ mod pac {
                 live.tick(&p,m,c,now);
                 if !live.active(){break;}
             }
-            assert_eq!(live.status,"DONE - PROFILE IN RAM");
+            assert_eq!(live.status,"REVIEW RANGE - ACCEPT?");live.accept_scan(&p);
             let expected_base=69.0+12.0*(base_hz as f64/440.0).log2();
             let points=live.profile.as_ref().unwrap().points();
             assert!((points[0].millicents as f64/1000.0-(expected_base-60.0)*100.0).abs()<0.003);
@@ -445,7 +477,7 @@ mod pac {
                 live.tick(&p,m,c,now);
                 if !live.active(){break;}
             }
-            assert_eq!(live.status,"DONE - PROFILE IN RAM");assert_eq!(p.command.get()&(1<<18),0);
+            assert_eq!(live.status,"REVIEW RANGE - ACCEPT?");live.accept_scan(&p);assert_eq!(p.command.get()&(1<<18),0);
             let profile=live.profile.as_ref().unwrap();assert_eq!(profile.points().len(),count);
             for (i,point) in profile.points().iter().enumerate() {
                 let expected=if i<intervals {bipolar::voltage(density,Direction::Down,intervals-i)}
@@ -485,7 +517,7 @@ mod pac {
             live.tick(&p,m,c,now);
             if !live.active(){break;}
         }
-        assert!(!live.active());assert_eq!(live.status,"DONE - PROFILE IN RAM");
+        assert!(!live.active());assert_eq!(live.status,"REVIEW RANGE - ACCEPT?");live.accept_scan(&p);
         assert_eq!(p.command.get()&(1<<18),0);
         assert_eq!(live.profile.as_ref().unwrap().points().len(),121);
         let last=live.profile.as_ref().unwrap().points()[8].millicents;
@@ -541,7 +573,7 @@ mod pac {
             saw_rejection|=live.tracking_failure.is_some();
             if !live.active(){break;}
         }
-        assert!(saw_rejection);assert_eq!(live.status,"DONE - PROFILE IN RAM");
+        assert!(saw_rejection);assert_eq!(live.status,"REVIEW RANGE - ACCEPT?");live.accept_scan(&p);
         assert!(live.tracking_failure.is_none());
         let point=live.profile.as_ref().unwrap().points().iter().find(|p|p.microvolts==3000000).unwrap();
         assert!((point.millicents-10500000).abs()<3);
@@ -558,7 +590,7 @@ mod pac {
                 valid:true,qualified:true,frequency_hz:hz as f32},c,now);
             if !live.active(){break;}
         }
-        assert!(!live.active());assert_eq!(live.status,"DONE - LIMITED RANGE");
+        assert!(!live.active());assert_eq!(live.status,"REVIEW LIMITED RANGE - ACCEPT?");live.accept_scan(&p);
         assert!(live.tracking_failure.is_none());
         let points=live.profile.as_ref().unwrap().points();
         assert_eq!(points[0].microvolts,-4000000);
@@ -649,7 +681,7 @@ mod pac {
                 assert!((live.zero_error_cents.unwrap()-8.0).abs()<0.02);
                 assert_eq!(live.profile.as_ref().unwrap().points(),old);
             } else {
-                assert_eq!(live.status,"DONE - LIMITED RANGE");
+                assert_eq!(live.status,"REVIEW LIMITED RANGE - ACCEPT?");
                 assert!(live.zero_error_cents.unwrap().abs()<0.02);
             }
         }
@@ -672,7 +704,7 @@ mod pac {
                 assert_eq!(live.status,"FAILED - ZERO PITCH LOST");
                 assert_eq!(live.profile.as_ref().unwrap().points(),old);continue;
             }
-            assert_eq!(live.status,"DONE - LIMITED RANGE");
+            assert_eq!(live.status,"REVIEW LIMITED RANGE - ACCEPT?");live.accept_scan(&p);
             let profile=live.profile.as_ref().unwrap();
             assert!(profile.limited_low&&profile.limited_high);
             assert_eq!(profile.points().first().unwrap().microvolts,-1000000);

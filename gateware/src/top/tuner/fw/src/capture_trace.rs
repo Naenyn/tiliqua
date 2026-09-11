@@ -39,7 +39,8 @@ impl Trace {
         self.capture_status="ARMED";
         tuner.capture_control().write(|w|w.arm().set_bit());
     }
-    pub fn tick(&mut self,tuner:&pac::TUNER_PERIPH,uart:&pac::UART0,now:u64,cal:&crate::calibration_live::Live) {
+    pub fn tick(&mut self,tuner:&pac::TUNER_PERIPH,uart:&pac::UART0,now:u64,cal:&crate::calibration_live::Live,
+                feedback:crate::runtime::ChannelMeasurement) {
         let cal_active=cal.active();
         // Confirm the host/bridge path before asking for a hardware scan.
         // Repeat while idle so opening the reader after boot still works.
@@ -62,7 +63,9 @@ impl Trace {
                 if let Some(d)=cal.rejected_verifier {
                     write!(self.status_line,"CAL VERIFIER LAG={} DIV={} ERROR={} SPAN={}\n",d.lag_q8,d.divisor,d.error,d.span).ok();
                 }
-                if crate::serial_report::verification(&mut self.status_line,cal).is_err() {
+                let report=if crate::playback_visible() {crate::write_playback_status(&mut self.status_line,feedback)}
+                    else {crate::serial_report::verification(&mut self.status_line,cal)};
+                if report.is_err() {
                     // Never transmit a silently truncated report as complete.
                     self.status_line.clear();
                     self.status_line.push_str("\nSERIAL REPORT OVERFLOW\n").ok();

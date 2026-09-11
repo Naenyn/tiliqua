@@ -16,6 +16,7 @@ pub enum OperatingMode {
     Verify,
     Profiles,
     Quantizer,
+    Play,
 }
 
 /// The small subset of menu state consumed by the real-time foreground loop.
@@ -45,6 +46,8 @@ impl RuntimeControls {
                 OperatingMode::Verify
             } else if opts.tracker.page.value == crate::options::Page::Profiles {
                 OperatingMode::Profiles
+            } else if opts.tracker.page.value == crate::options::Page::Play {
+                OperatingMode::Play
             } else { OperatingMode::Tuner },
             target_millicents: opts.verify.note.value as i32 * 100000
                 + opts.verify.cents.value as i32 * 1000,

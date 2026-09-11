@@ -15,6 +15,7 @@ from amaranth_soc import csr
 from . import ASQ
 from .period_verifier import PeriodVerifier
 from .calibration_output import CalibrationOutput
+from .cv_snapshot import CVSnapshot
 
 
 class ReferenceOscillator(wiring.Component):
@@ -189,6 +190,8 @@ class TunerPeripheral(wiring.Component):
         self._verify_span = regs.add("verify_span", self.SignedLevel(), offset=0x6c)
         self._capture_control = regs.add("capture_control", self.CaptureControl(), offset=0x70)
         self._capture_data = regs.add("capture_data", self.CaptureData(), offset=0x74)
+        self._cv_channel = regs.add("cv_channel", self.Control(), offset=0x78)
+        self._cv_sample = regs.add("cv_sample", self.SignedLevel(), offset=0x7c)
         self._bridge = csr.Bridge(regs.as_memory_map())
 
         super().__init__({
@@ -211,6 +214,13 @@ class TunerPeripheral(wiring.Component):
         m.submodules.bridge = self._bridge
         wiring.connect(m, wiring.flipped(self.bus), self._bridge.bus)
         samples = Array(self.i.payload[n].as_value() for n in range(4))
+        m.submodules.cv_snapshot = cv = CVSnapshot()
+        cv_channel = self._cv_channel.f.channel.data
+        previous_cv_channel = Signal(2)
+        m.d.sync += previous_cv_channel.eq(cv_channel)
+        m.d.comb += [cv.sample.eq(samples[cv_channel]), cv.accept.eq(self.i.valid),
+                     cv.clear.eq((previous_cv_channel != cv_channel) | self._cv_channel.element.w_stb),
+                     self._cv_sample.f.value.r_data.eq(cv.packed)]
         m.submodules.cal_output = cal = CalibrationOutput()
         m.d.comb += [cal.command.eq(self._cal_command.element.w_data),
                      cal.write.eq(self._cal_command.element.w_stb),

@@ -2,21 +2,42 @@
 
 ## Current status and remaining scope
 
+Latest PLAY qualification: the user reports good LFO-driven chromatic playback
+and correct boundary holding/reentry. The optional audio check frequently lacked
+a qualified pitch. Serial readings at the low held boundary were approximately
++0.3 to +0.7 cents; this is a local observation, not an absolute accuracy claim.
+The shared verifier previously rotated through all four audio inputs during PLAY.
+It now stays on the loaded profile's audio input, before measurement reads, while
+normal tuner operation retains rotation. Qualification and settled-window guards
+are unchanged; fast target changes can still legitimately prevent an error reading.
+
+The focus change passed all four tests in test_tuner_calibration.py and the
+192-kHz firmware-only build. Flashed unrotated TUNER to bitstream slot 1 with
+Refresh: DONE; archive SHA-256:
+`f23630a49ac3c6e20980c245adc0e0aa0e5f165d41eb66c65c9c76690522cc34`.
+Hardware observation of the new verifier scheduling remains pending.
+
+Agreed quantizer architecture: multiple independent CV channels in a standalone
+mode, without requiring tuner operation or an oscillator calibration profile.
+Per-channel profile correction is optional. Single-channel PLAY quantization is
+an interim integration, not the final third mode.
+
 Current implementation: upward -5..+5 V acquisition with up to 121 points,
 qualified usable-range limits, inverse piecewise-linear mapping, four named
 profile slots, manual corrected-note output, POINTS/SCAN verification, serial
 diagnostics, and explicitly accepted local refinement. Idle/cancel/fault output
-handling is implemented. External pitch-CV corrected playback is not implemented.
+handling is implemented. Single-channel external pitch-CV playback is implemented
+in PLAY; initial held-CV playback and RUN/exit stop checks passed on Twin Waves.
+Broader dynamic, range and fault qualification remains pending.
 
 Remaining agreed work:
 
-- A bounded real-time input-CV to desired-pitch to corrected-output path,
-  with explicit routing, arming, range policy and safe transitions. Share its
-  mapping with the future quantizer, not the slow UI update loop.
-- User-facing discovery results: usable voltage and pitch coverage, cautious
-  tuning-adjustment recommendations, and Accept / Adjust and Rescan / Cancel.
-  Existing sweep boundary handling is not that complete workflow. Tuning changes
-  invalidate the measured relationship and require a new scan.
+- Qualify the new real-time corrected-CV path, including arming, range policy,
+  latency and safe transitions. Extend its shared mapping with the future
+  quantizer; do not move playback into the slow UI update loop.
+- Qualify the new scan review: measured voltage/pitch coverage, cautious tuning
+  advice, ACCEPT / RUN to rescan / DISCARD. Implemented offline, not yet flashed.
+  Tuning changes invalidate the measured relationship and require a new scan.
 - Broader hardware qualification: low/high frequency coverage toward 20 Hz–20 kHz,
   more oscillator/routing combinations, persisted recall and fault paths. The
   Generate3 alternating-cycle high-frequency failure remains unresolved. The
@@ -32,6 +53,171 @@ accuracy guarantee. User slot map: 1 original Generate3, 2 original Twin Waves,
 
 The following sections are a chronological engineering log; early sizes,
 ranges, pending steps and test counts describe their milestone, not today.
+
+### First live PLAY adapter
+
+User subsequently confirmed corrected playback works, RUN stops correctly, and
+leaving PLAY stops correctly. Nominal Disting 1 outputs 0/1/2 V were read by
+Tiliqua as approximately -0.089/0.909/1.907 V; independent Disting 2 readings
+were -0.090/0.913/1.917 V. This corroborates a source offset, not an absolute
+calibration certificate for either reader. No speculative correction was added.
+PLAY target-relative error was around 1-2 cents on held CV. Peak observed mapping
+cost 6536 cycles (~109 us at 60 MHz), service gap 85449 cycles (~1.42 ms).
+
+### Offline scan-review workflow
+
+User confirmed LFO-driven chromatic playback sounded quantized. Requested musical
+out-of-range policy is now hold-last-valid and automatic resume, for continuous
+and chromatic playback. Before any valid target, remain disabled and wait.
+Hold reissues the last acknowledged command to renew the hardware watchdog;
+fresh sample qualification, stale/rail/fault/ACK guards and explicit stop remain.
+Invalid mappings other than pitch-outside-profile still stop. Hysteresis history
+clears on out-of-range requests so reentry is not delayed by an invalid note.
+Audio feedback uses the loaded profile's input; cents error is suppressed until
+the whole fresh measurement window follows the last target/output change plus
+450 ms margin. Frequency remains visible during settling. No closed-loop tuning.
+Ten regression tests pass, including 1000-step alternating range holds, resume,
+stale stop during hold and settled-window qualification. Firmware-only build
+passes on timing-qualified hardware. Archive SHA-256
+`02d2ed2eea5b1422f4969c60c32561247c2f471d64c6e96107cc125551531f47`
+flashed to slot 1 with Refresh DONE. Serial: `/tmp/tuner-hold-capture.serial.log`.
+Hardware hold/reentry and slow-note audio check remain pending user testing.
+
+User authorized discarding unsaved test calibrations until feature completion.
+Eight-row menu firmware flashed successfully; no separate menu test requested.
+Next shared-processing step: optional chromatic quantization in PLAY, default OFF.
+Nearest semitone (midpoint ties upward), five-cent boundary hysteresis, fresh
+history after stop/restart, direct jumps for large changes. Changing mode while
+active stops output; out-of-profile notes stop without clamping. Same calibrated
+inverse mapping, output guards and renderer; no additional FPGA logic.
+Ten regression tests and firmware-only build pass. Archive SHA-256
+`9f0530ac7796f83fb285102bf05cd6e5644d222e7c18590f5ca8e34a513a4977`
+flashed to bitstream slot 1 with Refresh DONE; saved profiles preserved.
+Serial: `/tmp/tuner-chromatic-capture.serial.log`. Pending hardware test:
+load profile 4, PLAY quantize CHROMATIC, RUN, slowly sweep CV and hold near
+boundaries, then change quantize mode and confirm explicit restart is required.
+This is first quantizer integration, not completion of the third instrument mode.
+
+Subsequent hardware VERIFY completed 167/167, worst -1.75c at F5, max span
+1.80c; local endpoint-adjusted residual -1.33c with repeatable local passes.
+Evidence: `/tmp/tuner-menu-rows-capture.serial.log`. No automatic refinement.
+User requested removal of premature menu scrolling: firmware now exposes eight
+rows in the existing box (ninth hardware row would cross its lower border).
+All current pages fit; a regression checks page field counts and geometry.
+Three calibration/menu tests and firmware build pass. Menu update is not yet
+flashed, pending preservation or explicit disposal of the current RAM profile.
+
+Rack powered down at user's request: no further flashing authorized tonight.
+Completed sweeps now retain a separate candidate and preserve the previous
+profile. ACCEPT requires acknowledged idle/fault-free output and selects the
+candidate in RAM; saving remains explicit. RUN during review rescans, DISCARD
+keeps the prior curve. Pending review blocks PLAY, VERIFY, refinement, save and
+recall. Retuning invalidates the physical relationship of any older curve.
+Screen and serial report the candidate range and guarded advice. Directional
+advice requires reaching the appropriate voltage boundary and near-audible-limit
+coverage at the other end; limited oscillator ranges do not imply tuning can
+expand them. This is not automatic optimization or a range guarantee.
+
+Nine regression tests pass, including the real live adapter's explicit acceptance,
+busy-output rejection, discard/prior preservation and review serial formatting.
+Firmware-only 192 kHz / unrotated 720p build succeeds against the last timing-clean
+hardware. Foreground frame is 9184 bytes; linked stack allocation 31164 bytes.
+These are individual measurements, not a formal whole-call-tree stack proof.
+Offline archive SHA-256:
+`e46bc52935f264ca171aa193c17a94cf58300d5a29b4596460fc358604bcf438`.
+Rack subsequently powered on and flashing reauthorized. This exact archive was
+flashed to bitstream slot 1 with Refresh DONE; saved profiles preserved. Serial
+monitor: `/tmp/tuner-scan-review-capture.serial.log`.
+Next hardware test: complete CAL, inspect review/menu, discard and
+confirm prior profile retained, rescan and ACCEPT, then VERIFY. No slot overwrite
+is needed to test the new workflow.
+
+### PLAY startup correction
+
+First hardware test: profile 4 loaded successfully, but RUN froze the module.
+The CPU netlist does not implement mcycle (CSR 0xb00); the newly added active
+playback ISR read it before the first output update. That unsupported instruction
+is a concrete integration bug consistent with the observed freeze. Serial stops
+after inactive PLAY status; no trap register dump was available.
+Replaced those reads with a dedicated 32-bit bus timer at 0x1200, initialized
+before interrupts, with no interrupt source attached. Its inverted periodic
+downcount supplies wrapping cycle timestamps. Regression tests exercise timer
+CSR configuration and rollover and forbid CPU cycle-CSR reads in this path.
+Nine targeted tests pass. The rebuilt hardware passes all clocks: CPU 64.55/60,
+video 91.11/74.25, serializer 435.54/371.33, audio 70.67/49.15 MHz.
+Archive SHA-256 `1711c40ebbf3d7cf72f61e8150602dc0d3c75bb6f6d361059e944c3ac73eebbc`
+flashed to bitstream slot 1 with Refresh DONE; profiles preserved. Serial reader:
+`/tmp/tuner-play-timer-fix-capture.serial.log`. Hardware requalification is pending
+repeating profile 4 / PLAY RUN, initially with held zero CV.
+
+New CSR offsets 0x78/0x7c select an independent CV source and expose one packed
+signed mean / 15-bit sequence / valid snapshot. A 64-sample DC-preserving boxcar
+includes the last sample, holds under stream backpressure, and clears partial
+windows on selection writes. At 192 kHz this window is about 0.333 ms. No extra
+sample RAM or multiplier is required. This is separate from audio DC removal.
+
+The timer now runs at 1 ms, retaining 5-ms menu service and 50-Hz frame publication.
+A static playback engine owns one immutable profile copy and feeds the existing
+DAC-acknowledged guarded output. The route's output comes from the loaded profile;
+PLAY selects CV input independently. Explicit RUN arms only with output inactive;
+page/input changes stop before another mode owns the output. Profile writes never
+occur from the interrupt. Bounds, rails, 10-ms stale snapshot and 3-ms missing ACK
+checks latch a stop. Existing hardware heartbeat timeout remains the final guard.
+CPU instrumentation stops above 0.5-ms mapping cost or a 5-ms service gap and
+reports peak cycles/gap over serial. These are safeguards, not measured latency.
+Unplugged CV cannot reliably be distinguished from valid zero.
+
+The first 16-KiB placement missed CPU timing (59.78 vs 60 MHz), so it was not
+flashed. Inspection also found inadequate comfortable stack margin after adding
+the retained playback profile: main stack was 14820 bytes, foreground 8112,
+load 1056, decoder 3088, plus startup and interrupt/nested work. Main RAM is now
+32 KiB, costing eight additional EBRs. Final routed clocks pass: CPU 68.45 MHz
+against 60, video 89.25 against 74.25, serializer 436.11 against 371.33, and
+audio 68.98 against 49.15. Resources: 17472/24288 LUT4s and 33/56 EBRs.
+The final 11-test calibration, CV snapshot, output and multichannel regression
+passes. Continuous playback commands retain distinct acknowledgments without
+resetting audio pitch acquisition. Latest serial diagnostics include audio
+frequency and target error; evaluate that error with held CV, not during steps.
+
+The final firmware was repackaged after routing. Archive SHA-256:
+`00404b54b8b277002449cd772236e110ee14b39e690dc9861fd51fbfa6dea17c`.
+192-kHz unrotated 720p TUNER flashed to bitstream slot 1 with Refresh DONE.
+Profile storage was preserved. Serial monitoring resumed in
+`/tmp/tuner-live-play-release-capture.serial.log`. Hardware qualification remains
+pending: load profile 4, known CV into IN 1, existing Twin Waves patch on OUT 1
+and IN 0, explicit PLAY RUN, held 0/+1/-1 V, then RUN/exit stop checks.
+
+Initial host suite: 13 tests pass across calibration/playback, CV sampler, DAC
+guard, bus, serializer and serial capture. Tests cover signed origins and variable
+curves, no implicit arming, stale and repeated samples, output ACK failures,
+fault latching, route preservation, timer/sequence wrap and zero on stop.
+
+### Shared playback mapping foundation
+
+`calibration/playback.rs` separates calibrated input microvolts -> requested
+pitch (1 V/oct with explicit zero-note origin) from requested pitch -> corrected
+DAC voltage. Future quantization belongs between these two operations; it must
+not duplicate or simplify the measured variable-slope calibration curve.
+Conversions use bounded integer arithmetic, symmetric CV rounding, explicit
+range errors, and the existing signed DAC encoding. No extrapolation, automatic
+arming, output write, profile clone or persistence occurs in this module.
+
+Profile lookup now uses a binary lower-bound search (at most seven comparisons
+for 121 anchors), preserving the original segment selection and integer rounding.
+Host regression compares a full irregular table with the old linear algorithm,
+including anchor neighbors. Playback tests cover signed CV, origin selection,
+variable slopes, common continuous/quantized pitch mapping, overflow, unavailable
+profile ranges and hardware output limits. This is groundwork, not live playback.
+
+Live integration requirements: dedicated coherent calibrated-CV snapshots,
+explicit input/output ownership, a bounded update schedule independent of video,
+stale-input and output-ack deadlines, watchdog/fault handling, and explicit start.
+Do not use the audio DC estimate or the existing 5 ms UI wake schedule as the
+performance-CV specification. No promise of audio-rate modulation is made.
+Profile loading/saving and calibration/verification must first stop playback;
+input/output route or profile changes must never silently reroute active CV.
+The first playback adapter should use one channel, leaving a reusable contract
+for the future quantizer rather than cloning four expensive processing paths.
 
 Four-channel tuning is hardware-confirmed. The first live calibration mode now
 provides an explicitly started 0..2 V sweep and a RAM-only response profile.

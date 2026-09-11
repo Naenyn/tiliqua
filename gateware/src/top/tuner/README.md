@@ -14,7 +14,7 @@ This bitstream continuously measures all four monophonic audio inputs and displa
 
 The reference-tone feature has been removed from production firmware and
 gateware. All outputs remain at calibrated zero unless an explicitly started
-calibration sweep or corrected-note verification owns one. A4 remains configurable as a tuning reference,
+calibration sweep, corrected-note verification, or explicitly armed PLAY owns one. A4 remains configurable as a tuning reference,
 not an audio output.
 
 All channel labels follow the physical panel's 0–3 numbering.
@@ -25,7 +25,8 @@ started -5..+5 V oscillator tracking sweep with up to 121 points; see
 RAM profile to a requested note name/octave and cents offset, showing measured error
 against that target (fixed A4=440 Hz). It uses the successful calibration's
 route, requires Run to start, and stops on leaving VERIFY or a range/output
-error. No external-CV playback yet. Otherwise outputs remain at zero, including
+error. PLAY provides single-channel external-CV playback through that same curve.
+Otherwise outputs remain at zero, including
 while sitting on CAL before a run.
 
 ## Controls
@@ -33,13 +34,20 @@ while sitting on CAL before a run.
 Press the encoder to open an OSCIO/SONORO-style boxed menu over the live tuner.
 Rotate to navigate, press to begin editing, rotate to change the selected value,
 and press again to finish. Select the page heading to switch between TUNER,
-CAL, VERIFY, PROFILES, SETTINGS, and HELP. CAL contains four visible rows: input,
-output, 0v note, and run. Every sweep uses nominal semitone voltage spacing,
+CAL, VERIFY, PROFILES, SETTINGS, HELP, and PLAY. CAL contains input,
+output, 0v note, run, accept, and discard. Every sweep uses nominal semitone voltage spacing,
 up to 121 points across -5..+5 V, scanning upward from low to high.
 Unmeasurable edges and qualified boundary plateaus can produce a limited-range
 profile; internal tracking failures remain errors.
 Coverage depends on the oscillator and detector; 10 V does not guarantee ten
 measurable octaves. Existing saved density settings are ignored.
+Completed scans now open a review showing measured CV/pitch coverage and cautious
+tuning advice. ACCEPT replaces the active RAM profile; it does not save a slot.
+RUN discards the pending result and rescans, allowing oscillator adjustment first.
+DISCARD keeps the previous profile. Saved slots are unchanged throughout.
+Pending results block PLAY, VERIFY, refinement, save and recall until resolved.
+If the oscillator was retuned, its previous profile no longer describes the patch:
+rescan before using it again, even if you discarded the newer result.
 CAL's `0v note` sets the nominal 0 V note
 (default C4) for the displayed 1 V/oct voltage; this is distinct from the
 profile-corrected output voltage. The menu hides after five seconds of inactivity and exposes
@@ -47,9 +55,9 @@ focus, display mode, A4 reference, and option persistence.
 Each boot restores saved instrument settings but starts navigation at the TUNER
 page heading, outside edit mode. The menu remains hidden until the encoder press.
 
-After a successful calibration, an out-of-range VERIFY target is replaced with
-a whole note near the middle of the measured range (an already-valid target is
-retained). Output remains zero until Run. VERIFY also displays rolling MEAN
+After accepting a calibration, the VERIFY target is set to
+a whole note near the middle of the measured range. Output remains zero until Run.
+VERIFY also displays rolling MEAN
 deviation and SPAN (maximum minus minimum) over up to 16 fresh qualified pitches,
 at most 500 ms old. The instantaneous deviation remains visible; statistics
 never adjust output or calibration data and reset when the target changes.
@@ -93,6 +101,54 @@ Advice and local comparison are not a full-range accuracy certificate: verify
 the accepted profile again before saving. Recalibrate rather than fitting
 corrections to a shifted or unstable oscillator response.
 
+## Corrected pitch-CV playback
+
+PLAY now includes `quantize`: OFF (default) or CHROMATIC. CHROMATIC is the first
+single-channel quantizer integration, temporarily hosted in PLAY rather than a
+separate quantizer page. It rounds incoming pitch to the nearest semitone before
+applying the same measured calibration curve. Midpoint ties round upward; once
+a note is selected, it is retained until pitch moves more than 55 cents from it
+(five cents beyond the usual boundary). Large changes jump directly to the
+nearest note. Stop/restart clears that history. Changing quantization mode during
+playback stops output and requires RUN again. Unreachable selected notes hold
+the last valid output and resume automatically on reentry; before the first valid
+note output remains disabled. Notes are never clamped to the profile edge.
+Fresh out-of-range samples renew the held command, while stale measurements,
+input rails, output faults and explicit stop retain the zero-output safety path.
+The oscillator may remain patched to the loaded profile's audio input for pitch
+checking. Frequency is shown while settling; cents error requires the entire
+measurement window to follow the last target change plus a settling margin.
+This check observes audio; it does not retune the output or alter the profile.
+During PLAY, the shared audio verifier stays on the loaded profile's audio input
+instead of rotating through all four inputs. Rapid target changes can still
+prevent a qualified, settled reading; CV quantization does not depend on this
+optional audio check.
+There is no trigger,
+scale selection, polyphonic quantization or automatic output arming yet.
+The planned standalone quantizer must support multiple independent CV channels
+without requiring tuner operation or a calibration profile. Applying an oscillator
+profile is an optional correction stage, not a prerequisite for quantization.
+
+Load a profile, keep its oscillator tuning unchanged, then select PLAY (after
+HELP in the page list). PLAY/input selects the pitch-CV source; the output comes
+from the loaded profile and cannot be silently rerouted. Oscillator audio can
+remain patched to its tuner input. Supply 1 V/oct pitch CV, where 0 V means the
+profile's saved zero-note setting (normally C4). RUN explicitly starts/stops.
+Leaving PLAY or changing its input stops output. Loading a profile never starts
+playback. The original calibration and all saved profiles remain unchanged.
+
+PLAY uses a separate DC-preserving 64-sample snapshot and a 1-kHz interrupt
+service, not the audio DC estimator or 50-Hz display loop. A requested pitch
+outside the measured curve holds the last valid output until it reenters range,
+without clamping or extrapolating the calibration curve.
+Stale CV, input rails, output faults/ack timeouts, excessive computation time
+or scheduling gaps latch a stop requiring another explicit RUN. Unplugged CV
+can resemble valid zero and is not detectable as a disconnected cable.
+Nominal stopped output is zero; that is not an audio mute or universally safe
+pitch. With quantize OFF this playback path is continuous and does
+not promise audio-rate FM. Serial reports input/output microvolts, update count,
+peak computation cycles and peak service gap for hardware qualification.
+
 ## Oscillator profiles
 
 PROFILES provides four saved slots inside TUNER's existing settings storage.
@@ -110,7 +166,7 @@ enabling a profile. Settings/Reset preserves saved profiles.
 To test persistence, save, reload the bitstream, select the same profile slot
 and Load, then test VERIFY. Keep oscillator tuning and patching unchanged and
 allow the oscillator to warm up: a saved curve cannot compensate for moving its
-tuning knob or arbitrary temperature drift. External-CV playback is still pending.
+tuning knob or arbitrary temperature drift.
 For Settings/Save, the save row shows `saved` for about two seconds. A failed write
 shows `failed`; missing option storage shows `no flash`. These messages report
 the save result, not merely the encoder click.

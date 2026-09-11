@@ -19,6 +19,10 @@ pub mod name;
 pub mod verification_scan;
 #[path = "calibration/refinement.rs"]
 pub mod refinement;
+#[path = "calibration/playback.rs"]
+pub mod playback;
+#[path = "calibration/discovery.rs"]
+pub mod discovery;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Error {
@@ -182,9 +186,14 @@ impl Profile {
         if pitch < points[0].millicents || pitch > points[points.len()-1].millicents {
             return Err(Error::PitchOutsideRange);
         }
-        for pair in points.windows(2) {
-            let (a, b) = (pair[0], pair[1]);
-            if pitch <= b.millicents {
+        // Lower-bound search: at most seven comparisons for 121 anchors.
+        // Preserve the previous segment choice at exact anchors and rounding.
+        let (mut low,mut high)=(1,points.len()-1);
+        while low<high {
+            let mid=low+(high-low)/2;
+            if points[mid].millicents<pitch {low=mid+1;} else {high=mid;}
+        }
+        let (a,b)=(points[low-1],points[low]);
                 // Each difference fits u32. Their product fits u64 even at
                 // opposite i32 extremes; signed i64 multiplication would not.
                 let dx = (pitch as i64 - a.millicents as i64) as u64;
@@ -192,10 +201,7 @@ impl Profile {
                 let dv = (b.microvolts as i64 - a.microvolts as i64) as u64;
                 let product = dx * dv;
                 let offset = product / span + u64::from(product % span >= span / 2 + span % 2);
-                return Ok((a.microvolts as i64 + offset as i64) as i32);
-            }
-        }
-        Err(Error::PitchOutsideRange)
+        Ok((a.microvolts as i64 + offset as i64) as i32)
     }
 }
 
@@ -216,6 +222,29 @@ mod tests {
         assert_eq!(p.voltage_for_pitch(2_400_000), Ok(1_100_000));
         assert_eq!(p.voltage_for_pitch(-1), Err(Error::PitchOutsideRange));
         assert_eq!(p.voltage_for_pitch(2_400_001), Err(Error::PitchOutsideRange));
+    }
+
+    #[test]
+    fn binary_lookup_matches_linear_reference_for_variable_full_table() {
+        let mut p=Profile::new("lookup",-5_000_000,5_000_000).unwrap();
+        let mut mc=-500_000;
+        for i in 0..MAX_POINTS {
+            mc+=71_003+(i as i32*739)%40_000;
+            p.push(point(-5_000_000+i as i32*80_001,mc)).unwrap();
+        }
+        let reference=|pitch:i32| {
+            let pair=p.points().windows(2).find(|a|pitch<=a[1].millicents).unwrap();
+            let a=pair[0];let b=pair[1];
+            let dx=(pitch as i64-a.millicents as i64) as u64;
+            let span=(b.millicents as i64-a.millicents as i64) as u64;
+            let product=dx*(b.microvolts as i64-a.microvolts as i64) as u64;
+            (a.microvolts as i64+(product/span+u64::from(product%span>=span/2+span%2)) as i64) as i32
+        };
+        let first=p.points()[0].millicents;let last=p.points().last().unwrap().millicents;
+        for pitch in (first..=last).step_by(137).chain(p.points().iter().flat_map(|a|
+            [a.millicents-1,a.millicents,a.millicents+1])).filter(|v|*v>=first && *v<=last) {
+            assert_eq!(p.voltage_for_pitch(pitch),Ok(reference(pitch)));
+        }
     }
 
     #[test]

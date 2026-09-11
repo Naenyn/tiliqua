@@ -2,6 +2,30 @@ from amaranth.sim import Simulator
 from tiliqua.dsp.calibration_output import CalibrationOutput
 
 
+def test_performance_commands_ack_without_resetting_audio_measurements():
+    dut = CalibrationOutput(watchdog_cycles=20)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+
+    async def bench(ctx):
+        ctx.set(dut.advance, 1)
+        for token, performance in [(1, True), (2, True), (3, False), (4, True)]:
+            ctx.set(dut.command, 4000 | (1 << 18) | (token << 21) | (int(performance) << 29))
+            ctx.set(dut.write, 1)
+            await ctx.tick()
+            ctx.set(dut.write, 0)
+            assert ctx.get(dut.changed) == int(not performance)
+            await ctx.tick()
+            assert ctx.get(dut.token) == token
+            assert ctx.get(dut.value) == 4000 and ctx.get(dut.active)
+        await ctx.tick().repeat(21)
+        assert ctx.get(dut.fault) and not ctx.get(dut.active)
+        assert ctx.get(dut.value) == 0
+
+    sim.add_testbench(bench)
+    sim.run()
+
+
 def test_calibration_output_ack_watchdog_bounds_and_rearm():
     dut = CalibrationOutput(watchdog_cycles=12)
     sim = Simulator(dut)

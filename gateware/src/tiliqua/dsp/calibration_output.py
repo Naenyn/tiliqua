@@ -32,7 +32,9 @@ class CalibrationOutput(wiring.Component):
             m.d.sync += [pending.eq(0), self.token.eq(command[21:29]),
                          self.channel.eq(command[16:18]),
                          value.eq(command[:16]), enabled.eq(command[18] & ~self.fault)]
-            m.d.comb += self.changed.eq(command[18] &
+            # Bit 29 marks continuous performance CV: do not repeatedly clear
+            # audio pitch acquisition on every acknowledged playback update.
+            m.d.comb += self.changed.eq(command[18] & ~command[29] &
                 ((self.token != command[21:29]) | ~enabled))
         with m.If(self.write):
             # Calibrated 4 counts/mV, signed -5..+5 V envelope. The payload

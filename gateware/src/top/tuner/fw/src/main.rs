@@ -41,6 +41,7 @@ use tiliqua_fw::*;
 use tiliqua_pac as pac;
 
 const TIMER0_ISR_PERIOD_MS: u32 = 5;
+const PLAYBACK_PERIOD_MS:u32=1;
 const FRAME_PERIOD_TICKS: u8 = 4; // Publish measurements at up to 50Hz.
 const MENU_COLS: u8 = 28;
 const MENU_ROWS: u8 = 9;
@@ -64,6 +65,8 @@ struct App {
 // becoming part of `main()`'s stack frame, which previously corrupted an
 // already constrained main RAM after the first interrupt.
 static APP: Mutex<RefCell<Option<App>>> = Mutex::new(RefCell::new(None));
+static PLAYBACK:Mutex<RefCell<oscillator_calibration::playback::Engine>>=
+    Mutex::new(RefCell::new(oscillator_calibration::playback::Engine::new()));
 
 impl App {
     #[inline(never)]
@@ -99,14 +102,49 @@ fn install_app(opts: Opts) {
     });
 }
 
+fn playback_cycles()->usize {
+    // The CPU does not implement mcycle. Invert the free-running downcounter
+    // to retain wrapping cycle arithmetic, including its 32-bit rollover.
+    (!unsafe{pac::Peripherals::steal()}.PLAYBACK_TIMER.counter().read().value().bits()) as usize
+}
+
 fn timer0_handler() {
-    with_app(|app| {
+    let (now,allowed,input,chromatic)=with_app(|app| {
         // Never perform an unbounded motherboard-I2C transaction in this ISR.
         // Encoder/options and PMOD LEDs are all CSR-backed and deterministic.
-        app.ui.update_realtime();
-        app.now_ms += TIMER0_ISR_PERIOD_MS as u64;
+        app.now_ms += PLAYBACK_PERIOD_MS as u64;
+        if app.now_ms%TIMER0_ISR_PERIOD_MS as u64==0 {app.ui.update_realtime();}
         // Measurement bank selection is owned by the foreground reader, not
         // the encoder ISR. All four acquisition lanes run independently.
+        (app.now_ms as u32,app.ui.opts.tracker.page.value==Page::Play,app.ui.opts.play.input.value,
+            app.ui.opts.play.quantize.value==options::QuantizeMode::Chromatic)
+    });
+    critical_section::with(|cs| {
+        let mut play=PLAYBACK.borrow_ref_mut(cs);
+        if !play.active {return;}
+        let start=playback_cycles();
+        let tuner=unsafe{pac::Peripherals::steal()}.TUNER_PERIPH;
+        if play.last_irq_cycle!=0 {
+            let gap=start.wrapping_sub(play.last_irq_cycle);
+            play.max_gap_cycles=play.max_gap_cycles.max(gap);
+            if gap>pac::clock::sysclk() as usize/200 {
+                tuner.cal_command().write(|w|unsafe{w.value().bits(play.stop("STOPPED - SCHEDULING GAP"))});
+                return;
+            }
+        }
+        play.last_irq_cycle=start;
+        let allowed=allowed && input==play.input && chromatic==play.chromatic;
+        if let Some(command)=play.tick(now,tuner.cv_sample().read().value().bits(),
+            tuner.cal_status().read().value().bits(),allowed) {
+            tuner.cal_command().write(|w|unsafe{w.value().bits(command)});
+        }
+        let elapsed=playback_cycles().wrapping_sub(start);
+        play.max_cycles=play.max_cycles.max(elapsed);
+        // Leave at least half the 1-ms period for interrupt/UI overhead and
+        // foreground work. A missed compute budget is a fault, not silent jitter.
+        if elapsed>pac::clock::sysclk() as usize/2000 {
+            tuner.cal_command().write(|w|unsafe{w.value().bits(play.stop("STOPPED - CPU BUDGET"))});
+        }
     });
 }
 
@@ -520,8 +558,9 @@ struct MenuSnapshot {
     page_label: &'static str,
     page_bold: bool,
     page_editing: bool,
-    // Five visible rows fit comfortably inside the existing menu box.
-    entries: [Option<MenuEntrySnapshot>; 5],
+    // Eight complete 15-pixel glyph rows fit at the existing 18-pixel pitch.
+    // The ninth hardware text row would cross the panel's bottom border.
+    entries: [Option<MenuEntrySnapshot>; 8],
 }
 
 impl MenuSnapshot {
@@ -534,13 +573,12 @@ impl MenuSnapshot {
             Page::Profiles => "PROFILES",
             Page::Settings => "SETTINGS",
             Page::Help => "HELP",
+            Page::Play => "PLAY",
         };
         let page_bold = opts.selected().is_none();
         let options = opts.view().options();
-        // Scroll longer pages without changing the overlay geometry.
-        let first=opts.selected().unwrap_or(0).saturating_sub(4);
         let entries = core::array::from_fn(|row| {
-            let index=first+row;
+            let index=row;
             options.get(index).map(|option| {
                 let selected = opts.selected() == Some(index);
                 let label = match (page, index) {
@@ -910,6 +948,65 @@ fn publish_verification(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,
     publish_markers(display,Markers([None;4]),false,menu_active);
 }
 
+fn publish_playback(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,
+                    cal:&calibration_live::Live,controls:RuntimeControls,value:ChannelMeasurement,menu:bool) {
+    let now=with_app(|app|app.now_ms as u32);
+    let (active,status,input,output,uv,out,pitch,updates,cycles,settled)=critical_section::with(|cs| {
+        let p=PLAYBACK.borrow_ref(cs);
+        (p.active,p.status,p.input,p.output,p.input_uv,p.output_uv,p.pitch,p.updates,p.max_cycles,
+            p.feedback_ready(now,value.window_age_ms,value.end_age_ms))
+    });
+    let mut line=String::<96>::new();
+    write_centered(text,4,"CALIBRATED CV PLAYBACK",28);
+    write_centered(text,10,"PITCH CV -> SELECTED INPUT",30);
+    if let Some(route)=cal.profile_route {
+        write!(line,"OUT {} -> OSCILLATOR V/OCT",route.output()).ok();
+        write_centered(text,13,&line,32);line.clear();
+    }
+    write!(line,"OSC AUDIO -> IN {} (PITCH CHECK)",cal.input).ok();
+    write_centered(text,16,&line,34);line.clear();
+    write_centered(text,19,"RUN STARTS / STOPS; EXIT STOPS",34);
+    write!(line,"0 V = {}{}; 1 V/OCT",NOTE_NAMES[(controls.zero_note%12) as usize],
+        controls.zero_note as i32/12-1).ok();
+    write_centered(text,23,&line,32);line.clear();
+    let chromatic=with_app(|app|app.ui.opts.play.quantize.value==options::QuantizeMode::Chromatic);
+    write_centered(text,26,if chromatic {"CHROMATIC - 5c HYSTERESIS"} else {"CONTINUOUS - NO QUANTIZATION"},34);
+    write_centered(text,29,status,38);
+    write!(line,"IN {} {:+.4} V -> OUT {} {:+.4} V",input,uv as f32/1e6,output,out as f32/1e6).ok();
+    write_centered(text,33,&line,42);line.clear();
+    if active && updates>0 {pitch_units::write_pitch(&mut line,pitch).ok();write_centered(text,36,&line,30);line.clear();}
+    if active && value.valid && value.qualified {
+        if settled {
+            write!(line,"AUDIO {:.2} Hz ERROR {:+.2}c",value.frequency_hz,
+                (pitch_math::millicents(value.frequency_hz,440.0) as i64-pitch as i64) as f32/1000.0).ok();
+        } else {write!(line,"AUDIO {:.2} Hz - SETTLING",value.frequency_hz).ok();}
+        write_centered(text,38,&line,42);line.clear();
+    } else {write_centered(text,38,"AUDIO CHECK: NO QUALIFIED PITCH",42);}
+    write!(line,"UPDATES {} MAX {} CPU CYCLES",updates,cycles).ok();
+    write_centered(text,40,&line,42);
+    publish_markers(display,Markers([None;4]),false,menu);
+}
+
+pub fn playback_visible()->bool {with_app(|app|app.ui.opts.tracker.page.value==Page::Play)}
+pub fn write_playback_status(out:&mut impl core::fmt::Write,value:ChannelMeasurement)->core::fmt::Result {
+    let now=with_app(|app|app.now_ms as u32);
+    let (active,status,input,output,uv,voltage,updates,cycles,gap,pitch,chromatic,settled)=critical_section::with(|cs| {
+        let p=PLAYBACK.borrow_ref(cs);
+        (p.active,p.status,p.input,p.output,p.input_uv,p.output_uv,p.updates,p.max_cycles,p.max_gap_cycles,p.pitch,p.chromatic,
+            p.feedback_ready(now,value.window_age_ms,value.end_age_ms))
+    });
+    writeln!(out,"PLAY ACTIVE={} STATUS={} IN={} OUT={} INPUT_UV={} OUTPUT_UV={} UPDATES={} MAX_CYCLES={} MAX_GAP_CYCLES={}",
+        active,status,input,output,uv,voltage,updates,cycles,gap)?;
+    writeln!(out,"PLAY QUANTIZE={}",if chromatic {"CHROMATIC"} else {"OFF"})?;
+    if active && value.valid && value.qualified {
+        if settled {
+            writeln!(out,"PLAY AUDIO_HZ={:.3} TARGET_MC={} ERROR_C={:+.2}",value.frequency_hz,pitch,
+                (pitch_math::millicents(value.frequency_hz,440.0) as i64-pitch as i64) as f32/1000.0)?;
+        } else {writeln!(out,"PLAY AUDIO_HZ={:.3} TARGET_MC={} CHECK=SETTLING",value.frequency_hz,pitch)?;}
+    }
+    Ok(())
+}
+
 fn publish_calibration(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,
                        cal:&calibration_live::Live,controls:RuntimeControls,
                        value:ChannelMeasurement,menu_active:bool) {
@@ -923,6 +1020,31 @@ fn publish_calibration(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,
     write_centered(text,14,"UPWARD -5 TO +5V; 121 PTS",30);
     write_centered(text,16,"RUN AGAIN TO CANCEL",30);
     write_centered(text,18,"EXIT CAL ALSO CANCELS",30);
+    if let Some(profile)=cal.pending_profile.as_ref() {
+        let points=profile.points();let low=points[0];let high=points[points.len()-1];
+        write_centered(text,12,"SCAN COMPLETE - OUTPUT ZERO",30);
+        write_centered(text,14,"ACCEPT: USE RESULT IN RAM",30);
+        write_centered(text,16,"RUN: ADJUST AND RESCAN",30);
+        write_centered(text,18,"DISCARD: KEEP PRIOR PROFILE",30);
+        line.clear();write!(line,"{} POINTS; {:.2} OCTAVES",points.len(),
+            (high.millicents-low.millicents) as f32/1_200_000.0).ok();
+        write_centered(text,20,&line,32);
+        line.clear();write!(line,"CV {:+.3} TO {:+.3} V",low.microvolts as f32/1e6,high.microvolts as f32/1e6).ok();
+        write_centered(text,22,&line,32);
+        line.clear();pitch_units::write_pitch(&mut line,low.millicents).ok();
+        write!(line," TO ").ok();pitch_units::write_pitch(&mut line,high.millicents).ok();
+        write_centered(text,24,&line,32);
+        write_centered(text,26,oscillator_calibration::discovery::advice(profile),32);
+        write_centered(text,28,"ADVICE IS NOT A RANGE GUARANTEE",32);
+        write_centered(text,30,"RETUNING REQUIRES A NEW SCAN",32);
+        write_centered(text,32,cal.status,32);
+        write_centered(text,34,"SAVED SLOTS ARE UNCHANGED",32);
+        write_centered(text,36,"ACCEPT DOES NOT SAVE TO FLASH",32);
+        write_centered(text,38,"SAVE SEPARATELY IN PROFILES",32);
+        write_centered(text,41,"ENCODER: MENU",24);
+        publish_markers(display,Markers([None;4]),false,menu_active);
+        return;
+    }
     for row in [22,24,26,28] {write_centered(text,row,"",32);}
     if let Some(failure)=cal.tracking_failure {
         if let Some(previous)=failure.neighbour {
@@ -1025,12 +1147,15 @@ fn publish_markers(display: &pac::TUNER_DISPLAY, markers: Markers,
 
 #[derive(Clone, Copy)]
 struct UiFrame {
+    run_play:bool,
     controls: RuntimeControls,
     save: bool,
     wipe: bool,
     menu_active: bool,
     menu_dirty: bool,
     run_calibration: bool,
+    accept_scan:bool,
+    discard_scan:bool,
     run_verify: bool,
     refine:bool,
     accept_refinement:bool,
@@ -1050,7 +1175,10 @@ fn poll_ui_frame() -> UiFrame {
         let menu_active = app.ui.draw();
         app.ui.set_menu_visible(menu_active);
         UiFrame {
+            run_play:app.ui.opts.play.run.poll(),
             run_calibration: app.ui.opts.calibrate.run.poll(),
+            accept_scan:app.ui.opts.calibrate.accept.poll(),
+            discard_scan:app.ui.opts.calibrate.discard.poll(),
             run_verify: app.ui.opts.verify.run.poll(),
             refine:app.ui.opts.verify.refine.poll(),
             accept_refinement:app.ui.opts.verify.accept.poll(),
@@ -1101,6 +1229,7 @@ fn save_profile(storage:&mut Option<TunerPersistence>,cal:&mut calibration_live:
                 slot:u8,zero_note:u8,name:&str)->&'static str {
     use oscillator_calibration::storage as record;
     if cal.active() {return "BUSY - STOP OUTPUT FIRST";}
+    if cal.pending_profile.is_some() {return "ACCEPT OR DISCARD CAL FIRST";}
     if cal.refinement.as_ref().is_some_and(|r|r.stage==oscillator_calibration::refinement::Stage::Ready) {
         return "ACCEPT OR DISCARD FIRST";
     }
@@ -1167,6 +1296,10 @@ struct RuntimeResources {
 fn startup() -> RuntimeResources {
     let peripherals = pac::Peripherals::take().unwrap();
     let sysclk = pac::clock::sysclk();
+    peripherals.PLAYBACK_TIMER.enable().write(|w|w.enable().bit(false));
+    peripherals.PLAYBACK_TIMER.reload().write(|w|unsafe{w.value().bits(u32::MAX)});
+    peripherals.PLAYBACK_TIMER.mode().write(|w|w.periodic().bit(true));
+    peripherals.PLAYBACK_TIMER.enable().write(|w|w.enable().bit(true));
     let timer = Timer0::new(peripherals.TIMER0, sysclk);
     let spiflash = SPIFlash0::new(peripherals.SPIFLASH_CTRL, SPIFLASH_BASE, SPIFLASH_SZ_BYTES);
 
@@ -1273,7 +1406,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
 
     irq::scope(|scope| {
         scope.register(handlers::Interrupt::TIMER0, timer0);
-        timer.enable_tick_isr(TIMER0_ISR_PERIOD_MS, pac::Interrupt::TIMER0);
+        timer.enable_tick_isr(PLAYBACK_PERIOD_MS, pac::Interrupt::TIMER0);
         let sample_rate = tuner.info().read().sample_rate().bits();
         let mut frame_ticks = FRAME_PERIOD_TICKS;
         let mut smoothed_midi = [None; 4];
@@ -1297,11 +1430,38 @@ fn run(resources: &mut RuntimeResources) -> ! {
         let mut text_scenes = [None; 2];
         // Compact occupancy only: 512 bytes total, not an 8-KiB text shadow.
         let mut text_occupied = [ui_text::Occupied::new(), ui_text::Occupied::new()];
+        let mut last_ui_ms=0;
         loop {
             riscv::asm::wfi();
+            let now=with_app(|app|app.now_ms);
+            if now.wrapping_sub(last_ui_ms)<TIMER0_ISR_PERIOD_MS as u64 {continue;}
+            last_ui_ms=now;
             let ui_frame = poll_ui_frame();
-            capture_trace.tick(&tuner,uart,ui_frame.now_ms,&calibration);
+            if ui_frame.run_play && ui_frame.controls.mode==runtime::OperatingMode::Play {
+                critical_section::with(|cs| {
+                    let mut play=PLAYBACK.borrow_ref_mut(cs);
+                    if play.active {
+                        tuner.cal_command().write(|w|unsafe{w.value().bits(play.stop("STOPPED BY USER"))});
+                    } else if calibration.pending_profile.is_some() {
+                        play.status="ACCEPT OR DISCARD CAL FIRST";
+                    } else if !calibration.active() {
+                        if let (Some(profile),Some(route))=(calibration.profile.as_ref(),calibration.profile_route) {
+                            let input=with_app(|app|app.ui.opts.play.input.value);
+                            if play.arm(profile,input,route.output(),ui_frame.controls.zero_note,
+                                counts_per_v as i32,ui_frame.now_ms as u32,tuner.cal_status().read().value().bits()) {
+                                play.chromatic=with_app(|app|app.ui.opts.play.quantize.value==options::QuantizeMode::Chromatic);
+                                tuner.cv_channel().write(|w|unsafe{w.channel().bits(input)});
+                            }
+                        } else {play.status="LOAD OR CALIBRATE A PROFILE";}
+                    }
+                });
+            }
+            capture_trace.tick(&tuner,uart,ui_frame.now_ms,&calibration,measurements.channel(calibration.input));
             run_calibration |= ui_frame.run_calibration;
+            if ui_frame.controls.mode==runtime::OperatingMode::Calibrator {
+                if ui_frame.discard_scan {calibration.discard_scan();}
+                else if ui_frame.accept_scan {calibration.accept_scan(&tuner);}
+            }
             run_verify |= ui_frame.run_verify;
             refine|=ui_frame.refine;accept_refinement|=ui_frame.accept_refinement;
             discard_refinement|=ui_frame.discard_refinement;
@@ -1359,7 +1519,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
             }
 
             let calibration_view = matches!(ui_frame.controls.mode,
-                runtime::OperatingMode::Calibrator | runtime::OperatingMode::Verify | runtime::OperatingMode::Profiles);
+                runtime::OperatingMode::Calibrator | runtime::OperatingMode::Verify | runtime::OperatingMode::Profiles | runtime::OperatingMode::Play);
             let requested_scene = if ui_frame.controls.display_mode == DisplayMode::Linear {
                 ui_scene::Scene::Linear
             } else { ui_scene::Scene::Spiral };
@@ -1421,6 +1581,17 @@ fn run(resources: &mut RuntimeResources) -> ! {
                         verification[calibration.input as usize].clear();
                     }
                 }
+                // PLAY checks the loaded oscillator, not all four audio lanes.
+                // Pin the shared verifier before reading so note changes don't
+                // wait for a round trip through unrelated inputs. Raw four-lane
+                // pitch acquisition remains continuous.
+                let playback_audio=if controls.mode==runtime::OperatingMode::Play {
+                    calibration.profile_route.map(|route|route.input())
+                } else {None};
+                if let Some(input)=playback_audio {
+                    tuner.verify_channel().write(|w|unsafe{w.channel().bits(input)});
+                    verification_frames=0;
+                }
                 let previous_capture_mode=tuner.verify_capture().read().mode().bits();
                 for input in 0..4u8 {
                     let measurement = read_measurement(&tuner, counts_per_v, input,
@@ -1436,7 +1607,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 if calibration.active() {
                     tuner.verify_channel().write(|w| unsafe {w.channel().bits(calibration.input)});
                     verification_frames = 0;
-                } else if verification_frames >= dwell {
+                } else if playback_audio.is_none() && verification_frames >= dwell {
                     verification_frames = 0;
                     let next = (tuner.verify_channel().read().channel().bits()+1) & 3;
                     tuner.verify_channel().write(|w| unsafe { w.channel().bits(next) });
@@ -1488,7 +1659,10 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 // Dynamic fields still replace their full bounded footprint.
                 if calibration_view {
                     text.clear(false);
-                    if controls.mode == runtime::OperatingMode::Profiles {
+                    if controls.mode == runtime::OperatingMode::Play {
+                        publish_playback(&tuner_display,&mut text,&calibration,controls,
+                            measurements.channel(calibration.input),ui_frame.menu_active);
+                    } else if controls.mode == runtime::OperatingMode::Profiles {
                         publish_profiles(&tuner_display,&mut text,&calibration,&name_editor,
                             ui_frame.profile_slot,ui_frame.name_position,profile_status,ui_frame.menu_active);
                     } else if controls.mode == runtime::OperatingMode::Verify {

@@ -10,12 +10,12 @@ def test_calibration_menu_overrides_match_option_order():
     firmware = Path(__file__).parents[1] / "src/top/tuner/fw/src"
     options = (firmware / "options.rs").read_text()
     fields = re.findall(r"pub (\w+):", options.split("pub struct CalibrateOpts {")[1].split("}")[0])
-    assert fields == ["input", "output", "zero_note", "run"]
+    assert fields == ["input", "output", "zero_note", "run", "accept", "discard"]
     snapshot = (firmware / "main.rs").read_text().split("impl MenuSnapshot {")[1].split("#[inline(never)]")[0]
     overrides = {int(index): label for index, label in re.findall(
         r'\(Page::Calibrate, (\d+)\) => "([^"]+)"', snapshot)}
     assert [overrides.get(i, field) for i, field in enumerate(fields)] == [
-        "input", "output", "0v note", "run"]
+        "input", "output", "0v note", "run", "accept", "discard"]
     formatted_index = re.search(r"page==Page::Calibrate && index==(\d+)", snapshot)
     assert fields[int(formatted_index[1])] == "zero_note"
 
@@ -27,3 +27,28 @@ def test_live_calibration_protocol_and_profile_math(tmp_path):
     subprocess.run([compiler,"--edition=2021","--test",str(fixture),"-o",str(executable)],
                    check=True,capture_output=True,text=True)
     subprocess.run([str(executable)],check=True,capture_output=True,text=True)
+
+
+def test_all_menu_pages_fit_without_hidden_scrolling():
+    firmware = Path(__file__).parents[1] / "src/top/tuner/fw/src"
+    main = (firmware / "main.rs").read_text()
+    assert "entries: [Option<MenuEntrySnapshot>; 8]" in main
+    snapshot = main.split("impl MenuSnapshot {")[1].split("#[inline(never)]")[0]
+    assert "let index=row;" in snapshot
+    options = (firmware / "options.rs").read_text()
+    for name, body in re.findall(r"pub struct (\w+Opts) \{(.*?)\n\}", options, re.S):
+        assert len(re.findall(r"pub \w+:", body)) <= 8, name
+    display = (firmware.parents[1] / "display.py").read_text()
+    constants = {key: int(value) for key, value in re.findall(
+        r"\b(MENU_Y|MENU_H|MENU_TEXT_Y|MENU_ROW_PITCH) = (\d+)", display)}
+    assert constants["MENU_TEXT_Y"] + 7 * constants["MENU_ROW_PITCH"] + 15 < \
+        constants["MENU_Y"] + constants["MENU_H"]
+
+
+def test_playback_audio_verifier_is_pinned_before_measurement_reads():
+    main = (Path(__file__).parents[1] / "src/top/tuner/fw/src/main.rs").read_text()
+    pin = main.index("let playback_audio=if controls.mode==runtime::OperatingMode::Play")
+    read = main.index("let measurement = read_measurement", pin)
+    assert "calibration.profile_route.map(|route|route.input())" in main[pin:read]
+    assert "tuner.verify_channel().write" in main[pin:read]
+    assert "else if playback_audio.is_none() && verification_frames >= dwell" in main[read:]

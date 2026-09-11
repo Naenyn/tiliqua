@@ -13,6 +13,7 @@ import sys
 
 from amaranth import Module, Mux
 from amaranth.lib import wiring
+from luna_soc.gateware.core import timer
 
 from tiliqua.build.cli import top_level_cli
 from tiliqua.build.types import BitstreamHelp
@@ -30,7 +31,7 @@ except ImportError:
 class TunerSoc(TiliquaSoc):
     # Keep enough CPU RAM for the retained options/UI state plus nested calls
     # and interrupt frames. See the constructor comment below.
-    MAINRAM_SIZE = 0x4000
+    MAINRAM_SIZE = 0x8000
 
     module_docstring = sys.modules[__name__].__doc__
     bitstream_help = BitstreamHelp(
@@ -48,10 +49,9 @@ class TunerSoc(TiliquaSoc):
             h_active=modeline.h_active,
             rotate_left=round_display,
             scene_layout=BackgroundLayout(modeline.h_active, modeline.v_active))
-        # The firmware's retained UI/options state gives main() a roughly
-        # 7.25-KiB stack frame before nested calls and interrupt frames. 8 KiB
-        # silently corrupts the stack as soon as the timer ISR begins; retain
-        # the original 16-KiB allocation and treat it as a functional minimum.
+        # Retained playback profile plus foreground, storage and interrupt
+        # frames need more than the old 16-KiB safety budget. 32 KiB leaves
+        # explicit headroom without using external RAM in the playback ISR.
         super().__init__(finalize_csr_bridge=False,
                          mainram_size=self.MAINRAM_SIZE,
                          fb_overlay=self.tuner_display.overlay,
@@ -78,12 +78,17 @@ class TunerSoc(TiliquaSoc):
             self.tuner_periph.bus, addr=0x1000, name="tuner_periph")
         self.csr_decoder.add(
             self.tuner_display.bus, addr=0x1100, name="tuner_display")
+        # This compact CPU has no mcycle CSR. Use a bus-readable cycle timer
+        # for playback diagnostics, without another interrupt source.
+        self.playback_timer = timer.Peripheral(width=32)
+        self.csr_decoder.add(self.playback_timer.bus, addr=0x1200, name="playback_timer")
         self.finalize_csr_bridge()
 
     def elaborate(self, platform):
         m = Module()
         m.submodules.tuner_periph = self.tuner_periph
         m.submodules.tuner_display = self.tuner_display
+        m.submodules.playback_timer = self.playback_timer
         m.submodules += super().elaborate(platform)
 
         pmod = self.pmod0_periph.pmod

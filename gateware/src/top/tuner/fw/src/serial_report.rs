@@ -3,6 +3,15 @@ use core::fmt::{self,Write};
 use crate::{calibration_live::Live,pitch_units};
 
 pub fn verification(out:&mut impl Write,cal:&Live)->fmt::Result {
+    if let Some(profile)=cal.pending_profile.as_ref() {
+        let points=profile.points();let low=points[0];let high=points[points.len()-1];
+        writeln!(out,"CAL REVIEW POINTS={} LOW_UV={} HIGH_UV={}",points.len(),low.microvolts,high.microvolts)?;
+        write!(out,"CAL REVIEW LOW=")?;pitch_units::write_pitch(out,low.millicents)?;
+        write!(out," HIGH=")?;pitch_units::write_pitch(out,high.millicents)?;writeln!(out)?;
+        writeln!(out,"CAL ADVICE={}",crate::oscillator_calibration::discovery::advice(profile))?;
+        writeln!(out,"CAL REVIEW ACCEPT=RAM RUN=RESCAN DISCARD=PRIOR; RETUNING REQUIRES RESCAN")?;
+        return Ok(());
+    }
     if let Some(profile)=cal.profile.as_ref() {
         let points=profile.points();
         if let (Some(lo),Some(hi))=(points.first(),points.last()) {
