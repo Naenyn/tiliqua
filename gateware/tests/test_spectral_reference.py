@@ -56,6 +56,8 @@ def test_aliasing_limit():
 @pytest.mark.parametrize('name,low,high',[
     ('tuner-live-sine-1064.json',1060,1068),
     ('tuner-live-saw-1064.json',1060,1068),
+    ('tuner-live-pulse-pair-sine-1063.json',1060,1068),
+    ('tuner-live-narrow-pulse-1063.json',1060,1068),
     ('tuner-alternating-cycle-capture.json',7600,7750)])
 def test_real_capture_repeatability_not_ground_truth(name,low,high):
     data=json.loads((Path(__file__).parent/'fixtures'/name).read_text())

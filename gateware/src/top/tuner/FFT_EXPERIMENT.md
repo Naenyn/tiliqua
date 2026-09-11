@@ -106,6 +106,28 @@ power-spectrum precision, clipping robustness, filtering, or a complete detector
 
 ## Next hardware evidence
 
+September 11 narrow-pulse follow-up completed: two further 2048-sample native
+captures retained as `tuner-live-pulse-pair-sine-1063.json` and
+`tuner-live-narrow-pulse-1063.json`. Captured pulse width is approximately 71.6 us,
+7.61% duty, measured at the midpoint of the 1st/99th-percentile signal levels and
+using median interpolated edge intervals. This includes the acquisition chain's
+bandwidth effects; it is not an independent oscilloscope measurement.
+
+At identical 200–20000 Hz search bounds, sine/pulse estimates respectively:
+
+| Method | Sine Hz | Pulse Hz |
+|---|---:|---:|
+| Spectral | 1063.345 | 1063.481 |
+| NSDF | 1063.382 | 1063.676 |
+| YIN steps 2–5 | 1063.439 | 1063.285 |
+| Recorded raw baseline | 1062.909 | 1063.712 |
+
+All candidates qualify both recordings with no octave error. The baseline header
+records factor 1 on both. This is a useful passing real-waveform case, not proof
+of absolute accuracy or continuous tracking stability. The pulse is narrower
+than the earlier saw-like capture but not the 1% synthetic failure case; it does
+not establish a winner. Spectral processing identifies 22 matched peaks on it.
+
 Use existing TUNER -> FOCUS 0 -> CAPTURE; no new firmware required. Record a
 narrow pulse near 1 kHz, ideally alongside the same oscillator's sine/basic
 waveform without moving its pitch controls. Keep output settings untouched.
