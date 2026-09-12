@@ -271,3 +271,35 @@ pass. The early energy gate and confidence/octave guards remain unchanged.
 Firmware build passes; `.data`/`.bss` remain 1632/8 bytes, with no new frame
 buffer, heap or FPGA change. On-device timing for this fixed-point version is
 still required. The performance gate remains open.
+
+Physical fixed-point trial, `b54b9a34`, same patch: native pulse 881.621 Hz in
+0.903 ms, low-bank pulse 881.024 Hz in 2.553 ms, combined 3.456 ms. IN 1 LFO
+was rejected (2.534 ms native / 0.402 ms low). Quiet inputs were gated in
+approximately 5–7 microseconds. Independent IO sweeps took 0.274–0.292 ms.
+All complete CPU/IO/score triples agree on metadata, checksum, estimates and
+qualification. No diagnostic acquisition errors appeared. Raw capture:
+`/tmp/tuner-nsdf-fixedpoint-live.log`; retained fixture:
+`tests/fixtures/nsdf-cpu-fixedpoint.json`.
+
+This makes four comparable pulse inputs about 13.8 ms of a 50-ms update period
+for CPU selection (roughly 28%), not a measured four-input throughput or worst
+case. Both banks are asynchronous; this remains an algorithm-parity and timing
+trial rather than independent pitch accuracy proof. Broader frequencies,
+four-channel scheduling, source-energy arbitration, stack high-water and
+calibration/quantizer coexistence still require qualification.
+
+`tests/analyze_nsdf_cpu.py LOG` now validates complete CPU/IO/score triples and
+reports timings directly. It verifies channel/bank/sequence identity, IO count
+and wrapping checksum, read bounds, early gating, numerical parity and flags.
+It excludes connection-boundary fragments and refuses diagnostic acquisition
+errors. Tests cover malformed metadata/checksums/counts and wrong CPU estimates.
+
+One further arithmetic change replaces the interpolation's software 64-bit
+division with three native 32-bit divisions producing successive 9, 9 and 1
+fraction bits. It computes exactly the same truncated Q20 shift: a local
+maximum bounds the numerator by the denominator, and all intermediate shifts
+fit u32 even at the maximum valid NSDF curvature. Boundary cases plus 100,000
+deterministic fractions match the wide-integer reference with overflow checks
+enabled. Other 64-bit products remain where needed to avoid overflow. No
+arithmetic tolerance or pitch acceptance guard was widened. This additional
+optimization's on-device timing is not yet measured.

@@ -24,12 +24,28 @@ pub fn select_frame(read:impl FnMut(usize)->i32,low:bool,energy:u64,scaled:bool,
 fn peak(k:usize,a:i32,b:i32,c:i32)->Peak {
     let curvature=a-2*b+c;
     let shift=if curvature<0 {
-        (((a-c) as i64*524288)/curvature as i64).clamp(-524288,524288) as i32
+        let difference=a-c;
+        let fraction=fraction19(difference.unsigned_abs(),(-curvature) as u32) as i32;
+        if difference>0 {-fraction} else {fraction}
     } else {0};
     // At the parabola's vertex, height = b + (c-a)*shift/4.
     // Q20 shift quantization and truncation cost less than two height units.
     let height=b+(((c-a) as i64*shift as i64)/4194304) as i32;
     Peak {lag:((k as i32)<<20)+shift,height}
+}
+
+fn fraction19(mut numerator:u32,denominator:u32)->u32 {
+    // Exact (numerator << 19) / denominator without software 64-bit division.
+    // A local maximum guarantees numerator <= denominator <= 4 * 2^20.
+    // Each nine-bit step fits u32, including the maximum denominator.
+    let mut result=0;
+    for shift in [9,9,1] {
+        let scaled=numerator<<shift;
+        let quotient=scaled/denominator;
+        numerator=scaled-quotient*denominator;
+        result=(result<<shift)|quotient;
+    }
+    result
 }
 
 fn peaks(read: &mut impl FnMut(usize)->i32,last:usize,mut visit:impl FnMut(Peak)->bool) {
@@ -97,4 +113,26 @@ pub fn select(mut read:impl FnMut(usize)->i32,low:bool)->Option<Estimate> {
     Some(Estimate {hz:(fs*1048576) as f32/p.lag as f32,
         clarity:p.height as f32/1048576.0,qualified,
         unrefined_hz:(fs*1048576) as f32/original_lag as f32})
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn fractional_division_matches_wide_reference() {
+        for denominator in [1,2,3,7,511,512,513,65535,1048576,2097152,4194304] {
+            for numerator in [0,1,denominator/2,denominator-1,denominator] {
+                assert_eq!(super::fraction19(numerator,denominator),
+                    (((numerator as u64)<<19)/denominator as u64) as u32);
+            }
+        }
+        let mut state=731_u32;
+        for _ in 0..100000 {
+            state=state.wrapping_mul(1664525).wrapping_add(1013904223);
+            let denominator=1+(state&4194303);
+            state=state.wrapping_mul(1664525).wrapping_add(1013904223);
+            let numerator=state%(denominator+1);
+            assert_eq!(super::fraction19(numerator,denominator),
+                (((numerator as u64)<<19)/denominator as u64) as u32);
+        }
+    }
 }

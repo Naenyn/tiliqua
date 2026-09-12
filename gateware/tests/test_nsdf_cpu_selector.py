@@ -50,7 +50,15 @@ def test_cpu_selector_matches_model_without_frame_buffer(tmp_path):
         assert int(reads)<=2*len(scores)+63
 
 
-@pytest.mark.parametrize('name',['nsdf-cpu-pulse-lfo.json','nsdf-cpu-integer-screen.json'])
+def test_fixed_point_fraction_uses_exact_bounded_arithmetic(tmp_path):
+    rustc=shutil.which('rustc') or str(Path.home()/'.cargo/bin/rustc')
+    source=Path(__file__).parents[1]/'src/top/tuner/fw/src/nsdf_select.rs'
+    exe=tmp_path/'fraction-tests'
+    subprocess.run([rustc,'--edition=2021','--test','-O','-C','overflow-checks=on',str(source),'-o',str(exe)],check=True)
+    subprocess.run([str(exe)],check=True,capture_output=True,text=True)
+
+
+@pytest.mark.parametrize('name',['nsdf-cpu-pulse-lfo.json','nsdf-cpu-integer-screen.json','nsdf-cpu-fixedpoint.json'])
 def test_physical_cpu_reports_match_exported_scores(name):
     fixture=json.loads((Path(__file__).parent/'fixtures'/name).read_text())
     assert len(fixture['cpu_reports'])==len(fixture['frames'])
