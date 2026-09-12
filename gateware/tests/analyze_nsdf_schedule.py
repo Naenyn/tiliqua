@@ -22,6 +22,24 @@ def analyze_picks(text):
         yield r
 
 
+def analyze_comparisons(text):
+    for line in text.splitlines(keepends=True):
+        if not line.endswith('\n') or not line.startswith('NSDF COMP '):continue
+        f=dict(p.split('=') for p in line.split()[2:])
+        if f.keys()!={'ch','ms','mhz','src','gen','age','win','base','bq','bage'}:raise ValueError('unexpected comparison fields')
+        if f['bq'] not in ('true','false'):raise ValueError('invalid baseline flag')
+        r={k:(v=='true' if k=='bq' else int(v)) for k,v in f.items()}
+        if any(not 0<=r[k]<2**32 for k in f.keys()-{'bq'}) or r['ch']>3 or r['src']>3:
+            raise ValueError('invalid comparison bounds')
+        if r['src'] in (1,2):
+            if not (r['gen']>0 and 20000<=r['mhz']<=20000000 and r['age']<=252
+                    and r['age']+110<=r['win']<=362):raise ValueError('invalid pitch window descriptor')
+        elif (r['mhz'],r['gen'],r['age'],r['win'])!=(0,0,0xffffffff,0xffffffff):
+            raise ValueError('invalid absent descriptor')
+        if r['bq'] and r['bage']>250:raise ValueError('stale qualified baseline')
+        yield r
+
+
 def analyze_schedule(text):
     previous_slot=None
     previous={}

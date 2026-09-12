@@ -5,6 +5,8 @@ use heapless::String;
 use tiliqua_pac as pac;
 #[path="nsdf_resolve.rs"]
 mod resolve;
+#[path="nsdf_publish.rs"]
+mod publish;
 
 #[derive(Clone,Copy)]
 struct Latest {
@@ -16,9 +18,10 @@ impl Latest {
         raw:false,guard:false,valid:false};
 }
 pub struct Scheduler {
-    latest:[Latest;8], pending:String<384>, offset:usize,
+    latest:[Latest;8], pending:String<512>, offset:usize,
     slot:u8, report:u8, active:bool, due:u64, started:u64,
     report_due:u64, faults:u32,
+    baseline:[(u32,bool,u32,u64);4],
 }
 // Also checked by the embedded compiler with the real heapless buffer layout.
 const _:()=assert!(core::mem::size_of::<Scheduler>()<=1024);
@@ -28,7 +31,18 @@ impl Scheduler {
     pub fn new()->Self {
         Self {latest:[Latest::EMPTY;8],pending:String::new(),offset:0,
             slot:0,report:0,active:false,due:2000,started:0,
-            report_due:2000,faults:0}
+            report_due:2000,faults:0,baseline:[(0,false,u32::MAX,0);4]}
+    }
+    pub fn observe_baseline(&mut self,input:u8,hz:f32,qualified:bool,end_age:u32,now:u64) {
+        if let Some(slot)=self.baseline.get_mut(input as usize) {
+            *slot=((hz*1000.0) as u32,qualified,end_age,now);
+        }
+    }
+    fn selected(&self,input:u8,now:u64)->publish::Pitch {
+        if input>=4 {return publish::Pitch::NONE;}
+        let frame=|r:Latest|publish::Frame {mhz:r.mhz,count:r.count,completed:r.done,
+            request_ms:r.dt,qualified:r.valid && r.raw && r.guard};
+        publish::publish(frame(self.latest[input as usize*2]),frame(self.latest[input as usize*2+1]),now)
     }
     fn finish(&mut self,now:u64) {
         self.active=false;self.slot=(self.slot+1)&7;
@@ -115,6 +129,12 @@ impl Scheduler {
                     resolve::Candidate {mhz:r.mhz,age,qualified:lq});
                 write!(self.pending,"NSDF PICK ch={} ms={} n={} na={} nq={} l={} la={} lq={} mhz={} src={}\n",
                     self.report>>1,now as u32,n.mhz,na,nq,r.mhz,age,lq,selected.mhz,selected.source).ok();
+                let p=self.selected(self.report>>1,now);
+                let (base,bq,end_age,observed)=self.baseline[(self.report>>1) as usize];
+                let bage=now.saturating_sub(observed).saturating_add(end_age as u64).min(u32::MAX as u64) as u32;
+                write!(self.pending,"NSDF COMP ch={} ms={} mhz={} src={} gen={} age={} win={} base={} bq={} bage={}\n",
+                    self.report>>1,now as u32,p.mhz,p.source,p.generation,p.end_age_ms,p.window_age_ms,
+                    base,bq && bage<=250,bage).ok();
             }
             self.report=(self.report+1)&7;self.report_due=now.saturating_add(50);
         }

@@ -1623,6 +1623,9 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 for input in 0..4u8 {
                     let measurement = read_measurement(&tuner, counts_per_v, input,
                                                        &mut verification[input as usize]);
+                    #[cfg(tuner_nsdf_continuous)]
+                    nsdf_trace.observe_baseline(input,measurement.frequency_hz,
+                        measurement.valid && measurement.qualified,measurement.end_age_ms,ui_frame.now_ms);
                     measurements.update(input, measurement);
                 }
                 if previous_capture_mode!=tuner.verify_capture().read().mode().bits() {

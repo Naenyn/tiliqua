@@ -63,6 +63,9 @@ def main():
                 if line.startswith('NSDF ERROR'):
                     raise RuntimeError(line.strip())
                 if args.continuous:
+                    if line.startswith('NSDF COMP '):
+                        from analyze_nsdf_schedule import analyze_comparisons
+                        list(analyze_comparisons(line))
                     if line.startswith('NSDF PICK '):
                         from analyze_nsdf_schedule import analyze_picks
                         list(analyze_picks(line))

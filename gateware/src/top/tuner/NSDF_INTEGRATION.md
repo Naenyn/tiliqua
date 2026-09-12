@@ -1272,3 +1272,35 @@ Both sides of overlap preference now have simultaneous-input hardware
 evidence. Next work can proceed offline with no signal adjustment: validate
 state transitions/freshness and integration boundaries before authoritative
 detector promotion. Existing tuner/calibration/quantization remain unchanged.
+
+### Transition-safe publication boundary and baseline comparison
+
+`nsdf_publish.rs` provides a diagnostic pitch descriptor, without fabricating
+Vpp/RMS or reusing baseline detector sequence IDs. Freshness includes request
+duration, not only completion time, and rejects future timestamps. A successful
+descriptor carries source + source-bank generation (the PAIR is its identity;
+generation alone is not globally unique), pitch, end age and conservative
+audio-support-window age. Invalid/conflicting results carry no pitch and max
+ages, not a held old valid result. Same pitch/new acquisition advances identity.
+
+End age adds 2 ms for observation rounding. Window age includes the older
+eligible bank when both participated in arbitration, plus 107 ms for the
+20480-sample source-energy window and 3 ms for its possible 512-sample endpoint
+offset. Total support allowance is 112 ms including rounding. This conservative
+descriptor prepares calibration settling checks but is NOT wired into them.
+
+`NSDF COMP` reports this descriptor beside the existing baseline frequency,
+qualification and audio-end age. Baseline capture occurs after read_measurement
+without modifying measurements or their consumers. These snapshots are not
+simultaneous/independent reference readings; disagreement must not be labeled
+an absolute accuracy improvement. Baseline shared-verifier qualification may
+be absent on some lanes; that flag is retained. Existing UI/calibration/PLAY
+continue consuming only baseline measurements. COMP runs only in continuous
+experimental firmware; other modes/builds unchanged.
+
+Latest-value serial buffer is now 512 bytes for RUN/PICK/COMP, with the
+<=1024-byte scheduler state assertion retained. No waveform buffer, heap or
+FPGA changes. 131 focused tests cover actual Rust publication lifecycle,
+stale/future/invalid/overflow cases, changed pitch and source, same-pitch new
+generation, conservative two-bank window support, cross-channel independence,
+and comparison record validation. Next: embedded build and physical comparison.

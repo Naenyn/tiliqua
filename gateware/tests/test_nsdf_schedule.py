@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 import subprocess
 import pytest
-from analyze_nsdf_schedule import analyze_schedule,analyze_picks
+from analyze_nsdf_schedule import analyze_schedule,analyze_picks,analyze_comparisons
 import sys
 from types import SimpleNamespace
 import capture_nsdf_cpu
@@ -19,6 +19,9 @@ def test_real_scheduler_keeps_acquiring_during_uart_stall(tmp_path,scenario):
     text=subprocess.check_output([exe,str(scenario)],text=True)
     checked=list(analyze_schedule(text))
     picks=list(analyze_picks(text))
+    comparisons=list(analyze_comparisons(text))
+    assert len(comparisons)>40
+    assert all(c['src']==1 for c in comparisons[-4:])
     assert len(picks)>40
     assert {p['ch'] for p in picks}=={0,1,2,3}
     assert all(p['src']==1 for p in picks[-4:])
@@ -86,6 +89,9 @@ def test_summary_worst_case_capacity():
     pick=('NSDF PICK ch=3 ms=4294967295 n=20000000 na=4294967295 nq=false '
           'l=1500000 la=4294967295 lq=false mhz=20000000 src=3\n')
     assert len(line+pick)<=384
+    comp=('NSDF COMP ch=3 ms=4294967295 mhz=20000000 src=3 gen=4294967295 '
+          'age=4294967295 win=4294967295 base=4294967295 bq=false bage=4294967295\n')
+    assert len(line+pick+comp)<=512
 
 
 @pytest.mark.parametrize('high',[0,10,19,25])
