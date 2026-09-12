@@ -61,6 +61,7 @@ mod nsdf_select {
     }
 }
 #[path="../src/top/tuner/fw/src/nsdf_trace.rs"] mod trace;
+#[path="../src/top/tuner/fw/src/nsdf_guard.rs"] mod nsdf_guard;
 fn main() {
     let mut trace=trace::Trace::new();let uart=UART0;
     assert_eq!(trace.ui_period_ms(false,5),5);

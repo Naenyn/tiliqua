@@ -66,6 +66,15 @@ def source_details(report,source):
             # group. Keep this allowance explicit and validate on hardware.
             if age>512:raise ValueError('stale or future source window')
             relative_pass=report['rms_counts']>max(2,.1*rms)
+    if 'device_guard' in report:
+        energy=report['energy']*(4 if report['scaled'] else 1)
+        frame_n=604 if report['bank']=='low' else 674
+        source_power=(squares*n-total*total+n*n-1)//(n*n) if n else 0
+        expected=(bool(status&1) and endpoint_offset is not None and not report['clipped']
+                  and energy>4*frame_n
+                  and energy*(2500 if report['bank']=='low' else 100)>source_power*frame_n)
+        if report['device_guard']!=expected:
+            raise ValueError('device source guard disagrees with integer reference')
     return dict(**report,source_end=end,source_samples=n,source_rms=rms,
                source_ready=bool(status&1),source_age_native=age,
                native_relative_energy_pass=relative_pass,

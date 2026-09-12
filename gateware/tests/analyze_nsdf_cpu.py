@@ -11,6 +11,13 @@ import re
 from nsdf_trace_analysis import decode,select
 
 
+def guard_fields(cpu):
+    if 'guard' not in cpu and 'gc' not in cpu:return {}
+    if cpu.get('guard') not in ('true','false') or not 0<int(cpu.get('gc','0'))<1<<32:
+        raise ValueError('invalid device guard metadata')
+    return dict(device_guard=cpu['guard']=='true',guard_ms=int(cpu['gc'])/60000)
+
+
 def validate(cpu,io,block):
     report=next(decode(block.splitlines()))
     for key in ('ch','low','seq'):
@@ -46,7 +53,8 @@ def validate(cpu,io,block):
                 sequence=report['seq'],hz=int(cpu['mhz'])/1000,
                 qualified=cpu['ok']=='true',gated=gated,rms_counts=report['rms_counts'],
                 select_ms=int(cpu['cycles'])/60000,io_ms=int(io['cycles'])/60000,
-                reads=int(cpu['reads']))
+                reads=int(cpu['reads']),energy=report['energy'],scaled=report['scaled'],
+                clipped=report['clipped'],**guard_fields(cpu))
 
 
 def analyze(text):

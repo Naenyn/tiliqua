@@ -4,6 +4,7 @@ import json
 import math
 from pathlib import Path
 from analyze_nsdf_source import source_details
+from analyze_nsdf_cpu import guard_fields
 
 
 def analyze_fast(text):
@@ -46,7 +47,8 @@ def analyze_fast(text):
         if not 0<=start<=end<1<<64 or end-start>=1000:raise ValueError('invalid summary timing')
         report=dict(channel=channel,bank='low' if low else 'native',sequence=sequence,
                     rms_counts=rms,qualified=qualified,gated=gated,hz=hz,
-                    reads=reads,select_ms=cycles/60000)
+                    reads=reads,select_ms=cycles/60000,energy=energy,scaled=scaled,
+                    clipped=clipped,**guard_fields(cpu))
         if 'frame_end' not in source:raise ValueError('fast summary lacks native endpoint')
         report=source_details(report,source)
         interval=None
@@ -59,7 +61,7 @@ def analyze_fast(text):
         previous=(start,int(source['frame_end']),low)
         guard=report['low_relative_energy_pass'] if low else report['native_relative_energy_pass']
         yield dict(**report,start_ms=start,end_ms=end,frame_interval_ms=interval,
-                   guarded_qualified=qualified and guard is True,
+                   guarded_qualified=qualified and report.get('device_guard',guard) is True,
                    score_parity_checked=False)
         seen=True;source=cpu=None
     if not seen:raise ValueError('no complete fast summaries')

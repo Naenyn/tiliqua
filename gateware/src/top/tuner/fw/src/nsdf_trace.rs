@@ -77,11 +77,23 @@ impl Trace {
                     nsdf.data().read().value().bits() as i32
                 },self.low,energy,status&(1<<8)!=0,status&(1<<9)!=0);
                 let cycles=crate::playback_cycles().wrapping_sub(started);
+                let guard_started=crate::playback_cycles();
+                let guard=crate::nsdf_guard::passes(crate::nsdf_guard::Source {
+                    end:nsdf.source_sequence().read().value().bits(),
+                    samples:nsdf.source_samples().read().value().bits(),
+                    sum:nsdf.source_sum().read().value().bits() as i32,
+                    squares:(nsdf.source_squares_low().read().value().bits() as u64)
+                        |((nsdf.source_squares_high().read().value().bits() as u64)<<32),
+                    status:nsdf.source_status().read().value().bits(),
+                },self.channel,self.low,nsdf.sequence().read().value().bits(),
+                    nsdf.frame_native_end().read().value().bits(),energy,
+                    status&(1<<8)!=0,status&(1<<9)!=0);
+                let guard_cycles=crate::playback_cycles().wrapping_sub(guard_started);
                 let (hz,raw,clarity,qualified)=result.map_or((0,0,0,false),|r|
                     ((r.hz*1000.0) as u32,(r.unrefined_hz*1000.0) as u32,
                      (r.clarity*1000000.0) as u32,r.qualified));
-                write!(self.pending,"NSDF CPU ch={} low={} seq={} mhz={} raw={} ppm={} ok={} cycles={} reads={}\n",
-                    self.channel,self.low,nsdf.sequence().read().value().bits(),hz,raw,clarity,qualified,cycles,reads).ok();
+                write!(self.pending,"NSDF CPU ch={} low={} seq={} mhz={} raw={} ppm={} ok={} cycles={} reads={} guard={} gc={}\n",
+                    self.channel,self.low,nsdf.sequence().read().value().bits(),hz,raw,clarity,qualified,cycles,reads,guard,guard_cycles).ok();
                 self.state=if FAST {7} else {5};
             }
             7 => {

@@ -854,3 +854,35 @@ permits their selection gaps and makes no score/model-parity or latency claim.
 29 focused fast-report/capture/firmware tests pass. No firmware changes or
 flash this turn; installed build remains `58b31f9f`. No serial capture is open.
 No further repetition of this manual low-frequency level test is necessary.
+
+User clarification: the lowest-level observations included ongoing attempts to
+adjust amplitude. Do not attribute their frequency spread solely to estimator
+noise or describe them as a controlled settled-signal accuracy measurement.
+
+### Integer source-energy safeguard on device (diagnostic only)
+
+Added `fw/src/nsdf_guard.rs`: bounded integer-only validation of complete source
+moments, channel/status, native endpoint alignment, clipping and the >2-count
+frame RMS floor, followed by the 10% native / 2% low relative-energy veto.
+Source centered mean-square rounds UP to an integer count squared. This is
+conservative versus the prior exact host comparison: it can only reject an
+additional tiny boundary band, less than 0.01 count squared native or 0.0004
+low. All products are range-checked to fit u64; no u128 arithmetic, floats,
+square roots, heap or sample buffers. Invalid/unready source metadata vetoes.
+
+The serial CPU record now adds `guard` and `gc` (guard cycles, including frozen
+CSR reads). Raw selector `ok` and its separate `cycles` retain their meaning.
+The new decision does NOT alter baseline UI pitch, calibration or quantization.
+Fast host reports use a present device guard for combined qualification and
+validate it against an independent integer reference. Legacy recordings without
+the fields remain readable. Full SOURCE/CPU/IO/score exports also check it.
+Malformed, incomplete or contradictory new guard metadata fails validation.
+
+143 focused tests pass. Actual Rust guard with overflow checking agrees with
+saved native/low hardware frames plus 4000 randomized bounded cases and explicit
+energy/rounding, channel, stale/future/wrapping endpoint, readiness, impossible
+moments and clipping cases. Host tests check malformed guard records; the real
+trace/UART mock exercises guard execution in all export modes. Target fast-low
+firmware compiles; .data=1632, .bss=8, heap=0, reserved stack=31128 unchanged.
+Its device execution time is still unmeasured: next hardware check is a fast
+quiet-bass capture with `guard`/`gc`, not another amplitude-adjustment test.
