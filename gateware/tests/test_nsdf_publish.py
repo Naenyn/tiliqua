@@ -57,3 +57,25 @@ def test_physical_disconnected_input_does_not_publish_old_pitch():
             assert (b['count']-a['count'])*1000/(b['ms']-a['ms'])==12.5
     assert all(r['faults']==0 for r in runs)
     # Capture starts after unplugging: no assertion about removal latency.
+
+
+def test_physical_reconnection_publishes_fresh_results():
+    fixtures=Path(__file__).parent/'fixtures'
+    text=(fixtures/'nsdf-publication-in0-restored.txt').read_text()
+    runs=list(analyze_schedule(text));picks=list(analyze_picks(text));comp=list(analyze_comparisons(text))
+    before=list(analyze_comparisons((fixtures/'nsdf-publication-comparison.txt').read_text()))
+    assert (len(runs),len(picks),len(comp))==(200,99,99)
+    ranges=[(1200000,1203000),(775000,778000),(174000,177000),(138000,140000)]
+    for ch,(lo,hi) in enumerate(ranges):
+        group=[r for r in comp if r['ch']==ch]
+        assert len(group)>=24
+        assert all(r['src']==(2 if ch==0 else 1) and lo<r['mhz']<hi
+                   and r['age']<=92 and r['win']<=202 for r in group)
+        assert min(r['gen'] for r in group)>max(r['gen'] for r in before if r['ch']==ch)
+        for low in (False,True):
+            bank=[r for r in runs if (r['ch'],r['low'])==(ch,low)]
+            a,b=bank[0],bank[-1]
+            assert 11.3<(b['count']-a['count'])*1000/(b['ms']-a['ms'])<11.5
+            assert all(r['ok']==(low or ch<2) for r in bank)
+    assert all(r['faults']==0 for r in runs)
+    # The capture establishes recovered state, not time-to-recovery.

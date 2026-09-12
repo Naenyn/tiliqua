@@ -1354,3 +1354,20 @@ Empty-input early exit reduces work; this does not revise previous four-tone
 measured rates. Capture began after unplugging, so no dropout latency is
 claimed. Next physical check is reconnecting unchanged IN0 and confirming
 valid selection returns while other inputs remain unaffected. No reflash.
+
+### Physical reconnection publication check
+
+User reconnected unchanged IN0. `/tmp/tuner-publication-in0-restored.log`
+completed 200 RUN / 99 PICK / 99 COMP records and disconnected; originals in
+`tests/fixtures/nsdf-publication-in0-restored.txt`. All 25 IN0 selections were
+valid/native at 1200.841..1202.270 Hz, with both banks qualified in reported
+RUN records. Other lanes selected low at 776.234..776.424,
+175.243..175.368 and 138.551..138.584 Hz. Selected generations are newer than
+the pre-disconnection capture, not old retained samples. No acquisition faults.
+
+Measured rates 11.323..11.425 Hz per bank; selected end age <=92 ms and
+support-window age <=202 ms. As with unplugging, capture began after the user
+acted: this verifies recovered steady state, not reconnect latency. Existing
+production consumers and firmware remain unchanged (`ca50614f`). No serial
+capture remains open. Disconnect/reconnect publication checks are complete;
+no further patch adjustment required for the next offline integration work.
