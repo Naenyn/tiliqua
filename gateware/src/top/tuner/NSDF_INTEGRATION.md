@@ -1336,3 +1336,21 @@ simultaneous-window comparison, or evidence that one detector is more accurate.
 No new build/flash. Next physical transition check: disconnect IN0 only and
 verify no pitch is published for the absent signal while other lanes continue;
 then reconnect to check recovery. Main consumers are still baseline-only.
+
+### Physical absent-input publication check
+
+User removed IN0 only. `/tmp/tuner-publication-in0-removed.log` completed
+200 RUN / 99 PICK / 99 COMP records and disconnected normally. All retained
+in `tests/fixtures/nsdf-publication-in0-removed.txt`; capture boundary can
+omit the trailing PICK/COMP after its final RUN, not an acquisition failure.
+All 25 IN0 published descriptors had source 0, zero pitch/generation and max
+invalid ages; neither bank qualified nor passed the source guard. Baseline
+was also unqualified. No previous IN0 pitch was exposed as a valid result.
+
+Other lanes selected low around 776.205..776.595, 175.268..175.366 and
+138.423..138.545 Hz. Zero acquisition faults, and all eight banks measured
+exactly 12.5 updates/s over this capture, the configured acquisition cap.
+Empty-input early exit reduces work; this does not revise previous four-tone
+measured rates. Capture began after unplugging, so no dropout latency is
+claimed. Next physical check is reconnecting unchanged IN0 and confirming
+valid selection returns while other inputs remain unaffected. No reflash.
