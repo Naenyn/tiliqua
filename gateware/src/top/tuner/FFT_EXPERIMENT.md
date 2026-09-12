@@ -208,7 +208,48 @@ Do not choose or deploy a winner yet. A small FFT remains plausible as an
 optional shared spectral feature, not an earned replacement for the working
 tuner. Tuner/calibrator/independent multichannel quantizer capacity takes priority.
 
-## Reproduction
+## Short-window comparison on the real recordings
+
+`capture_window_probe.py` replays all 11 recordings at 2048, 1024, and 512
+samples. The lower search bounds are explicitly 200, 400, and 800 Hz,
+respectively. There are 473 observations (overlapping windows at a 64-sample
+hop), NOT 473 independent recordings. Native 192-kHz durations are 10.67,
+5.33, and 2.67 ms. These recordings cannot validate 20-Hz operation.
+
+Selected 1024-sample results below are peak-to-peak variation in cents across
+17 windows, not absolute error against an independent frequency reference:
+
+| Recording | Spectral, 1024 FFT | Spectral, 4096 FFT | NSDF | YIN |
+|---|---:|---:|---:|---:|
+| Local Parks narrow pulse (~1001 Hz) | 0.73 | 0.62 | 0.34 | 0.56 |
+| Local Parks square (~1001 Hz) | 1.10 | 0.91 | 0.46 | 1.14 |
+| Attenuated modulated Blade (~501 Hz repetition) | 5.01 | 3.12 | 1.09 | 1.00 |
+| Historical alternating-cycle capture (~7676 Hz) | 0.18 | 0.12 | 0.35 | 2.03 |
+
+All methods qualify these 1024-sample windows. The narrow pulse remains
+promising without a large FFT: even unpadded spectral processing reproduces it
+well. NSDF is the strongest balanced short-window candidate here, while the
+spectral estimate is particularly steady on the high-frequency recording.
+
+However, at 512 samples and an 800-Hz lower bound, the attenuated Blade's
+approximately 501-Hz repetition is out of range. NSDF and YIN qualify none of
+the 25 windows. The spectral method incorrectly qualifies 16/25 unpadded windows
+(989–1326 Hz) and 10/25 padded windows (976–1271 Hz). Its selected-peak coverage
+is not an adequate range/confidence guard. This is retained as a strict expected
+failure for both padding settings; do not deploy bank selection based only on
+that qualification bit. At 512 samples the square also worsens to 7.78 cents
+variation for the unpadded spectrum, versus 1.83 cents for NSDF.
+
+Next hardware feasibility work should prioritize shared NSDF processing and
+explicit bank/range rejection, while retaining the FFT experiment as a possible
+shared building block or optional display source. A forward FFT's measured
+resource usage does not establish the cost/precision of FFT-based NSDF: inverse
+transform, power spectrum, energy normalization, histories and filtering still
+need accounting. Neither these figures nor agreement between references justify
+replacing the production detector yet. No production firmware changed for this
+comparison.
+
+## Reproduction commands
 
 Use the project's Python environment (NumPy/SciPy/Amaranth/pytest) and `PYTHONPATH=src`
 for RTL probes. Commands below run from this branch's `gateware` directory.
@@ -217,6 +258,7 @@ for RTL probes. Commands below run from this branch's `gateware` directory.
 python -m pytest -q tests/test_spectral_reference.py
 python tests/compare_detectors.py --yin-tests YIN_GATEWARE/tests --nsdf-tests NSDF_GATEWARE/tests
 python tests/detector_transition_probe.py --yin-tests YIN_GATEWARE/tests --nsdf-tests NSDF_GATEWARE/tests
+python tests/capture_window_probe.py --yin-tests YIN_GATEWARE/tests --nsdf-tests NSDF_GATEWARE/tests
 python tests/fft_precision_probe.py
 python tests/synthesize_fft_candidate.py /tmp/fft-check --size 1024 --yosys /path/to/yosys
 ```

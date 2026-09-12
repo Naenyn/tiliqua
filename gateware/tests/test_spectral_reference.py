@@ -70,3 +70,24 @@ def test_real_capture_repeatability_not_ground_truth(name,low,high):
     fs=int(data['header']['fs'])/int(data['header']['div'])
     result=estimate(data['samples'],fs,200,20000)
     assert result and result.qualified and low<result.hz<high
+
+
+@pytest.mark.parametrize('padding',[1,4])
+def test_short_narrow_pulse_windows(padding):
+    data=json.loads((Path(__file__).parent/'fixtures'/'tuner-local-parks-narrow-pulse-1001.json').read_text())
+    # Overlapping observations of one recording, not independent accuracy trials.
+    results=[estimate(data['samples'][start:start+1024],192000,400,20000,padding=padding)
+             for start in range(0,1025,64)]
+    assert all(r and r.qualified and 995<r.hz<1005 for r in results)
+    assert 1200*math.log2(max(r.hz for r in results)/min(r.hz for r in results))<1
+
+
+@pytest.mark.parametrize('padding',[1,4])
+@pytest.mark.xfail(strict=True,reason='Selected-peak coverage can qualify harmonics of an out-of-bank repetition rate')
+def test_below_bank_modulated_blade_must_not_qualify(padding):
+    data=json.loads((Path(__file__).parent/'fixtures'/'tuner-local-parks-modulated-blade-attenuated.json').read_text())
+    # Longer-frame references find ~501 Hz repetition. This bank starts at 800 Hz;
+    # an apparently strong in-bank spectral series is not sufficient evidence.
+    results=[estimate(data['samples'][start:start+512],192000,800,20000,padding=padding)
+             for start in range(0,1537,64)]
+    assert all(r is None or not r.qualified for r in results)
