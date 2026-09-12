@@ -647,3 +647,17 @@ the host native guard. The retained regression therefore checks preservation
 of quiet bass and rejection of a simultaneous LFO counterexample. This is not
 proof across all phases or transients and does not enable the guard on-device.
 Next physical steady-level check requested: quiet 22–25 Hz, near the lower edge.
+
+Quiet low-edge trial completed on unchanged `1f0cb525`: fixture
+`tests/fixtures/nsdf-cpu-endpoint-lowedge.json`, raw log
+`/tmp/tuner-nsdf-endpoint-lowedge-live.log`. All eight source/CPU/IO/score sets
+validate. Low IN 0 qualifies 24.041 Hz in 0.846 ms with clarity 0.999964,
+frame RMS 97.987 versus source RMS 100.282 counts, endpoint offset +288
+native groups. The host low guard preserves it; native IN 0 has no candidate.
+IN 1 native is unqualified and also fails its host energy guard. There are no
+acquisition faults. This completes quiet steady-level examples near 880, 55
+and 24 Hz, not exact-20-Hz coverage or independent absolute accuracy proof.
+Guard decisions remain host-only. The next engineering qualification is
+transition behavior; the slow full-score diagnostic cannot measure a ~110-ms
+transient, so that needs a timestamped faster summary capture before asking
+the user to change levels repeatedly.

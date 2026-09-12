@@ -103,6 +103,17 @@ def test_physical_source_capture_rejects_lfo_false_candidate_on_host():
     assert sine['native_relative_energy_pass'] is None # No invented low-bank alignment.
 
 
+def test_physical_endpoint_capture_preserves_quiet_low_edge():
+    reports=physical_source_reports('nsdf-cpu-endpoint-lowedge.json')
+    assert all(-512<=r['source_frame_offset_native']<=512 for r in reports)
+    low=next(r for r in reports if r['channel']==0 and r['bank']=='low')
+    assert low['qualified'] and 23<low['hz']<25
+    assert low['low_relative_energy_pass']
+    assert 85<low['rms_counts']<115 and 85<low['source_rms']<115
+    native=next(r for r in reports if r['channel']==0 and r['bank']=='native')
+    assert not native['qualified'] and native['hz']==0
+
+
 def test_physical_source_capture_preserves_previously_attenuated_native_sine():
     reports=physical_source_reports('nsdf-cpu-source-880.json')
     native=next(r for r in reports if r['channel']==0 and r['bank']=='native')
