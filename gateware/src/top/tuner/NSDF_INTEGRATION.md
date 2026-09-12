@@ -88,8 +88,8 @@ user to approximately 880 Hz. Build `d637e584`. Complete serial frames report:
 | Native, repeat | 880.958 Hz | 0.999946 | yes / no |
 | Low, repeat session | 881.408 Hz | 0.985023 | yes / no |
 
-No diagnostic acquisition errors were reported in these captures. An idle IN 3
-low-bank frame was correctly unqualified (0.091 RMS counts). Complete tone
+No diagnostic acquisition errors were reported in these captures. A near-silent IN 3
+low-bank frame was unqualified (0.091 RMS counts). Complete tone
 frames and that idle frame are retained in
 `tests/fixtures/nsdf-local-parks-sine-880.json`, with a parser/qualification
 regression test. Partial packets at connection boundaries were excluded.
@@ -101,6 +101,15 @@ accuracy or stability claim**: there is no independent frequency reference,
 and the banks were captured seconds apart. Repeated native readings differ by
 about 1.06 Hz; this export alone cannot separate source variation from estimator
 variation. Next physical case: a thin pulse at the same oscillator setting.
+
+Later complete frames from the same session expose a qualification concern:
+IN 1 native bank reports 15782.783 Hz, clarity 0.854231, at only 7.861 RMS
+counts, and passes the current host gate. The patch state of that input has
+not been confirmed, so this is not yet proof of a false pitch on an empty
+jack. Other-channel records are retained in
+`tests/fixtures/nsdf-local-parks-880-other-channel.json`. Do not claim all quiet
+inputs are rejected or raise the amplitude floor without checking the signal
+and preserving the previously demonstrated low-level sensitivity.
 
 First compare exported estimates on a steady sine, then the previously captured
 thin pulse, across low/mid/high pitches. Confirm no audio drops, metadata faults,
