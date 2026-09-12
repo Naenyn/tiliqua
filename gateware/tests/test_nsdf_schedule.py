@@ -81,11 +81,14 @@ def test_summary_worst_case_capacity():
     assert len(line)<=224
 
 
-def test_physical_continuous_four_tone_rates_and_results():
-    reports=list(analyze_schedule((Path(__file__).parent/'fixtures/nsdf-continuous-four-tones.txt').read_text()))
+@pytest.mark.parametrize('high',[False,True])
+def test_physical_continuous_four_tone_rates_and_results(high):
+    fixture='nsdf-continuous-mixed-10k.txt' if high else 'nsdf-continuous-four-tones.txt'
+    reports=list(analyze_schedule((Path(__file__).parent/'fixtures'/fixture).read_text()))
     assert len(reports)==200
     total_cpu=0
     ranges=[(880,884),(775,779),(174,177),(138,140)]
+    if high:ranges[0]=(10000,10010)
     for ch in range(4):
         for low in (False,True):
             group=[r for r in reports if (r['ch'],r['low'])==(ch,low)]
@@ -96,12 +99,13 @@ def test_physical_continuous_four_tone_rates_and_results():
             assert 11<rate<11.3
             total_cpu+=((b['work']-a['work'])&0xffffffff)/(elapsed*60000)
             expected=low or ch<2
+            if high and ch==0:expected=not low
             assert all(r['ok']==expected and r['faults']==0 for r in group)
             if expected:
                 lo,hi=ranges[ch]
                 assert all(lo<r['hz']<hi for r in group)
     assert .065<total_cpu<.08
-    assert all(r['age']<=90 and r['dt']<=4 and r['cycles']/60000<1.6 for r in reports)
+    assert all(r['age']<=90 and r['dt']<=4 and r['cycles']/60000<(2 if high else 1.6) for r in reports)
     # Latest-value telemetry observes only some completed acquisitions.
     # Do not claim these reports prove qualification on every acquisition.
     assert all(not r['score_parity_checked'] for r in reports)

@@ -1128,3 +1128,25 @@ Normal UI cadence remained configured. No firmware change or flash required
 for saving this regression. Next integration must retain freshness/guard
 checks and resolve the two banks into one bounded per-input result before
 promoting anything to the authoritative tuner/calibrator/quantizer path.
+
+### Continuous mixed-frequency test, IN0 approximately 10 kHz
+
+User raised IN0 only; other three tones unchanged. Capture
+`/tmp/tuner-continuous-mixed-10k.log` completed 200 validated RUN records and
+closed. All originals saved in `tests/fixtures/nsdf-continuous-mixed-10k.txt`.
+IN0 native qualified/guard-passed on all 25 reported observations at
+10003.610..10007.721 Hz. Low bank had no raw-qualified or guard-passing
+observations, correctly rejecting this out-of-band tone; unqualified candidate
+values 21.580..521.575 Hz must not be mistaken for accepted pitch results.
+IN1 qualified in both banks around 776 Hz; IN2/3 low-bank-only around
+175.3/138.8 Hz. All 200 reports had zero cumulative acquisition faults.
+
+Rates were 11.099..11.208 updates/s per bank, maximum reported age 89 ms,
+request-to-completion-observation <=4 ms. Cumulative measured selector+guard
+work summed to 6.820% CPU (same exclusions/caveats as previous capture).
+Worst sampled call 1.937 ms was the ultimately rejected IN0 low-bank frame.
+Evaluating the independent source-energy veto before expensive selection is
+a possible later optimization, but this capture does not change the ordering.
+No absolute pitch-accuracy or every-acquisition-qualification claim: these
+remain decimated latest-value observations, not full score/source exports.
+No firmware changes or reflash for recording this test.
