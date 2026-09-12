@@ -79,6 +79,29 @@ Flash only an archive whose final routed clocks all pass; do not erase options.
 
 ## Hardware trial and remaining gates
 
+First physical trial, September 12, 2026: Local Parks sine into IN 0, set by the
+user to approximately 880 Hz. Build `d637e584`. Complete serial frames report:
+
+| Bank | Frequency | Clarity | Qualified / clipped |
+|---|---:|---:|---|
+| Native, first capture | 882.016 Hz | 0.999940 | yes / no |
+| Native, repeat | 880.958 Hz | 0.999946 | yes / no |
+| Low, repeat session | 881.408 Hz | 0.985023 | yes / no |
+
+No diagnostic acquisition errors were reported in these captures. An idle IN 3
+low-bank frame was correctly unqualified (0.091 RMS counts). Complete tone
+frames and that idle frame are retained in
+`tests/fixtures/nsdf-local-parks-sine-880.json`, with a parser/qualification
+regression test. Partial packets at connection boundaries were excluded.
+The raw session logs are `/tmp/tuner-nsdf-localparks-880-serial.log` and
+`/tmp/tuner-nsdf-localparks-880-repeat.log`.
+
+These are successful basic capture/qualification results, **not a sub-cent
+accuracy or stability claim**: there is no independent frequency reference,
+and the banks were captured seconds apart. Repeated native readings differ by
+about 1.06 Hz; this export alone cannot separate source variation from estimator
+variation. Next physical case: a thin pulse at the same oscillator setting.
+
 First compare exported estimates on a steady sine, then the previously captured
 thin pulse, across low/mid/high pitches. Confirm no audio drops, metadata faults,
 UI stalls or output behavior changes. The display still shows baseline pitch:
