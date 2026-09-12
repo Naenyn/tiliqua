@@ -142,3 +142,15 @@ def test_physical_endpoint_capture_aligns_both_quiet_sine_banks():
             assert report[field]
             assert 90<report['rms_counts']<110
     assert any(r['source_frame_offset_native']<0 for r in reports)
+
+
+def test_physical_endpoint_capture_preserves_quiet_bass_and_rejects_lfo():
+    reports=physical_source_reports('nsdf-cpu-endpoint-55.json')
+    assert all(-512<=r['source_frame_offset_native']<=512 for r in reports)
+    low=next(r for r in reports if r['channel']==0 and r['bank']=='low')
+    assert low['qualified'] and 54<low['hz']<56
+    assert low['low_relative_energy_pass']
+    assert 90<low['rms_counts']<110 and 90<low['source_rms']<110
+    lfo=next(r for r in reports if r['channel']==1 and r['bank']=='native')
+    assert lfo['qualified'] and 15000<lfo['hz']<16000
+    assert not lfo['native_relative_energy_pass']

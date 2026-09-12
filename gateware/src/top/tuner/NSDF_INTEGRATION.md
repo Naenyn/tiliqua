@@ -632,3 +632,18 @@ LFO native is unqualified and fails the energy guard; low has no candidate even
 though its energy guard passes. Energy is an additional veto, never a substitute
 for pitch qualification. Quiet unused channels are gated. Next physical check:
 quiet ~55-Hz sine, then amplitude transitions. Firmware remains diagnostic-only.
+
+Quiet ~55-Hz endpoint trial, same `1f0cb525` hardware and LFO setup: eight
+validated records retained in `tests/fixtures/nsdf-cpu-endpoint-55.json`, raw
+log `/tmp/tuner-nsdf-endpoint-55-live.log`. Low IN 0 qualifies 54.999 Hz in
+0.731 ms; frame RMS 98.731 versus source RMS 98.007 counts, endpoint offset
++256 native groups, so the provisional low-bank energy guard passes. Native
+IN 0 has no candidate, as expected outside its 600–20000-Hz analysis band.
+All source/endpoints, CPU/model comparisons, checksums and read bounds pass.
+
+IN 1 native again produces a raw qualified LFO false candidate at 15786.557 Hz
+(clarity 0.895668), but frame RMS 7.726 versus source RMS 126.224 counts fails
+the host native guard. The retained regression therefore checks preservation
+of quiet bass and rejection of a simultaneous LFO counterexample. This is not
+proof across all phases or transients and does not enable the guard on-device.
+Next physical steady-level check requested: quiet 22–25 Hz, near the lower edge.
