@@ -4,6 +4,24 @@ import json
 from pathlib import Path
 
 
+def analyze_picks(text):
+    for line in text.splitlines(keepends=True):
+        if not line.endswith('\n') or not line.startswith('NSDF PICK '):continue
+        f=dict(p.split('=') for p in line.split()[2:])
+        if f.keys()!={'ch','ms','n','na','nq','l','la','lq','mhz','src'}:raise ValueError('unexpected resolver fields')
+        if f['nq'] not in ('true','false') or f['lq'] not in ('true','false'):raise ValueError('invalid resolver boolean')
+        r={k:(v=='true' if k in ('nq','lq') else int(v)) for k,v in f.items()}
+        if any(not 0<=r[k]<2**32 for k in f.keys()-{'nq','lq'}) or r['ch']>3:raise ValueError('invalid resolver integer')
+        n=r['nq'] and r['na']<=250 and 600000<=r['n']<=20000000
+        l=r['lq'] and r['la']<=250 and 20000<=r['l']<=1500000
+        if n and l:
+            expected=(0,3) if abs(r['n']-r['l'])*50>min(r['n'],r['l']) else (
+                (r['l'],1) if r['l']<=1000000 else (r['n'],2))
+        else:expected=(r['n'],2) if n else ((r['l'],1) if l else (0,0))
+        if (r['mhz'],r['src'])!=expected:raise ValueError('resolver reference mismatch')
+        yield r
+
+
 def analyze_schedule(text):
     previous_slot=None
     previous={}

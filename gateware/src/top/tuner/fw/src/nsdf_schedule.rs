@@ -3,6 +3,8 @@
 use core::fmt::Write;
 use heapless::String;
 use tiliqua_pac as pac;
+#[path="nsdf_resolve.rs"]
+mod resolve;
 
 #[derive(Clone,Copy)]
 struct Latest {
@@ -14,7 +16,7 @@ impl Latest {
         raw:false,guard:false,valid:false};
 }
 pub struct Scheduler {
-    latest:[Latest;8], pending:String<224>, offset:usize,
+    latest:[Latest;8], pending:String<384>, offset:usize,
     slot:u8, report:u8, active:bool, due:u64, started:u64,
     report_due:u64, faults:u32,
 }
@@ -104,6 +106,16 @@ impl Scheduler {
             // results, never replay an unbounded backlog. age is at formatting.
             write!(self.pending,"NSDF RUN ch={} low={} count={} seq={} mhz={} raw={} guard={} ok={} age={} dt={} cycles={} work={} faults={} ms={}\n",
                 self.report>>1,self.report&1!=0,r.count,r.seq,r.mhz,r.raw,r.guard,ok,age,r.dt,r.cycles,r.work,self.faults,now as u32).ok();
+            if self.report&1!=0 {
+                let n=self.latest[(self.report-1) as usize];
+                let na=now.saturating_sub(n.done).min(u32::MAX as u64) as u32;
+                let nq=n.valid && n.count>0 && n.raw && n.guard;
+                let lq=r.valid && r.count>0 && r.raw && r.guard;
+                let selected=resolve::resolve(resolve::Candidate {mhz:n.mhz,age:na,qualified:nq},
+                    resolve::Candidate {mhz:r.mhz,age,qualified:lq});
+                write!(self.pending,"NSDF PICK ch={} ms={} n={} na={} nq={} l={} la={} lq={} mhz={} src={}\n",
+                    self.report>>1,now as u32,n.mhz,na,nq,r.mhz,age,lq,selected.mhz,selected.source).ok();
+            }
             self.report=(self.report+1)&7;self.report_due=now.saturating_add(50);
         }
     }

@@ -63,6 +63,9 @@ def main():
                 if line.startswith('NSDF ERROR'):
                     raise RuntimeError(line.strip())
                 if args.continuous:
+                    if line.startswith('NSDF PICK '):
+                        from analyze_nsdf_schedule import analyze_picks
+                        list(analyze_picks(line))
                     if line.startswith(('NSDF SOURCE ','NSDF BEGIN ','NSDF FAST ')):
                         raise RuntimeError('expected continuous scheduler firmware')
                     if line.startswith('NSDF RUN '):

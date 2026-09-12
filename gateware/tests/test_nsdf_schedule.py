@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 import subprocess
 import pytest
-from analyze_nsdf_schedule import analyze_schedule
+from analyze_nsdf_schedule import analyze_schedule,analyze_picks
 import sys
 from types import SimpleNamespace
 import capture_nsdf_cpu
@@ -18,6 +18,10 @@ def test_real_scheduler_keeps_acquiring_during_uart_stall(tmp_path,scenario):
                     '-o',str(exe)],env=dict(os.environ,TILIQUA_TUNER_NSDF_TRACE='continuous'),check=True)
     text=subprocess.check_output([exe,str(scenario)],text=True)
     checked=list(analyze_schedule(text))
+    picks=list(analyze_picks(text))
+    assert len(picks)>40
+    assert {p['ch'] for p in picks}=={0,1,2,3}
+    assert all(p['src']==1 for p in picks[-4:])
     assert all(not r['score_parity_checked'] for r in checked)
     if scenario==0:
         assert all(12<=r['updates_per_second']<=13 for r in checked
@@ -79,6 +83,9 @@ def test_summary_worst_case_capacity():
           'raw=false guard=false ok=false age=4294967295 dt=4294967295 '
           'cycles=4294967295 work=4294967295 faults=4294967295 ms=4294967295\n')
     assert len(line)<=224
+    pick=('NSDF PICK ch=3 ms=4294967295 n=20000000 na=4294967295 nq=false '
+          'l=1500000 la=4294967295 lq=false mhz=20000000 src=3\n')
+    assert len(line+pick)<=384
 
 
 @pytest.mark.parametrize('high',[0,10,19,25])

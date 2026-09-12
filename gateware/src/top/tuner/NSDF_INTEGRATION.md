@@ -1192,3 +1192,32 @@ or total CPU use. Existing patch may remain unchanged. No new flash for
 recording these regressions. Next integration work is bounded per-input
 bank resolution with explicit freshness, disagreement and source-guard rules;
 baseline tuner/calibrator/quantizer remain authoritative pending validation.
+
+### Diagnostic per-input bank resolution
+
+`nsdf_resolve.rs` is a pure, integer-only arbitration function. Candidates
+must be valid, raw-qualified, source-guard-passing, in their bank's frequency
+range and <=250 ms old. One eligible candidate wins; neither yields no pitch.
+When both are eligible, differences >2% of the lower frequency produce an
+explicit conflict/no-pitch result. No averaging, octave folding or extrapolated
+pitch. Within tolerance, prefer low at <=1 kHz, otherwise native. This initial
+overlap policy and ~34-cent agreement tolerance are diagnostic choices, NOT
+precision guarantees or a proven optimum for modulated/transient signals.
+Different window durations and asynchronous acquisition can temporarily
+produce conflicts during genuine pitch movement; this is not silently hidden.
+
+Each low-bank RUN report now appends `NSDF PICK` for the same channel with
+both candidate frequencies, ages, qualification predicates and resolved
+frequency/source (0 absent, 1 low, 2 native, 3 conflict). Resolution is evaluated
+from the actual current pair at formatting time, not reconstructed from sparse
+host reports. The host independently checks each complete PICK decision.
+These outputs remain diagnostic-only; no production pitch, calibration or
+quantization changes. Acquisition remains independent of serial output.
+
+One pending buffer increased from 224 to 384 bytes to hold the paired records;
+the embedded <=1024-byte scheduler-state assertion is retained. Tests exercise
+the actual Rust resolver with overflow checks, range/freshness endpoints,
+unqualified/guard-vetoed candidates, octave disagreement, tolerance boundaries,
+and deterministic random inputs. Real scheduler mock checks PICK decisions
+through serial stalls, hardware timeouts, unavailable history and recovery.
+127 focused tests passed. Hardware validation and embedded build still needed.
