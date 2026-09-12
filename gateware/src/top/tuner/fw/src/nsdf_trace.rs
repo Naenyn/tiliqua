@@ -17,6 +17,9 @@ impl Trace {
             low: FAST_LOW, index: 0, due: 2000, started: 0 }
     }
     pub fn fast(&self)->bool { FAST }
+    pub fn ui_period_ms(&self, idle_tuner:bool, normal:u64)->u64 {
+        if FAST && idle_tuner {100} else {normal}
+    }
     pub fn tick(&mut self, uart: &pac::UART0, now: u64) {
         // Only compiled with the matching opt-in gateware register block.
         let nsdf = unsafe { &*pac::NSDF_PERIPH::ptr() };

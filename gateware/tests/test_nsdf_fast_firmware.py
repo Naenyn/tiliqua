@@ -6,6 +6,14 @@ import pytest
 from analyze_nsdf_fast import analyze_fast
 
 
+def test_physical_quiet_low_summaries_expose_slow_service():
+    reports=list(analyze_fast((Path(__file__).parent/'fixtures/nsdf-fast-low-steady.txt').read_text()))
+    assert len(reports)==3
+    assert all(r['guarded_qualified'] and 24.3<r['hz']<24.5 for r in reports)
+    assert all(350<r['frame_interval_ms']<390 for r in reports[1:])
+    assert all(not r['score_parity_checked'] for r in reports)
+
+
 @pytest.mark.parametrize('mode',['full','fast-native','fast-low'])
 def test_real_trace_state_machine_bounded_uart_and_cadence(tmp_path,mode):
     here=Path(__file__).parent;exe=tmp_path/'trace'

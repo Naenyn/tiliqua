@@ -1,0 +1,9 @@
+NSDF SOURCE ch=0 low=true seq=276993 end=8864256 n=20480 sum=-248096 squares=210420358 status=1 frame_end=8864544
+NSDF CPU ch=0 low=true seq=276993 mhz=24381 raw=24381 ppm=999942 ok=true cycles=49464 reads=604
+NSDF FAST ch=0 low=true seq=276993 energy=5832926 scaled=0 clipped=0 start_ms=44625 end_ms=44882
+NSDF SOURCE ch=0 low=true seq=279249 end=8936448 n=20480 sum=-13603 squares=191241963 status=1 frame_end=8936736
+NSDF CPU ch=0 low=true seq=279249 mhz=24353 raw=24353 ppm=999958 ok=true cycles=49241 reads=604
+NSDF FAST ch=0 low=true seq=279249 energy=5860247 scaled=0 clipped=0 start_ms=45001 end_ms=45252
+NSDF SOURCE ch=0 low=true seq=281464 end=9007616 n=20480 sum=-3900 squares=188837906 status=1 frame_end=9007616
+NSDF CPU ch=0 low=true seq=281464 mhz=24358 raw=24358 ppm=999961 ok=true cycles=49427 reads=604
+NSDF FAST ch=0 low=true seq=281464 energy=5837238 scaled=0 clipped=0 start_ms=45370 end_ms=45629

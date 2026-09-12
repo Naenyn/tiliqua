@@ -1444,7 +1444,16 @@ fn run(resources: &mut RuntimeResources) -> ! {
             // opportunities between UI frames; UART writes remain bounded.
             #[cfg(tuner_nsdf)]
             if nsdf_trace.fast() {nsdf_trace.tick(uart,now);}
-            if now.wrapping_sub(last_ui_ms)<TIMER0_ISR_PERIOD_MS as u64 {continue;}
+            let ui_period_ms=TIMER0_ISR_PERIOD_MS as u64;
+            // Opt-in transition capture trades idle tuner UI refresh for UART
+            // service opportunities. Never throttle calibration, verify or PLAY.
+            // Encoder sampling and output processing remain in their ISRs.
+            #[cfg(tuner_nsdf)]
+            let ui_period_ms=nsdf_trace.ui_period_ms(!calibration.active()
+                && with_app(|app|app.ui.opts.tracker.page.value==options::Page::Tuner)
+                && !critical_section::with(|cs|PLAYBACK.borrow_ref(cs).active),ui_period_ms);
+            let ui_elapsed_ms=now.wrapping_sub(last_ui_ms);
+            if ui_elapsed_ms<ui_period_ms {continue;}
             last_ui_ms=now;
             let ui_frame = poll_ui_frame();
             if ui_frame.run_play && ui_frame.controls.mode==runtime::OperatingMode::Play {
@@ -1506,7 +1515,10 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     }
                 }
             }
-            if save_feedback.tick(TIMER0_ISR_PERIOD_MS as u16) {
+            let feedback_ms=if ui_period_ms>TIMER0_ISR_PERIOD_MS as u64 {
+                ui_elapsed_ms.min(u16::MAX as u64) as u16
+            } else {TIMER0_ISR_PERIOD_MS as u16};
+            if save_feedback.tick(feedback_ms) {
                 menu_dirty_banks = 0b11;
             }
             if ui_frame.menu_dirty {

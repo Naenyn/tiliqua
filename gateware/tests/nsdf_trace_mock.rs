@@ -63,6 +63,8 @@ mod nsdf_select {
 #[path="../src/top/tuner/fw/src/nsdf_trace.rs"] mod trace;
 fn main() {
     let mut trace=trace::Trace::new();let uart=UART0;
+    assert_eq!(trace.ui_period_ms(false,5),5);
+    assert_eq!(trace.ui_period_ms(true,5),if trace.fast(){100}else{5});
     for now in 0..12000 {
         let before=STATE.with(|s|{let mut s=s.borrow_mut();s.now=now;s.ready=!(2500..2900).contains(&now);s.out.len()});
         trace.tick(&uart,now);

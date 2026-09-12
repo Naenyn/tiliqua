@@ -720,3 +720,25 @@ this is not hardware validation. Next user action is reopening TUNER. Do not
 request signal changes yet: measure summary cadence on the existing quiet
 ~24-Hz sine first. Logs `/tmp/tuner-nsdf-fast-low-boot-probe{,-status}.log`.
 There are no pending serial sessions and no claim of an on-device guard change.
+
+### Fast-low physical steady capture and service adjustment
+
+Firmware `38dcd642`: 200/200 complete summaries qualified both the CPU
+selector and host-only source-energy guard on the unchanged quiet bass IN0
+(LFO IN1). Reported frequency 24.338–24.441 Hz. Actual frame intervals were
+356/372/382 ms min/median/max, measured from native endpoints. This validates
+steady qualification, NOT 20-Hz reporting, transition latency or absolute
+frequency accuracy. Log `/tmp/tuner-nsdf-fast-low-steady.log`; capture closed
+normally. First three complete physical reports are retained in
+`tests/fixtures/nsdf-fast-low-steady.txt` with a parser/cadence regression.
+
+The UI's nominal 5-ms gate did not reserve sufficient foreground time for
+the bounded UART exporter. Fast modes now use a 100-ms foreground UI gate
+only on the idle TUNER page, with neither calibration nor playback active.
+Normal/full-export builds, other pages and active outputs retain their
+existing scheduling. Encoder sampling and playback interrupts are unchanged.
+This intentionally slows diagnostic idle UI refresh; it is not a production
+renderer change. Save feedback uses elapsed time during this throttling.
+The trace still writes at most 32 bytes per call and caps requests at 20 Hz.
+No buffers, FPGA logic or RAM capacity were added. Actual new cadence remains
+to be measured before requesting any physical level transition.
