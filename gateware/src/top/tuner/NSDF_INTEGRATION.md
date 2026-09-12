@@ -29,7 +29,9 @@ The experiment has no connection to output-voltage ownership or profile storage.
 
 `TILIQUA_TUNER_NSDF=1` enables both the gateware peripheral and matching firmware
 through its build script. Without it, the existing tuner remains unchanged.
-Diagnostic identity is `0x4e534401`; a mismatch is reported rather than ignored.
+Diagnostic identity is now `0x4e534402` (source-moment registers added);
+earlier score-only captures used `0x4e534401`. A mismatch is reported rather
+than ignored.
 
 ## Validation so far
 
@@ -438,3 +440,53 @@ Basic physical coverage now includes approximately 24 Hz, 55 Hz, 880-Hz pulse,
 10 kHz and 18.5 kHz. This supports proceeding to aligned source-energy guarding
 and continuous four-channel scheduling; it does not waive the previously listed
 production gates or establish full-band worst-case performance.
+
+## Source-energy diagnostic integration
+
+The new `NsdfSourceEnergy` measures raw sum and sum of squares over a rolling
+40-block window, 512 native sample groups per block: 20480 samples, 106.667 ms.
+One multiplier is shared across four channels. Packed ring entries use three
+32-bit words per channel/block (signed sum, square low32/high8), 480 words total,
+mapping to one EBR rather than a wide shallow array. There is no new CPU frame
+buffer. Outputs publish atomically at block boundaries, retaining an exclusive
+native sample-group sequence and readiness flag. Source windows update every
+2.667 ms, not for each pitch request. Missing an input batch sets a sticky fault
+and invalidates the measurements until reset. The worst input-group service
+time is under 100 main-clock cycles, versus 312.5 cycles available at 192 kHz.
+
+Exact simulation checks include full-size windows, ring replacement, signed
+extremes, constant DC, alternating extremes, independent random samples, atomic
+publication and overrun. Isolated synthesis: 1 EBR, 1 DSP, 788 LUT4, 1272 FF.
+An initial synthesis unnecessarily mapped two constant address multiplications
+to DSPs; explicit shifts/additions removed them. Isolated routed timing is
+101.41 MHz at a 60-MHz target. These costs exclude CSR integration.
+
+The peripheral now snapshots the selected channel's source moments on each
+accepted analysis request. Byte-wide CSR tests check signed totals, split square
+readback, frozen values despite continued acquisition, channel changes and
+warm-up readiness. Identity changes to `0x4e534402`; firmware emits a preceding
+`NSDF SOURCE` line with channel, bank, score sequence, source end sequence,
+sample count, sum, squares, and status (bit0 ready, bit1 overrun, bits2..3 channel).
+Existing CPU/IO/score triples remain contiguous. This firmware does NOT use
+these moments to accept/reject pitch yet, and does not alter production pitch,
+CV ownership, saved profiles or the quantizer interrupt.
+
+`analyze_nsdf_source.py LOG` verifies matching frame identity, bounds, readiness,
+source faults and physically possible moments. Native source age uses wrapping
+sequence subtraction with an explicit maximum 512-sample allowance; the host
+reports whether native-frame RMS exceeds max(2 counts, 10% of centered source
+RMS). This is a provisional host diagnostic, not a proven hardware LFO fix.
+Filtered-bank sample sequences have a different origin/rate: no alignment or
+relative-energy decision is invented for them. Low-bank source alignment,
+transient behavior and the 2% low-bank guard still need implementation/testing.
+The capture helper's `--source` option requires a whole cycle with validated
+source metadata, rather than stopping on CPU-only coverage. Protocol tests use
+explicitly synthetic moments and are not presented as measured source energy.
+
+Full normal-display/192-kHz build, seed15, passes FINAL routing: main 66.76 MHz
+at 60 MHz; pixel 86.18 at 74.25; serializer 401.61 at 371.33; audio 67.36 at
+49.152. Total 46/56 EBR and 15/28 DSP, versus previous 45/14. The preliminary
+placement timing failed before routing; only the final routed figures above
+qualify this artifact. CPU RAM remains 32 KiB. No claim of measured stack
+high-water or continuous four-channel throughput is made. New source metadata
+still needs physical validation after loading this diagnostic build.

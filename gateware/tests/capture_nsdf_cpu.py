@@ -7,12 +7,19 @@ No commands are sent to firmware and no bitstream is flashed.
 import argparse
 import sys
 import time
+import re
 from analyze_nsdf_cpu import analyze
 
 
-def complete_cycle(text):
+def complete_cycle(text,require_source=False):
+    analyzer=analyze
+    if require_source:
+        from analyze_nsdf_source import analyze_source
+        start=re.search(r'^NSDF SOURCE ',text,re.M)
+        if start is None:return False
+        text=text[start.start():];analyzer=analyze_source
     try:
-        reports=list(analyze(text))
+        reports=list(analyzer(text))
     except ValueError as exc:
         if str(exc)=='no complete CPU/IO/score triples':return False
         raise
@@ -24,6 +31,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('port',help='Confirmed debug serial device, not flashing port')
     parser.add_argument('--timeout',type=float,default=180,help='Maximum capture seconds')
+    parser.add_argument('--source',action='store_true',help='Also require validated frozen source metadata')
     args=parser.parse_args()
     if not 0<args.timeout<=600:parser.error('timeout must be >0 and <=600 seconds')
     import serial
@@ -45,7 +53,7 @@ def main():
                 fragments.append(line)
                 if line.startswith('NSDF ERROR'):
                     raise RuntimeError(line.strip())
-                if line=='NSDF END\n' and complete_cycle(''.join(fragments)):
+                if line=='NSDF END\n' and complete_cycle(''.join(fragments),args.source):
                     print('Validated all four channels and both banks; disconnected.',file=sys.stderr)
                     return
             if sum(map(len,fragments))+len(pending)>1048576:

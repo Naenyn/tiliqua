@@ -28,6 +28,20 @@ def test_bad_reports_fail_instead_of_counting_as_coverage():
         complete_cycle(''.join(blocks()).replace('mhz=15819849','mhz=1'))
 
 
+def test_source_mode_requires_a_complete_validated_source_cycle():
+    records=blocks();with_source=[]
+    for block in records:
+        c=dict(p.split('=') for p in block.splitlines()[0].split()[2:])
+        # Synthetic constant-source moments, only testing protocol completion.
+        source=dict(ch=c['ch'],low=c['low'],seq=c['seq'],end=int(c['seq'])-100,
+                    n=20480,sum=0,squares=0,status=1|(int(c['ch'])<<2))
+        with_source.append('NSDF SOURCE '+' '.join(f'{k}={v}' for k,v in source.items())+'\n'+block)
+    assert not complete_cycle(''.join(records),require_source=True)
+    assert complete_cycle(records[0]+''.join(with_source),require_source=True)
+    with pytest.raises(ValueError):
+        complete_cycle(''.join(with_source).replace('n=20480','n=20479'),require_source=True)
+
+
 @pytest.mark.parametrize('error',[False,True])
 def test_capture_handles_split_reads_and_closes_port(monkeypatch,capsys,error):
     raw=('NSDF ERROR fault\n' if error else ''.join(blocks())).encode()

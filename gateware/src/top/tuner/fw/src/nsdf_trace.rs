@@ -27,7 +27,7 @@ impl Trace {
         match self.state {
             0 => {
                 if now < self.due { return; }
-                if nsdf.identity().read().value().bits() != 0x4e534401 {
+                if nsdf.identity().read().value().bits() != 0x4e534402 {
                     self.pending.push_str("NSDF ERROR incompatible gateware\n").ok();
                     self.due = now.saturating_add(5000); return;
                 }
@@ -47,6 +47,17 @@ impl Trace {
                     write!(self.pending,"NSDF ERROR ch={} low={} status={:08x}\n",self.channel,self.low,status).ok();
                     self.state = 3; return;
                 }
+                let source_sum=nsdf.source_sum().read().value().bits() as i32;
+                let source_squares=(nsdf.source_squares_low().read().value().bits() as u64)
+                    |((nsdf.source_squares_high().read().value().bits() as u64)<<32);
+                write!(self.pending,"NSDF SOURCE ch={} low={} seq={} end={} n={} sum={} squares={} status={}\n",
+                    self.channel,self.low,nsdf.sequence().read().value().bits(),
+                    nsdf.source_sequence().read().value().bits(),nsdf.source_samples().read().value().bits(),
+                    source_sum,source_squares,nsdf.source_status().read().value().bits()).ok();
+                self.state=6;
+            }
+            6 => {
+                let status=nsdf.status().read().value().bits();
                 let energy=(nsdf.energy_low().read().value().bits() as u64)
                     | ((nsdf.energy_high().read().value().bits() as u64)<<32);
                 let started=crate::playback_cycles();
