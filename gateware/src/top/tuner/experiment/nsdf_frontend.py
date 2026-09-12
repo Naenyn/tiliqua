@@ -24,7 +24,7 @@ class NsdfFrontend(wiring.Component):
             'native_filled':Out(range(1025)),'low_filled':Out(range(1025)),
             'score_valid':Out(1),'score_ready':In(1),'lag':Out(range(322)),
             'score':Out(signed(22)),'frame_energy':Out(42),
-            'frame_sequence':Out(32),'frame_channel':Out(2),'frame_low_bank':Out(1),
+            'frame_sequence':Out(32),'frame_native_end':Out(32),'frame_channel':Out(2),'frame_low_bank':Out(1),
             'frame_scaled':Out(1),'frame_clipped':Out(1),'overrun':Out(1)})
 
     def elaborate(self,platform):
@@ -33,6 +33,7 @@ class NsdfFrontend(wiring.Component):
         m.submodules.low_history=history=Memory(shape=17,depth=4096,init=[])
         write=history.write_port();read=history.read_port()
         write_head=Signal(10);low_head=Signal(10);low_sequence=Signal(32);low_valid=Signal()
+        low_native_end=Signal(32)
         accepting=Signal();launch=Signal();snapshot_started=Signal()
         m.d.comb += [a.input_valid.eq(self.input_valid),self.input_ready.eq(a.input_ready),
             a.low_ready.eq(1),write.en.eq(a.low_valid),
@@ -61,12 +62,16 @@ class NsdfFrontend(wiring.Component):
         for ch in range(4):m.d.comb += getattr(a,f'sample{ch}').eq(getattr(self,f'sample{ch}'))
         m.d.sync += [self.done.eq(0),launch.eq(accepting),low_valid.eq(read.en)]
         with m.If(a.low_valid & (a.low_channel==3)):
-            m.d.sync += [low_head.eq(write_head),write_head.eq(write_head+1),low_sequence.eq(low_sequence+1)]
+            m.d.sync += [low_head.eq(write_head),write_head.eq(write_head+1),low_sequence.eq(low_sequence+1),
+                low_native_end.eq(a.low_sequence)]
             with m.If(self.low_filled<1024):m.d.sync += self.low_filled.eq(self.low_filled+1)
         with m.If(accepting):
             m.d.sync += [self.busy.eq(1),self.fault.eq(0),self.frame_channel.eq(self.channel),
                 self.frame_low_bank.eq(self.low_bank),snapshot_started.eq(0)]
-        with m.If(launch):m.d.sync += snapshot_started.eq(1)
+        # Same edge and published head as NsdfSnapshot freezes. The low-bank
+        # count cannot be multiplied by 32: FIR warm-up changes its origin.
+        with m.If(launch):m.d.sync += [snapshot_started.eq(1),
+            self.frame_native_end.eq(Mux(self.frame_low_bank,low_native_end,a.sequence))]
         with m.If(self.busy & snapshot_started & s.done & s.fault):
             m.d.sync += [self.busy.eq(0),self.fault.eq(1),self.done.eq(1)]
         with m.If(d.done):m.d.sync += [self.busy.eq(0),self.done.eq(1)]

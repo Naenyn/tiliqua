@@ -559,3 +559,42 @@ This is sparse physical evidence, not a proof across levels, LFO phases,
 transients or all frequencies. Installed firmware remains `eb9fab10`; the
 guard is not enabled on-device. Next engineering work remains low-bank source
 alignment and transition validation before continuous scheduling/integration.
+
+### Offline endpoint alignment and transition qualification (2026-09-12)
+
+Rack powered off at user request: no serial access or flash during this work.
+The low-bank count starts after FIR warmup, so `low_sequence * 32` alone is
+not its native endpoint. Acquisition already labels each filtered batch with
+its actual exclusive native endpoint. The frontend now publishes that label
+atomically with the four-channel low history head, then freezes it on the same
+edge as the selected snapshot. Native snapshots freeze the native history
+sequence instead. CSR offset 60 exposes `frame_native_end`; identity is now
+`0x4e534403` and firmware requires that version. SOURCE lines append
+`frame_end`, remaining within the existing 192-byte nonblocking UART buffer.
+No additional audio/score buffers, multiplier, or CPU RAM were introduced.
+
+Host analysis preserves old fixtures without inventing their missing endpoint.
+For new low-bank records, signed wrapping endpoint separation must lie within
+plus/minus 512 native groups before reporting the provisional 2% relative RMS
+guard. The source window can lead the filtered endpoint because FIR execution
+takes time, or trail it because moments publish every 512 samples. This is
+bounded temporal proximity, NOT identical sample support: 604 low samples with
+a 769-tap FIR cover 20064 native samples, versus 20480 for source moments.
+Production use still needs physical validation and bank-arbitration decisions.
+
+RTL tests cover both unchanged and shifted decimation origins using 5/37-tap
+filters, verify exact scores, and verify CSR endpoint stability while input
+continues during readout. Existing full 769-tap acquisition tests cover the
+actual filter's published native labels. Host tests cover explicit endpoints,
+stale/mismatched metadata, legacy compatibility and UART worst-case length.
+Synthetic actual-coefficient FIR tests preserve quiet 24/55/880/1400-Hz sines
+with and without DC offset. A 14000-to-100-count amplitude step exposes an
+intentional limitation: the native relative guard temporarily vetoes quiet
+audio until loud history ages out; settling is bounded by 20992 native groups
+(109.33 ms). This is not a claim of instantaneous quiet-signal response.
+
+The new guard remains host-only. Baseline tuner/calibrator/quantizer pitch and
+output ownership are unchanged. Tomorrow's first test is a complete SOURCE
+capture with the new endpoint field, then quiet low-frequency sine and an
+amplitude transition. Continuous scheduling and production promotion should
+follow those checks, not bypass them.

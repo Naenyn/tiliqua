@@ -1,8 +1,9 @@
 """Validate frozen source moments alongside complete CPU/IO/score records.
 
-Native-bank relative-energy qualification is a host-only diagnostic here. Low
-bank sequences have a different origin/rate; do not silently compare them to
-native sample counts. No candidate or output on the device is changed.
+Relative-energy qualification is a host-only diagnostic here. Low-bank
+sequences have a different origin/rate; only new captures with explicit native
+frame endpoints receive a low-bank decision. Legacy records remain readable
+without inventing alignment. No candidate or device output is changed.
 """
 import argparse
 import json
@@ -40,7 +41,20 @@ def analyze_source(text):
         if abs(total)>n*32768 or not 0<=squares<=n*(1<<30) or total*total>squares*n:
             raise ValueError('impossible source moments')
         rms=math.sqrt((squares*n-total*total)/(n*n)) if n else 0.0
-        age=None;relative_pass=None
+        age=None;relative_pass=None;low_relative_pass=None;endpoint_offset=None
+        if 'frame_end' in source:
+            frame_end=int(source['frame_end'])
+            if not 0<=frame_end<1<<32:raise ValueError('invalid frame endpoint')
+            endpoint_offset=((frame_end-end+(1<<31))&0xffffffff)-(1<<31)
+            if report['bank']=='native' and frame_end!=report['sequence']:
+                raise ValueError('native frame endpoint mismatch')
+            # Low frames finish FIR computation after their newest contributing
+            # native sample. Source publication can lead or trail that endpoint.
+            # This bounds alignment, not equality of differently filtered windows.
+            if status&1 and not -512<=endpoint_offset<=512:
+                raise ValueError('source/frame endpoint separation too large')
+            if report['bank']=='low' and status&1:
+                low_relative_pass=report['rms_counts']>max(2,.02*rms)
         if report['bank']=='native':
             age=(report['sequence']-end)&0xffffffff
             if status&1:
@@ -50,7 +64,9 @@ def analyze_source(text):
                 relative_pass=report['rms_counts']>max(2,.1*rms)
         yield dict(**report,source_end=end,source_samples=n,source_rms=rms,
                    source_ready=bool(status&1),source_age_native=age,
-                   native_relative_energy_pass=relative_pass)
+                   native_relative_energy_pass=relative_pass,
+                   source_frame_offset_native=endpoint_offset,
+                   low_relative_energy_pass=low_relative_pass)
 
 
 if __name__=='__main__':

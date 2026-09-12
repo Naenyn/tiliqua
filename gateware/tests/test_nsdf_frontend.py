@@ -1,12 +1,15 @@
 import numpy as np
+import pytest
 from amaranth.sim import Simulator
 from top.tuner.experiment.nsdf_frontend import NsdfFrontend
 
 
-def test_low_bank_signed_history_and_scores():
+@pytest.mark.parametrize('tap_count',[5,37])
+def test_low_bank_signed_history_and_scores(tap_count):
     # Short FIR accelerates warm-up only. Full 769-tap / 192-kHz execution is
     # covered by acquisition and streaming-integration tests separately.
-    taps=[65536,32768,16384,-8192,4096]
+    taps=[65536,32768,16384,-8192,4096]+[0]*(tap_count-5)
+    warmup_offset=((tap_count+31)//32-1)*32
     dut=NsdfFrontend(taps);rng=np.random.default_rng(6)
     samples=rng.integers(-15000,15000,(23000,4));observed=[];frames=[]
     async def bench(ctx):
@@ -27,13 +30,14 @@ def test_low_bank_signed_history_and_scores():
                 assert ctx.get(dut.frame_channel)==1 and ctx.get(dut.frame_low_bank)
                 assert not ctx.get(dut.frame_clipped)
                 frames.append((ctx.get(dut.frame_sequence),ctx.get(dut.frame_energy)))
+                assert ctx.get(dut.frame_native_end)==ctx.get(dut.frame_sequence)*32+warmup_offset
                 break
             await ctx.tick()
         else:raise AssertionError('frontend did not finish')
     sim=Simulator(dut);sim.add_clock(1/60e6);sim.add_testbench(bench);sim.run()
     sequence,energy=frames[0]
     low=[]
-    for seq in range((sequence-604)*32+32,sequence*32+1,32):
+    for seq in range((sequence-604)*32+32+warmup_offset,sequence*32+1+warmup_offset,32):
         total=sum(int(samples[seq-1-k,1])*c for k,c in enumerate(taps))
         low.append((total+65536)>>17)
     x=np.asarray(low,dtype=np.int64);x-=int(np.rint(x.mean()))

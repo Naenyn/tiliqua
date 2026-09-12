@@ -39,6 +39,7 @@ class Peripheral(wiring.Component):
         self.source_squares_high=regs.add('source_squares_high',self.Read(),offset=48)
         self.source_samples=regs.add('source_samples',self.Read(),offset=52)
         self.source_status=regs.add('source_status',self.Read(),offset=56)
+        self.frame_native_end=regs.add('frame_native_end',self.Read(),offset=60)
         self.bridge=csr.Bridge(regs.as_memory_map())
         super().__init__({'input_valid':In(1),**{f'sample{i}':In(signed(16)) for i in range(4)},
             'bus':In(csr.Signature(addr_width=regs.addr_width,data_width=regs.data_width))})
@@ -67,7 +68,8 @@ class Peripheral(wiring.Component):
                 d.frame_low_bank,d.frame_channel,d.frame_scaled,d.frame_clipped,
                 Const(0,6),count)),
             self.fill.f.value.r_data.eq(Cat(d.native_filled,Const(0,5),d.low_filled)),
-            self.identity.f.value.r_data.eq(0x4e534402),e.input_valid.eq(self.input_valid)]
+            self.identity.f.value.r_data.eq(0x4e534403),e.input_valid.eq(self.input_valid),
+            self.frame_native_end.f.value.r_data.eq(d.frame_native_end)]
         for ch in range(4):
             m.d.comb += [getattr(d,f'sample{ch}').eq(getattr(self,f'sample{ch}')),
                          getattr(e,f'sample{ch}').eq(getattr(self,f'sample{ch}'))]

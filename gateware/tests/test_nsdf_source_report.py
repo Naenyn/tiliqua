@@ -27,6 +27,31 @@ def test_aligned_native_relative_energy_diagnostic():
     assert r['source_rms']==0 and r['native_relative_energy_pass']
 
 
+def test_explicit_native_endpoint_and_serial_line_bound():
+    assert next(analyze_source(example(frame_end=6951261)))['source_frame_offset_native']==128
+    with pytest.raises(ValueError):list(analyze_source(example(frame_end=6951262)))
+    # Firmware retains its 192-byte nonblocking line buffer, even at maxima.
+    line=('NSDF SOURCE ch=3 low=false seq=4294967295 end=4294967295 '
+          'n=20480 sum=-671088640 squares=21990232555520 status=15 '
+          'frame_end=4294967295\n')
+    assert len(line)<192
+
+
+@pytest.mark.parametrize('offset',[-512,-40,0,128,512])
+def test_explicit_low_endpoint_diagnostic(offset):
+    f=json.loads((Path(__file__).parent/'fixtures/nsdf-cpu-source-quiet075.json').read_text())
+    index=next(k for k,c in enumerate(f['cpu_reports']) if c['ch']=='0' and c['low']=='true')
+    s=dict(f['source_reports'][index]);s['frame_end']=(int(s['end'])+offset)&0xffffffff
+    def text():
+        return ''.join('NSDF '+name+' '+' '.join(f'{k}={v}' for k,v in fields.items())+'\n'
+            for name,fields in [('SOURCE',s),('CPU',f['cpu_reports'][index]),('IO',f['io_reports'][index])])+f['frames'][index]
+    r=next(analyze_source(text()))
+    assert r['source_frame_offset_native']==offset and r['low_relative_energy_pass']
+    assert r['native_relative_energy_pass'] is None
+    s['frame_end']=(int(s['end'])+513)&0xffffffff
+    with pytest.raises(ValueError):list(analyze_source(text()))
+
+
 @pytest.mark.parametrize('change',[dict(status=1),dict(status=7),dict(end=0),
     dict(sum=999999999),dict(n=20479),dict(squares=-1),dict(seq=0),dict(status=4)])
 def test_reject_inconsistent_source_metadata(change):

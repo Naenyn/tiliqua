@@ -27,7 +27,7 @@ impl Trace {
         match self.state {
             0 => {
                 if now < self.due { return; }
-                if nsdf.identity().read().value().bits() != 0x4e534402 {
+                if nsdf.identity().read().value().bits() != 0x4e534403 {
                     self.pending.push_str("NSDF ERROR incompatible gateware\n").ok();
                     self.due = now.saturating_add(5000); return;
                 }
@@ -50,10 +50,11 @@ impl Trace {
                 let source_sum=nsdf.source_sum().read().value().bits() as i32;
                 let source_squares=(nsdf.source_squares_low().read().value().bits() as u64)
                     |((nsdf.source_squares_high().read().value().bits() as u64)<<32);
-                write!(self.pending,"NSDF SOURCE ch={} low={} seq={} end={} n={} sum={} squares={} status={}\n",
+                write!(self.pending,"NSDF SOURCE ch={} low={} seq={} end={} n={} sum={} squares={} status={} frame_end={}\n",
                     self.channel,self.low,nsdf.sequence().read().value().bits(),
                     nsdf.source_sequence().read().value().bits(),nsdf.source_samples().read().value().bits(),
-                    source_sum,source_squares,nsdf.source_status().read().value().bits()).ok();
+                    source_sum,source_squares,nsdf.source_status().read().value().bits(),
+                    nsdf.frame_native_end().read().value().bits()).ok();
                 self.state=6;
             }
             6 => {
