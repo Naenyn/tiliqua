@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import numpy as np
+import pytest
 from nsdf_trace_analysis import decode,select
 from nsdf_refinement_probe import scores_for
 
@@ -13,7 +14,7 @@ def test_cpu_selector_matches_model_without_frame_buffer(tmp_path):
     here=Path(__file__).parent
     exe=tmp_path/'selector'
     rustc=shutil.which('rustc') or str(Path.home()/'.cargo/bin/rustc')
-    subprocess.run([rustc,'--edition=2021','-O',str(here/'nsdf_selector_fixture.rs'),'-o',str(exe)],check=True)
+    subprocess.run([rustc,'--edition=2021','-O','-C','overflow-checks=on',str(here/'nsdf_selector_fixture.rs'),'-o',str(exe)],check=True)
     cases=[]
     for fixture in sorted((here/'fixtures').glob('nsdf-*.json')):
         for block in json.loads(fixture.read_text())['frames']:
@@ -49,18 +50,28 @@ def test_cpu_selector_matches_model_without_frame_buffer(tmp_path):
         assert int(reads)<=2*len(scores)+63
 
 
-def test_physical_cpu_reports_match_exported_scores():
-    fixture=json.loads((Path(__file__).parent/'fixtures/nsdf-cpu-pulse-lfo.json').read_text())
+@pytest.mark.parametrize('name',['nsdf-cpu-pulse-lfo.json','nsdf-cpu-integer-screen.json'])
+def test_physical_cpu_reports_match_exported_scores(name):
+    fixture=json.loads((Path(__file__).parent/'fixtures'/name).read_text())
     assert len(fixture['cpu_reports'])==len(fixture['frames'])
     assert len(fixture['frames'])>=8
-    for cpu,block in zip(fixture['cpu_reports'],fixture['frames']):
+    for index,(cpu,block) in enumerate(zip(fixture['cpu_reports'],fixture['frames'])):
         report=next(decode(block.splitlines()))
         for key in ('ch','low','seq'):assert cpu[key]==str(report[key])
         words=[int(s,16) for s in block.splitlines()[1:-1]]
         scores=[w-(1<<32) if w&(1<<31) else w for w in words]
         low=report['low']=='true'
         expected=select(scores,report['fs'],20 if low else 600,1500 if low else 20000,fallback=True)
-        assert 0<int(cpu['reads'])<=2*len(scores)+63
+        if fixture.get('early_gate') and (report['rms_counts']<=2 or report['clipped']):
+            expected=None
+            assert int(cpu['reads'])==0
+        else:assert 0<int(cpu['reads'])<=2*len(scores)+63
+        if 'io_reports' in fixture:
+            io=fixture['io_reports'][index]
+            for key in ('ch','low','seq'):assert io[key]==cpu[key]
+            assert int(io['reads'])==len(scores)
+            assert int(io['sum'],16)==sum(words)&0xffffffff
+            assert int(io['cycles'])>0
         assert int(cpu['cycles'])>0
         if expected is None:
             assert cpu['mhz']==cpu['raw']==cpu['ppm']=='0' and cpu['ok']=='false'

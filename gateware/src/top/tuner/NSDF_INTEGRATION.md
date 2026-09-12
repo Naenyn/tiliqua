@@ -239,3 +239,35 @@ intended for production. Interrupts remain enabled in both measurements; do
 not subtract the two timings as if they were isolated CPU instruction costs.
 No new FPGA build or memory allocation is needed. The performance gate remains
 failed until a new on-device measurement demonstrates adequate margin.
+
+Physical follow-up of `6c9fddd7`, same pulse/LFO patch: the matched CPU, IO and
+score records are in `tests/fixtures/nsdf-cpu-integer-screen.json`. CPU estimates
+match the model; all IO checksums match the exported score words. No diagnostic
+acquisition errors appeared. Measured elapsed times:
+
+| Input/bank | Selection | Independent IO sweep | Result |
+|---|---:|---:|---|
+| IN 0 native | 1.226 ms | 0.260 ms | 882.454 Hz, qualified |
+| IN 0 low | 10.419 ms | 0.244 ms | 881.060 Hz, qualified |
+| IN 1 native | 2.800 ms | 0.262 ms | rejected |
+| IN 1 low | 0.388 ms | 0.244 ms | no candidate |
+| IN 2/3, both | 0.0045–0.0058 ms | 0.244–0.260 ms | gated before score reads |
+
+The pulse's combined 11.645 ms remains too costly: four comparable active
+inputs would spend about 46.6 ms of each 50-ms update period on selection alone.
+Do not promote this implementation or interpret these sparse asynchronous
+measurements as a four-channel throughput/latency qualification. Score-register
+access is not the dominant observed cost; remaining interpolation/selection
+arithmetic is the next optimization target. The raw log is
+`/tmp/tuner-nsdf-int-screen-live.log`.
+
+Next firmware diagnostic uses Q20 fixed-point lag and NSDF height throughout
+selection and interpolation, with 64-bit intermediates for bounded products
+and division. Final estimates alone convert to float for the existing report.
+The first Q16-lag prototype missed the existing clarity-parity tolerance, so it
+was replaced with Q20 rather than relaxing the tests. Model parity checks
+(including range boundaries and real captures) and overflow-checked host Rust
+pass. The early energy gate and confidence/octave guards remain unchanged.
+Firmware build passes; `.data`/`.bss` remain 1632/8 bytes, with no new frame
+buffer, heap or FPGA change. On-device timing for this fixed-point version is
+still required. The performance gate remains open.
