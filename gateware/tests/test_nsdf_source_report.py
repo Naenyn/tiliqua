@@ -128,3 +128,17 @@ def test_physical_source_capture_preserves_quiet_native_sine():
     lfo=next(r for r in reports if r['channel']==1 and r['bank']=='native')
     assert lfo['qualified'] and 15000<lfo['hz']<16000
     assert not lfo['native_relative_energy_pass']
+
+
+def test_physical_endpoint_capture_aligns_both_quiet_sine_banks():
+    reports=physical_source_reports('nsdf-cpu-endpoint-880.json')
+    for report in reports:
+        assert report['source_frame_offset_native'] is not None
+        assert -512<=report['source_frame_offset_native']<=512
+        if report['channel']==0:
+            assert report['qualified'] and 878<report['hz']<882
+            field=('low_relative_energy_pass' if report['bank']=='low'
+                   else 'native_relative_energy_pass')
+            assert report[field]
+            assert 90<report['rms_counts']<110
+    assert any(r['source_frame_offset_native']<0 for r in reports)

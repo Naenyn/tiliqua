@@ -618,3 +618,17 @@ Packed bitstream SHA256:
 Firmware .data=1632, .bss=8, heap=0 and reserved stack=31128 bytes; CPU RAM
 remains 32 KiB (reserved stack is not measured high-water). Hardware remains
 unflashed until the user powers up the rack and resumes testing.
+
+Physical endpoint validation after flashing `1f0cb525` to slot 1, normal display,
+profiles preserved: `tests/fixtures/nsdf-cpu-endpoint-880.json` retains all eight
+complete records from `/tmp/tuner-nsdf-endpoint-880-live.log`. Quiet ~880-Hz sine
+IN 0 and LFO IN 1 retained. All timestamps, moments, CPU/model comparisons,
+checksums and read bounds pass; explicit native offsets range -32 to +327
+groups. The negative low-bank offset is expected and now represented correctly.
+Native sine qualifies 879.400 Hz in 0.850 ms, low sine 879.494 Hz in 1.199 ms;
+frame/source RMS are approximately 99 counts in both records. Both host energy
+guards pass. Asynchronous agreement is not independent absolute accuracy.
+LFO native is unqualified and fails the energy guard; low has no candidate even
+though its energy guard passes. Energy is an additional veto, never a substitute
+for pitch qualification. Quiet unused channels are gated. Next physical check:
+quiet ~55-Hz sine, then amplitude transitions. Firmware remains diagnostic-only.
