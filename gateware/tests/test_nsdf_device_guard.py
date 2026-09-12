@@ -83,7 +83,7 @@ def test_actual_rust_guard_physical_and_arithmetic_boundaries(tmp_path):
                           int(s['end']),int(s['n']),int(s['sum']),int(s['squares']),int(s['status']),
                           f['energy'],f['scaled'],f['clipped']])
     for fixture in (here/'fixtures').glob('nsdf-fast-*.txt'):
-        text=fixture.read_text();reports=list(analyze_fast(text))
+        text=fixture.read_text();reports=list(analyze_fast(text,round_robin=fixture.name.startswith('nsdf-fast-all-')))
         sources={int(s['seq']):s for line in re.findall(r'^NSDF SOURCE .*$',text,re.M)
                  if (s:=dict(p.split('=') for p in line.split()[2:]))}
         for r in reports:

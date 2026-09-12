@@ -996,3 +996,36 @@ a finite UART FIFO and a 400-ms stall without skipped banks or catch-up.
 104 focused tests passed (fast firmware/report/capture, source guard, actual
 CPU selector and source metadata). Hardware cadence with normal UI still
 requires measurement before choosing the next scheduling budget.
+
+### Physical all-bank baseline, normal UI
+
+Firmware `d2d695d4` built and flashed successfully to normal-display TUNER
+slot 1, preserving option storage; qualified FPGA hash remained
+`83dfbb3a6becc72b2ade62396a47c09d186f8fceb3b37ca65c96e58d288e373f`.
+With the user reopening TUNER, `/tmp/tuner-fast-all-live.log` captured 200
+validated summaries and disconnected normally. Exactly 25 records per bank
+and channel; every acquisition start gap was 50 ms. Same-bank native endpoint
+intervals were 400.000..400.167 ms. This confirms the diagnostic cap with
+normal UI, not a production latency or 20-Hz-per-channel claim.
+
+IN0 quiet approximately-880-Hz sine qualified and passed the device guard
+on all 50 native/low records. Native estimates ranged 878.506..883.240 Hz;
+low estimates 880.533..881.399 Hz. No independent frequency reference or
+simultaneous bank comparison: retain this spread rather than claiming
+sub-cent accuracy. IN1 LFO had nine raw-qualified native false candidates;
+all were guard-rejected. Neither bank accepted IN1, IN2 or IN3.
+
+Worst selector+guard elapsed time was 1.266 ms (native LFO). The sum of
+selector+guard elapsed cycles / capture duration was 0.878%; this excludes
+acquisition, UART formatting/service, UI and other foreground work, and
+includes any interrupt time within measured calls. It is not total CPU use
+or worst-case four-oscillator load. Request-to-summary completion was <=33 ms
+including diagnostic serialization, not isolated FPGA engine time.
+
+First 32 consecutive original records retained in
+`tests/fixtures/nsdf-fast-all-sine-lfo.txt`; regression checks fairness,
+cadence, real-sine acceptance, LFO veto and unused-channel rejection.
+Next useful hardware coverage is four independent tones to exercise all
+selector paths instead of letting quiet inputs exit early. Final production
+scheduling must decouple telemetry, cache bounded latest results, and be
+measured independently of this verbose diagnostic's shared 20-Hz cap.

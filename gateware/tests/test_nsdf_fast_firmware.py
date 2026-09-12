@@ -56,3 +56,18 @@ def test_physical_level_roundtrip_representative_windows():
     assert max(r['rms_counts'] for r in reports)>7000
     assert all(60<r['rms_counts']<70 for r in reports[-3:])
     assert all(not r['score_parity_checked'] for r in reports)
+
+
+def test_physical_all_bank_schedule_with_normal_ui():
+    reports=list(analyze_fast((Path(__file__).parent/'fixtures/nsdf-fast-all-sine-lfo.txt').read_text(),round_robin=True))
+    assert len(reports)==32
+    for channel in range(4):
+        for bank in ('native','low'):
+            group=[r for r in reports if (r['channel'],r['bank'])==(channel,bank)]
+            assert len(group)==4
+            assert all(400<=r['frame_interval_ms']<=400.2 for r in group[1:])
+            assert all(r['guarded_qualified']==(channel==0) for r in group)
+    assert any(r['channel']==1 and r['qualified'] and not r['device_guard'] for r in reports)
+    assert all(b['start_ms']-a['start_ms']==50 for a,b in zip(reports,reports[1:]))
+    assert all(r['select_ms']+r['guard_ms']<1.3 for r in reports)
+    assert all(not r['score_parity_checked'] for r in reports)
