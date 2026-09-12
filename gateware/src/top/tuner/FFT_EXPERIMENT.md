@@ -210,6 +210,10 @@ tuner. Tuner/calibrator/independent multichannel quantizer capacity takes priori
 
 ## Short-window comparison on the real recordings
 
+Follow-up: see `NSDF_HARDWARE_EXPERIMENT.md` for actual FFT/IFFT precision tests,
+the implemented direct NSDF score engine, and explicitly separated integration
+budget estimates. Those results favor direct NSDF over FFT-based NSDF for now.
+
 `capture_window_probe.py` replays all 11 recordings at 2048, 1024, and 512
 samples. The lower search bounds are explicitly 200, 400, and 800 Hz,
 respectively. There are 473 observations (overlapping windows at a 64-sample
