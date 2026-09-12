@@ -1221,3 +1221,14 @@ unqualified/guard-vetoed candidates, octave disagreement, tolerance boundaries,
 and deterministic random inputs. Real scheduler mock checks PICK decisions
 through serial stalls, hardware timeouts, unavailable history and recovery.
 127 focused tests passed. Hardware validation and embedded build still needed.
+
+Resolver firmware `66513b03` subsequently built and flashed successfully to
+normal-display TUNER slot 1 (exit 0 / Refresh DONE), preserving options.
+FPGA image unchanged at qualified SHA `83dfbb3a...e373f`; firmware 178200 bytes.
+Embedded scheduler-size assertion passed; ELF data 1632, bss 8, heap 0,
+reserved stack 31128 bytes remain in the same 32-KiB allocation (not a
+stack high-water measurement). Build confirms continuous configuration.
+No serial capture is open. User must reopen TUNER; current four tones with
+IN0 approximately 25 Hz are suitable. Capture with `--continuous`, then
+validate PICK records as well as RUN counters. Main tuner display is still
+the baseline detector, so this diagnostic flash is not expected to change it.
