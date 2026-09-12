@@ -34,8 +34,9 @@ def test_physical_device_guard_quiet_low_and_measured_cost():
     assert all(50<=r['frame_interval_ms']<=50.2 for r in reports[1:])
 
 
-def test_physical_device_guard_vetoes_lfo_without_losing_quiet_bass():
-    data=json.loads((Path(__file__).parent/'fixtures/nsdf-cpu-device-guard-lfo-veto.json').read_text())
+@pytest.mark.parametrize('name', ['nsdf-cpu-device-guard-lfo-veto.json','nsdf-cpu-device-guard-880.json'])
+def test_physical_device_guard_vetoes_lfo_without_losing_quiet_sine(name):
+    data=json.loads((Path(__file__).parent/'fixtures'/name).read_text())
     text=''
     for source,cpu,io,frame in zip(data['source_reports'],data['cpu_reports'],data['io_reports'],data['frames']):
         for kind,fields in [('SOURCE',source),('CPU',cpu),('IO',io)]:
@@ -45,7 +46,12 @@ def test_physical_device_guard_vetoes_lfo_without_losing_quiet_bass():
     assert len(reports)==8
     lfo=reports[1,'native'];bass=reports[0,'low']
     assert lfo['qualified'] and not lfo['device_guard']
-    assert bass['qualified'] and bass['device_guard'] and 24<bass['hz']<25
+    assert bass['qualified'] and bass['device_guard']
+    if name.endswith('880.json'):
+        native=reports[0,'native']
+        assert native['qualified'] and native['device_guard']
+        assert 875<native['hz']<885 and 875<bass['hz']<885
+    else:assert 24<bass['hz']<25
     assert all(not reports[ch,bank]['qualified'] and not reports[ch,bank]['device_guard']
                for ch in (2,3) for bank in ('native','low'))
 

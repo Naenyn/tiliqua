@@ -952,3 +952,27 @@ serial session remains open. Next physical coverage needed: a real native-band
 sine (roughly 880 Hz) with the existing attenuation, keeping the LFO connected.
 No exact level setting is needed. This completes guard qualification evidence
 before continuous multi-channel scheduling/promotion work, not promotion itself.
+
+### Quiet 880-Hz on-device guard check
+
+After the user retuned IN0 to approximately 880 Hz with attenuation unchanged,
+`/tmp/tuner-device-guard-880-live.log` completed a validated four-input/two-bank
+cycle and closed normally. Both sine frames were raw-qualified and device-guard
+accepted: low 881.034 Hz, native 882.503 Hz; frame RMS 64.392/65.015 counts.
+These sequential snapshots are seconds apart, not a simultaneous cross-bank
+accuracy comparison or independently referenced tuning measurement.
+
+IN1's LFO again produced a raw-qualified native candidate (15775.661 Hz), and
+the device guard rejected it. The low LFO frame had no candidate. IN2/3 were
+unqualified and guard-rejected in both banks. All scores, CPU selection results,
+source metadata and guard decisions matched references. Total selector+guard
+cost was 1.211 ms for the low sine, 0.926 ms for native sine, and 1.373 ms for
+the LFO native candidate. Full records retained in
+`tests/fixtures/nsdf-cpu-device-guard-880.json`; regression requires both real
+sine banks pass while the LFO false candidate is vetoed.
+
+No build/flash or signal adjustment is needed for these saved-data regressions.
+Installed firmware remains `b3f2e8d6`; no capture is open. The guard stage now
+has positive native/low quiet-signal evidence and real false-candidate vetoes.
+Next implementation milestone is bounded continuous four-channel scheduling,
+not replacing the baseline display/calibration/quantization detector yet.
