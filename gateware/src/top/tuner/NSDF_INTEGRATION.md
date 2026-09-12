@@ -742,3 +742,13 @@ renderer change. Save feedback uses elapsed time during this throttling.
 The trace still writes at most 32 bytes per call and caps requests at 20 Hz.
 No buffers, FPGA logic or RAM capacity were added. Actual new cadence remains
 to be measured before requesting any physical level transition.
+
+Service adjustment firmware `9141d97e`: 126 focused tests pass. Normal-display
+fast-low firmware build succeeds; archive contains only bitstream, firmware
+and manifest, preserving the 24576-byte options region. FPGA SHA256 unchanged
+from qualified seed 17. Firmware 177736 bytes, SHA256
+`81cd8bec3d4b21fc5bf7d4892ec81b7fdfeb0deac4377e0051431e7d06c18b55`.
+Flashed slot 1 successfully (Refresh DONE), log
+`/tmp/tuner-fast-service-9141d97e-flash.log`. Next physical step: reopen TUNER
+with the quiet ~24-Hz sine and LFO unchanged, then capture fast summaries to
+measure cadence. Do not claim transition qualification yet.
