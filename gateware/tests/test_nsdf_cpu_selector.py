@@ -58,7 +58,20 @@ def test_fixed_point_fraction_uses_exact_bounded_arithmetic(tmp_path):
     subprocess.run([str(exe)],check=True,capture_output=True,text=True)
 
 
-@pytest.mark.parametrize('name',['nsdf-cpu-pulse-lfo.json','nsdf-cpu-integer-screen.json','nsdf-cpu-fixedpoint.json','nsdf-cpu-native-div.json'])
+@pytest.mark.parametrize('amplitude',[72,14000])
+def test_synthetic_55hz_phase_coverage(amplitude):
+    # Known synthetic truth, not an accuracy claim for the analog capture.
+    for phase in np.linspace(0,1,32,endpoint=False):
+        x=np.rint(amplitude*np.sin(2*np.pi*(np.arange(604)*55/6000+phase)))
+        result=select(scores_for(x,301),6000,20,1500,fallback=True)
+        assert result and result['qualified']
+        assert abs(1200*math.log2(result['hz']/55))<.12
+        x=np.rint(amplitude*np.sin(2*np.pi*(np.arange(674)*55/192000+phase)))
+        result=select(scores_for(x,321),192000,600,20000,fallback=True)
+        assert result is None or not result['qualified']
+
+
+@pytest.mark.parametrize('name',['nsdf-cpu-pulse-lfo.json','nsdf-cpu-integer-screen.json','nsdf-cpu-fixedpoint.json','nsdf-cpu-native-div.json','nsdf-cpu-sine55.json'])
 def test_physical_cpu_reports_match_exported_scores(name):
     fixture=json.loads((Path(__file__).parent/'fixtures'/name).read_text())
     assert len(fixture['cpu_reports'])==len(fixture['frames'])

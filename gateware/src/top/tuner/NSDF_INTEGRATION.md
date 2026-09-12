@@ -345,3 +345,22 @@ source-energy measurement and bank arbitration remain a production gate.
 Next physical coverage should include low and high steady sines, while leaving
 the LFO connected. No additional flash is needed for those captures. The working
 baseline remains authoritative; none of these diagnostics owns CV outputs.
+
+Physical low-sine trial, same `3814b173` firmware: user set Local Parks to
+approximately 55 Hz on IN 0, with the LFO left on IN 1. Eight complete matched
+records from `/tmp/tuner-nsdf-sine55-live.log` are retained in
+`tests/fixtures/nsdf-cpu-sine55.json`. All CPU/model, metadata, checksum, gating
+and read-bound checks pass; no acquisition error was reported. Low bank
+qualifies 55.324 Hz in 0.733 ms (449 reads); native bank has no candidate and
+takes 0.430 ms (322 reads). Combined selection is 1.163 ms. The LFO has no
+qualified candidate in these particular records, which does not resolve the
+previous captured false candidate. Quiet IN 2/3 frames are gated as expected.
+
+This confirms basic low-sine handling and the intended bank qualification at
+this setting, not absolute pitch accuracy or end-to-end latency. The user's
+55-Hz setting is approximate, the banks are asynchronous, and low acquisition
+still needs its roughly 101-ms sample window. Separately, known synthetic
+55-Hz sines at 32 phases and amplitudes 72/14000 counts produce worst errors
+0.105/0.018 cents in the host score model; all native-bank cases are rejected.
+Those checks and the physical fixture are now regression tests. Next hardware
+coverage: a steady high sine around 10 kHz, keeping the LFO patch unchanged.
