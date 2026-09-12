@@ -490,3 +490,30 @@ placement timing failed before routing; only the final routed figures above
 qualify this artifact. CPU RAM remains 32 KiB. No claim of measured stack
 high-water or continuous four-channel throughput is made. New source metadata
 still needs physical validation after loading this diagnostic build.
+
+First physical source-moment trial, `eb9fab10`, Local Parks sine around 24 Hz
+on IN 0 and the existing LFO on IN 1. The new capture helper with `--source`
+completed a validated four-channel/two-bank cycle and closed the port normally.
+Raw log `/tmp/tuner-nsdf-source-low-live.log`; retained complete records in
+`tests/fixtures/nsdf-cpu-source-low.json`. All eight windows have 20480 samples,
+ready status, matching channel/score identity, valid moments, and no overrun.
+CPU/model, score checksum and read-bound checks also pass. Native source ages
+are 272–440 sample groups (1.42–2.29 ms), within the explicit 512-sample bound.
+
+The LFO reproduces a raw qualified 15787.669-Hz false candidate, clarity 0.800875.
+Native-frame centered RMS is 8.992 counts, versus 144.502 counts for its matched
+long source window. The existing 10% relative-energy rule therefore rejects
+this captured candidate on the host (ratio about 6.22%). This is the first
+physical aligned-source evidence for the proposed safeguard, not a blanket
+LFO-rejection proof. The source has a large mean level; DC removal from the
+moments is essential, rather than comparing uncentered RMS values.
+
+IN 0 low qualifies 23.969 Hz in 0.911 ms; native has no candidate in 0.435 ms.
+The sine source RMS is 7791/8062 counts in the asynchronous native/low records.
+No low-bank relative-energy decision is made yet because its sequence alignment
+still needs explicit implementation. Quiet IN 2/3 records are gated. A retained
+regression verifies the real LFO counterexample would be rejected while the raw
+CPU qualification stays unchanged. Firmware still makes no new pitch decision.
+Next useful physical test is a native-band sine around 880 Hz (then attenuated),
+to verify this guard does not suppress legitimate quiet audio. Full-rate
+scheduling, transition behavior and production integration remain outstanding.

@@ -40,3 +40,24 @@ def test_native_sequence_wrap_and_low_bank_units():
     text=example().replace('low=false','low=true')
     # Changing score-bank metadata alone is invalid even if source agrees.
     with pytest.raises(ValueError):list(analyze_source(text))
+
+
+def test_physical_source_capture_rejects_lfo_false_candidate_on_host():
+    from capture_nsdf_cpu import complete_cycle
+    f=json.loads((Path(__file__).parent/'fixtures/nsdf-cpu-source-low.json').read_text())
+    parts=[]
+    for s,c,i,b in zip(f['source_reports'],f['cpu_reports'],f['io_reports'],f['frames']):
+        for name,fields in [('SOURCE',s),('CPU',c),('IO',i)]:
+            parts.append('NSDF '+name+' '+' '.join(f'{k}={v}' for k,v in fields.items())+'\n')
+        parts.append(b)
+    text=''.join(parts)
+    assert complete_cycle(text,require_source=True)
+    reports=list(analyze_source(text))
+    assert len(reports)==8 and all(r['source_ready'] for r in reports)
+    lfo=next(r for r in reports if r['channel']==1 and r['bank']=='native')
+    assert lfo['qualified'] and 15000<lfo['hz']<16000
+    assert not lfo['native_relative_energy_pass']
+    assert 8<lfo['rms_counts']<10 and 140<lfo['source_rms']<150
+    sine=next(r for r in reports if r['channel']==0 and r['bank']=='low')
+    assert sine['qualified'] and 23<sine['hz']<25
+    assert sine['native_relative_energy_pass'] is None # No invented low-bank alignment.

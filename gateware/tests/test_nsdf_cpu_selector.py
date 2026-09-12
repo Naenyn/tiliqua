@@ -86,7 +86,7 @@ def test_synthetic_low_sine_phase_coverage(frequency,tolerance,amplitude):
         assert result is None or not result['qualified']
 
 
-@pytest.mark.parametrize('name',['nsdf-cpu-pulse-lfo.json','nsdf-cpu-integer-screen.json','nsdf-cpu-fixedpoint.json','nsdf-cpu-native-div.json','nsdf-cpu-sine55.json','nsdf-cpu-sine10k.json','nsdf-cpu-sine18500.json','nsdf-cpu-sine-lowedge.json'])
+@pytest.mark.parametrize('name',['nsdf-cpu-pulse-lfo.json','nsdf-cpu-integer-screen.json','nsdf-cpu-fixedpoint.json','nsdf-cpu-native-div.json','nsdf-cpu-sine55.json','nsdf-cpu-sine10k.json','nsdf-cpu-sine18500.json','nsdf-cpu-sine-lowedge.json','nsdf-cpu-source-low.json'])
 def test_physical_cpu_reports_match_exported_scores(name):
     fixture=json.loads((Path(__file__).parent/'fixtures'/name).read_text())
     assert len(fixture['cpu_reports'])==len(fixture['frames'])
