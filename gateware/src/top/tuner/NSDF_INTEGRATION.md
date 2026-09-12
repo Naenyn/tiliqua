@@ -1232,3 +1232,22 @@ No serial capture is open. User must reopen TUNER; current four tones with
 IN0 approximately 25 Hz are suitable. Capture with `--continuous`, then
 validate PICK records as well as RUN counters. Main tuner display is still
 the baseline detector, so this diagnostic flash is not expected to change it.
+
+### Physical resolver validation, four tones including 25 Hz
+
+User reopened unchanged patch; `/tmp/tuner-resolve-four-tones.log` captured
+200 RUN + 100 PICK records and disconnected. All retained in
+`tests/fixtures/nsdf-resolve-four-tones.txt`. Each channel had 25 selected
+snapshots; all independently checked decisions selected low, with no missing
+or conflict result. IN0 24.990..25.165 Hz, IN1 776.248..776.521 Hz,
+IN2 175.275..175.353 Hz, IN3 138.438..138.462 Hz. IN1 native also qualified,
+so its result exercises agreement and the low-preference overlap branch.
+Other inputs exercise low-only selection. No independent frequency reference;
+reported IN0 spread is retained rather than asserting sub-cent precision.
+
+Per-bank measured acquisition rates 11.315..11.418 Hz; age <=87 ms, faults 0.
+Cumulative measured selector/guard work summed to 5.818% CPU; arbitration,
+formatting and other work are not included, so this is not total CPU usage.
+No authoritative detector/output changes and no reflash for storing results.
+Next physical resolver coverage: approximately 1.2 kHz on IN0, keeping other
+tones unchanged, to exercise the native-preference side of the overlap.

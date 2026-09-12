@@ -2,7 +2,7 @@ from pathlib import Path
 import random
 import subprocess
 import pytest
-from analyze_nsdf_schedule import analyze_picks
+from analyze_nsdf_schedule import analyze_picks,analyze_schedule
 
 
 def reference(n,na,nq,l,la,lq):
@@ -43,3 +43,21 @@ def test_serial_resolver_reports_verified_not_trusted():
     for bad in (line.replace('mhz=881000','mhz=880000'),line.replace('src=1','src=2'),
                 line.replace('nq=true','nq=maybe'),line.replace('la=25','la=251')):
         with pytest.raises(ValueError):list(analyze_picks(bad))
+
+
+def test_physical_four_input_resolution_and_schedule():
+    text=(Path(__file__).parent/'fixtures/nsdf-resolve-four-tones.txt').read_text()
+    picks=list(analyze_picks(text));runs=list(analyze_schedule(text))
+    assert len(picks)==100 and len(runs)==200
+    ranges=[(24900,25200),(775000,778000),(174000,177000),(138000,140000)]
+    for ch,(lo,hi) in enumerate(ranges):
+        group=[p for p in picks if p['ch']==ch]
+        assert len(group)==25
+        assert all(lo<p['mhz']<hi and p['src']==1 for p in group)
+        for low in (False,True):
+            group=[r for r in runs if (r['ch'],r['low'])==(ch,low)]
+            a,b=group[0],group[-1]
+            assert 11.2<(b['count']-a['count'])*1000/(b['ms']-a['ms'])<11.5
+    assert all(r['faults']==0 and r['age']<=90 for r in runs)
+    assert all(p['nq'] for p in picks if p['ch']==1)
+    # Selection checked for reported snapshots only, not every acquisition.
