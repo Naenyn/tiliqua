@@ -47,6 +47,29 @@ impl Trace {
                     write!(self.pending,"NSDF ERROR ch={} low={} status={:08x}\n",self.channel,self.low,status).ok();
                     self.state = 3; return;
                 }
+                let started=crate::playback_cycles();
+                let mut reads=0_u16;
+                let result=crate::nsdf_select::select(|index| {
+                    nsdf.address().write(|w|unsafe{w.value().bits(index as u16)});
+                    let _=nsdf.data().read(); // Settle the synchronous score RAM.
+                    reads+=1;
+                    nsdf.data().read().value().bits() as i32
+                },self.low);
+                let cycles=crate::playback_cycles().wrapping_sub(started);
+                let energy=(nsdf.energy_low().read().value().bits() as u64)
+                    | ((nsdf.energy_high().read().value().bits() as u64)<<32);
+                let samples=if self.low {604} else {674};
+                let energetic=energy>samples*(if status&(1<<8)!=0 {1} else {4});
+                let (hz,raw,clarity,qualified)=result.map_or((0,0,0,false),|r|
+                    ((r.hz*1000.0) as u32,(r.unrefined_hz*1000.0) as u32,
+                     (r.clarity*1000000.0) as u32,r.qualified && energetic && status&(1<<9)==0));
+                write!(self.pending,"NSDF CPU ch={} low={} seq={} mhz={} raw={} ppm={} ok={} cycles={} reads={}\n",
+                    self.channel,self.low,nsdf.sequence().read().value().bits(),hz,raw,clarity,qualified,cycles,reads).ok();
+                self.state=4;
+            }
+            4 => {
+                let status=nsdf.status().read().value().bits();
+                let last=if self.low {301} else {321};
                 let energy = (nsdf.energy_low().read().value().bits() as u64)
                     | ((nsdf.energy_high().read().value().bits() as u64) << 32);
                 write!(self.pending,"NSDF BEGIN ch={} low={} fs={} n={} last={} seq={} energy={} scaled={} clipped={}\n",

@@ -11,6 +11,8 @@ mod pitch_verification;
 mod capture_trace;
 #[cfg(tuner_nsdf)]
 mod nsdf_trace;
+#[cfg(tuner_nsdf)]
+mod nsdf_select;
 mod serial_report;
 mod pitch_math;
 #[path = "calibration.rs"]

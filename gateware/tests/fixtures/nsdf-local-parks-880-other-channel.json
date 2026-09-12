@@ -1,6 +1,6 @@
 {
   "source": "Other-channel observations during Local Parks sine test on IN 0",
-  "other_channel_patch_state": "unconfirmed",
+  "other_channel_patch_state": "User confirmed IN 1 carries the LFO used for pitch quantization; rate and waveform not measured",
   "build": "d637e584",
   "date": "2026-09-12",
   "note": "One very low-level native IN 1 frame qualified near 15.8 kHz. Retained for investigation; not an independent known-silence fixture.",

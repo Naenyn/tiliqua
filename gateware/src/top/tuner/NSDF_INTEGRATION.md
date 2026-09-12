@@ -104,12 +104,41 @@ variation. Next physical case: a thin pulse at the same oscillator setting.
 
 Later complete frames from the same session expose a qualification concern:
 IN 1 native bank reports 15782.783 Hz, clarity 0.854231, at only 7.861 RMS
-counts, and passes the current host gate. The patch state of that input has
-not been confirmed, so this is not yet proof of a false pitch on an empty
-jack. Other-channel records are retained in
+counts, and passes the current host gate. The user subsequently confirmed IN 1
+carries the quantizer-test LFO (rate/waveform not measured), not an empty jack.
+The low-bank frame has 114.141 RMS counts and no candidate. Other-channel records are retained in
 `tests/fixtures/nsdf-local-parks-880-other-channel.json`. Do not claim all quiet
 inputs are rejected or raise the amplitude floor without checking the signal
 and preserving the previously demonstrated low-level sensitivity.
+
+The offline bank model already compares native-frame RMS against 10% of
+long-window source RMS. That guard is not present in this diagnostic decoder.
+The captured low/native energy contrast is consistent with why it is needed,
+but is not a validation: these exports are asynchronous and low-bank RMS is
+not the model's source RMS. Obtain aligned source-energy metadata and test LFO
+phases, transitions and quiet audio before enabling production arbitration.
+Keep the LFO patched during subsequent trials as an out-of-band rejection case.
+
+Second physical case: user switched Local Parks to pulse, with IN 1 LFO still
+connected. Pulse duty cycle was not measured. Three-minute serial capture
+`/tmp/tuner-nsdf-localparks-pulse-serial.log` contains no diagnostic acquisition
+errors; complete IN 0/1 frames are preserved in
+`tests/fixtures/nsdf-local-parks-pulse-880.json`.
+
+- Native: 884.711892 Hz, clarity 0.928793, RMS 3109.699 counts.
+- Low: 876.344458 Hz, clarity 0.970210, RMS 1067.079 counts.
+- Both qualify, neither clips/scales. IN 1 candidates in this capture do not
+  qualify; this does not erase the earlier LFO false-candidate observation.
+- The roughly 16.45-cent cross-bank difference is NOT an accuracy pass. Frames
+  are asynchronous, and no independent reference establishes pulse frequency.
+  The low-bank longer-lag peaks give approximately 881.4–881.9 Hz at large
+  multiples, demonstrating sensitivity to which peak is interpolated within
+  this same frame. Current refinement tries only multiple 8 here and does not
+  accept it; it does not search other strong multiples. The native frame has
+  only about three cycles and no second-period peak within its lag limit.
+  Investigate refinement/longer-baseline estimation offline before claiming
+  precision on narrow pulses or expanding hardware resources. Do not widen
+  acceptance thresholds merely to make this capture pass.
 
 First compare exported estimates on a steady sine, then the previously captured
 thin pulse, across low/mid/high pitches. Confirm no audio drops, metadata faults,
@@ -128,3 +157,47 @@ bank arbitration/transition tests, stack high-water checks, and physical
 accuracy/latency qualification alongside calibration and quantized output.
 Retire the old verifier only after that. No spectrum-display dependency and no
 CPU RAM increase have been introduced.
+
+## CPU selector diagnostic and pulse follow-up
+
+The guarded fallback searches multiples 8 down to 2 (or the maximum available),
+stopping at the first acceptable existing peak. The same confidence, ±1 sample
+search, ten-cent agreement and frequency-range limits apply; there is no extra
+correlation work. Legacy host `decode` remains the single-multiple baseline;
+`select(..., fallback=True)` and `fw/src/nsdf_select.rs` implement the extension.
+The captured low-bank pulse changes from 876.344458 to 880.807541 Hz. This does
+not establish its true frequency or resolve the native-bank discrepancy.
+
+`tests/nsdf_refinement_probe.py` A/B compares 254 synthetic cases (including
+quiet/DC-offset signals, noise, harmonic and intentionally aliased waveforms).
+All selected results remain unchanged. Known aliased pulse/saw/square octave
+errors remain; no claim is made to have solved these. Comparison log:
+`/tmp/tuner-nsdf-refinement-comparison.jsonl`.
+An additional sliding-window comparison of all eleven older 2048-sample real
+captures found no consistent improvement from increasing the native lag limit
+321 to 511. No gateware dimension was changed on that evidence.
+
+The allocation-free Rust selector performs two score-memory scans plus at most
+63 extra reads (maximum 707 native / 667 low reads). It uses scalar state, not
+a score-sized array, logs, powers, or heap allocations. Host-compiled Rust is
+compared with the double-precision model on real score captures, sliding real
+waveform windows, sine phase/frequency sweeps, and noise/constant frames;
+frequency differences must be below 0.005 cents with matching qualification.
+This is numerical parity, not hardware tuning accuracy or a CPU-cycle proof.
+
+The opt-in diagnostic emits `NSDF CPU` before each corresponding score frame:
+`ch`, `low`, `seq`, `mhz` (milli-Hz), `raw` (unrefined milli-Hz), `ppm`
+(clarity × 1,000,000), `ok` (independent bank gate), `cycles`, and `reads`.
+Cycles use the existing free-running 60-MHz timer, with interrupts enabled;
+measurements include intervening ISR time. No unavailable `mcycle` instruction
+is used. Scores stay frozen throughout selection and export. Baseline tuning,
+calibration and outputs remain authoritative; source-energy bank arbitration
+is still NOT enabled. `ok` is not an accepted production pitch.
+
+Firmware-only build passes with unchanged `.data` 1632 bytes and `.bss` 8 bytes,
+zero heap and 32-KiB CPU RAM. Reserved stack space is not measured stack usage.
+FPGA bitstream SHA-256 remains
+`8646c2fbba1a503f20e54bbddce8ef13e187378f41c6220c9860d461dc2f9b01`;
+the prior full-route timing/resource report still applies. Next hardware gate:
+collect CPU estimates/cycles on pulse plus LFO while checking encoder/UI and
+quantized playback responsiveness, before attempting continuous scheduling.

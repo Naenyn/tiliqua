@@ -47,3 +47,50 @@ def test_first_live_local_parks_sine_trial():
     idle=[r for r in reports if r['ch']!=0]
     assert len(idle)==1
     assert not idle[0]['result']['qualified']
+
+
+def test_live_lfo_records_preserve_independent_bank_limitation():
+    fixture=json.loads((Path(__file__).parent/'fixtures/nsdf-local-parks-880-other-channel.json').read_text())
+    reports=[next(decode(frame.splitlines())) for frame in fixture['frames']]
+    high=next(r for r in reports if r['low']=='false')
+    low=next(r for r in reports if r['low']=='true')
+    assert high['ch']==low['ch']==1
+    assert low['result'] is None
+    assert high['rms_counts']<8 and low['rms_counts']>100
+    # This diagnostic reports independent candidates, NOT an accepted tuner
+    # pitch. Retain the observed limitation until aligned bank arbitration is
+    # implemented; never infer source RMS from asynchronously captured banks.
+    assert high['result']['qualified']
+    assert 15000<high['result']['hz']<16000
+
+
+def test_live_local_parks_pulse_capture():
+    fixture=json.loads((Path(__file__).parent/'fixtures/nsdf-local-parks-pulse-880.json').read_text())
+    reports=[next(decode(frame.splitlines())) for frame in fixture['frames']]
+    tones={r['low']:r for r in reports if r['ch']==0}
+    assert set(tones)=={'true','false'}
+    for report in tones.values():
+        assert report['clipped']==0 and report['scaled']==0
+        assert report['result']['qualified'] and report['result']['clarity']>.9
+        assert 870<report['result']['hz']<890  # Octave sanity, not accuracy.
+    # Preserve the observed disagreement, not an accuracy acceptance criterion.
+    difference=1200*math.log2(tones['false']['result']['hz']/tones['true']['result']['hz'])
+    assert 16<difference<17
+    for report in reports:
+        if report['ch']==1:
+            assert report['result'] is None or not report['result']['qualified']
+
+
+def test_guarded_fallback_uses_another_existing_peak():
+    fixture=json.loads((Path(__file__).parent/'fixtures/nsdf-local-parks-pulse-880.json').read_text())
+    block=next(b for b in fixture['frames'] if 'ch=0 low=true' in b)
+    words=[int(s,16) for s in block.splitlines()[1:-1]]
+    scores=[w-(1<<32) if w&(1<<31) else w for w in words]
+    before=scores.copy()
+    old=select(scores,6000,20,1500)
+    new=select(scores,6000,20,1500,fallback=True)
+    assert scores==before
+    assert new['qualified'] and new['clarity']>=max(.8,.9*old['clarity'])
+    assert abs(1200*math.log2(new['hz']/old['hz']))<=10
+    assert abs(new['hz']-880.807541)<.00001
+    # Observed algorithm output, NOT ground-truth accuracy for the oscillator.

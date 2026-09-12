@@ -11,7 +11,7 @@ import math
 from pathlib import Path
 
 
-def select(scores,fs,minimum,maximum,refine=True):
+def select(scores,fs,minimum,maximum,refine=True,fallback=False):
     values=[v/(1<<20) for v in scores];last=len(values)-1
     peaks=[];skipped=False;best=None
     for k in range(1,last):
@@ -34,8 +34,10 @@ def select(scores,fs,minimum,maximum,refine=True):
     lag,height=next(c for c in candidates if c[1]>=cutoff)
     hz=fs/lag;original_hz=hz;qualified=height>=.8
     if refine and qualified:
-        multiple=min(8,int((last-2)/lag))
-        if multiple>=2:
+        largest=min(8,int((last-2)/lag))
+        multiples=range(largest,1,-1) if fallback else [largest]
+        for multiple in multiples:
+            if multiple<2:continue
             center=round(lag*multiple)
             choices=[k for k in range(max(1,center-1),min(last,center+2))
                 if values[k]>=values[k-1] and values[k]>values[k+1]]
@@ -45,6 +47,7 @@ def select(scores,fs,minimum,maximum,refine=True):
                 if (refined_height>=max(.8,.9*height) and minimum<=refined_hz<=maximum
                         and abs(1200*math.log2(refined_hz/hz))<=10):
                     hz=refined_hz;lag=refined_lag;height=min(height,refined_height)
+                    break
     return dict(hz=hz,lag=lag,clarity=height,qualified=qualified,unrefined_hz=original_hz)
 
 
