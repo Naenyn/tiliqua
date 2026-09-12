@@ -43,8 +43,10 @@ def test_source_mode_requires_a_complete_validated_source_cycle():
 
 
 @pytest.mark.parametrize('error',[False,True])
-def test_capture_handles_split_reads_and_closes_port(monkeypatch,capsys,error):
-    raw=('NSDF ERROR fault\n' if error else ''.join(blocks())).encode()
+@pytest.mark.parametrize('fast',[False,True])
+def test_capture_handles_split_reads_and_closes_port(monkeypatch,capsys,error,fast):
+    from test_nsdf_fast_report import example
+    raw=('NSDF ERROR fault\n' if error else (example()+example(1) if fast else ''.join(blocks()))).encode()
     chunks=iter(raw[i:i+13] for i in range(0,len(raw),13))
     class Port:
         closed=False
@@ -53,7 +55,7 @@ def test_capture_handles_split_reads_and_closes_port(monkeypatch,capsys,error):
         def readline(self):return next(chunks)
     port=Port()
     monkeypatch.setitem(sys.modules,'serial',SimpleNamespace(Serial=lambda *a,**kw:port))
-    monkeypatch.setattr(sys,'argv',['capture_nsdf_cpu.py','fake-port'])
+    monkeypatch.setattr(sys,'argv',['capture_nsdf_cpu.py','fake-port']+(['--fast','--fast-frames','2'] if fast else []))
     if error:
         with pytest.raises(RuntimeError,match='NSDF ERROR'):capture_nsdf_cpu.main()
     else:

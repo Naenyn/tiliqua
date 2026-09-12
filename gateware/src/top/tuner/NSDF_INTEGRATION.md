@@ -661,3 +661,45 @@ Guard decisions remain host-only. The next engineering qualification is
 transition behavior; the slow full-score diagnostic cannot measure a ~110-ms
 transient, so that needs a timestamped faster summary capture before asking
 the user to change levels repeatedly.
+
+### Opt-in fast transition summary (firmware-only)
+
+`TILIQUA_TUNER_NSDF_TRACE=fast-low` or `fast-native` selects fixed input 0 and
+one bank; default `full` preserves the existing four-input full-score cycle.
+Build rejects unknown modes and fast mode without `TILIQUA_TUNER_NSDF=1`.
+Fast mode still emits frozen SOURCE and CPU records, followed by FAST with
+frame energy, scaling/clipping flags, request-start and report-end milliseconds.
+It omits the diagnostic IO sweep and individual score words. This is not
+continuous four-channel scheduling or a production detector replacement.
+
+Fast service is foreground-only, before the UI's 5-ms service gate, with at
+most 32 UART bytes per invocation, no blocking writes and one outstanding
+request. Requests are capped at 20 Hz with no catch-up backlog. UI load or
+serial backpressure may lower actual cadence. Native frame endpoints, not
+assumed update rates, let the host measure intervals and expose gaps.
+No output-control registers are touched. The 192-byte line buffer and existing
+Trace storage are retained; no extra sample/score buffer, heap or CPU RAM.
+
+`tests/analyze_nsdf_fast.py` validates matching record identities, source moments,
+endpoint age, energy/flags, pitch bank limits, work bounds, monotonic timing and
+frame advance. Its explicit `score_parity_checked=false` prevents confusing
+summary validation with the full captured-score/Rust/model checks. Source
+validation is shared with the full analyzer, which retains legacy compatibility.
+`capture_nsdf_cpu.py PORT --fast --fast-frames 200 --timeout 180` captures a
+bounded set then closes the port; wrong firmware mode fails promptly. The
+default full capture is unchanged.
+
+Tests compile the actual Rust trace against a UART/CSR mock in all three modes.
+They enforce line capacity, <=32 writes per invocation, retained data under a
+400-ms UART stall, fixed selected bank/input and >=50-ms request spacing.
+The host parser detects the resulting cadence gap rather than inventing a
+fixed rate. Mock pitch results exercise transport/state flow, not algorithm
+accuracy; existing score parity tests remain separate. Protocol tests cover
+split reads, prefix/tail fragments, missing/duplicate records and invalid data.
+
+The fast-low firmware builds against the qualified seed-17 FPGA bitstream
+without any gateware change. .data=1632, .bss=8, heap=0, reserved stack=31128;
+32-KiB CPU RAM unchanged. Hardware cadence and transition recovery are NOT yet
+measured. First physical step is to open the fast-low build and capture the
+existing quiet bass unchanged. Only after cadence is sufficient should we ask
+for a level transition; if UI delays dominate, improve diagnostic service first.

@@ -31,9 +31,13 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('port',help='Confirmed debug serial device, not flashing port')
     parser.add_argument('--timeout',type=float,default=180,help='Maximum capture seconds')
-    parser.add_argument('--source',action='store_true',help='Also require validated frozen source metadata')
+    mode=parser.add_mutually_exclusive_group()
+    mode.add_argument('--source',action='store_true',help='Also require validated frozen source metadata')
+    mode.add_argument('--fast',action='store_true',help='Capture timestamped summaries instead of scores')
+    parser.add_argument('--fast-frames',type=int,default=200,help='Complete fast summaries to collect')
     args=parser.parse_args()
     if not 0<args.timeout<=600:parser.error('timeout must be >0 and <=600 seconds')
+    if not 2<=args.fast_frames<=1000:parser.error('fast frame count must be 2..1000')
     import serial
     fragments=[]
     # Preserve partial lines across serial read timeouts. A single OS read is
@@ -53,7 +57,20 @@ def main():
                 fragments.append(line)
                 if line.startswith('NSDF ERROR'):
                     raise RuntimeError(line.strip())
-                if line=='NSDF END\n' and complete_cycle(''.join(fragments),args.source):
+                if args.fast and line.startswith('NSDF BEGIN '):
+                    raise RuntimeError('expected fast-summary firmware, received full score export')
+                if not args.fast and line.startswith('NSDF FAST '):
+                    raise RuntimeError('fast-summary firmware requires --fast capture')
+                if args.fast and line.startswith('NSDF FAST '):
+                    from analyze_nsdf_fast import analyze_fast
+                    try:reports=list(analyze_fast(''.join(fragments)))
+                    except ValueError as exc:
+                        if str(exc)=='no complete fast summaries':continue
+                        raise
+                    if len(reports)>=args.fast_frames:
+                        print(f'Validated {len(reports)} fast summaries; disconnected.',file=sys.stderr)
+                        return
+                if not args.fast and line=='NSDF END\n' and complete_cycle(''.join(fragments),args.source):
                     print('Validated all four channels and both banks; disconnected.',file=sys.stderr)
                     return
             if sum(map(len,fragments))+len(pending)>1048576:

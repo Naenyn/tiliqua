@@ -31,42 +31,46 @@ def analyze_source(text):
         key=(str(report['channel']),'true' if report['bank']=='low' else 'false',str(report['sequence']))
         if key not in sources:raise ValueError('complete score frame lacks source metadata')
         source=sources[key]
-        n=int(source['n']);total=int(source['sum']);squares=int(source['squares'])
-        status=int(source['status']);end=int(source['end'])
-        if status&~15 or status>>2!=report['channel']:raise ValueError('source channel/status mismatch')
-        if status&2:raise ValueError('source acquisition overrun')
-        if not 0<=end<1<<32 or not 0<=n<=20480 or n%512:
-            raise ValueError('invalid source window')
-        if bool(status&1)!=(n==20480):raise ValueError('source readiness mismatch')
-        if abs(total)>n*32768 or not 0<=squares<=n*(1<<30) or total*total>squares*n:
-            raise ValueError('impossible source moments')
-        rms=math.sqrt((squares*n-total*total)/(n*n)) if n else 0.0
-        age=None;relative_pass=None;low_relative_pass=None;endpoint_offset=None
-        if 'frame_end' in source:
-            frame_end=int(source['frame_end'])
-            if not 0<=frame_end<1<<32:raise ValueError('invalid frame endpoint')
-            endpoint_offset=((frame_end-end+(1<<31))&0xffffffff)-(1<<31)
-            if report['bank']=='native' and frame_end!=report['sequence']:
-                raise ValueError('native frame endpoint mismatch')
-            # Low frames finish FIR computation after their newest contributing
-            # native sample. Source publication can lead or trail that endpoint.
-            # This bounds alignment, not equality of differently filtered windows.
-            if status&1 and not -512<=endpoint_offset<=512:
-                raise ValueError('source/frame endpoint separation too large')
-            if report['bank']=='low' and status&1:
-                low_relative_pass=report['rms_counts']>max(2,.02*rms)
-        if report['bank']=='native':
-            age=(report['sequence']-end)&0xffffffff
-            if status&1:
-                # Block publication plus snapshot start may cross one sample
-                # group. Keep this allowance explicit and validate on hardware.
-                if age>512:raise ValueError('stale or future source window')
-                relative_pass=report['rms_counts']>max(2,.1*rms)
-        yield dict(**report,source_end=end,source_samples=n,source_rms=rms,
-                   source_ready=bool(status&1),source_age_native=age,
-                   native_relative_energy_pass=relative_pass,
-                   source_frame_offset_native=endpoint_offset,
-                   low_relative_energy_pass=low_relative_pass)
+        yield source_details(report,source)
+
+
+def source_details(report,source):
+    n=int(source['n']);total=int(source['sum']);squares=int(source['squares'])
+    status=int(source['status']);end=int(source['end'])
+    if status&~15 or status>>2!=report['channel']:raise ValueError('source channel/status mismatch')
+    if status&2:raise ValueError('source acquisition overrun')
+    if not 0<=end<1<<32 or not 0<=n<=20480 or n%512:
+        raise ValueError('invalid source window')
+    if bool(status&1)!=(n==20480):raise ValueError('source readiness mismatch')
+    if abs(total)>n*32768 or not 0<=squares<=n*(1<<30) or total*total>squares*n:
+        raise ValueError('impossible source moments')
+    rms=math.sqrt((squares*n-total*total)/(n*n)) if n else 0.0
+    age=None;relative_pass=None;low_relative_pass=None;endpoint_offset=None
+    if 'frame_end' in source:
+        frame_end=int(source['frame_end'])
+        if not 0<=frame_end<1<<32:raise ValueError('invalid frame endpoint')
+        endpoint_offset=((frame_end-end+(1<<31))&0xffffffff)-(1<<31)
+        if report['bank']=='native' and frame_end!=report['sequence']:
+            raise ValueError('native frame endpoint mismatch')
+        # Low frames finish FIR computation after their newest contributing
+        # native sample. Source publication can lead or trail that endpoint.
+        # This bounds alignment, not equality of differently filtered windows.
+        if status&1 and not -512<=endpoint_offset<=512:
+            raise ValueError('source/frame endpoint separation too large')
+        if report['bank']=='low' and status&1:
+            low_relative_pass=report['rms_counts']>max(2,.02*rms)
+    if report['bank']=='native':
+        age=(report['sequence']-end)&0xffffffff
+        if status&1:
+            # Block publication plus snapshot start may cross one sample
+            # group. Keep this allowance explicit and validate on hardware.
+            if age>512:raise ValueError('stale or future source window')
+            relative_pass=report['rms_counts']>max(2,.1*rms)
+    return dict(**report,source_end=end,source_samples=n,source_rms=rms,
+               source_ready=bool(status&1),source_age_native=age,
+               native_relative_energy_pass=relative_pass,
+               source_frame_offset_native=endpoint_offset,
+               low_relative_energy_pass=low_relative_pass)
 
 
 if __name__=='__main__':

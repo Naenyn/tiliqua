@@ -1440,6 +1440,10 @@ fn run(resources: &mut RuntimeResources) -> ! {
         loop {
             riscv::asm::wfi();
             let now=with_app(|app|app.now_ms);
+            // Fast diagnostic is foreground-only, never an ISR job. It gets
+            // opportunities between UI frames; UART writes remain bounded.
+            #[cfg(tuner_nsdf)]
+            if nsdf_trace.fast() {nsdf_trace.tick(uart,now);}
             if now.wrapping_sub(last_ui_ms)<TIMER0_ISR_PERIOD_MS as u64 {continue;}
             last_ui_ms=now;
             let ui_frame = poll_ui_frame();
@@ -1465,7 +1469,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
             #[cfg(not(tuner_nsdf))]
             capture_trace.tick(&tuner,uart,ui_frame.now_ms,&calibration,measurements.channel(calibration.input));
             #[cfg(tuner_nsdf)]
-            nsdf_trace.tick(uart,ui_frame.now_ms);
+            if !nsdf_trace.fast() {nsdf_trace.tick(uart,ui_frame.now_ms);}
             run_calibration |= ui_frame.run_calibration;
             if ui_frame.controls.mode==runtime::OperatingMode::Calibrator {
                 if ui_frame.discard_scan {calibration.discard_scan();}

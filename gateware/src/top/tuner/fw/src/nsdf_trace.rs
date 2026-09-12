@@ -3,6 +3,9 @@ use core::fmt::Write;
 use heapless::String;
 use tiliqua_pac as pac;
 
+const FAST: bool = !matches!(env!("TILIQUA_TUNER_NSDF_TRACE").as_bytes(),b"full");
+const FAST_LOW: bool = matches!(env!("TILIQUA_TUNER_NSDF_TRACE").as_bytes(),b"fast-low");
+
 pub struct Trace {
     pending: String<192>, offset: usize, state: u8, channel: u8,
     low: bool, index: u16, due: u64, started: u64,
@@ -11,8 +14,9 @@ pub struct Trace {
 impl Trace {
     pub fn new() -> Self {
         Self { pending: String::new(), offset: 0, state: 0, channel: 0,
-            low: false, index: 0, due: 2000, started: 0 }
+            low: FAST_LOW, index: 0, due: 2000, started: 0 }
     }
+    pub fn fast(&self)->bool { FAST }
     pub fn tick(&mut self, uart: &pac::UART0, now: u64) {
         // Only compiled with the matching opt-in gateware register block.
         let nsdf = unsafe { &*pac::NSDF_PERIPH::ptr() };
@@ -75,7 +79,19 @@ impl Trace {
                      (r.clarity*1000000.0) as u32,r.qualified));
                 write!(self.pending,"NSDF CPU ch={} low={} seq={} mhz={} raw={} ppm={} ok={} cycles={} reads={}\n",
                     self.channel,self.low,nsdf.sequence().read().value().bits(),hz,raw,clarity,qualified,cycles,reads).ok();
-                self.state=5;
+                self.state=if FAST {7} else {5};
+            }
+            7 => {
+                // Summary only: no score sweep and no promise of model parity
+                // without a full export. Native frame endpoints measure actual
+                // cadence even when UI work delays this foreground service.
+                let status=nsdf.status().read().value().bits();
+                let energy=(nsdf.energy_low().read().value().bits() as u64)
+                    |((nsdf.energy_high().read().value().bits() as u64)<<32);
+                write!(self.pending,"NSDF FAST ch={} low={} seq={} energy={} scaled={} clipped={} start_ms={} end_ms={}\n",
+                    self.channel,self.low,nsdf.sequence().read().value().bits(),energy,
+                    (status>>8)&1,(status>>9)&1,self.started,now).ok();
+                self.state=3;
             }
             5 => {
                 // Separate diagnostic baseline for one full score-register
@@ -116,8 +132,14 @@ impl Trace {
                 }
             }
             _ => {
-                if self.low { self.channel=(self.channel+1)&3; }
-                self.low=!self.low;self.state=0;self.due=now.saturating_add(250);
+                if FAST {
+                    // Bound request rate to <=20 Hz; do not queue missed work.
+                    self.due=now.max(self.started.saturating_add(50));
+                } else {
+                    if self.low { self.channel=(self.channel+1)&3; }
+                    self.low=!self.low;self.due=now.saturating_add(250);
+                }
+                self.state=0;
             }
         }
     }
