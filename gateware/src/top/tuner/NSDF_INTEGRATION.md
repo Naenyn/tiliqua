@@ -1150,3 +1150,21 @@ a possible later optimization, but this capture does not change the ordering.
 No absolute pitch-accuracy or every-acquisition-qualification claim: these
 remain decimated latest-value observations, not full score/source exports.
 No firmware changes or reflash for recording this test.
+
+### Continuous mixed-frequency test, IN0 approximately 18.46 kHz
+
+User raised IN0 only; `/tmp/tuner-continuous-mixed-19k.log` completed 200
+validated RUN records and closed. All original lines retained in
+`tests/fixtures/nsdf-continuous-mixed-19k.txt`. IN0 native accepted all 25
+reported observations at 18454.646..18459.842 Hz; low bank accepted none
+(neither raw qualification nor source guard passed). Other reported channels
+retained expected behavior: IN1 both banks around 776 Hz, IN2/3 low-bank-only
+around 175.3/138.9 Hz. Zero cumulative acquisition faults throughout.
+
+Per-bank measured rates 11.093..11.098 Hz; maximum report-time age 93 ms;
+completion observation delay <=4 ms. Cumulative measured selector+guard work
+summed to 6.959% CPU with the previously documented exclusions. Worst sampled
+call 1.848 ms was again rejected low-bank IN0 work. The regression records the
+93-ms observed age rather than retaining the earlier <=90-ms bound. No
+independent accuracy reference, full-score parity, or qualification guarantee
+for unreported intermediate acquisitions is inferred. No build/flash change.
