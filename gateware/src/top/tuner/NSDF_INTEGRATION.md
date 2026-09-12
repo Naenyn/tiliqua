@@ -1251,3 +1251,24 @@ formatting and other work are not included, so this is not total CPU usage.
 No authoritative detector/output changes and no reflash for storing results.
 Next physical resolver coverage: approximately 1.2 kHz on IN0, keeping other
 tones unchanged, to exercise the native-preference side of the overlap.
+
+### Physical resolver overlap validation, IN0 approximately 1.2 kHz
+
+User retuned IN0; `/tmp/tuner-resolve-overlap-1200.log` completed 200 RUN and
+99 PICK records and disconnected normally. Capture ends at RUN 200, before
+its trailing PICK, so IN3 has 24 picks rather than 25; not a dropped scheduler
+turn. Full originals retained in `tests/fixtures/nsdf-resolve-overlap-1200.txt`.
+All 25 IN0 picks had both candidates qualified and selected native at
+1200.228..1201.382 Hz. All 25 IN1 picks also had both qualified and selected
+low at 776.217..776.439 Hz. IN2/3 low-only at 175.273..175.369 and
+138.226..138.345 Hz. Every reported resolver decision matched independent
+host arbitration, with no conflict or absent selection.
+
+Measured acquisition rates 11.322..11.427 Hz per bank, ages <=87 ms, cumulative
+fault counts zero. Measured selector/guard CPU fraction summed to 6.370%; this
+still excludes resolution/reporting/UI and is not total CPU use. No absolute
+accuracy or unreported-intermediate-qualification claim. No new flash.
+Both sides of overlap preference now have simultaneous-input hardware
+evidence. Next work can proceed offline with no signal adjustment: validate
+state transitions/freshness and integration boundaries before authoritative
+detector promotion. Existing tuner/calibration/quantization remain unchanged.

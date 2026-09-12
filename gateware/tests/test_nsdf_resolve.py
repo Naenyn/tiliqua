@@ -45,15 +45,21 @@ def test_serial_resolver_reports_verified_not_trusted():
         with pytest.raises(ValueError):list(analyze_picks(bad))
 
 
-def test_physical_four_input_resolution_and_schedule():
-    text=(Path(__file__).parent/'fixtures/nsdf-resolve-four-tones.txt').read_text()
+@pytest.mark.parametrize('overlap',[False,True])
+def test_physical_four_input_resolution_and_schedule(overlap):
+    name='nsdf-resolve-overlap-1200.txt' if overlap else 'nsdf-resolve-four-tones.txt'
+    text=(Path(__file__).parent/'fixtures'/name).read_text()
     picks=list(analyze_picks(text));runs=list(analyze_schedule(text))
-    assert len(picks)==100 and len(runs)==200
+    assert len(picks)==(99 if overlap else 100) and len(runs)==200
     ranges=[(24900,25200),(775000,778000),(174000,177000),(138000,140000)]
+    if overlap:ranges[0]=(1200000,1202000)
     for ch,(lo,hi) in enumerate(ranges):
         group=[p for p in picks if p['ch']==ch]
-        assert len(group)==25
-        assert all(lo<p['mhz']<hi and p['src']==1 for p in group)
+        # Capture stops on RUN 200; its trailing PICK may remain on the wire.
+        assert len(group)==(24 if overlap and ch==3 else 25)
+        source=2 if overlap and ch==0 else 1
+        assert all(lo<p['mhz']<hi and p['src']==source for p in group)
+        if overlap and ch==0:assert all(p['nq'] and p['lq'] for p in group)
         for low in (False,True):
             group=[r for r in runs if (r['ch'],r['low'])==(ch,low)]
             a,b=group[0],group[-1]
