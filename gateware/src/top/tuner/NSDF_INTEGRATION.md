@@ -364,3 +364,22 @@ still needs its roughly 101-ms sample window. Separately, known synthetic
 0.105/0.018 cents in the host score model; all native-bank cases are rejected.
 Those checks and the physical fixture are now regression tests. Next hardware
 coverage: a steady high sine around 10 kHz, keeping the LFO patch unchanged.
+
+Physical high-sine trial, same `3814b173` firmware and LFO patch: user set
+IN 0 near 10 kHz. All eight complete CPU/IO/score triples from the bounded
+135-second `/tmp/tuner-nsdf-sine10k-live.log` capture pass the report validator
+and are retained in `tests/fixtures/nsdf-cpu-sine10k.json`. Native bank qualifies
+10002.669 Hz, clarity 0.999690, in 0.842 ms (358 reads). Low bank rejects its
+102.256-Hz candidate, clarity 0.331543, in 0.966 ms (368 reads). Combined
+selection is 1.807 ms; independent IO sweeps remain 0.274–0.292 ms. Both LFO
+records are unqualified in this session and quiet IN 2/3 records are gated.
+No acquisition errors appeared. The previous LFO false-candidate regression
+remains unresolved, not invalidated by this session's rejected candidates.
+
+The known synthetic model is also tested at 9900/10000/10100 Hz, 32 phases
+each, at amplitudes 72/14000 counts. All qualify, worst error under 0.033 cents;
+the actual host-compiled Rust parity corpus now includes those frequencies.
+Physical knob settings are not frequency references, so neither the displayed
+precision nor model parity proves absolute hardware accuracy. This establishes
+basic high-sine behavior and selection timing, not full-rate scheduling,
+end-to-end latency, or the final 20-Hz/20-kHz endpoint qualification.

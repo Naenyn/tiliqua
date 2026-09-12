@@ -25,6 +25,7 @@ def test_cpu_selector_matches_model_without_frame_buffer(tmp_path):
         fs,n,last,minimum,maximum=(6000,604,301,20,1500) if low else (192000,674,321,600,20000)
         frequencies=list(np.geomspace(minimum*1.001,maximum*.999,24))
         frequencies.extend([minimum,maximum,minimum*(1-2e-6),maximum*(1+2e-6)])
+        if not low:frequencies.extend([9900,10000,10100])
         for f in frequencies:
             for phase in (.03,.39,.81):
                 p=np.arange(n)*f/fs+phase
@@ -58,6 +59,17 @@ def test_fixed_point_fraction_uses_exact_bounded_arithmetic(tmp_path):
     subprocess.run([str(exe)],check=True,capture_output=True,text=True)
 
 
+@pytest.mark.parametrize('frequency',[9900,10000,10100])
+@pytest.mark.parametrize('amplitude',[72,14000])
+def test_synthetic_near_10khz_phase_coverage(frequency,amplitude):
+    # Known synthetic truth; the user's knob setting is not a reference clock.
+    for phase in np.linspace(0,1,32,endpoint=False):
+        x=np.rint(amplitude*np.sin(2*np.pi*(np.arange(674)*frequency/192000+phase)))
+        result=select(scores_for(x,321),192000,600,20000,fallback=True)
+        assert result and result['qualified']
+        assert abs(1200*math.log2(result['hz']/frequency))<.04
+
+
 @pytest.mark.parametrize('amplitude',[72,14000])
 def test_synthetic_55hz_phase_coverage(amplitude):
     # Known synthetic truth, not an accuracy claim for the analog capture.
@@ -71,7 +83,7 @@ def test_synthetic_55hz_phase_coverage(amplitude):
         assert result is None or not result['qualified']
 
 
-@pytest.mark.parametrize('name',['nsdf-cpu-pulse-lfo.json','nsdf-cpu-integer-screen.json','nsdf-cpu-fixedpoint.json','nsdf-cpu-native-div.json','nsdf-cpu-sine55.json'])
+@pytest.mark.parametrize('name',['nsdf-cpu-pulse-lfo.json','nsdf-cpu-integer-screen.json','nsdf-cpu-fixedpoint.json','nsdf-cpu-native-div.json','nsdf-cpu-sine55.json','nsdf-cpu-sine10k.json'])
 def test_physical_cpu_reports_match_exported_scores(name):
     fixture=json.loads((Path(__file__).parent/'fixtures'/name).read_text())
     assert len(fixture['cpu_reports'])==len(fixture['frames'])
