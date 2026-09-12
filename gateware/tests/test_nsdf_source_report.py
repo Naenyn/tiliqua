@@ -76,7 +76,7 @@ def test_physical_source_capture_rejects_lfo_false_candidate_on_host():
     assert sine['native_relative_energy_pass'] is None # No invented low-bank alignment.
 
 
-def test_physical_source_capture_preserves_full_level_native_sine():
+def test_physical_source_capture_preserves_previously_attenuated_native_sine():
     reports=physical_source_reports('nsdf-cpu-source-880.json')
     native=next(r for r in reports if r['channel']==0 and r['bank']=='native')
     low=next(r for r in reports if r['channel']==0 and r['bank']=='low')
@@ -85,3 +85,19 @@ def test_physical_source_capture_preserves_full_level_native_sine():
     assert .99<native['rms_counts']/native['source_rms']<1.01
     assert low['qualified'] and 880<low['hz']<882
     assert low['native_relative_energy_pass'] is None
+
+
+def test_physical_source_capture_preserves_quiet_native_sine():
+    reports=physical_source_reports('nsdf-cpu-source-quiet075.json')
+    native=next(r for r in reports if r['channel']==0 and r['bank']=='native')
+    assert native['qualified'] and 879<native['hz']<883
+    assert native['native_relative_energy_pass']
+    assert 90<native['rms_counts']<110
+    assert 90<native['source_rms']<110
+    assert .95<native['rms_counts']/native['source_rms']<1.05
+    low=next(r for r in reports if r['channel']==0 and r['bank']=='low')
+    assert low['qualified'] and 879<low['hz']<883
+    assert low['native_relative_energy_pass'] is None
+    lfo=next(r for r in reports if r['channel']==1 and r['bank']=='native')
+    assert lfo['qualified'] and 15000<lfo['hz']<16000
+    assert not lfo['native_relative_energy_pass']

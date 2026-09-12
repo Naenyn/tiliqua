@@ -518,7 +518,7 @@ Next useful physical test is a native-band sine around 880 Hz (then attenuated),
 to verify this guard does not suppress legitimate quiet audio. Full-rate
 scheduling, transition behavior and production integration remain outstanding.
 
-Full-level 880-Hz follow-up on the same installed `eb9fab10` build completed
+Previously attenuated 880-Hz follow-up on the same installed `eb9fab10` build completed
 all eight source/CPU/IO/score records. Retained fixture:
 `tests/fixtures/nsdf-cpu-source-880.json`; raw log:
 `/tmp/tuner-nsdf-source-880-live.log`. Native IN 0 qualifies 881.144 Hz in
@@ -530,9 +530,32 @@ Native source ages are 138–284 groups, all within the 512-group bound.
 IN 1 native is unqualified and also fails the host relative guard; quiet
 IN 2/3 are gated. The next physical test is attenuation of this same sine.
 
+User correction: this 880-Hz capture was NOT full level. The attenuation used
+earlier for Blade-wave testing was still in place; its Vpp was not specified.
+Retain the measured digital counts above without inferring full-scale level.
+
 The analyzer now discards a connection prefix before the first SOURCE header,
 matching the capture helper. This capture began partway through a record;
 that CPU-only prefix was excluded, not stitched to later metadata. Acquisition
 errors even in the prefix and missing SOURCE records inside the retained
 capture remain failures, with regression coverage. No firmware change or
 flash was required for this capture, parser correction, or added regressions.
+
+Further attenuation trial: user reports approximately 0.075 Vpp at ~880 Hz,
+same Local Parks sine IN 0 and LFO IN 1. `nsdf-cpu-source-quiet075.json`
+retains eight validated records from `/tmp/tuner-nsdf-source-quiet075-live.log`.
+All source windows ready, no overruns, native ages 7–502 groups. Native sine
+qualifies 880.440 Hz in 0.857 ms with frame RMS 99.477 and source RMS 98.540
+counts; the host 10% relative-energy safeguard passes. Low sine qualifies
+881.218 Hz in 1.274 ms (no low-bank relative guard yet). These asynchronous
+readings differ by about 1.53 cents; without an independent reference or
+simultaneous frames, this does not establish absolute accuracy or its cause.
+
+The same capture contains another raw qualified LFO false candidate at
+15787.521 Hz: native RMS 8.088 versus source RMS 124.068 counts, rejected by
+the host safeguard. Quiet IN 2/3 are gated. Regressions retain both quiet-sine
+preservation and LFO rejection, including Rust/model parity over the scores.
+This is sparse physical evidence, not a proof across levels, LFO phases,
+transients or all frequencies. Installed firmware remains `eb9fab10`; the
+guard is not enabled on-device. Next engineering work remains low-bank source
+alignment and transition validation before continuous scheduling/integration.

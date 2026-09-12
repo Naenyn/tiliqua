@@ -1,5 +1,5 @@
 {
-  "source": "Local Parks full-level sine around 880 Hz IN 0; LFO IN 1; physical source-moment diagnostic",
+  "source": "Local Parks previously attenuated sine around 880 Hz IN 0 (level retained from Blade testing, not full level; Vpp unspecified); LFO IN 1; physical source-moment diagnostic",
   "build": "eb9fab10",
   "timer_hz": 60000000,
   "date": "2026-09-12",
