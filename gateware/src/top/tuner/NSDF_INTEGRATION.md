@@ -886,3 +886,12 @@ trace/UART mock exercises guard execution in all export modes. Target fast-low
 firmware compiles; .data=1632, .bss=8, heap=0, reserved stack=31128 unchanged.
 Its device execution time is still unmeasured: next hardware check is a fast
 quiet-bass capture with `guard`/`gc`, not another amplitude-adjustment test.
+
+Device-guard firmware `296a6ca9` built and flashed successfully to slot 1,
+Refresh DONE, profile storage preserved. Archive uses unchanged timing-qualified
+buffered-UART FPGA SHA256 `83dfbb3a6becc72b2ade62396a47c09d186f8fceb3b37ca65c96e58d288e373f`;
+178360-byte firmware SHA256 `dcb4f9cf38180862771dc82ad7779514717772c628aba957c9439c686177e7eb`.
+Build `/tmp/tuner-device-guard-final-build.log`; flash
+`/tmp/tuner-device-guard-296a6ca9-flash.log`. No serial capture is open.
+Next user action is reopening TUNER, leaving the existing quiet sine and LFO
+unchanged, so guard agreement and its separate cycle cost can be measured.
