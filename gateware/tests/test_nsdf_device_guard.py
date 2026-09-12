@@ -7,6 +7,7 @@ import subprocess
 import pytest
 from analyze_nsdf_fast import analyze_fast
 from nsdf_trace_analysis import decode
+from analyze_nsdf_source import analyze_source
 
 
 @pytest.mark.parametrize('fields',['guard=false gc=100','guard=true gc=0',
@@ -31,6 +32,22 @@ def test_physical_device_guard_quiet_low_and_measured_cost():
     assert all(r['device_guard'] and r['guarded_qualified'] for r in reports)
     assert all(0<r['guard_ms']<0.05 and r['select_ms']+r['guard_ms']<0.9 for r in reports)
     assert all(50<=r['frame_interval_ms']<=50.2 for r in reports[1:])
+
+
+def test_physical_device_guard_vetoes_lfo_without_losing_quiet_bass():
+    data=json.loads((Path(__file__).parent/'fixtures/nsdf-cpu-device-guard-lfo-veto.json').read_text())
+    text=''
+    for source,cpu,io,frame in zip(data['source_reports'],data['cpu_reports'],data['io_reports'],data['frames']):
+        for kind,fields in [('SOURCE',source),('CPU',cpu),('IO',io)]:
+            text+='NSDF '+kind+' '+' '.join(f'{k}={v}' for k,v in fields.items())+'\n'
+        text+=frame
+    reports={(r['channel'],r['bank']):r for r in analyze_source(text)}
+    assert len(reports)==8
+    lfo=reports[1,'native'];bass=reports[0,'low']
+    assert lfo['qualified'] and not lfo['device_guard']
+    assert bass['qualified'] and bass['device_guard'] and 24<bass['hz']<25
+    assert all(not reports[ch,bank]['qualified'] and not reports[ch,bank]['device_guard']
+               for ch in (2,3) for bank in ('native','low'))
 
 
 def reference(v):

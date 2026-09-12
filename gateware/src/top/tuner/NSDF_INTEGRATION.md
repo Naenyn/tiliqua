@@ -924,3 +924,31 @@ do not use their presence to infer execution mode. The source-mode capture
 helper additionally rejects FAST records rather than silently accepting the
 wrong export. Next: reopen TUNER and capture with `--source`, not `--fast`.
 49 focused guard/firmware/source/capture tests passed; no serial session open.
+
+### Full two-bank/four-input physical device-guard validation
+
+On `b3f2e8d6`, two complete SOURCE/CPU/IO/score cycles validated and closed:
+`/tmp/tuner-device-guard-full-live.log` and
+`/tmp/tuner-device-guard-full-repeat.log`. All sixteen score frames, selector
+results, source metadata and device guard decisions agree with host references.
+Full originals retained in `nsdf-cpu-device-guard-all-banks.json` and
+`nsdf-cpu-device-guard-lfo-veto.json` under `tests/fixtures`.
+
+IN0 quiet bass qualified in low bank at 24.400/24.420 Hz and passed the guard;
+native bank had no qualified pitch (expected for this low frequency). IN2/3
+were rejected in both banks. IN1 LFO low bank had no pitch candidate although
+its energy gate passed: the gate is only an additional veto, never a detector.
+Most importantly, the second IN1 native frame's raw selector qualified
+10515.598 Hz, but the on-device source-energy guard rejected it. The first
+cycle's native LFO candidate was already unqualified and also guard-rejected.
+This directly demonstrates the added veto on a real known-LFO false candidate
+while preserving the real quiet bass, not a blanket proof against all LFOs.
+
+The explicit regression replays the full second cycle and requires this
+raw-qualified/device-rejected outcome plus accepted bass and rejected unused
+inputs. Guard time in these records ranged about 0.016–0.073 ms including CSR
+reads and interrupt interference. No firmware/gateware change or flash; no
+serial session remains open. Next physical coverage needed: a real native-band
+sine (roughly 880 Hz) with the existing attenuation, keeping the LFO connected.
+No exact level setting is needed. This completes guard qualification evidence
+before continuous multi-channel scheduling/promotion work, not promotion itself.
