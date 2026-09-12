@@ -43,3 +43,16 @@ def test_large_attenuation_transient_is_bounded_not_instantaneous():
     for end in range(change+20480+512,n,137):
         source_end=end-end%512
         assert rms(x[end-674:end])>max(2,.1*rms(x[source_end-20480:source_end]))
+
+
+@pytest.mark.parametrize('frequency',[3000,10000,18500,19900])
+@pytest.mark.parametrize('amplitude',[100,14000])
+def test_low_guard_rejects_filter_stopband_leakage(frequency,amplitude):
+    # Energy rejection alone, not a claim about NSDF candidate selection.
+    n=26000;t=np.arange(n)/192000
+    x=np.rint(amplitude*np.sin(2*np.pi*frequency*t)+12000)
+    filtered=np.floor((lfilter(coefficients(),[1],x)+65536)/131072)
+    end=n-n%32;source_end=end-end%512
+    frame=filtered[np.arange(end-603*32,end+1,32)-1]
+    source=x[source_end-20480:source_end]
+    assert rms(frame)<=max(2,.02*rms(source))

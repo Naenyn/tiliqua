@@ -598,3 +598,23 @@ output ownership are unchanged. Tomorrow's first test is a complete SOURCE
 capture with the new endpoint field, then quiet low-frequency sine and an
 amplitude transition. Continuous scheduling and production promotion should
 follow those checks, not bypass them.
+
+Qualification: 103 focused tests plus 8 added stopband cases plus 35 full-filter,
+snapshot, shared-history, direct-score and live-acquisition tests pass (146
+distinct cases). The stopband cases cover 3/10/18.5/19.9 kHz at amplitudes
+100/14000 counts with DC; this is synthetic energy rejection, not measured
+hardware pitch accuracy. Endpoint wraparound tests also pass.
+
+Full r5 normal-display 192-kHz synthesis has 46/56 EBR and 15/28 DSP, unchanged.
+Seeds 15 and 16 failed final serializer timing (361.01 and 349.77 MHz against
+371.33 MHz); these are NOT qualified artifacts. Seed 17 passes all final clocks:
+main 65.00/60 MHz, pixel 89.74/74.25, serializer 436.87/371.33, audio
+71.13/49.152. Use `TILIQUA_TUNER_SEED=17` for this experiment's normal-display
+build. Final report `/tmp/tuner-nsdf-endpoint-seed17.tim`; same synthesized
+netlist as `/tmp/tuner-nsdf-endpoint-build.log`. Failed route paths were serializer
+register-to-output routing, not the added timestamp or arithmetic.
+Packed bitstream SHA256:
+`b79653b788d1c8a4043bc0510ff2e2e3f39554540a12e82e66132d05aa3ab929`.
+Firmware .data=1632, .bss=8, heap=0 and reserved stack=31128 bytes; CPU RAM
+remains 32 KiB (reserved stack is not measured high-water). Hardware remains
+unflashed until the user powers up the rack and resumes testing.

@@ -48,6 +48,8 @@ def test_explicit_low_endpoint_diagnostic(offset):
     r=next(analyze_source(text()))
     assert r['source_frame_offset_native']==offset and r['low_relative_energy_pass']
     assert r['native_relative_energy_pass'] is None
+    s['end']=(1<<32)-256;s['frame_end']=128
+    assert next(analyze_source(text()))['source_frame_offset_native']==384
     s['frame_end']=(int(s['end'])+513)&0xffffffff
     with pytest.raises(ValueError):list(analyze_source(text()))
 
