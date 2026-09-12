@@ -35,3 +35,15 @@ def test_physical_buffered_quiet_low_summaries_reach_20hz():
     assert all(r['guarded_qualified'] and 24.3<r['hz']<24.5 for r in reports)
     assert all(50<=r['frame_interval_ms']<=50.2 for r in reports[1:])
     assert all(r['select_ms']<0.85 and not r['score_parity_checked'] for r in reports)
+
+
+def test_physical_level_roundtrip_representative_windows():
+    # Selected original records: initial quiet, loud peak, lowest overshoot,
+    # settled quiet. Gaps are intentional; this is not a recovery-time test.
+    reports=list(analyze_fast((Path(__file__).parent/'fixtures/nsdf-fast-low-level-roundtrip.txt').read_text()))
+    assert len(reports)==16
+    assert all(r['guarded_qualified'] and 24.2<r['hz']<24.7 for r in reports)
+    assert min(r['rms_counts'] for r in reports)<7
+    assert max(r['rms_counts'] for r in reports)>7000
+    assert all(60<r['rms_counts']<70 for r in reports[-3:])
+    assert all(not r['score_parity_checked'] for r in reports)

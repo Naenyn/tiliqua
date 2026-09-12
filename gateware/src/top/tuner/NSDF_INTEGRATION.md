@@ -826,3 +826,31 @@ Full-score mode retains its 1-MiB bound. No firmware/FPGA change or flash.
 Tests cover accepted/rejected frame limits and port closure at each byte cap.
 Next capture should span a user-paced quiet-to-loud-to-quiet adjustment, with
 several seconds at the louder level; avoid rushing or insisting on exact Vpp.
+
+### Completed user-paced amplitude roundtrip
+
+`/tmp/tuner-fast-low-level-roundtrip.log` completed 6000 validated summaries
+and closed normally (~5 minutes). All 6000 were CPU-qualified and passed
+the host-only source-energy guard. No reported qualification dropout, capture
+fault or cadence gap: maximum native endpoint interval 50.167 ms.
+The user raised the ~24.4-Hz sine from quiet to roughly 5 Vpp, held it, then
+attenuated with several overshoots before settling. Frame RMS ranged from
+6.836 to 7020.525 counts; final 200 frames ranged 63.748–64.199 counts.
+Do not assign an exact Vpp to the final signal or demand exact knob positioning.
+
+Reported frequency across all adjustments ranged 24.292–24.659 Hz. Final 200
+frames: min/5th-percentile/median/95th-percentile/max approximately
+24.396/24.405/24.427/24.447/24.613 Hz. Thus continuous qualification does not
+mean constant sub-cent accuracy; there is extra low-level jitter and no
+independent instantaneous frequency reference. This is a successful practical
+level-change robustness test, NOT a timed abrupt-step recovery measurement.
+The gradual changes never exercised a failing source-energy veto, so they
+do not validate the exact simulated ~109-ms recovery bound.
+
+Sixteen original complete records around initial quiet, loud maximum, lowest
+overshoot and settled quiet are retained in
+`tests/fixtures/nsdf-fast-low-level-roundtrip.txt`; the regression explicitly
+permits their selection gaps and makes no score/model-parity or latency claim.
+29 focused fast-report/capture/firmware tests pass. No firmware changes or
+flash this turn; installed build remains `58b31f9f`. No serial capture is open.
+No further repetition of this manual low-frequency level test is necessary.
