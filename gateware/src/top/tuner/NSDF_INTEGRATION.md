@@ -770,3 +770,22 @@ Simulation checks 100-byte order/wrap, full-queue rejection, two baud divisors,
 idle output-enable and original RX read/clear behavior. This requires a full
 FPGA build and fresh final timing/resource qualification, not firmware-only
 reuse of the previous bitstream.
+
+Buffered-UART build `58b31f9f`, seed 17: final routed clocks all PASS:
+main 65.52/60 MHz, pixel 87.90/74.25 MHz, serializer 434.97/371.33 MHz,
+audio 70.25/49.152 MHz. Preliminary placement failures are superseded by
+these final routed results. Report `/tmp/tuner-uart-fifo-seed17.tim`.
+Resources: 46/56 EBR, 15/28 DSP unchanged; 12242 FF versus 12101 previously
+(+141), 21086 total mapped LUT4 equivalents (mapping can change globally).
+CPU .data=1632, .bss=8, heap=0, reserved stack=31128, still 32 KiB total.
+FPGA SHA256 `83dfbb3a6becc72b2ade62396a47c09d186f8fceb3b37ca65c96e58d288e373f`;
+firmware SHA256 remains `81cd8bec3d4b21fc5bf7d4892ec81b7fdfeb0deac4377e0051431e7d06c18b55`.
+
+129 focused tests pass, including a tightened actual-Rust trace mock with
+finite 16-byte space and approximate 115200-baud drain between foreground
+visits. Ready can now fall during a call rather than remaining indefinitely
+true. Physical cadence still needs measurement; simulations are not proof.
+The normal-display fast-low archive was flashed to slot 1, Refresh DONE,
+profiles preserved. Log `/tmp/tuner-uart-fifo-58b31f9f-flash.log`.
+Next: user reopens TUNER with quiet bass IN0 and LFO IN1 unchanged; collect
+200 fast summaries before asking for a level transition. No capture is open.
