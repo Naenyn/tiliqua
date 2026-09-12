@@ -1315,3 +1315,24 @@ No serial capture open. User must reopen TUNER; current IN0 ~1.2-kHz/four-tone
 patch can remain. Capture `--continuous`, analyze RUN/PICK and new COMP records.
 COMP baseline age includes measured audio-end age plus time since observation.
 Main display and every production measurement consumer remain unchanged.
+
+### Physical publication and baseline comparison
+
+User reopened unchanged four-tone patch. `/tmp/tuner-publication-comparison.log`
+completed 200 RUN, 100 PICK and 100 COMP records and disconnected. All 400
+original records retained in `tests/fixtures/nsdf-publication-comparison.txt`.
+All selected descriptors valid, expected source native for IN0 (~1.2 kHz),
+low for IN1/2/3 (~776/175/138 Hz). Maximum selected end age 92 ms; conservative
+support-window age 202 ms. No acquisition faults; measured rates
+11.327..11.430 Hz per bank. Measured selector/guard CPU sum 6.724%, excluding
+publication, UI, telemetry and other work as before.
+
+Baseline qualification present in 23,24,23,23 of 25 comparisons on inputs
+0..3. Relative new-minus-baseline differences in cents (min/median/max):
+IN0 -0.533/+0.033/+0.962; IN1 -0.968/-0.284/+0.662;
+IN2 -1.392/-0.109/+1.086; IN3 -1.248/-0.711/+1.237.
+This is encouraging agreement on the present tones, NOT absolute accuracy,
+simultaneous-window comparison, or evidence that one detector is more accurate.
+No new build/flash. Next physical transition check: disconnect IN0 only and
+verify no pitch is published for the absent signal while other lanes continue;
+then reconnect to check recovery. Main consumers are still baseline-only.
