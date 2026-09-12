@@ -1090,3 +1090,13 @@ per-bank counters, allowing sample/time/work wrap. Physical four-tone rate
 remains to be measured. Tests exercise actual firmware with finite UART FIFO,
 400-ms serial stall, timeouts, unavailable history, recovery, maximum line
 length, wrapping counters and malformed/partial serial reports.
+
+Continuous firmware `507d43c1` built successfully and flashed to TUNER slot 1
+(exit 0, Refresh DONE), preserving options. 121 focused tests passed. Archive
+firmware is 177048 bytes; FPGA SHA remains the qualified `83dfbb3a...e373f`.
+Build output confirms `tuner_nsdf_continuous` and mode `continuous`. ELF data
+1632, bss 8, heap 0, reserved stack 31128 bytes: unchanged 32-KiB CPU RAM.
+Reserved stack is not a measured stack high-water mark; the <=1024-byte
+scheduler state compile-time assertion passed on the actual embedded target.
+User needs to reopen TUNER after flash; existing four tones can stay patched.
+No serial capture is open. Next capture uses `--continuous`, not `--fast`.
