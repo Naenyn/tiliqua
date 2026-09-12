@@ -1,5 +1,9 @@
 # NSDF hardware feasibility checkpoint
 
+Follow-up implementation: [NSDF_INTEGRATION.md](NSDF_INTEGRATION.md) documents
+the opt-in two-bank acquisition/snapshot/score pipeline and serial hardware trial.
+The measurements below remain the earlier isolated feasibility checkpoint.
+
 September 11, 2026. Experimental branch only; production gateware and firmware
 are unchanged. This is **not a full SoC fit or a four-channel integration proof**.
 It extends the prior desktop comparison by implementing the entire NSDF score

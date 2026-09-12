@@ -9,6 +9,8 @@ mod ui_markers;
 mod measurement_snapshot;
 mod pitch_verification;
 mod capture_trace;
+#[cfg(tuner_nsdf)]
+mod nsdf_trace;
 mod serial_report;
 mod pitch_math;
 #[path = "calibration.rs"]
@@ -1415,6 +1417,8 @@ fn run(resources: &mut RuntimeResources) -> ! {
         let mut verification_frames = 0u8;
         let mut calibration = calibration_live::Live::new();
         let mut capture_trace=capture_trace::Trace::with_calibration(*hardware_calibration,*hardware_calibration_bits);
+        #[cfg(tuner_nsdf)]
+        let mut nsdf_trace=nsdf_trace::Trace::new();
         let mut run_calibration = false;
         let mut run_verify = false;
         let mut refine=false;let mut accept_refinement=false;let mut discard_refinement=false;
@@ -1456,7 +1460,10 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     }
                 });
             }
+            #[cfg(not(tuner_nsdf))]
             capture_trace.tick(&tuner,uart,ui_frame.now_ms,&calibration,measurements.channel(calibration.input));
+            #[cfg(tuner_nsdf)]
+            nsdf_trace.tick(uart,ui_frame.now_ms);
             run_calibration |= ui_frame.run_calibration;
             if ui_frame.controls.mode==runtime::OperatingMode::Calibrator {
                 if ui_frame.discard_scan {calibration.discard_scan();}

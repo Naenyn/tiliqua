@@ -2,11 +2,7 @@
 import json
 import numpy as np
 from scipy.signal import firwin, freqz
-
-
-def coefficients():
-    # 192 kHz -> 6 kHz. Preserve <=1500 Hz; reject >=3000 Hz before /32.
-    return np.rint(firwin(769,2250,fs=192000,window=('kaiser',8.6))*(1<<17)).astype(np.int64)
+from top.tuner.experiment.nsdf_coefficients import coefficients
 
 
 def report():

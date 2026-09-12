@@ -82,6 +82,15 @@ class TunerSoc(TiliquaSoc):
         # for playback diagnostics, without another interrupt source.
         self.playback_timer = timer.Peripheral(width=32)
         self.csr_decoder.add(self.playback_timer.bus, addr=0x1200, name="playback_timer")
+        self.nsdf_periph = None
+        if os.getenv("TILIQUA_TUNER_NSDF") == "1":
+            try:
+                from .experiment.nsdf_peripheral import Peripheral as NsdfPeripheral
+            except ImportError:
+                from experiment.nsdf_peripheral import Peripheral as NsdfPeripheral
+            assert self.clock_settings.audio_clock.fs() == 192000
+            self.nsdf_periph = NsdfPeripheral()
+            self.csr_decoder.add(self.nsdf_periph.bus, addr=0x1300, name="nsdf_periph")
         self.finalize_csr_bridge()
 
     def elaborate(self, platform):
@@ -93,6 +102,11 @@ class TunerSoc(TiliquaSoc):
 
         pmod = self.pmod0_periph.pmod
         wiring.connect(m, pmod.o_cal, self.tuner_periph.i)
+        if self.nsdf_periph is not None:
+            m.submodules.nsdf_periph = self.nsdf_periph
+            m.d.comb += self.nsdf_periph.input_valid.eq(pmod.o_cal.valid & pmod.o_cal.ready)
+            for channel in range(4):
+                m.d.comb += getattr(self.nsdf_periph, f"sample{channel}").eq(pmod.o_cal.payload[channel].as_value())
 
         # No reference oscillator: idle outputs are always calibrated zero.
         # Keep DAC acceptance connected for calibration command acknowledgments.
