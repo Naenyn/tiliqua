@@ -61,6 +61,7 @@ from .video import framebuffer, palette
 
 
 class TiliquaSoc(Component):
+    UART_PERIPHERAL = uart.Peripheral
     def __init__(self, *, firmware_bin_path, ui_name, ui_tag, platform_class, clock_settings,
                  touch=False, finalize_csr_bridge=True, poke_outputs=False, mainram_size=0x4000,
                  fw_location=None, fw_offset=None, cpu_variant="tiliqua_rv32im",
@@ -188,7 +189,7 @@ class TiliquaSoc(Component):
         # uart0
         uart_baud_rate = 115200
         divisor = int(self.clock_settings.frequencies.sync // uart_baud_rate)
-        self.uart0 = uart.Peripheral(divisor=divisor)
+        self.uart0 = self.UART_PERIPHERAL(divisor=divisor)
         self.csr_decoder.add(self.uart0.bus, addr=self.uart0_base, name="uart0")
 
         # timer0

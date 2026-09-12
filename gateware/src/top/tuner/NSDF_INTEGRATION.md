@@ -752,3 +752,21 @@ Flashed slot 1 successfully (Refresh DONE), log
 `/tmp/tuner-fast-service-9141d97e-flash.log`. Next physical step: reopen TUNER
 with the quiet ~24-Hz sine and LFO unchanged, then capture fast summaries to
 measure cadence. Do not claim transition qualification yet.
+
+The `9141d97e` hardware capture again passed 200/200 guarded summaries, but
+intervals were 309/315.17/436 ms min/median/max. UI throttling alone is not
+sufficient. Log `/tmp/tuner-fast-service-steady.log`, capture closed normally.
+Inspection of LUNA UART confirms a single-byte transmitter: ready falls after
+one write. The 1-ms foreground wake cadence consequently limits the text
+export to roughly one byte per wake, despite its 32-byte service budget.
+
+The experiment now substitutes a register-backed 16-byte TX queue with the
+same CSR layout, baud rate and RX behavior. No UART interrupts, CPU spin waits,
+sample buffers or block RAM are added. The shared SoC's peripheral factory
+defaults to the original UART; only TUNER with `TILIQUA_TUNER_NSDF=1` opts in.
+TX-ready denotes queue capacity; pin output enable still follows the physical
+serializer, not queue readiness. Illegal writes while full are ignored.
+Simulation checks 100-byte order/wrap, full-queue rejection, two baud divisors,
+idle output-enable and original RX read/clear behavior. This requires a full
+FPGA build and fresh final timing/resource qualification, not firmware-only
+reuse of the previous bitstream.

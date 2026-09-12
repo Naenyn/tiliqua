@@ -42,6 +42,12 @@ class TunerSoc(TiliquaSoc):
     )
 
     def __init__(self, **kwargs):
+        if os.getenv("TILIQUA_TUNER_NSDF") == "1":
+            try:
+                from .experiment.buffered_uart import Peripheral as BufferedUART
+            except ImportError:
+                from experiment.buffered_uart import Peripheral as BufferedUART
+            self.UART_PERIPHERAL = BufferedUART
         modeline = kwargs["clock_settings"].modeline
         assert modeline is not None, "tuner display targets require a fixed modeline"
         round_display = modeline.h_active == 720 and modeline.v_active == 720
