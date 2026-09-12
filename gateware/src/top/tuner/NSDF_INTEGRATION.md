@@ -895,3 +895,20 @@ Build `/tmp/tuner-device-guard-final-build.log`; flash
 `/tmp/tuner-device-guard-296a6ca9-flash.log`. No serial capture is open.
 Next user action is reopening TUNER, leaving the existing quiet sine and LFO
 unchanged, so guard agreement and its separate cycle cost can be measured.
+
+### Device guard first physical qualification
+
+`296a6ca9`, unchanged quiet ~24.4-Hz sine IN0 and LFO IN1:
+`/tmp/tuner-device-guard-low-steady.log` completed 200 summaries and closed.
+All 200 raw CPU estimates qualified, all 200 on-device energy decisions passed,
+and all matched the independent integer host reference. Guard cost including
+CSR reads: min/median/max 0.0284/0.03408/0.03733 ms; selector plus guard maximum
+0.86109 ms. Maximum endpoint interval 50.167 ms. Frequency 24.389–24.585 Hz;
+not an independent accuracy measurement. Representative original reports are
+retained in `tests/fixtures/nsdf-fast-low-device-guard.txt` with timing and
+guard-decision checks. No production detector/output ownership change.
+
+Next is full four-input/two-bank SOURCE/CPU/IO/score export with the same guard
+enabled, to verify both real candidates and vetoes (especially LFO IN1 native).
+This requires switching only the diagnostic firmware export mode; FPGA stays
+the same qualified buffered-UART image. No signal adjustments are requested.

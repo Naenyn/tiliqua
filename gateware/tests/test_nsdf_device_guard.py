@@ -24,6 +24,15 @@ def test_host_accepts_matching_device_guard():
     assert all(r['device_guard'] and r['guarded_qualified'] and r['guard_ms']>0 for r in reports)
 
 
+def test_physical_device_guard_quiet_low_and_measured_cost():
+    text=(Path(__file__).parent/'fixtures/nsdf-fast-low-device-guard.txt').read_text()
+    reports=list(analyze_fast(text))
+    assert len(reports)==3
+    assert all(r['device_guard'] and r['guarded_qualified'] for r in reports)
+    assert all(0<r['guard_ms']<0.05 and r['select_ms']+r['guard_ms']<0.9 for r in reports)
+    assert all(50<=r['frame_interval_ms']<=50.2 for r in reports[1:])
+
+
 def reference(v):
     low,ch,seq,frame,end,n,total,q,status,energy,scaled,clipped=v
     offset=((frame-end+(1<<31))&0xffffffff)-(1<<31)
