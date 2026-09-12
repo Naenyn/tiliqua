@@ -1,0 +1,96 @@
+NSDF SOURCE ch=0 low=true seq=5204454 end=166542848 n=20480 sum=-2296327 squares=3955807978751 status=1 frame_end=166543296
+NSDF CPU ch=0 low=true seq=5204454 mhz=881825 raw=880174 ppm=986996 ok=true cycles=53909 reads=322 guard=true gc=5438
+NSDF FAST ch=0 low=true seq=5204454 energy=116898689890 scaled=0 clipped=0 start_ms=865874 end_ms=865909
+NSDF SOURCE ch=1 low=false seq=166553292 end=166553088 n=20480 sum=-2014772 squares=3868705222924 status=5 frame_end=166553292
+NSDF CPU ch=1 low=false seq=166553292 mhz=776094 raw=776094 ppm=999998 ok=true cycles=52333 reads=633 guard=true gc=2393
+NSDF FAST ch=1 low=false seq=166553292 energy=120330695482 scaled=0 clipped=0 start_ms=865926 end_ms=865959
+NSDF SOURCE ch=1 low=true seq=5205066 end=166562816 n=20480 sum=-946232 squares=3857537254404 status=5 frame_end=166562880
+NSDF CPU ch=1 low=true seq=5205066 mhz=776389 raw=775419 ppm=996402 ok=true cycles=54823 reads=323 guard=true gc=5147
+NSDF FAST ch=1 low=true seq=5205066 energy=113931705589 scaled=0 clipped=0 start_ms=865976 end_ms=866014
+NSDF SOURCE ch=2 low=false seq=166572492 end=166572032 n=20480 sum=-357811 squares=3898186385505 status=9 frame_end=166572492
+NSDF CPU ch=2 low=false seq=166572492 mhz=0 raw=0 ppm=0 ok=false cycles=25169 reads=322 guard=true gc=2893
+NSDF FAST ch=2 low=false seq=166572492 energy=138804142401 scaled=0 clipped=0 start_ms=866026 end_ms=866062
+NSDF SOURCE ch=2 low=true seq=5205692 end=166582784 n=20480 sum=-6423677 squares=3898671813439 status=9 frame_end=166582912
+NSDF CPU ch=2 low=true seq=5205692 mhz=175254 raw=175261 ppm=999962 ok=true cycles=42497 reads=356 guard=true gc=2433
+NSDF FAST ch=2 low=true seq=5205692 energy=113773807725 scaled=0 clipped=0 start_ms=866080 end_ms=866113
+NSDF SOURCE ch=3 low=false seq=166592544 end=166592512 n=20480 sum=-2241296 squares=4194893369104 status=13 frame_end=166592544
+NSDF CPU ch=3 low=false seq=166592544 mhz=0 raw=0 ppm=0 ok=false cycles=25100 reads=322 guard=true gc=2644
+NSDF FAST ch=3 low=false seq=166592544 energy=24131618528 scaled=0 clipped=0 start_ms=866130 end_ms=866156
+NSDF SOURCE ch=3 low=true seq=5206292 end=166601728 n=20480 sum=-10573948 squares=4137097595128 status=13 frame_end=166602112
+NSDF CPU ch=3 low=true seq=5206292 mhz=138663 raw=138705 ppm=999583 ok=true cycles=39434 reads=368 guard=true gc=2610
+NSDF FAST ch=3 low=true seq=5206292 energy=122948163622 scaled=0 clipped=0 start_ms=866180 end_ms=866220
+NSDF SOURCE ch=0 low=false seq=166612817 end=166612480 n=20480 sum=-2064145 squares=3959768379969 status=1 frame_end=166612817
+NSDF CPU ch=0 low=false seq=166612817 mhz=881353 raw=881353 ppm=999989 ok=true cycles=49979 reads=595 guard=true gc=2507
+NSDF FAST ch=0 low=false seq=166612817 energy=132735752486 scaled=0 clipped=0 start_ms=866236 end_ms=866268
+NSDF SOURCE ch=0 low=true seq=5206926 end=166622208 n=20480 sum=-2232793 squares=3957358784019 status=1 frame_end=166622400
+NSDF CPU ch=0 low=true seq=5206926 mhz=881604 raw=879917 ppm=985816 ok=true cycles=60258 reads=322 guard=true gc=2662
+NSDF FAST ch=0 low=true seq=5206926 energy=116491548022 scaled=0 clipped=0 start_ms=866286 end_ms=866316
+NSDF SOURCE ch=1 low=false seq=166632018 end=166631936 n=20480 sum=-2647573 squares=3857711081663 status=5 frame_end=166632018
+NSDF CPU ch=1 low=false seq=166632018 mhz=776281 raw=776281 ppm=999998 ok=true cycles=51728 reads=633 guard=true gc=2667
+NSDF FAST ch=1 low=false seq=166632018 energy=122463939866 scaled=0 clipped=0 start_ms=866336 end_ms=866374
+NSDF SOURCE ch=1 low=true seq=5207556 end=166642176 n=20480 sum=-1037203 squares=3858511196059 status=5 frame_end=166642560
+NSDF CPU ch=1 low=true seq=5207556 mhz=776383 raw=775366 ppm=996320 ok=true cycles=58150 reads=323 guard=true gc=2556
+NSDF FAST ch=1 low=true seq=5207556 energy=113827095542 scaled=0 clipped=0 start_ms=866391 end_ms=866423
+NSDF SOURCE ch=2 low=false seq=166652180 end=166651904 n=20480 sum=-2948433 squares=3917486194223 status=9 frame_end=166652180
+NSDF CPU ch=2 low=false seq=166652180 mhz=0 raw=0 ppm=0 ok=false cycles=25115 reads=322 guard=true gc=2698
+NSDF FAST ch=2 low=false seq=166652180 energy=59570403026 scaled=0 clipped=0 start_ms=866441 end_ms=866471
+NSDF SOURCE ch=2 low=true seq=5208156 end=166661632 n=20480 sum=-6826145 squares=3893207438293 status=9 frame_end=166661760
+NSDF CPU ch=2 low=true seq=5208156 mhz=175300 raw=175286 ppm=999933 ok=true cycles=39939 reads=356 guard=true gc=2486
+NSDF FAST ch=2 low=true seq=5208156 energy=113842727969 scaled=0 clipped=0 start_ms=866491 end_ms=866528
+NSDF SOURCE ch=3 low=false seq=166672532 end=166672384 n=20480 sum=-10326219 squares=4138441673055 status=13 frame_end=166672532
+NSDF CPU ch=3 low=false seq=166672532 mhz=0 raw=0 ppm=0 ok=false cycles=25058 reads=322 guard=true gc=2491
+NSDF FAST ch=3 low=false seq=166672532 energy=134190648373 scaled=0 clipped=0 start_ms=866547 end_ms=866576
+NSDF SOURCE ch=3 low=true seq=5208792 end=166682112 n=20480 sum=-10386655 squares=4143208097045 status=13 frame_end=166682112
+NSDF CPU ch=3 low=true seq=5208792 mhz=138655 raw=138690 ppm=999600 ok=true cycles=39410 reads=368 guard=true gc=2734
+NSDF FAST ch=3 low=true seq=5208792 energy=123400927980 scaled=0 clipped=0 start_ms=866597 end_ms=866628
+NSDF SOURCE ch=0 low=false seq=166691734 end=166691328 n=20480 sum=-2103242 squares=3958380172428 status=1 frame_end=166691734
+NSDF CPU ch=0 low=false seq=166691734 mhz=881378 raw=881378 ppm=999998 ok=true cycles=49400 reads=595 guard=true gc=2347
+NSDF FAST ch=0 low=false seq=166691734 energy=133085774791 scaled=0 clipped=0 start_ms=866647 end_ms=866684
+NSDF SOURCE ch=0 low=true seq=5209428 end=166702080 n=20480 sum=-2433633 squares=3959820913009 status=1 frame_end=166702464
+NSDF CPU ch=0 low=true seq=5209428 mhz=881762 raw=880124 ppm=986795 ok=true cycles=59491 reads=322 guard=true gc=2656
+NSDF FAST ch=0 low=true seq=5209428 energy=116889709567 scaled=0 clipped=0 start_ms=866703 end_ms=866734
+NSDF SOURCE ch=1 low=false seq=166712087 end=166711808 n=20480 sum=-2618811 squares=3857017674477 status=5 frame_end=166712087
+NSDF CPU ch=1 low=false seq=166712087 mhz=776502 raw=776502 ppm=999996 ok=true cycles=51832 reads=633 guard=true gc=2688
+NSDF FAST ch=1 low=false seq=166712087 energy=130775144886 scaled=0 clipped=0 start_ms=866753 end_ms=866791
+NSDF SOURCE ch=1 low=true seq=5210028 end=166721536 n=20480 sum=-1381641 squares=3866577878603 status=5 frame_end=166721664
+NSDF CPU ch=1 low=true seq=5210028 mhz=776337 raw=775311 ppm=996264 ok=true cycles=55641 reads=323 guard=true gc=5444
+NSDF FAST ch=1 low=true seq=5210028 energy=113756643438 scaled=0 clipped=0 start_ms=866803 end_ms=866840
+NSDF SOURCE ch=2 low=false seq=166731864 end=166731776 n=20480 sum=-5516893 squares=3907434748841 status=9 frame_end=166731864
+NSDF CPU ch=2 low=false seq=166731864 mhz=0 raw=0 ppm=0 ok=false cycles=25051 reads=322 guard=true gc=2705
+NSDF FAST ch=2 low=false seq=166731864 energy=137671888029 scaled=0 clipped=0 start_ms=866856 end_ms=866887
+NSDF SOURCE ch=2 low=true seq=5210646 end=166740992 n=20480 sum=1115616 squares=3875640140592 status=9 frame_end=166741440
+NSDF CPU ch=2 low=true seq=5210646 mhz=175313 raw=175297 ppm=999972 ok=true cycles=39212 reads=356 guard=true gc=2763
+NSDF FAST ch=2 low=true seq=5210646 energy=115251228305 scaled=0 clipped=0 start_ms=866906 end_ms=866936
+NSDF SOURCE ch=3 low=false seq=166751066 end=166750720 n=20480 sum=-608425 squares=4158927882231 status=13 frame_end=166751066
+NSDF CPU ch=3 low=false seq=166751066 mhz=0 raw=0 ppm=0 ok=false cycles=25175 reads=322 guard=true gc=2687
+NSDF FAST ch=3 low=false seq=166751066 energy=19825529029 scaled=0 clipped=0 start_ms=866956 end_ms=866995
+NSDF SOURCE ch=3 low=true seq=5211288 end=166761984 n=20480 sum=-4299943 squares=4215347715121 status=13 frame_end=166761984
+NSDF CPU ch=3 low=true seq=5211288 mhz=138660 raw=138683 ppm=999589 ok=true cycles=39570 reads=368 guard=true gc=2565
+NSDF FAST ch=3 low=true seq=5211288 energy=123110195654 scaled=0 clipped=0 start_ms=867013 end_ms=867044
+NSDF SOURCE ch=0 low=false seq=166771611 end=166771200 n=20480 sum=-2121971 squares=3957918544055 status=1 frame_end=166771611
+NSDF CPU ch=0 low=false seq=166771611 mhz=881453 raw=881453 ppm=999997 ok=true cycles=49943 reads=599 guard=true gc=2589
+NSDF FAST ch=0 low=false seq=166771611 energy=126604870536 scaled=0 clipped=0 start_ms=867063 end_ms=867095
+NSDF SOURCE ch=0 low=true seq=5211888 end=166780928 n=20480 sum=-2430652 squares=3959386702466 status=1 frame_end=166781184
+NSDF CPU ch=0 low=true seq=5211888 mhz=881754 raw=880100 ppm=986694 ok=true cycles=60111 reads=322 guard=true gc=2513
+NSDF FAST ch=0 low=true seq=5211888 energy=116819610451 scaled=0 clipped=0 start_ms=867113 end_ms=867150
+NSDF SOURCE ch=1 low=false seq=166791964 end=166791680 n=20480 sum=-2650718 squares=3857795950462 status=5 frame_end=166791964
+NSDF CPU ch=1 low=false seq=166791964 mhz=775812 raw=775812 ppm=999997 ok=true cycles=52315 reads=633 guard=true gc=2564
+NSDF FAST ch=1 low=false seq=166791964 energy=130124739807 scaled=0 clipped=0 start_ms=867169 end_ms=867203
+NSDF SOURCE ch=1 low=true seq=5212524 end=166801408 n=20480 sum=-1558690 squares=3868986344092 status=5 frame_end=166801536
+NSDF CPU ch=1 low=true seq=5212524 mhz=776272 raw=775253 ppm=996342 ok=true cycles=54834 reads=323 guard=true gc=30108
+NSDF FAST ch=1 low=true seq=5212524 energy=113829362482 scaled=0 clipped=0 start_ms=867219 end_ms=867250
+NSDF SOURCE ch=2 low=false seq=166811166 end=166811136 n=20480 sum=172180 squares=3889967525060 status=9 frame_end=166811166
+NSDF CPU ch=2 low=false seq=166811166 mhz=0 raw=0 ppm=0 ok=false cycles=25083 reads=322 guard=true gc=2667
+NSDF FAST ch=2 low=false seq=166811166 energy=143268675392 scaled=0 clipped=0 start_ms=867269 end_ms=867305
+NSDF SOURCE ch=2 low=true seq=5213154 end=166821376 n=20480 sum=-8882456 squares=3855102858484 status=9 frame_end=166821696
+NSDF CPU ch=2 low=true seq=5213154 mhz=175295 raw=175303 ppm=999974 ok=true cycles=39670 reads=356 guard=true gc=2514
+NSDF FAST ch=2 low=true seq=5213154 energy=113708053493 scaled=0 clipped=0 start_ms=867324 end_ms=867355
+NSDF SOURCE ch=3 low=false seq=166831327 end=166831104 n=20480 sum=-1686640 squares=4184509780502 status=13 frame_end=166831327
+NSDF CPU ch=3 low=false seq=166831327 mhz=0 raw=0 ppm=0 ok=false cycles=25104 reads=322 guard=true gc=2684
+NSDF FAST ch=3 low=false seq=166831327 energy=27495782841 scaled=0 clipped=0 start_ms=867374 end_ms=867405
+NSDF SOURCE ch=3 low=true seq=5213754 end=166840832 n=20480 sum=-2136010 squares=4195076312088 status=13 frame_end=166840896
+NSDF CPU ch=3 low=true seq=5213754 mhz=138655 raw=138637 ppm=999596 ok=true cycles=39487 reads=368 guard=true gc=2660
+NSDF FAST ch=3 low=true seq=5213754 energy=123179905118 scaled=0 clipped=0 start_ms=867424 end_ms=867460
+NSDF SOURCE ch=0 low=false seq=166850527 end=166850048 n=20480 sum=-2070830 squares=3959320521532 status=1 frame_end=166850527
+NSDF CPU ch=0 low=false seq=166850527 mhz=881725 raw=881725 ppm=999997 ok=true cycles=49032 reads=597 guard=true gc=2494
+NSDF FAST ch=0 low=false seq=166850527 energy=130727283892 scaled=0 clipped=0 start_ms=867474 end_ms=867509

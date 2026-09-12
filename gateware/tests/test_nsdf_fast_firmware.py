@@ -71,3 +71,22 @@ def test_physical_all_bank_schedule_with_normal_ui():
     assert all(b['start_ms']-a['start_ms']==50 for a,b in zip(reports,reports[1:]))
     assert all(r['select_ms']+r['guard_ms']<1.3 for r in reports)
     assert all(not r['score_parity_checked'] for r in reports)
+
+
+def test_physical_four_tones_without_channel_starvation():
+    reports=list(analyze_fast((Path(__file__).parent/'fixtures/nsdf-fast-all-four-tones.txt').read_text(),round_robin=True))
+    assert len(reports)==32
+    ranges=[(880,884),(775,778),(174,177),(138,140)]
+    for channel in range(4):
+        for bank in ('native','low'):
+            group=[r for r in reports if (r['channel'],r['bank'])==(channel,bank)]
+            assert len(group)==4
+            expected=bank=='low' or channel<2
+            assert all(r['guarded_qualified']==expected for r in group)
+            if expected:
+                lo,hi=ranges[channel]
+                assert all(lo<r['hz']<hi for r in group)
+            assert all(400<=r['frame_interval_ms']<420 for r in group[1:])
+    assert all(50<=b['start_ms']-a['start_ms']<=57 for a,b in zip(reports,reports[1:]))
+    assert all(r['select_ms']+r['guard_ms']<1.5 for r in reports)
+    assert all(not r['score_parity_checked'] for r in reports)

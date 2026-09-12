@@ -1029,3 +1029,30 @@ Next useful hardware coverage is four independent tones to exercise all
 selector paths instead of letting quiet inputs exit early. Final production
 scheduling must decouple telemetry, cache bounded latest results, and be
 measured independently of this verbose diagnostic's shared 20-Hz cap.
+
+### Four independent tones, normal UI
+
+User patched four tones with unchanged installed `d2d695d4` firmware.
+`/tmp/tuner-fast-all-four-tones.log` captured 200 validated summaries and
+closed normally: exactly 25 observations per input/bank, strict turn order.
+IN0 native 881.207..882.107 Hz / low 881.604..881.864 Hz; IN1 native
+775.749..776.805 Hz / low 776.156..776.389 Hz. All qualified and passed the
+device guard. IN2 low 175.247..175.351 Hz and IN3 low 138.636..138.664 Hz
+also qualified on every observation. Their native-bank results were
+unqualified, expected below that bank's 600-Hz lower limit. Frequencies are
+device estimates, not independently referenced accuracy measurements.
+
+Starts were 50..57 ms apart; per-bank endpoints 403.000..418.027 ms apart.
+No starvation, but do not hide the increase over the nominal 400-ms revisit.
+Selector+guard measured elapsed time summed to 1.541% of capture duration;
+worst call 1.468 ms (IN0 low). Excludes other foreground and hardware work;
+cannot attribute all scheduling delay to any single component from these
+records. Request-to-summary completion <=40 ms includes UART staging.
+
+First 32 consecutive original records retained in
+`tests/fixtures/nsdf-fast-all-four-tones.txt`. Tests require per-channel
+frequency bands, expected bank qualification, fairness and measured bounds.
+This is positive four-input evidence, not worst-case waveform complexity,
+full-range coverage, or production 20-Hz-per-channel qualification. No further
+repatch is needed before separating acquisition from telemetry and measuring
+that scheduler. No firmware change or reflash for this capture.
