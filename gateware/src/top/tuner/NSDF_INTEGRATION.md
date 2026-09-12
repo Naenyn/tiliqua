@@ -1168,3 +1168,27 @@ call 1.848 ms was again rejected low-bank IN0 work. The regression records the
 93-ms observed age rather than retaining the earlier <=90-ms bound. No
 independent accuracy reference, full-score parity, or qualification guarantee
 for unreported intermediate acquisitions is inferred. No build/flash change.
+
+### Continuous mixed-frequency test, IN0 approximately 25 Hz
+
+User lowered IN0 only; `/tmp/tuner-continuous-mixed-25hz.log` completed 200
+validated RUN reports and disconnected. Originals retained in
+`tests/fixtures/nsdf-continuous-mixed-25hz.txt`. IN0 low accepted all 25
+reported observations at 24.945..24.977 Hz; native had no raw-qualified
+candidate (guard passed 15 observations, which alone never confers pitch
+validity). IN1 both banks around 776 Hz; IN2/3 low-bank-only around
+175.3/138.9 Hz. Every report showed zero cumulative acquisition faults.
+
+Measured per-bank update rates 11.083..11.189 Hz, report-time ages <=88 ms,
+completion-observation delay <=4 ms. Sum of cumulative selector/guard work
+deltas was 6.283% CPU with the same documented exclusions. Worst sampled call
+1.434 ms on IN1 low; IN0 low <=0.883 ms. No independent frequency reference
+or evidence for every unreported intermediate qualification is implied.
+
+This completes the mixed-range scheduler checks at approximately 25 Hz,
+880 Hz, 10 kHz and 18.46 kHz with three other simultaneous tones. It does
+not establish full continuous-range accuracy, worst-case rich-waveform load,
+or total CPU use. Existing patch may remain unchanged. No new flash for
+recording these regressions. Next integration work is bounded per-input
+bank resolution with explicit freshness, disagreement and source-guard rules;
+baseline tuner/calibrator/quantizer remain authoritative pending validation.
