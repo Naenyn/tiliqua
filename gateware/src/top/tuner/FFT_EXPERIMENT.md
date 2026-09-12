@@ -106,6 +106,21 @@ power-spectrum precision, clipping robustness, filtering, or a complete detector
 
 ## Next hardware evidence
 
+Attenuated modulated Blade follow-up: user kept internal modulation unchanged
+(believed internal LFO; exact rate unknown) and reduced amplitude. Retained as
+`tuner-local-parks-modulated-blade-attenuated.json`. All 2048 samples are inside
+the signed range, minimum -11905 / maximum 20268; zero samples hit either rail.
+The raw header reports 1514.889 Hz (factor 1). Spectral gives 500.880 Hz, NSDF
+500.567 Hz, YIN 500.652 Hz at the same 200–20000 Hz bounds, all qualified.
+Integer NSDF near 1 ms is -0.0056 versus 0.9893 near 2 ms. Half-frame NSDF
+estimates are 500.668 / 500.486 Hz. Capture rail clipping is therefore not
+necessary for this detector disagreement. This does not exclude distortion
+upstream of attenuation or prove the oscillator's intended pitch is 501 Hz.
+The snapshots occur at different modulation phases and are not a synchronized
+before/after amplitude experiment. These two modulated captures provide useful
+real data for subsequent periodicity/qualification improvements without needing
+to keep asking the user for increasingly artificial pulse widths.
+
 Modulated Blade follow-up is retained as `tuner-local-parks-modulated-blade.json`.
 User reports waveform modulation with fixed tuning controls. Modulation source,
 rate and depth were not yet supplied. Native frame: 2048 samples / 10.67 ms.
