@@ -1,0 +1,110 @@
+//! Diagnostic-only continuous acquisition. No DAC or authoritative pitch writes.
+//! Latest-value storage is bounded; a blocked UART cannot hold the score engine.
+use core::fmt::Write;
+use heapless::String;
+use tiliqua_pac as pac;
+
+#[derive(Clone,Copy)]
+struct Latest {
+    count:u32, seq:u32, mhz:u32, cycles:u32, work:u32, dt:u32, done:u64,
+    raw:bool, guard:bool, valid:bool,
+}
+impl Latest {
+    const EMPTY:Self=Self {count:0,seq:0,mhz:0,cycles:0,work:0,dt:0,done:0,
+        raw:false,guard:false,valid:false};
+}
+pub struct Scheduler {
+    latest:[Latest;8], pending:String<224>, offset:usize,
+    slot:u8, report:u8, active:bool, due:u64, started:u64,
+    report_due:u64, faults:u32,
+}
+// Also checked by the embedded compiler with the real heapless buffer layout.
+const _:()=assert!(core::mem::size_of::<Scheduler>()<=1024);
+impl Scheduler {
+    pub fn fast(&self)->bool {true}
+    pub fn ui_period_ms(&self,_idle_tuner:bool,normal:u64)->u64 {normal}
+    pub fn new()->Self {
+        Self {latest:[Latest::EMPTY;8],pending:String::new(),offset:0,
+            slot:0,report:0,active:false,due:2000,started:0,
+            report_due:2000,faults:0}
+    }
+    fn finish(&mut self,now:u64) {
+        self.active=false;self.slot=(self.slot+1)&7;
+        // At most 100 acquisitions/s TOTAL. Late service never queues catch-up.
+        self.due=now.max(self.started.saturating_add(10));
+    }
+    pub fn tick(&mut self,uart:&pac::UART0,now:u64) {
+        let nsdf=unsafe {&*pac::NSDF_PERIPH::ptr()};
+        // UART service never gates acquisition, even when disconnected/stalled.
+        for _ in 0..32 {
+            if self.offset==self.pending.len() || !uart.tx_ready().read().txe().bit() {break;}
+            uart.tx_data().write(|w|unsafe {w.data().bits(self.pending.as_bytes()[self.offset].into())});
+            self.offset+=1;
+        }
+        let low=self.slot&1!=0;let channel=self.slot>>1;
+        if self.active {
+            let status=nsdf.status().read().value().bits();
+            let complete=status&2!=0;
+            if status&0x1c!=0 || (!complete && now.saturating_sub(self.started)>=250)
+                || (complete && status>>16!=if low {302}else{322}) {
+                nsdf.control().write(|w|unsafe {w.value().bits(2)});
+                self.latest[self.slot as usize].valid=false;
+                self.faults=self.faults.saturating_add(1);self.finish(now);
+            } else if complete {
+                let started=crate::playback_cycles();
+                let energy=(nsdf.energy_low().read().value().bits() as u64)
+                    |((nsdf.energy_high().read().value().bits() as u64)<<32);
+                let seq=nsdf.sequence().read().value().bits();
+                let result=crate::nsdf_select::select_frame(|index| {
+                    nsdf.address().write(|w|unsafe {w.value().bits(index as u16)});
+                    let _=nsdf.data().read();
+                    nsdf.data().read().value().bits() as i32
+                },low,energy,status&(1<<8)!=0,status&(1<<9)!=0);
+                let guard=crate::nsdf_guard::passes(crate::nsdf_guard::Source {
+                    end:nsdf.source_sequence().read().value().bits(),
+                    samples:nsdf.source_samples().read().value().bits(),
+                    sum:nsdf.source_sum().read().value().bits() as i32,
+                    squares:(nsdf.source_squares_low().read().value().bits() as u64)
+                        |((nsdf.source_squares_high().read().value().bits() as u64)<<32),
+                    status:nsdf.source_status().read().value().bits(),
+                },channel,low,seq,nsdf.frame_native_end().read().value().bits(),energy,
+                    status&(1<<8)!=0,status&(1<<9)!=0);
+                let cycles=crate::playback_cycles().wrapping_sub(started) as u32;
+                let (mhz,raw)=result.map_or((0,false),|r|((r.hz*1000.0) as u32,r.qualified));
+                let old=self.latest[self.slot as usize];
+                self.latest[self.slot as usize]=Latest {count:old.count.saturating_add(1),
+                    seq,mhz,cycles,work:old.work.wrapping_add(cycles),
+                    dt:now.saturating_sub(self.started).min(u32::MAX as u64) as u32,
+                    done:now,raw,guard,valid:true};
+                self.finish(now);
+            }
+        } else if now>=self.due {
+            if nsdf.identity().read().value().bits()!=0x4e534403 {
+                self.faults=self.faults.saturating_add(1);
+                self.latest=[Latest::EMPTY;8];self.due=now.saturating_add(5000);
+            } else {
+                let fill=nsdf.fill().read().value().bits();
+                let ready=(if low {(fill>>16)&2047}else{fill&2047})>=if low {604}else{674};
+                if ready {
+                    nsdf.control().write(|w|unsafe {w.value().bits(1|((low as u32)<<2)|((channel as u32)<<3))});
+                    self.started=now;self.active=true;
+                } else {
+                    // A bank that cannot fill must not starve the other seven.
+                    self.latest[self.slot as usize].valid=false;
+                    self.started=now;self.finish(now);self.due=now.saturating_add(10);
+                }
+            }
+        }
+        if self.offset==self.pending.len() && now>=self.report_due {
+            self.pending.clear();self.offset=0;
+            let r=self.latest[self.report as usize];
+            let age=now.saturating_sub(r.done).min(u32::MAX as u64) as u32;
+            let ok=r.valid && age<=500 && r.raw && r.guard;
+            // One immutable line in flight; after a stall report current latest
+            // results, never replay an unbounded backlog. age is at formatting.
+            write!(self.pending,"NSDF RUN ch={} low={} count={} seq={} mhz={} raw={} guard={} ok={} age={} dt={} cycles={} work={} faults={} ms={}\n",
+                self.report>>1,self.report&1!=0,r.count,r.seq,r.mhz,r.raw,r.guard,ok,age,r.dt,r.cycles,r.work,self.faults,now as u32).ok();
+            self.report=(self.report+1)&7;self.report_due=now.saturating_add(50);
+        }
+    }
+}

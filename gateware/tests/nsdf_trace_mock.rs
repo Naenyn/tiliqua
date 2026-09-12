@@ -16,7 +16,7 @@ impl<const N:usize> fmt::Write for String<N> {
         self.0.push_str(s);Ok(())
     }
 }
-#[derive(Default)] struct State {now:u64,seq:u32,command:u32,cycles:usize,ready:bool,space:usize,out:Vec<u8>,starts:Vec<(u64,u32)>}
+#[derive(Default)] struct State {now:u64,seq:u32,command:u32,cycles:usize,ready:bool,space:usize,out:Vec<u8>,starts:Vec<(u64,u32)>,scenario:u8}
 thread_local! {static STATE:RefCell<State>=RefCell::new(State::default());}
 pub fn playback_cycles()->usize {STATE.with(|s|{let mut s=s.borrow_mut();s.cycles+=100;s.cycles})}
 pub struct Bits(u32);
@@ -24,8 +24,9 @@ impl Bits {pub fn value(self)->Self{self} pub fn bits(self)->u32{self.0} pub fn 
 pub struct Reg(u8);
 impl Reg {
     pub fn read(&self)->Bits {Bits(STATE.with(|s|{let s=s.borrow();let low=s.command&4!=0;match self.0 {
-        0=>(s.ready && s.space>0) as u32,1=>0x4e534403,2=>1024|(1024<<16),
-        3=>2|((if low {302}else{322})<<16),4=>s.seq,
+        0=>(s.ready && s.space>0) as u32,1=>0x4e534403,
+        2=>if s.scenario==2 && (4000..5000).contains(&s.now) {0}else{1024|(1024<<16)},
+        3=>if s.scenario==1 && s.command==1 && (3000..4000).contains(&s.now) {0}else{2|((if low {302}else{322})<<16)},4=>s.seq,
         5=>s.seq-s.seq%512,6=>20480,7=>0,8=>204800000,9=>0,
         10=>1|((s.command>>3)&3)<<2,11=>s.seq,12=>(if low {604}else{674})*10000,13=>0,_=>0
     }}))}
@@ -63,10 +64,13 @@ mod nsdf_select {
 #[path="../src/top/tuner/fw/src/nsdf_trace.rs"] mod trace;
 #[path="../src/top/tuner/fw/src/nsdf_guard.rs"] mod nsdf_guard;
 fn main() {
+    let scenario=std::env::args().nth(1).map_or(0,|s|s.parse::<u8>().unwrap());
+    STATE.with(|s|s.borrow_mut().scenario=scenario);
     let mut trace=trace::Trace::new();let uart=UART0;
     assert_eq!(trace.ui_period_ms(false,5),5);
     let all=env!("TILIQUA_TUNER_NSDF_TRACE")=="fast-all";
-    assert_eq!(trace.ui_period_ms(true,5),if trace.fast() && !all {100}else{5});
+    let continuous=env!("TILIQUA_TUNER_NSDF_TRACE")=="continuous";
+    assert_eq!(trace.ui_period_ms(true,5),if trace.fast() && !all && !continuous {100}else{5});
     for now in 0..12000 {
         // Approximate 115200-baud 8N1 draining between 1-ms foreground visits.
         // Ready falls within a service call, unlike the old always-ready mock.
@@ -78,14 +82,19 @@ fn main() {
     }
     STATE.with(|s|{let s=s.borrow();assert!(s.starts.len()>4);
         if trace.fast() {
-            for pair in s.starts.windows(2){assert!(pair[1].0-pair[0].0>=50);}
+            for pair in s.starts.windows(2){assert!(pair[1].0-pair[0].0>=if continuous {10}else{50});}
             let low=env!("TILIQUA_TUNER_NSDF_TRACE")=="fast-low";
-            if all {
-                for (i,(_,command)) in s.starts.iter().enumerate() {
+            if all || continuous {
+                if scenario!=2 {for (i,(_,command)) in s.starts.iter().enumerate() {
                     assert_eq!(*command,1|(((i/2)&3) as u32)<<3|((i&1) as u32)<<2);
-                }
+                }}
                 // UART stalls delay, but never skip a bank or queue catch-up.
                 assert!(s.starts.len()>100);
+                if continuous {
+                    assert!(s.starts.len()>=800);
+                    if scenario==0 {assert!(s.starts.windows(2).all(|p|p[1].0-p[0].0==10));}
+                    assert!(s.starts.iter().filter(|(t,_)|(2500..2900).contains(t)).count()>=39);
+                }
             } else {assert!(s.starts.iter().all(|(_,c)|*c==if low {5}else{1}));}
             assert!(!std::str::from_utf8(&s.out).unwrap().contains("NSDF BEGIN"));
         } else {assert!(std::str::from_utf8(&s.out).unwrap().contains("NSDF BEGIN"));}

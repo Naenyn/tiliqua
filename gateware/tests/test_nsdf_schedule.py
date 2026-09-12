@@ -1,0 +1,103 @@
+"""Actual firmware scheduler under UART backpressure; no physical-rate claims."""
+import os
+from pathlib import Path
+import subprocess
+import pytest
+from analyze_nsdf_schedule import analyze_schedule
+import sys
+from types import SimpleNamespace
+import capture_nsdf_cpu
+
+
+@pytest.mark.parametrize('scenario',[0,1,2])
+def test_real_scheduler_keeps_acquiring_during_uart_stall(tmp_path,scenario):
+    here=Path(__file__).parent
+    exe=tmp_path/'scheduler'
+    subprocess.run([str(Path.home()/'.cargo/bin/rustc'),'--edition=2021','-O',
+                    '--cfg','tuner_nsdf_continuous',str(here/'nsdf_trace_mock.rs'),
+                    '-o',str(exe)],env=dict(os.environ,TILIQUA_TUNER_NSDF_TRACE='continuous'),check=True)
+    text=subprocess.check_output([exe,str(scenario)],text=True)
+    checked=list(analyze_schedule(text))
+    assert all(not r['score_parity_checked'] for r in checked)
+    if scenario==0:
+        assert all(12<=r['updates_per_second']<=13 for r in checked
+                   if r['updates_per_second'] is not None and r['count']>20)
+    lines=[x for x in text.splitlines(keepends=True) if x.startswith('NSDF RUN ') and x.endswith('\n')]
+    assert len(lines)>100
+    reports=[dict(p.split('=') for p in x.split()[2:]) for x in lines]
+    assert {(int(r['ch']),r['low']) for r in reports}=={(ch,low) for ch in range(4) for low in ('false','true')}
+    for ch in range(4):
+        for low in ('false','true'):
+            group=[r for r in reports if (int(r['ch']),r['low'])==(ch,low) and int(r['count'])>0]
+            assert len(group)>10
+            assert group[-1]['ok']=='true'
+            if scenario==0:
+                assert all(r['ok']=='true' and r['faults']=='0' for r in group)
+                assert all(int(b['count'])>int(a['count']) for a,b in zip(group,group[1:]))
+            else:
+                assert all(int(b['count'])>=int(a['count']) for a,b in zip(group,group[1:]))
+    if scenario==1:
+        assert any(int(r['faults'])>0 and r['ok']=='false' for r in reports)
+    if scenario==2:
+        assert any(int(r['count'])>0 and int(r['age'])>500 and r['ok']=='false' for r in reports)
+    assert 'NSDF SOURCE' not in text
+
+
+def record(ch=0,low=False,count=1,seq=1000,ms=2000,**changes):
+    r=dict(ch=ch,low=str(low).lower(),count=count,seq=seq,mhz=880000,
+           raw='true',guard='true',ok='true',age=10,dt=2,cycles=200,work=200*count,faults=0,ms=ms)
+    r.update(changes)
+    return 'NSDF RUN '+' '.join(f'{k}={v}' for k,v in r.items())+'\n'
+
+
+@pytest.mark.parametrize('changes',[dict(age=501),dict(ch=4),dict(ok='maybe'),
+    dict(mhz=21000000),dict(count=0),dict(guard='false'),dict(ms=-1)])
+def test_bad_scheduler_record(changes):
+    with pytest.raises(ValueError):list(analyze_schedule(record(**changes)))
+
+
+def test_scheduler_rejects_skip_and_handles_partial_connection():
+    assert len(list(analyze_schedule('partial record\n'+record()+record(0,True)[:-1])))==1
+    with pytest.raises(ValueError):list(analyze_schedule(record()+record(1,False)))
+
+
+def test_scheduler_wrapping_counters():
+    text=''
+    for cycle in range(2):
+        for slot in range(8):
+            text+=record(slot//2,bool(slot&1),count=10+cycle,
+                         seq=(0xfffffff0+cycle*100)&0xffffffff,
+                         ms=(0xffffff00+cycle*400+slot*50)&0xffffffff,
+                         work=(0xffffff80+cycle*200)&0xffffffff)
+    reports=list(analyze_schedule(text))
+    assert all(r['updates_per_second']==2.5 for r in reports[8:])
+    assert all(r['measured_cpu_fraction']==200/(60000*400) for r in reports[8:])
+
+
+def test_summary_worst_case_capacity():
+    line=('NSDF RUN ch=3 low=false count=4294967295 seq=4294967295 mhz=20000000 '
+          'raw=false guard=false ok=false age=4294967295 dt=4294967295 '
+          'cycles=4294967295 work=4294967295 faults=4294967295 ms=4294967295\n')
+    assert len(line)<=224
+
+
+@pytest.mark.parametrize('wrong_mode',[False,True])
+def test_continuous_capture_split_reads_and_disconnect(monkeypatch,capsys,wrong_mode):
+    raw=('NSDF SOURCE incompatible\n' if wrong_mode else ''.join(
+        record((i//2)%4,bool(i&1),count=1+i//8,seq=1000+i*100,ms=2000+i*50)
+        for i in range(16))).encode()
+    chunks=iter(raw[i:i+13] for i in range(0,len(raw),13))
+    class Port:
+        closed=False
+        def __enter__(self):return self
+        def __exit__(self,*args):self.closed=True
+        def readline(self):return next(chunks)
+    port=Port()
+    monkeypatch.setitem(sys.modules,'serial',SimpleNamespace(Serial=lambda *a,**kw:port))
+    monkeypatch.setattr(sys,'argv',['capture_nsdf_cpu.py','fake','--continuous','--fast-frames','16'])
+    if wrong_mode:
+        with pytest.raises(RuntimeError,match='expected continuous'):capture_nsdf_cpu.main()
+    else:
+        capture_nsdf_cpu.main()
+        assert capsys.readouterr().out==raw.decode()
+    assert port.closed and port.dtr and not port.rts

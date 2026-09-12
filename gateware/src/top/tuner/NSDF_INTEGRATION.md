@@ -1056,3 +1056,37 @@ This is positive four-input evidence, not worst-case waveform complexity,
 full-range coverage, or production 20-Hz-per-channel qualification. No further
 repatch is needed before separating acquisition from telemetry and measuring
 that scheduler. No firmware change or reflash for this capture.
+
+### Independent latest-value scheduler (diagnostic only)
+
+`TILIQUA_TUNER_NSDF_TRACE=continuous` replaces the export state machine with
+one foreground acquisition scheduler. Strict eight-slot round robin, one
+outstanding request, 10-ms minimum start interval (100/s total maximum),
+250-ms acquisition timeout, no catch-up queue. This is a ceiling, not a
+measured achieved rate. Normal UI and existing ISR/output ownership remain.
+Firmware retains eight small latest-result records; the embedded compiler
+asserts scheduler state <=1024 bytes including its 224-byte UART line buffer.
+No sample buffers, heap expansion, gateware or CPU RAM capacity change.
+
+UART service is independent: <=32 bytes per visit, one immutable line pending,
+fresh latest-value reports every >=50 ms when space permits. A stalled UART
+does not block, cancel, or reorder acquisition. Old telemetry can finish after
+a stall, but there is no backlog; `age` and `ms` describe formatting time,
+not host receipt time. Results older than 500 ms are never marked `ok`;
+fault/unfilled-bank invalidation also vetoes old results. These results remain
+diagnostic and do not drive production tuning/calibration/quantization.
+
+`NSDF RUN` carries per-bank completion counts, sample sequence, pitch, raw
+qualification, guard, final validity, age, request-to-observation elapsed ms,
+selection+guard cycles, cumulative wrapping work cycles, faults and formatting
+timestamp. `dt` is sampled before selection and includes foreground delays,
+not isolated FPGA latency. Work includes interrupts inside measured calls,
+excludes telemetry/UI/other work. Full score/source parity still needs full
+export. Host computes count/work deltas independently for each bank.
+
+Capture: `capture_nsdf_cpu.py PORT --continuous --fast-frames 200`.
+Host validates ordered report slots, fresh accepted results and monotonic
+per-bank counters, allowing sample/time/work wrap. Physical four-tone rate
+remains to be measured. Tests exercise actual firmware with finite UART FIFO,
+400-ms serial stall, timeouts, unavailable history, recovery, maximum line
+length, wrapping counters and malformed/partial serial reports.

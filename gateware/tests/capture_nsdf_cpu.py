@@ -34,11 +34,13 @@ def main():
     mode=parser.add_mutually_exclusive_group()
     mode.add_argument('--source',action='store_true',help='Also require validated frozen source metadata')
     mode.add_argument('--fast',action='store_true',help='Capture timestamped summaries instead of scores')
+    mode.add_argument('--continuous',action='store_true',help='Capture independent scheduler latest-value reports')
     parser.add_argument('--round-robin',action='store_true',help='Require fast-all channel/bank order (with --fast)')
     parser.add_argument('--fast-frames',type=int,default=200,help='Complete fast summaries to collect')
     args=parser.parse_args()
     if args.round_robin and not args.fast:parser.error('--round-robin requires --fast')
     if args.round_robin and args.fast_frames<16:parser.error('round-robin needs at least 16 frames')
+    if args.continuous and args.fast_frames<16:parser.error('continuous needs at least 16 frames')
     if not 0<args.timeout<=600:parser.error('timeout must be >0 and <=600 seconds')
     if not 2<=args.fast_frames<=6000:parser.error('fast frame count must be 2..6000')
     import serial
@@ -60,6 +62,18 @@ def main():
                 fragments.append(line)
                 if line.startswith('NSDF ERROR'):
                     raise RuntimeError(line.strip())
+                if args.continuous:
+                    if line.startswith(('NSDF SOURCE ','NSDF BEGIN ','NSDF FAST ')):
+                        raise RuntimeError('expected continuous scheduler firmware')
+                    if line.startswith('NSDF RUN '):
+                        from analyze_nsdf_schedule import analyze_schedule
+                        reports=list(analyze_schedule(''.join(fragments)))
+                        if len(reports)>=args.fast_frames:
+                            print(f'Validated {len(reports)} scheduler reports; disconnected.',file=sys.stderr)
+                            return
+                    continue
+                if line.startswith('NSDF RUN '):
+                    raise RuntimeError('scheduler firmware requires --continuous capture')
                 if args.fast and line.startswith('NSDF BEGIN '):
                     raise RuntimeError('expected fast-summary firmware, received full score export')
                 if not args.fast and line.startswith('NSDF FAST '):
@@ -78,7 +92,7 @@ def main():
                     return
             # Human-operated level adjustments need more than a 50-second
             # window. This is host RAM only; retain a hard bound and deadline.
-            limit=4*1048576 if args.fast else 1048576
+            limit=4*1048576 if args.fast or args.continuous else 1048576
             if sum(map(len,fragments))+len(pending)>limit:
                 raise RuntimeError(f'diagnostic capture exceeded {limit//1048576} MiB bound')
     raise RuntimeError('capture timed out before a complete validated cycle')
