@@ -383,3 +383,23 @@ Physical knob settings are not frequency references, so neither the displayed
 precision nor model parity proves absolute hardware accuracy. This establishes
 basic high-sine behavior and selection timing, not full-rate scheduling,
 end-to-end latency, or the final 20-Hz/20-kHz endpoint qualification.
+
+Physical upper-range trial, same `3814b173` firmware: Local Parks sine set
+near 18.5 kHz, LFO still on IN 1. All eight complete CPU/IO/score triples from
+`/tmp/tuner-nsdf-sine18500-live.log` pass validation and are retained in
+`tests/fixtures/nsdf-cpu-sine18500.json`. Native bank qualifies 18529.872 Hz,
+clarity 0.998121, in 1.070 ms (346 reads). Its unrefined estimate is
+18539.908 Hz; guarded longer-lag refinement adjusts it without changing octave.
+Low bank rejects its 42.288-Hz candidate (clarity 0.378122) in 1.309 ms,
+460 reads. Combined selection is 2.379 ms. The two LFO frames are rejected;
+quiet IN 2/3 frames are gated. No acquisition errors appeared. The bounded
+capture completed and closed the reader. No firmware or FPGA change was needed.
+
+Synthetic upper-range sine coverage now includes 18/18.5/19/19.9 kHz at
+32 phases and 72/14000-count amplitudes. All model estimates qualify with
+worst error below 0.152 cents; tests bound these new cases at 0.16 cents,
+while retaining the existing tighter 0.04-cent bound near 10 kHz. Host-compiled
+Rust parity also covers these added frequencies. The physical result is basic
+upper-range qualification and timing evidence, not independent absolute
+frequency accuracy, repeated-frame stability, or an exact 20-kHz endpoint test.
+The known LFO false-candidate case, scheduling and arbitration gates remain.
