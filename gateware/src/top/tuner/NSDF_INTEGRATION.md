@@ -912,3 +912,15 @@ Next is full four-input/two-bank SOURCE/CPU/IO/score export with the same guard
 enabled, to verify both real candidates and vetoes (especially LFO IN1 native).
 This requires switching only the diagnostic firmware export mode; FPGA stays
 the same qualified buffered-UART image. No signal adjustments are requested.
+
+Full-export firmware `b3f2e8d6` built and flashed to slot 1, Refresh DONE,
+profiles preserved; build `/tmp/tuner-device-guard-full-build.log`, flash
+`/tmp/tuner-device-guard-full-flash.log`. Firmware 178328 bytes, SHA256
+`8ef11793ac750b5d268d5f61bc4f4071320a7f68ba72fe66d1518e5b2a09ce7f`;
+FPGA SHA256 unchanged (`83dfbb3a...288e373f`). Build-script output explicitly
+records `TILIQUA_TUNER_NSDF_TRACE=full`. A proposed binary-string absence check
+was invalid: both FAST and BEGIN strings survive compilation even in full mode;
+do not use their presence to infer execution mode. The source-mode capture
+helper additionally rejects FAST records rather than silently accepting the
+wrong export. Next: reopen TUNER and capture with `--source`, not `--fast`.
+49 focused guard/firmware/source/capture tests passed; no serial session open.
