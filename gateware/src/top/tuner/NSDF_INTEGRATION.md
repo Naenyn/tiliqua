@@ -303,3 +303,11 @@ deterministic fractions match the wide-integer reference with overflow checks
 enabled. Other 64-bit products remain where needed to avoid overflow. No
 arithmetic tolerance or pitch acceptance guard was widened. This additional
 optimization's on-device timing is not yet measured.
+
+Inspection of the target disassembly confirmed native `divu` for the fraction
+steps but exposed a remaining `__divdi3` call for height correction divided by
+2^22. At a local maximum the correction product is nonnegative, so an explicit
+right shift is exactly equivalent and avoids this size-optimization artifact.
+Another 10,000 bounded local maxima check lag and height against wide-division
+reference arithmetic. This is confined to the NSDF selector; unrelated math
+and compiler optimization settings remain untouched.

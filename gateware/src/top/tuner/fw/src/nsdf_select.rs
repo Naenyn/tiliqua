@@ -30,7 +30,11 @@ fn peak(k:usize,a:i32,b:i32,c:i32)->Peak {
     } else {0};
     // At the parabola's vertex, height = b + (c-a)*shift/4.
     // Q20 shift quantization and truncation cost less than two height units.
-    let height=b+(((c-a) as i64*shift as i64)/4194304) as i32;
+    let correction=(c-a) as i64*shift as i64;
+    // A local maximum makes this product nonnegative. Explicit shifting keeps
+    // the size-optimized RV32 build from calling __divdi3 for division by 2^22.
+    debug_assert!(correction>=0);
+    let height=b+(correction>>22) as i32;
     Peak {lag:((k as i32)<<20)+shift,height}
 }
 
@@ -133,6 +137,24 @@ mod tests {
             let numerator=state%(denominator+1);
             assert_eq!(super::fraction19(numerator,denominator),
                 (((numerator as u64)<<19)/denominator as u64) as u32);
+        }
+    }
+
+    #[test]
+    fn integer_peak_matches_wide_reference() {
+        let mut state=917_u32;
+        for _ in 0..10000 {
+            state=state.wrapping_mul(1664525).wrapping_add(1013904223);
+            let b=(state&1048575) as i32;
+            state=state.wrapping_mul(1664525).wrapping_add(1013904223);
+            let a=(state%(b as u32+1048577)) as i32-1048576;
+            state=state.wrapping_mul(1664525).wrapping_add(1013904223);
+            let c=(state%(b as u32+1048576)) as i32-1048576;
+            let shift=(((a-c) as i64*524288)/(a-2*b+c) as i64) as i32;
+            let expected=b+(((c-a) as i64*shift as i64)/4194304) as i32;
+            let p=super::peak(10,a,b,c);
+            assert_eq!(p.lag,(10<<20)+shift);
+            assert_eq!(p.height,expected);
         }
     }
 }
