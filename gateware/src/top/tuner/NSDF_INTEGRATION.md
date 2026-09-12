@@ -789,3 +789,22 @@ The normal-display fast-low archive was flashed to slot 1, Refresh DONE,
 profiles preserved. Log `/tmp/tuner-uart-fifo-58b31f9f-flash.log`.
 Next: user reopens TUNER with quiet bass IN0 and LFO IN1 unchanged; collect
 200 fast summaries before asking for a level transition. No capture is open.
+
+### Buffered UART physical cadence validation
+
+After reopening `58b31f9f`, captured 200 complete fast-low summaries on the
+unchanged quiet ~24-Hz sine IN0, with LFO IN1. All 200 were CPU-qualified and
+passed the host-only source-energy guard. Reported pitch 24.387–24.435 Hz;
+selector 0.8202–0.8382 ms. Native endpoint intervals min/median/p95/max:
+50/50/50/50.167 ms, no gaps over 100 ms. This confirms the requested 20-Hz
+single-bank diagnostic cadence on this idle tuner workload, not production
+four-channel scheduling, absolute accuracy or transition recovery.
+
+Log `/tmp/tuner-buffered-fast-low-steady.log`, capture exited normally and
+closed the port. First three complete records (after the connection prefix)
+are retained in `tests/fixtures/nsdf-fast-low-buffered-steady.txt` with a
+cadence/qualification parser regression. No firmware change or reflash needed.
+Next physical test: raise sine amplitude without retuning, establish a steady
+louder baseline, then capture a return to the quiet level. At 50-ms reporting
+cadence, recovery can only be bracketed to the observed frame spacing; do not
+claim an exact 109-ms transition measurement from these summaries.

@@ -27,3 +27,11 @@ def test_real_trace_state_machine_bounded_uart_and_cadence(tmp_path,mode):
         # UART backpressure stretches cadence; never fabricate a fixed rate.
         assert max(r['frame_interval_ms'] or 0 for r in reports)>300
         assert all(not r['score_parity_checked'] for r in reports)
+
+
+def test_physical_buffered_quiet_low_summaries_reach_20hz():
+    reports=list(analyze_fast((Path(__file__).parent/'fixtures/nsdf-fast-low-buffered-steady.txt').read_text()))
+    assert len(reports)==3
+    assert all(r['guarded_qualified'] and 24.3<r['hz']<24.5 for r in reports)
+    assert all(50<=r['frame_interval_ms']<=50.2 for r in reports[1:])
+    assert all(r['select_ms']<0.85 and not r['score_parity_checked'] for r in reports)
