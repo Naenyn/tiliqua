@@ -11,8 +11,9 @@ if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('directory',type=Path)
     p.add_argument('--yosys',required=True)
+    p.add_argument('--shared-load-port',action='store_true')
     a=p.parse_args();a.directory.mkdir(parents=True,exist_ok=True)
-    dut=NsdfDirect()
+    dut=NsdfDirect(shared_load_port=a.shared_load_port)
     ports=[Value.cast(member) for _,_,member in wiring.Signature.flatten(dut.signature,dut)]
     il=a.directory/'nsdf.il';netlist=a.directory/'nsdf.json'
     il.write_text(rtlil.convert(dut,ports=ports,name='nsdf_candidate'))

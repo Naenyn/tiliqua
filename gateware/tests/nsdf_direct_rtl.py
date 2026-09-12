@@ -12,10 +12,11 @@ from amaranth.lib.memory import Memory
 
 
 class NsdfDirect(wiring.Component):
-    def __init__(self, frame=674, max_lag=321):
+    def __init__(self, frame=674, max_lag=321, shared_load_port=False):
         if not 1 <= max_lag < frame:
             raise ValueError('lag must fit frame')
         self.frame=frame;self.max_lag=max_lag
+        self.shared_load_port=shared_load_port
         self.width=32+(frame-1).bit_length()
         super().__init__({
             'clear':In(1),'load_valid':In(1),'load_ready':Out(1),
@@ -28,7 +29,11 @@ class NsdfDirect(wiring.Component):
     def elaborate(self,platform):
         m=Module();n=self.frame;w=self.width;bits=w+21
         m.submodules.history=mem=Memory(shape=signed(16),depth=n,init=[])
-        wr=mem.write_port();a=mem.read_port();b=mem.read_port()
+        wr=mem.write_port()
+        # A is disabled while loading, so write-through behavior cannot affect
+        # a score; allowing it gives the mapper a legal combined RAM port.
+        a=mem.read_port(transparent_for=(wr,) if self.shared_load_port else ())
+        b=mem.read_port()
         filled=Signal(range(n+1));index=Signal(range(n));retired=Signal(range(n))
         active_n=Signal(range(n+1));active_last=Signal(range(self.max_lag+1))
         config_valid=Signal()
@@ -42,8 +47,10 @@ class NsdfDirect(wiring.Component):
                                     (self.limit<self.length) & (self.limit<=self.max_lag)),
             self.full.eq(config_valid & (filled==self.length)),
             self.load_ready.eq(config_valid & ~self.busy & (filled<self.length) & ~self.clear),
-            wr.en.eq(self.load_valid & self.load_ready),wr.addr.eq(filled),wr.data.eq(self.sample),
-            a.addr.eq(index),b.addr.eq(index+self.lag),a.en.eq(issue),b.en.eq(issue),issue.eq(0),
+            wr.en.eq(self.load_valid & self.load_ready),
+            wr.addr.eq(a.addr if self.shared_load_port else filled),wr.data.eq(self.sample),
+            a.addr.eq(Mux(self.busy,index,filled) if self.shared_load_port else index),
+            b.addr.eq(index+self.lag),a.en.eq(issue),b.en.eq(issue),issue.eq(0),
             trial.eq((remainder<<1)|numerator[-1])]
         m.d.sync += [self.done.eq(0),rv.eq(issue),pv.eq(rv)]
         with m.If(wr.en):m.d.sync += filled.eq(filled+1)

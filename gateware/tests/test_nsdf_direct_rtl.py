@@ -4,8 +4,8 @@ from amaranth.sim import Simulator
 from nsdf_direct_rtl import NsdfDirect
 
 
-def run_frame(samples,last,stall=True,capacity=None):
-    dut=NsdfDirect(*(capacity or (len(samples),last)));result=[];cycles=0
+def run_frame(samples,last,stall=True,capacity=None,shared_load_port=False):
+    dut=NsdfDirect(*(capacity or (len(samples),last)),shared_load_port=shared_load_port);result=[];cycles=0
     async def bench(ctx):
         nonlocal cycles
         ctx.set(dut.length,len(samples));ctx.set(dut.limit,last)
@@ -28,13 +28,14 @@ def run_frame(samples,last,stall=True,capacity=None):
     return np.array([v for _,v in result]),cycles
 
 
+@pytest.mark.parametrize('shared_load_port',[False,True])
 @pytest.mark.parametrize('kind',['random','rails','zero','constant','sine'])
-def test_exact_integer_scores(kind):
+def test_exact_integer_scores(kind,shared_load_port):
     n=64;last=31
     samples={'random':np.random.default_rng(27).integers(-32768,32768,n),
         'rails':np.tile([-32768,32767],n//2),'zero':np.zeros(n,dtype=int),
         'constant':np.full(n,32767),'sine':np.rint(30000*np.sin(np.arange(n)*.4)).astype(int)}[kind]
-    actual,_=run_frame(samples,last)
+    actual,_=run_frame(samples,last,shared_load_port=shared_load_port)
     expected=[]
     for lag in range(last+1):
         a=samples[:n-lag].astype(np.int64);b=samples[lag:].astype(np.int64)
@@ -51,8 +52,9 @@ def test_configurable_capacity():
 
 
 @pytest.mark.parametrize('cancel_cycle',[1,12,70,150])
-def test_abort_and_reuse(cancel_cycle):
-    dut=NsdfDirect(64,31)
+@pytest.mark.parametrize('shared_load_port',[False,True])
+def test_abort_and_reuse(cancel_cycle,shared_load_port):
+    dut=NsdfDirect(64,31,shared_load_port=shared_load_port)
     async def bench(ctx):
         ctx.set(dut.length,64);ctx.set(dut.limit,31)
         for attempt in range(2):

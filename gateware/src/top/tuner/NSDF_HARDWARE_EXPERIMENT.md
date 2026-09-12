@@ -9,6 +9,10 @@ that RTL engine and are accounted for separately below.
 
 ## Decision
 
+Follow-up resource audit: `RESOURCE_HEADROOM.md` attributes the current netlist,
+tests a shared-history schedule, and documents the CPU RAM sizing cliff. Its
+44-block eventual allocation is conditional, not a replacement for a full build.
+
 Prioritize **direct shared NSDF**, not FFT-based NSDF, for integration work.
 The FFT route can be faster but is less attractive in memory and numerical
 precision. Do not add a spectrum display as a dependency of pitch detection.
