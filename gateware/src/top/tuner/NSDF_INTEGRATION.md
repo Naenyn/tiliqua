@@ -311,3 +311,37 @@ right shift is exactly equivalent and avoids this size-optimization artifact.
 Another 10,000 bounded local maxima check lag and height against wide-division
 reference arithmetic. This is confined to the NSDF selector; unrelated math
 and compiler optimization settings remain untouched.
+
+Physical native-division trial, `3814b173`, same pulse/LFO patch:
+`tests/fixtures/nsdf-cpu-native-div.json` retains all eight complete matched
+CPU/IO/score triples from `/tmp/tuner-nsdf-native-div-live.log`. The bounded
+135-second capture completed and closed the serial reader. All estimates,
+qualification flags, score checksums, metadata and read bounds match the host
+model, with no reported acquisition errors.
+
+| Input/bank | Selection | Result |
+|---|---:|---|
+| IN 0 native | 0.811 ms | 882.216 Hz, qualified |
+| IN 0 low | 1.272 ms | 881.127 Hz, qualified |
+| IN 1 native | 1.545 ms | 15819.849 Hz, **false candidate on the LFO** |
+| IN 1 low | 0.404 ms | no candidate |
+| IN 2/3, both | 0.0066–0.0070 ms | gated before score reads |
+
+Pulse selection totals 2.083 ms versus 3.456 ms in the previous physical trial
+and 30.592 ms initially. Four comparable inputs would take about 8.33 ms per
+50-ms update period for selection alone; this is an extrapolation, not measured
+four-channel scheduling or worst-case CPU utilization. Independent IO sweeps
+remain 0.274–0.292 ms. Target disassembly contains native `divu` and multiply/
+shift operations, with no software division call inside `nsdf_select::peak`.
+
+The LFO's native frame has only 6.990 RMS counts, but clarity 0.816321 passes
+the existing candidate guard. Its asynchronous low frame has 115.464 RMS
+counts and no candidate. This reproduces the earlier qualification concern;
+neither raising the global amplitude floor nor using this asynchronous RMS
+ratio is a justified fix. A regression test explicitly retains the observation
+without mistaking numerical agreement for physical correctness. Aligned
+source-energy measurement and bank arbitration remain a production gate.
+
+Next physical coverage should include low and high steady sines, while leaving
+the LFO connected. No additional flash is needed for those captures. The working
+baseline remains authoritative; none of these diagnostics owns CV outputs.
