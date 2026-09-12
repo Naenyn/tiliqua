@@ -106,6 +106,27 @@ power-spectrum precision, clipping robustness, filtering, or a complete detector
 
 ## Next hardware evidence
 
+Local Parks pulse follow-up (attenuated square, then narrowed pulse) supplies a
+more interpretable disagreement than modulated Blade. Retained as
+`tuner-local-parks-square-1001.json` and `tuner-local-parks-narrow-pulse-1001.json`.
+Neither frame hits either sample rail. Mid-level interpolated median widths give
+48.49% duty / 484.44 us for square, 2.628% / 26.27 us for narrow pulse. Width is
+measured in the captured signal, not an independent scope measurement.
+
+| Method | Square Hz | Narrow pulse Hz |
+|---|---:|---:|
+| Spectral | 1001.240 | 1000.897 |
+| NSDF | 1001.081 | 1000.813 |
+| YIN steps 2–5 | 1001.100 | 1000.747 |
+| Recorded raw baseline | 1000.993 | 1241.791 |
+
+All references qualify both at the same 200–20000 Hz bounds. The alternatives
+agree closely with the square reference, unlike the raw narrow-pulse header.
+This is useful real evidence without demanding a 1% pulse. Still distinguish
+the raw header's measurement window from the captured frame and the complete
+firmware qualification chain; there is no independent absolute frequency truth.
+No further waveform hunt is needed before continuing algorithm/cost comparisons.
+
 Attenuated modulated Blade follow-up: user kept internal modulation unchanged
 (believed internal LFO; exact rate unknown) and reduced amplitude. Retained as
 `tuner-local-parks-modulated-blade-attenuated.json`. All 2048 samples are inside

@@ -62,6 +62,8 @@ def test_aliasing_limit():
     ('tuner-local-parks-blade-1000.json',995,1005),
     ('tuner-local-parks-modulated-blade.json',495,505),
     ('tuner-local-parks-modulated-blade-attenuated.json',495,505),
+    ('tuner-local-parks-square-1001.json',995,1005),
+    ('tuner-local-parks-narrow-pulse-1001.json',995,1005),
     ('tuner-alternating-cycle-capture.json',7600,7750)])
 def test_real_capture_repeatability_not_ground_truth(name,low,high):
     data=json.loads((Path(__file__).parent/'fixtures'/name).read_text())
