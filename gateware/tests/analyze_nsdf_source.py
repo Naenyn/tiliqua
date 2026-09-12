@@ -13,6 +13,13 @@ from analyze_nsdf_cpu import analyze
 
 
 def analyze_source(text):
+    # A connection can begin after SOURCE but before CPU for the same frame.
+    # Discard only the prefix before the first complete source header, matching
+    # the capture helper. Never excuse missing metadata inside the capture.
+    if re.search(r'^NSDF ERROR',text,re.M):raise ValueError('source capture contains acquisition error')
+    start=re.search(r'^NSDF SOURCE ',text,re.M)
+    if start is None:raise ValueError('no source metadata')
+    text=text[start.start():]
     sources={}
     for line in re.findall(r'^NSDF SOURCE [^\n]+',text,re.M):
         source=dict(p.split('=') for p in line.split()[2:])

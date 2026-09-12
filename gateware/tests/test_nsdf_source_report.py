@@ -42,9 +42,17 @@ def test_native_sequence_wrap_and_low_bank_units():
     with pytest.raises(ValueError):list(analyze_source(text))
 
 
-def test_physical_source_capture_rejects_lfo_false_candidate_on_host():
+def test_connection_prefix_without_source_is_excluded_not_stitched():
+    text=example()
+    prefix=text[text.index('NSDF CPU '):]
+    assert len(list(analyze_source(prefix+text)))==1
+    with pytest.raises(ValueError):list(analyze_source('NSDF ERROR fault\n'+text))
+    with pytest.raises(ValueError):list(analyze_source(text+prefix.replace('seq=6951261','seq=123')))
+
+
+def physical_source_reports(name):
     from capture_nsdf_cpu import complete_cycle
-    f=json.loads((Path(__file__).parent/'fixtures/nsdf-cpu-source-low.json').read_text())
+    f=json.loads((Path(__file__).parent/'fixtures'/name).read_text())
     parts=[]
     for s,c,i,b in zip(f['source_reports'],f['cpu_reports'],f['io_reports'],f['frames']):
         for name,fields in [('SOURCE',s),('CPU',c),('IO',i)]:
@@ -54,6 +62,11 @@ def test_physical_source_capture_rejects_lfo_false_candidate_on_host():
     assert complete_cycle(text,require_source=True)
     reports=list(analyze_source(text))
     assert len(reports)==8 and all(r['source_ready'] for r in reports)
+    return reports
+
+
+def test_physical_source_capture_rejects_lfo_false_candidate_on_host():
+    reports=physical_source_reports('nsdf-cpu-source-low.json')
     lfo=next(r for r in reports if r['channel']==1 and r['bank']=='native')
     assert lfo['qualified'] and 15000<lfo['hz']<16000
     assert not lfo['native_relative_energy_pass']
@@ -61,3 +74,14 @@ def test_physical_source_capture_rejects_lfo_false_candidate_on_host():
     sine=next(r for r in reports if r['channel']==0 and r['bank']=='low')
     assert sine['qualified'] and 23<sine['hz']<25
     assert sine['native_relative_energy_pass'] is None # No invented low-bank alignment.
+
+
+def test_physical_source_capture_preserves_full_level_native_sine():
+    reports=physical_source_reports('nsdf-cpu-source-880.json')
+    native=next(r for r in reports if r['channel']==0 and r['bank']=='native')
+    low=next(r for r in reports if r['channel']==0 and r['bank']=='low')
+    assert native['qualified'] and 880<native['hz']<882
+    assert native['native_relative_energy_pass']
+    assert .99<native['rms_counts']/native['source_rms']<1.01
+    assert low['qualified'] and 880<low['hz']<882
+    assert low['native_relative_energy_pass'] is None

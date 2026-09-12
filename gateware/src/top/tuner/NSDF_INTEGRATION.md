@@ -517,3 +517,22 @@ CPU qualification stays unchanged. Firmware still makes no new pitch decision.
 Next useful physical test is a native-band sine around 880 Hz (then attenuated),
 to verify this guard does not suppress legitimate quiet audio. Full-rate
 scheduling, transition behavior and production integration remain outstanding.
+
+Full-level 880-Hz follow-up on the same installed `eb9fab10` build completed
+all eight source/CPU/IO/score records. Retained fixture:
+`tests/fixtures/nsdf-cpu-source-880.json`; raw log:
+`/tmp/tuner-nsdf-source-880-live.log`. Native IN 0 qualifies 881.144 Hz in
+0.870 ms, frame RMS 7944.404 versus centered source RMS 7978.556 counts.
+The host-only native relative-energy guard passes it. Low IN 0 qualifies
+881.093 Hz in 1.319 ms; this asynchronous agreement is not independent
+frequency-accuracy evidence. No low-bank relative-energy decision is made.
+Native source ages are 138–284 groups, all within the 512-group bound.
+IN 1 native is unqualified and also fails the host relative guard; quiet
+IN 2/3 are gated. The next physical test is attenuation of this same sine.
+
+The analyzer now discards a connection prefix before the first SOURCE header,
+matching the capture helper. This capture began partway through a record;
+that CPU-only prefix was excluded, not stitched to later metadata. Acquisition
+errors even in the prefix and missing SOURCE records inside the retained
+capture remain failures, with regression coverage. No firmware change or
+flash was required for this capture, parser correction, or added regressions.
