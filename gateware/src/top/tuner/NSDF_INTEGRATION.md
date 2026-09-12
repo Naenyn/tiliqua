@@ -1100,3 +1100,31 @@ Reserved stack is not a measured stack high-water mark; the <=1024-byte
 scheduler state compile-time assertion passed on the actual embedded target.
 User needs to reopen TUNER after flash; existing four tones can stay patched.
 No serial capture is open. Next capture uses `--continuous`, not `--fast`.
+
+### Physical continuous four-tone scheduler validation
+
+After user reopened TUNER, `/tmp/tuner-continuous-four-tones.log` completed
+200 validated RUN reports and disconnected. Full 200 lines retained in
+`tests/fixtures/nsdf-continuous-four-tones.txt`. Exactly 25 telemetry records
+per input/bank, with 109..110 additional acquisitions between first/last
+records of each bank (~9.8 seconds). Actual measured per-bank rates were
+11.094..11.205 Hz, versus ~2.4 Hz for the serial-coupled four-tone diagnostic.
+All fault counters zero; report-time result ages <=87 ms. Completion polling
+delay `dt` <=4 ms, sampled before CPU selection, not isolated engine latency.
+
+All reported IN0/1 results qualified in both banks; IN2/3 qualified in low
+bank only, as expected. Device estimates: IN0 native 881.223..882.358 / low
+881.876..882.084 Hz; IN1 native 775.684..777.623 / low 776.301..776.511 Hz;
+IN2 low 175.244..175.338 Hz; IN3 low 138.752..138.773 Hz. These are not
+independently referenced accuracy measurements. Latest-value telemetry skips
+intermediate results; this does NOT prove every acquisition was qualified.
+
+Sum of per-bank cumulative measured work deltas / elapsed time was 7.097%
+of the 60-MHz CPU. Selection, guard and associated CSR reads are measured;
+interrupt interference inside those calls is included. UI, reporting and
+other work are excluded. Worst observed last-call duration 1.506 ms. This
+supports feasibility but is not a total CPU load or worst-case guarantee.
+Normal UI cadence remained configured. No firmware change or flash required
+for saving this regression. Next integration must retain freshness/guard
+checks and resolve the two banks into one bounded per-input result before
+promoting anything to the authoritative tuner/calibrator/quantizer path.
