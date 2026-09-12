@@ -201,3 +201,41 @@ FPGA bitstream SHA-256 remains
 the prior full-route timing/resource report still applies. Next hardware gate:
 collect CPU estimates/cycles on pulse plus LFO while checking encoder/UI and
 quantized playback responsiveness, before attempting continuous scheduling.
+
+Physical CPU trial of `37e76401`: Local Parks pulse IN 0 and quantizer-test LFO
+IN 1. Complete matched CPU/score records are saved in
+`tests/fixtures/nsdf-cpu-pulse-lfo.json`; raw log is
+`/tmp/tuner-nsdf-cpu-pulse-lfo.log`. Reports match the fallback host model,
+including bank qualification, within f32 plus milli-Hz serial truncation error.
+No acquisition errors appeared. IN 0: native 881.838 Hz / 13.303 ms, low
+881.122 Hz / 17.289 ms. IN 1 candidates in this capture were rejected. This
+does not resolve the earlier false-candidate concern or prove absolute accuracy.
+
+**CPU performance gate FAILED.** Other frames took approximately 7–70 ms;
+even this pulse alone spends about 30.6 ms across two banks. That is not
+compatible with four-channel, two-bank analysis every 50 ms. Measurements are
+elapsed timer cycles including interrupts, not isolated instruction costs.
+Do not enable production scheduling or replace baseline pitch with this path.
+Next optimization work must separate score-register access, float arithmetic,
+and interrupt costs; skip sub-floor frames before scanning; investigate integer
+peak screening and bounded score reuse before allocating RAM or expanding FPGA
+logic. Keep calibration/quantizer ISR timing independent. The diagnostic does
+not establish absence of audible glitches or full UI responsiveness.
+
+Next firmware-only diagnostic keeps score scans in integer Q20 until the
+strongest raw peak in a positive lobe has been chosen. It interpolates only
+that peak, rather than converting every score and interpolating intermediate
+contenders. Lag-range comparisons replace per-candidate frequency divisions.
+These changes preserve model outputs in host-compiled parity tests, including
+the real captures and search-range boundaries. Quiet/clipped frame rejection
+now happens before any score reads, using exactly the prior >2-count RMS gate
+(with proper scaling compensation). It does not raise the audio threshold.
+
+An extra `NSDF IO` line, keyed by the same channel/bank/sequence, reports the
+elapsed cycles, read count and wrapping checksum (`sum`, hex) for a separate
+full score-memory sweep without peak calculations. This diagnostic overhead is
+not included in `NSDF CPU cycles`, does not allocate a frame buffer, and is not
+intended for production. Interrupts remain enabled in both measurements; do
+not subtract the two timings as if they were isolated CPU instruction costs.
+No new FPGA build or memory allocation is needed. The performance gate remains
+failed until a new on-device measurement demonstrates adequate margin.

@@ -1,6 +1,18 @@
 #[path="../src/top/tuner/fw/src/nsdf_select.rs"] mod selector;
 use std::io::{self,BufRead};
 fn main() {
+    for low in [false,true] {
+        for scaled in [false,true] {
+            let threshold=(if low {604} else {674})*(if scaled {1} else {4});
+            for energy in [0,threshold-1,threshold] {
+                assert!(selector::select_frame(|_|panic!("quiet frame read"),low,energy,scaled,false).is_none());
+            }
+            assert!(selector::select_frame(|_|panic!("clipped frame read"),low,u64::MAX,scaled,true).is_none());
+            let mut reads=0;
+            assert!(selector::select_frame(|_|{reads+=1;0},low,threshold+1,scaled,false).is_none());
+            assert!(reads>0);
+        }
+    }
     for line in io::stdin().lock().lines() {
         let line=line.unwrap();let mut words=line.split_whitespace();
         let low=words.next().unwrap()=="low";
