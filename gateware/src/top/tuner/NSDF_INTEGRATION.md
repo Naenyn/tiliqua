@@ -703,3 +703,20 @@ without any gateware change. .data=1632, .bss=8, heap=0, reserved stack=31128;
 measured. First physical step is to open the fast-low build and capture the
 existing quiet bass unchanged. Only after cadence is sufficient should we ask
 for a level transition; if UI delays dominate, improve diagnostic service first.
+
+Build/hand-off: commit `38dcd642`, 125 focused tests passing, all three target
+firmware modes compile. Archives reside under
+`build/tuner-r5/trace-modes/{full,fast-native,fast-low}/tuner-38dcd642-r5.tar.gz`;
+all retain name TUNER, r5, normal 1280x720p60 and the same verified seed-17 FPGA
+SHA256 above. Distinct firmware SHA256 values:
+full `7eb01408b216e1592d32dac11a531eed209fa84733f7f702e78de3c51de3fda2`;
+fast-native `c5ddfbbedc6217a41659c050e2d16b4d315d4f1ee245eaec3926d8d309715f94`;
+fast-low `46d2b3e76c4b1f83be0c2589c035bbe71a06037f899f8464d956361e9cdeb792`.
+
+Fast-low was flashed successfully to authorized slot 1 with Refresh DONE;
+profiles preserved. Log `/tmp/tuner-nsdf-fast-low-38dcd642-flash.log`. A bounded
+20-second post-refresh serial probe received zero bytes and closed on timeout;
+this is not hardware validation. Next user action is reopening TUNER. Do not
+request signal changes yet: measure summary cadence on the existing quiet
+~24-Hz sine first. Logs `/tmp/tuner-nsdf-fast-low-boot-probe{,-status}.log`.
+There are no pending serial sessions and no claim of an on-device guard change.
