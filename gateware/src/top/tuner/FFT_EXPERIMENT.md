@@ -106,6 +106,22 @@ power-spectrum precision, clipping robustness, filtering, or a complete detector
 
 ## Next hardware evidence
 
+Local Parks follow-up: user identified capture 3 as sine and capture 4 as Blade.
+Both are retained as fixtures. With the same 200–20000 Hz search bounds:
+
+| Method | Local Parks sine Hz | Blade Hz |
+|---|---:|---:|
+| Spectral | 1000.818 | 1000.300 |
+| NSDF | 1000.885 | 1000.218 |
+| YIN steps 2–5 | 1000.914 | 1000.044 |
+| Recorded raw baseline | 1001.242 | 1000.248 |
+
+All three references qualify both. This Blade setting does not reproduce a
+wrong-octave/refusal failure; it is not evidence that every Blade setting works.
+Blade can intentionally change its octave content. Do not use the sine's pitch
+as mandatory truth for every setting. Raw header agreement also does not verify
+the production firmware's continuous qualification/display behavior.
+
 September 11 narrow-pulse follow-up completed: two further 2048-sample native
 captures retained as `tuner-live-pulse-pair-sine-1063.json` and
 `tuner-live-narrow-pulse-1063.json`. Captured pulse width is approximately 71.6 us,
