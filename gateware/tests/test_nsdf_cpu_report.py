@@ -8,7 +8,7 @@ def records(name='nsdf-cpu-integer-screen.json'):
     return json.loads((Path(__file__).parent/'fixtures'/name).read_text())
 
 
-@pytest.mark.parametrize('name',['nsdf-cpu-integer-screen.json','nsdf-cpu-fixedpoint.json','nsdf-cpu-native-div.json','nsdf-cpu-sine55.json','nsdf-cpu-sine10k.json','nsdf-cpu-sine18500.json'])
+@pytest.mark.parametrize('name',['nsdf-cpu-integer-screen.json','nsdf-cpu-fixedpoint.json','nsdf-cpu-native-div.json','nsdf-cpu-sine55.json','nsdf-cpu-sine10k.json','nsdf-cpu-sine18500.json','nsdf-cpu-sine-lowedge.json'])
 def test_complete_records_and_boundary_fragments(name):
     f=records(name);parts=[]
     for cpu,io,block in zip(f['cpu_reports'],f['io_reports'],f['frames']):
@@ -20,13 +20,15 @@ def test_complete_records_and_boundary_fragments(name):
     assert any(r['gated'] for r in reports)
 
 
-def test_physical_low_sine_is_only_qualified_in_low_bank():
-    f=records('nsdf-cpu-sine55.json')
+@pytest.mark.parametrize('name,minimum,maximum',[
+    ('nsdf-cpu-sine55.json',54,56),('nsdf-cpu-sine-lowedge.json',22,25)])
+def test_physical_low_sine_is_only_qualified_in_low_bank(name,minimum,maximum):
+    f=records(name)
     reports=[validate(c,i,b) for c,i,b in zip(f['cpu_reports'],f['io_reports'],f['frames'])]
     native=next(r for r in reports if r['channel']==0 and r['bank']=='native')
     low=next(r for r in reports if r['channel']==0 and r['bank']=='low')
     assert not native['qualified'] and native['hz']==0
-    assert low['qualified'] and 54<low['hz']<56
+    assert low['qualified'] and minimum<low['hz']<maximum
     # User setting was approximate; this is not a calibrated frequency reference.
 
 

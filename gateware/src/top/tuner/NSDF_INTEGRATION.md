@@ -403,3 +403,38 @@ Rust parity also covers these added frequencies. The physical result is basic
 upper-range qualification and timing evidence, not independent absolute
 frequency accuracy, repeated-frame stability, or an exact 20-kHz endpoint test.
 The known LFO false-candidate case, scheduling and arbitration gates remain.
+
+Physical low-edge sine trial, same `3814b173` firmware and LFO patch: first
+135-second capture `/tmp/tuner-nsdf-sine-lowedge-live.log` has seven complete
+triples, including IN 0 low at 23.922 Hz, clarity 0.999997, 0.853 ms. The
+following native frame was truncated and was not considered model-validated.
+A separate 150-second capture `/tmp/tuner-nsdf-sine-lowedge-repeat.log` contains
+eight complete triples, retained in `tests/fixtures/nsdf-cpu-sine-lowedge.json`.
+No packet is stitched across the two sessions. All eight pass metadata,
+checksum, score/model, gating and read-bound validation, with no acquisition
+error. IN 0 native has no candidate in 0.435 ms (322 reads); low qualifies
+23.950 Hz, clarity 0.999999, in 0.851 ms (604 reads), total selection 1.286 ms.
+The two LFO records are unqualified; quiet channels are gated. The reader is
+closed. These sparse, minutes-separated readings do not establish oscillator
+stability or absolute accuracy, and neither capture is an exact 20-Hz test.
+
+Synthetic 22/23.5/25-Hz sines at 32 phases and amplitudes 72/14000 counts all
+qualify in the low bank; worst error is below 0.222 cents. New low-edge cases
+are bounded at 0.25 cents, preserving the prior 55-Hz bound of 0.12 cents.
+Native synthetic cases are all rejected, and host-compiled Rust parity includes
+the added frequencies. No detector acceptance threshold changed.
+
+`tests/capture_nsdf_cpu.py PORT` now provides a bounded, read-only serial capture
+that ends once all four channels and both banks have complete validated records
+(default maximum 180 seconds). It handles split reads, ignores boundary fragments,
+fails on diagnostic errors and closes the port on success or failure. Output is
+the raw protocol on stdout, with completion status on stderr. Tests cover
+duplicate frames, incomplete coverage, corrupted records, split reads and port
+closure. This host-only helper avoids cutting a required frame at an arbitrary
+duration; it has not yet been used for a physical capture. For example, from
+`gateware`: `PYTHONPATH=tests python tests/capture_nsdf_cpu.py /dev/cu.usbmodem83102`.
+
+Basic physical coverage now includes approximately 24 Hz, 55 Hz, 880-Hz pulse,
+10 kHz and 18.5 kHz. This supports proceeding to aligned source-energy guarding
+and continuous four-channel scheduling; it does not waive the previously listed
+production gates or establish full-band worst-case performance.

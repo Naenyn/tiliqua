@@ -26,6 +26,7 @@ def test_cpu_selector_matches_model_without_frame_buffer(tmp_path):
         frequencies=list(np.geomspace(minimum*1.001,maximum*.999,24))
         frequencies.extend([minimum,maximum,minimum*(1-2e-6),maximum*(1+2e-6)])
         if not low:frequencies.extend([9900,10000,10100,18000,18500,19000,19900])
+        else:frequencies.extend([22,23.5,25])
         for f in frequencies:
             for phase in (.03,.39,.81):
                 p=np.arange(n)*f/fs+phase
@@ -71,20 +72,21 @@ def test_synthetic_high_sine_phase_coverage(frequency,tolerance,amplitude):
         assert abs(1200*math.log2(result['hz']/frequency))<tolerance
 
 
+@pytest.mark.parametrize('frequency,tolerance',[(22,.25),(23.5,.25),(25,.25),(55,.12)])
 @pytest.mark.parametrize('amplitude',[72,14000])
-def test_synthetic_55hz_phase_coverage(amplitude):
+def test_synthetic_low_sine_phase_coverage(frequency,tolerance,amplitude):
     # Known synthetic truth, not an accuracy claim for the analog capture.
     for phase in np.linspace(0,1,32,endpoint=False):
-        x=np.rint(amplitude*np.sin(2*np.pi*(np.arange(604)*55/6000+phase)))
+        x=np.rint(amplitude*np.sin(2*np.pi*(np.arange(604)*frequency/6000+phase)))
         result=select(scores_for(x,301),6000,20,1500,fallback=True)
         assert result and result['qualified']
-        assert abs(1200*math.log2(result['hz']/55))<.12
-        x=np.rint(amplitude*np.sin(2*np.pi*(np.arange(674)*55/192000+phase)))
+        assert abs(1200*math.log2(result['hz']/frequency))<tolerance
+        x=np.rint(amplitude*np.sin(2*np.pi*(np.arange(674)*frequency/192000+phase)))
         result=select(scores_for(x,321),192000,600,20000,fallback=True)
         assert result is None or not result['qualified']
 
 
-@pytest.mark.parametrize('name',['nsdf-cpu-pulse-lfo.json','nsdf-cpu-integer-screen.json','nsdf-cpu-fixedpoint.json','nsdf-cpu-native-div.json','nsdf-cpu-sine55.json','nsdf-cpu-sine10k.json','nsdf-cpu-sine18500.json'])
+@pytest.mark.parametrize('name',['nsdf-cpu-pulse-lfo.json','nsdf-cpu-integer-screen.json','nsdf-cpu-fixedpoint.json','nsdf-cpu-native-div.json','nsdf-cpu-sine55.json','nsdf-cpu-sine10k.json','nsdf-cpu-sine18500.json','nsdf-cpu-sine-lowedge.json'])
 def test_physical_cpu_reports_match_exported_scores(name):
     fixture=json.loads((Path(__file__).parent/'fixtures'/name).read_text())
     assert len(fixture['cpu_reports'])==len(fixture['frames'])
