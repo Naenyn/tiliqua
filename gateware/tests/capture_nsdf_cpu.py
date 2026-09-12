@@ -34,8 +34,11 @@ def main():
     mode=parser.add_mutually_exclusive_group()
     mode.add_argument('--source',action='store_true',help='Also require validated frozen source metadata')
     mode.add_argument('--fast',action='store_true',help='Capture timestamped summaries instead of scores')
+    parser.add_argument('--round-robin',action='store_true',help='Require fast-all channel/bank order (with --fast)')
     parser.add_argument('--fast-frames',type=int,default=200,help='Complete fast summaries to collect')
     args=parser.parse_args()
+    if args.round_robin and not args.fast:parser.error('--round-robin requires --fast')
+    if args.round_robin and args.fast_frames<16:parser.error('round-robin needs at least 16 frames')
     if not 0<args.timeout<=600:parser.error('timeout must be >0 and <=600 seconds')
     if not 2<=args.fast_frames<=6000:parser.error('fast frame count must be 2..6000')
     import serial
@@ -63,7 +66,7 @@ def main():
                     raise RuntimeError('fast-summary firmware requires --fast capture')
                 if args.fast and line.startswith('NSDF FAST '):
                     from analyze_nsdf_fast import analyze_fast
-                    try:reports=list(analyze_fast(''.join(fragments)))
+                    try:reports=list(analyze_fast(''.join(fragments),round_robin=args.round_robin))
                     except ValueError as exc:
                         if str(exc)=='no complete fast summaries':continue
                         raise

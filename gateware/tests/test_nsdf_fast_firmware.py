@@ -14,7 +14,7 @@ def test_physical_quiet_low_summaries_expose_slow_service():
     assert all(not r['score_parity_checked'] for r in reports)
 
 
-@pytest.mark.parametrize('mode',['full','fast-native','fast-low'])
+@pytest.mark.parametrize('mode',['full','fast-native','fast-low','fast-all'])
 def test_real_trace_state_machine_bounded_uart_and_cadence(tmp_path,mode):
     here=Path(__file__).parent;exe=tmp_path/'trace'
     rustc=shutil.which('rustc') or str(Path.home()/'.cargo/bin/rustc')
@@ -22,11 +22,20 @@ def test_real_trace_state_machine_bounded_uart_and_cadence(tmp_path,mode):
     subprocess.run([rustc,'--edition=2021','-O',str(here/'nsdf_trace_mock.rs'),'-o',str(exe)],env=env,check=True)
     output=subprocess.check_output([exe],text=True)
     if mode!='full':
-        reports=list(analyze_fast(output))
+        reports=list(analyze_fast(output,round_robin=mode=='fast-all'))
         assert len(reports)>100 and all(r['guarded_qualified'] for r in reports)
         # UART backpressure stretches cadence; never fabricate a fixed rate.
         assert max(r['frame_interval_ms'] or 0 for r in reports)>300
         assert all(not r['score_parity_checked'] for r in reports)
+        if mode=='fast-all':
+            assert {(r['channel'],r['bank']) for r in reports}=={
+                (ch,bank) for ch in range(4) for bank in ('native','low')}
+            # Reject skipped/duplicated banks, not merely eight report counts.
+            blocks=output.split('NSDF SOURCE ')
+            # An arbitrary first bank is allowed when connecting mid-cycle.
+            assert list(analyze_fast('NSDF SOURCE '+blocks[2],round_robin=True))
+            with pytest.raises(ValueError):
+                list(analyze_fast('NSDF SOURCE '+blocks[1]+'NSDF SOURCE '+blocks[3],round_robin=True))
 
 
 def test_physical_buffered_quiet_low_summaries_reach_20hz():

@@ -976,3 +976,23 @@ Installed firmware remains `b3f2e8d6`; no capture is open. The guard stage now
 has positive native/low quiet-signal evidence and real false-candidate vetoes.
 Next implementation milestone is bounded continuous four-channel scheduling,
 not replacing the baseline display/calibration/quantization detector yet.
+
+### Continuous all-bank diagnostic baseline
+
+Added opt-in `TILIQUA_TUNER_NSDF_TRACE=fast-all`: native/low on inputs 0..3
+in strict round-robin order, one outstanding acquisition, <=20 acquisitions/s
+total, no catch-up queue. Unlike fixed-bank fast diagnostics, this retains
+the normal UI period. No gateware, sample buffer, heap, or output ownership
+changes. This is a measurement baseline, NOT the final production scheduler:
+serial backpressure still delays acquisition, and the nominal per-bank rate
+is only 2.5 Hz. Do not claim four-channel 20-Hz tuning from this mode.
+
+Capture with `capture_nsdf_cpu.py PORT --fast --round-robin`; host validates
+strict channel/bank order from an arbitrary connection boundary and measures
+each bank's native-endpoint interval independently. At least 16 summaries
+are required. Full score export remains available for model parity; summaries
+do not establish score parity. The actual firmware state-machine mock exercises
+a finite UART FIFO and a 400-ms stall without skipped banks or catch-up.
+104 focused tests passed (fast firmware/report/capture, source guard, actual
+CPU selector and source metadata). Hardware cadence with normal UI still
+requires measurement before choosing the next scheduling budget.

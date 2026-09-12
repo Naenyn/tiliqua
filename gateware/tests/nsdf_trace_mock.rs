@@ -27,7 +27,7 @@ impl Reg {
         0=>(s.ready && s.space>0) as u32,1=>0x4e534403,2=>1024|(1024<<16),
         3=>2|((if low {302}else{322})<<16),4=>s.seq,
         5=>s.seq-s.seq%512,6=>20480,7=>0,8=>204800000,9=>0,
-        10=>1,11=>s.seq,12=>(if low {604}else{674})*10000,13=>0,_=>0
+        10=>1|((s.command>>3)&3)<<2,11=>s.seq,12=>(if low {604}else{674})*10000,13=>0,_=>0
     }}))}
     pub fn write(&self,f:impl for<'a> FnOnce(&'a mut Writer)->&'a mut Writer) {
         let mut w=Writer(0);f(&mut w);STATE.with(|s|{let mut s=s.borrow_mut();
@@ -65,7 +65,8 @@ mod nsdf_select {
 fn main() {
     let mut trace=trace::Trace::new();let uart=UART0;
     assert_eq!(trace.ui_period_ms(false,5),5);
-    assert_eq!(trace.ui_period_ms(true,5),if trace.fast(){100}else{5});
+    let all=env!("TILIQUA_TUNER_NSDF_TRACE")=="fast-all";
+    assert_eq!(trace.ui_period_ms(true,5),if trace.fast() && !all {100}else{5});
     for now in 0..12000 {
         // Approximate 115200-baud 8N1 draining between 1-ms foreground visits.
         // Ready falls within a service call, unlike the old always-ready mock.
@@ -79,7 +80,13 @@ fn main() {
         if trace.fast() {
             for pair in s.starts.windows(2){assert!(pair[1].0-pair[0].0>=50);}
             let low=env!("TILIQUA_TUNER_NSDF_TRACE")=="fast-low";
-            assert!(s.starts.iter().all(|(_,c)|*c==if low {5}else{1}));
+            if all {
+                for (i,(_,command)) in s.starts.iter().enumerate() {
+                    assert_eq!(*command,1|(((i/2)&3) as u32)<<3|((i&1) as u32)<<2);
+                }
+                // UART stalls delay, but never skip a bank or queue catch-up.
+                assert!(s.starts.len()>100);
+            } else {assert!(s.starts.iter().all(|(_,c)|*c==if low {5}else{1}));}
             assert!(!std::str::from_utf8(&s.out).unwrap().contains("NSDF BEGIN"));
         } else {assert!(std::str::from_utf8(&s.out).unwrap().contains("NSDF BEGIN"));}
         print!("{}",std::str::from_utf8(&s.out).unwrap());

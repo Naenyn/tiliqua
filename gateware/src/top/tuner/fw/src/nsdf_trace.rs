@@ -5,6 +5,7 @@ use tiliqua_pac as pac;
 
 const FAST: bool = !matches!(env!("TILIQUA_TUNER_NSDF_TRACE").as_bytes(),b"full");
 const FAST_LOW: bool = matches!(env!("TILIQUA_TUNER_NSDF_TRACE").as_bytes(),b"fast-low");
+const ALL: bool = matches!(env!("TILIQUA_TUNER_NSDF_TRACE").as_bytes(),b"fast-all");
 
 pub struct Trace {
     pending: String<192>, offset: usize, state: u8, channel: u8,
@@ -18,7 +19,7 @@ impl Trace {
     }
     pub fn fast(&self)->bool { FAST }
     pub fn ui_period_ms(&self, idle_tuner:bool, normal:u64)->u64 {
-        if FAST && idle_tuner {100} else {normal}
+        if FAST && !ALL && idle_tuner {100} else {normal}
     }
     pub fn tick(&mut self, uart: &pac::UART0, now: u64) {
         // Only compiled with the matching opt-in gateware register block.
@@ -148,6 +149,10 @@ impl Trace {
             }
             _ => {
                 if FAST {
+                    if ALL {
+                        if self.low { self.channel=(self.channel+1)&3; }
+                        self.low=!self.low;
+                    }
                     // Bound request rate to <=20 Hz; do not queue missed work.
                     self.due=now.max(self.started.saturating_add(50));
                 } else {

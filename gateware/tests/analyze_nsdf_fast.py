@@ -7,8 +7,8 @@ from analyze_nsdf_source import source_details
 from analyze_nsdf_cpu import guard_fields
 
 
-def analyze_fast(text):
-    source=cpu=None;previous=None;seen=False
+def analyze_fast(text,round_robin=False):
+    source=cpu=None;previous=None;seen=False;bank_ends={}
     for line in text.splitlines(keepends=True):
         if line.startswith('NSDF ERROR'):raise ValueError('acquisition error')
         if not line.endswith('\n'):continue # Incomplete final serial line.
@@ -29,7 +29,7 @@ def analyze_fast(text):
             raise ValueError('invalid boolean')
         low=fields['low']=='true';n=604 if low else 674
         channel=int(fields['ch']);sequence=int(fields['seq'])
-        if channel!=0 or not 0<=sequence<1<<32:raise ValueError('invalid fast channel/sequence')
+        if not 0<=channel<(4 if round_robin else 1) or not 0<=sequence<1<<32:raise ValueError('invalid fast channel/sequence')
         energy=int(fields['energy']);scaled=int(fields['scaled']);clipped=int(fields['clipped'])
         if not 0<=energy<=n*(1<<30) or scaled not in (0,1) or clipped not in (0,1):
             raise ValueError('invalid frame energy/flags')
@@ -53,12 +53,18 @@ def analyze_fast(text):
         report=source_details(report,source)
         interval=None
         if previous is not None:
-            old_start,old_end,old_bank=previous
-            advance=(int(source['frame_end'])-old_end)&0xffffffff
-            if low!=old_bank or start-old_start<50 or not 0<advance<1<<31:
+            old_start,old_channel,old_bank=previous
+            expected_channel=(old_channel+int(old_bank))&3 if round_robin else old_channel
+            expected_low=not old_bank if round_robin else old_bank
+            if channel!=expected_channel or low!=expected_low or start-old_start<50:
                 raise ValueError('nonmonotonic or over-rate summary')
+        key=(channel,low)
+        if key in bank_ends:
+            advance=(int(source['frame_end'])-bank_ends[key])&0xffffffff
+            if not 0<advance<1<<31:raise ValueError('nonmonotonic bank endpoint')
             interval=advance/192 # Native samples to ms at 192 kHz.
-        previous=(start,int(source['frame_end']),low)
+        bank_ends[key]=int(source['frame_end'])
+        previous=(start,channel,low)
         guard=report['low_relative_energy_pass'] if low else report['native_relative_energy_pass']
         yield dict(**report,start_ms=start,end_ms=end,frame_interval_ms=interval,
                    guarded_qualified=qualified and report.get('device_guard',guard) is True,
