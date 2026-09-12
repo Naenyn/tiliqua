@@ -1304,3 +1304,14 @@ FPGA changes. 131 focused tests cover actual Rust publication lifecycle,
 stale/future/invalid/overflow cases, changed pitch and source, same-pitch new
 generation, conservative two-bank window support, cross-channel independence,
 and comparison record validation. Next: embedded build and physical comparison.
+
+Publication/comparison firmware `ca50614f` built and flashed successfully to
+normal-display TUNER slot 1 (exit 0, Refresh DONE), preserving options.
+Firmware 179616 bytes; FPGA unchanged at qualified SHA `83dfbb3a...e373f`.
+Continuous configuration and embedded <=1024-byte scheduler assertion passed.
+131 focused tests passed after final edits. ELF data 1632, bss 8, heap 0,
+reserved stack 31128: same 32-KiB allocation, not measured stack high-water.
+No serial capture open. User must reopen TUNER; current IN0 ~1.2-kHz/four-tone
+patch can remain. Capture `--continuous`, analyze RUN/PICK and new COMP records.
+COMP baseline age includes measured audio-end age plus time since observation.
+Main display and every production measurement consumer remain unchanged.
