@@ -106,6 +106,24 @@ power-spectrum precision, clipping robustness, filtering, or a complete detector
 
 ## Next hardware evidence
 
+Modulated Blade follow-up is retained as `tuner-local-parks-modulated-blade.json`.
+User reports waveform modulation with fixed tuning controls. Modulation source,
+rate and depth were not yet supplied. Native frame: 2048 samples / 10.67 ms.
+Recorded raw baseline is 1320.092 Hz (factor 1); independent offline estimates
+are spectral 501.093 Hz, NSDF 500.864 Hz, YIN 500.830 Hz at the standard
+200–20000 Hz bounds. All three qualify. Around a 1-ms delay the best integer
+NSDF value is only 0.0013; around 2 ms it is 0.9887. Separate 1024-sample halves
+(400-Hz lower search limit) also give NSDF 500.862/500.976 Hz. This is evidence
+for approximately 2-ms waveform repetition, NOT proof that the oscillator's
+intended/base pitch changed to 501 Hz or that a full firmware replacement works.
+
+66 of the 2048 samples equal +32767; none equal -32768. The positive rail must
+be treated as possible clipping in the capture/signal chain. Request the same
+modulated signal at lower amplitude to distinguish waveform behavior from
+clipping effects. The retained frequency interval is a reproducibility check,
+not independently measured ground truth. Do not force the result to the earlier
+sine's approximately 1001 Hz just because its tuning controls were unchanged.
+
 Local Parks follow-up: user identified capture 3 as sine and capture 4 as Blade.
 Both are retained as fixtures. With the same 200–20000 Hz search bounds:
 
