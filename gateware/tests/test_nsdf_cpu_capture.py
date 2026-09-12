@@ -62,3 +62,31 @@ def test_capture_handles_split_reads_and_closes_port(monkeypatch,capsys,error,fa
         capture_nsdf_cpu.main()
         assert capsys.readouterr().out==raw.decode()
     assert port.closed and port.dtr and not port.rts
+
+
+@pytest.mark.parametrize('count,accepted',[(6000,True),(6001,False),(1,False)])
+def test_long_fast_capture_count_is_bounded(monkeypatch,count,accepted):
+    opened=[]
+    def connect(*args,**kwargs):
+        opened.append(True)
+        raise RuntimeError('accepted arguments')
+    monkeypatch.setitem(sys.modules,'serial',SimpleNamespace(Serial=connect))
+    monkeypatch.setattr(sys,'argv',['capture_nsdf_cpu.py','fake-port','--fast',
+                                 '--fast-frames',str(count),'--timeout','360'])
+    with pytest.raises(RuntimeError if accepted else SystemExit):capture_nsdf_cpu.main()
+    assert bool(opened)==accepted
+
+
+@pytest.mark.parametrize('fast',[False,True])
+def test_capture_byte_limit_closes_port(monkeypatch,fast):
+    limit=(4 if fast else 1)*1048576
+    class Port:
+        closed=False
+        def __enter__(self):return self
+        def __exit__(self,*args):self.closed=True
+        def readline(self):return b'x'*(limit+1)
+    port=Port()
+    monkeypatch.setitem(sys.modules,'serial',SimpleNamespace(Serial=lambda *a,**kw:port))
+    monkeypatch.setattr(sys,'argv',['capture_nsdf_cpu.py','fake-port']+(['--fast'] if fast else []))
+    with pytest.raises(RuntimeError,match='MiB bound'):capture_nsdf_cpu.main()
+    assert port.closed

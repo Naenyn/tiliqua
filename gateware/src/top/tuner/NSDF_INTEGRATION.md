@@ -808,3 +808,21 @@ Next physical test: raise sine amplitude without retuning, establish a steady
 louder baseline, then capture a return to the quiet level. At 50-ms reporting
 cadence, recovery can only be bracketed to the observed frame spacing; do not
 claim an exact 109-ms transition measurement from these summaries.
+
+### Human-operated level transition capture window
+
+The three 1000-frame attempts `/tmp/tuner-fast-low-level-transition{,-2,-3}.log`
+each closed after ~50 seconds, before the user's amplitude change. They contain
+loud steady data only, not a transition. In the third, 1000/1000 qualified with
+frame RMS 6911.9–6958.7 counts. Do not claim recovery from these captures.
+User then set 24.4 Hz / 0.072 Vpp (exact requested 0.075 Vpp is unnecessary).
+`/tmp/tuner-fast-low-0072-steady.log`: 200/200 CPU and host-guard qualified;
+reported 24.390–24.503 Hz, frame RMS 93.707–94.239 counts, max interval 50.167 ms.
+This confirms the final quiet baseline, not the missed transition.
+
+Host capture now permits up to 6000 fast summaries (~5 minutes at 20 Hz),
+retaining the <=600-second deadline and a 4-MiB fast-mode memory bound.
+Full-score mode retains its 1-MiB bound. No firmware/FPGA change or flash.
+Tests cover accepted/rejected frame limits and port closure at each byte cap.
+Next capture should span a user-paced quiet-to-loud-to-quiet adjustment, with
+several seconds at the louder level; avoid rushing or insisting on exact Vpp.

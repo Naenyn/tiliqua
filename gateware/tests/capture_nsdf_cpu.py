@@ -37,7 +37,7 @@ def main():
     parser.add_argument('--fast-frames',type=int,default=200,help='Complete fast summaries to collect')
     args=parser.parse_args()
     if not 0<args.timeout<=600:parser.error('timeout must be >0 and <=600 seconds')
-    if not 2<=args.fast_frames<=1000:parser.error('fast frame count must be 2..1000')
+    if not 2<=args.fast_frames<=6000:parser.error('fast frame count must be 2..6000')
     import serial
     fragments=[]
     # Preserve partial lines across serial read timeouts. A single OS read is
@@ -73,8 +73,11 @@ def main():
                 if not args.fast and line=='NSDF END\n' and complete_cycle(''.join(fragments),args.source):
                     print('Validated all four channels and both banks; disconnected.',file=sys.stderr)
                     return
-            if sum(map(len,fragments))+len(pending)>1048576:
-                raise RuntimeError('diagnostic capture exceeded 1 MiB bound')
+            # Human-operated level adjustments need more than a 50-second
+            # window. This is host RAM only; retain a hard bound and deadline.
+            limit=4*1048576 if args.fast else 1048576
+            if sum(map(len,fragments))+len(pending)>limit:
+                raise RuntimeError(f'diagnostic capture exceeded {limit//1048576} MiB bound')
     raise RuntimeError('capture timed out before a complete validated cycle')
 
 
