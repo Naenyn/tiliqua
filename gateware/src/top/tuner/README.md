@@ -153,8 +153,16 @@ input, 0 V note, scale, root, transpose, mapping, and the two note masks.
 Switching output stops playback and recalls that output's settings in RAM.
 NOTES edits/loads only the selected output's pattern. Pattern slots are reusable
 copies: editing a channel does not modify a saved pattern or another channel.
-Only **one output runs at a time** in this firmware; this is the configuration
-foundation, not simultaneous four-output quantization.
+QUANT **RUN starts/stops all four outputs**, each using its own configuration.
+Two outputs are serviced per 1 ms interrupt, giving each output a 500 Hz update
+rate. Editing controls, switching the channel selector, or leaving QUANT stops
+all outputs and requires RUN again. An empty custom pattern cannot arm its lane.
+Per-lane stale CV, missing ACK, rail, and output faults stop that lane; scheduling
+or shared CPU-budget faults stop the whole group. Calibration/corrected PLAY has
+hardware priority and disables the quantizer outputs without automatic rearming.
+The 500 Hz rate is a conservative first implementation, pending hardware timing
+measurements. Four lightweight lanes share the scale/mapping implementation;
+they do not retain four copies of the oscillator calibration profile.
 
 **SETUPS** offers eight explicit SAVE/LOAD slots for all four channels together,
 including their note masks. Save is read-back verified; load validates the entire

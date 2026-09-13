@@ -42,8 +42,10 @@ Nothing is automatically armed or loaded. Settings reset does not erase this
 separate storage. These are conventional note-pattern slots, not yet imported
 microtonal-scale slots. Eight separate SETUPS slots now retain the four output
 configurations and independent mask snapshots in 48-byte CRC-protected TQS1
-records. No running state is stored. The current adapter still enables only one
-output at a time; selecting output selects its settings and stops playback.
+records. No running state is stored. QUANT RUN now starts all four outputs at
+500 Hz per channel, staggered two per 1 ms interrupt. Selecting output selects its
+settings and stops the group. Hardware timing/resource qualification and live
+four-channel testing are required for this adapter change.
 Both populated halves repeat every 2400 cents. One empty half collapses to the
 other mask's pitch classes over 1200 cents, discarding which half they occupied.
 Both empty refuses to arm. Patterns may omit unison, so nearest lookup handles

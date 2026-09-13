@@ -95,6 +95,51 @@ static NOTE_STATUS:Mutex<RefCell<(u8,&'static str)>>=Mutex::new(RefCell::new((1,
 static SETUP_STATUS:Mutex<RefCell<(u8,&'static str)>>=Mutex::new(RefCell::new((1,"SAVE OR LOAD A SETUP")));
 static PLAYBACK:Mutex<RefCell<oscillator_calibration::playback::Engine>>=
     Mutex::new(RefCell::new(oscillator_calibration::playback::Engine::new()));
+type QuantEngine=oscillator_calibration::playback::QuantEngine;
+struct MultiQuant {
+    lanes:[QuantEngine;4],configs:[quantizer_setup::Channel;4],
+    running:bool,max_cycles:usize,last_cycle:usize,max_gap:usize,
+}
+static MULTI_QUANT:Mutex<RefCell<MultiQuant>>=Mutex::new(RefCell::new(MultiQuant {
+    lanes:[QuantEngine::new(),QuantEngine::new(),QuantEngine::new(),QuantEngine::new()],
+    configs:quantizer_setup::DEFAULT,running:false,max_cycles:0,last_cycle:0,max_gap:0,
+}));
+fn quant_command(t:&pac::TUNER_PERIPH,n:usize,value:u32) {
+    match n {
+        0=>t.quant_command0().write(|w|unsafe{w.value().bits(value)}),
+        1=>t.quant_command1().write(|w|unsafe{w.value().bits(value)}),
+        2=>t.quant_command2().write(|w|unsafe{w.value().bits(value)}),
+        _=>t.quant_command3().write(|w|unsafe{w.value().bits(value)}),
+    };
+}
+fn quant_status(t:&pac::TUNER_PERIPH,n:usize)->u32 {match n {
+    0=>t.quant_status0().read().value().bits(),1=>t.quant_status1().read().value().bits(),
+    2=>t.quant_status2().read().value().bits(),_=>t.quant_status3().read().value().bits(),
+}}
+fn quant_cv(t:&pac::TUNER_PERIPH,n:u8)->u32 {match n {
+    0=>t.quant_cv0().read().value().bits(),1=>t.quant_cv1().read().value().bits(),
+    2=>t.quant_cv2().read().value().bits(),_=>t.quant_cv3().read().value().bits(),
+}}
+impl MultiQuant {
+    fn stop(&mut self,t:&pac::TUNER_PERIPH,reason:&'static str) {
+        self.running=false;
+        for (n,lane) in self.lanes.iter_mut().enumerate() {quant_command(t,n,lane.stop(reason));}
+    }
+    fn start(&mut self,t:&pac::TUNER_PERIPH,configs:[quantizer_setup::Channel;4],now:u32,counts:i32) {
+        self.stop(t,"STOPPED");self.configs=configs;self.max_cycles=0;self.last_cycle=0;self.max_gap=0;
+        for (n,c) in configs.iter().enumerate() {
+            let lane=&mut self.lanes[n];
+            // Disable has cleared faults, but wait until a later RUN if a prior
+            // enabled output has not yet acknowledged shutdown.
+            if !lane.arm_nominal(c.input,n as u8,c.zero,counts,now,quant_status(t,n)) {continue;}
+            lane.scale_id=c.scale;lane.root=c.root;lane.transpose=c.transpose;lane.equal=c.equal;
+            if c.scale==6 {match scale::Pattern::compile(c.masks) {
+                Ok(pattern)=>lane.pattern=pattern,Err(_)=>{lane.stop("EMPTY PATTERN - ADD NOTES");},
+            }}
+        }
+        self.running=self.lanes.iter().any(|lane|lane.active);
+    }
+}
 
 impl App {
     #[inline(never)]
@@ -156,6 +201,36 @@ fn timer0_handler() {
             app.ui.opts.quantizer.scale.value as u8,app.ui.opts.quantizer.root.value as u8,
             app.ui.opts.quantizer.transpose.value,
             app.ui.opts.quantizer.mapping.value==options::Distribution::Equal)
+    });
+    // Two outputs per interrupt: every channel runs at 500 Hz without putting
+    // four worst-case note transitions in the same 1 ms interrupt budget.
+    critical_section::with(|cs| {
+        let mut quant=MULTI_QUANT.borrow_ref_mut(cs);
+        if !quant.running {return;}
+        let tuner=unsafe{pac::Peripherals::steal()}.TUNER_PERIPH;
+        let allowed=with_app(|app| {
+            let c=quant_settings(&app.ui.opts.quantizer,*QUANT_NOTES.borrow_ref(cs));
+            nominal && app.ui.opts.quantizer.output.value==app.quant_selected
+                && c==quant.configs[app.quant_selected as usize]
+        });
+        if !allowed || PLAYBACK.borrow_ref(cs).active || tuner.cal_status().read().value().bits()&768!=0 {
+            quant.stop(&tuner,"STOPPED - CONTROLS OR OWNER CHANGED");return;
+        }
+        let start=playback_cycles();
+        if quant.last_cycle!=0 {
+            let gap=start.wrapping_sub(quant.last_cycle);quant.max_gap=quant.max_gap.max(gap);
+            if gap>pac::clock::sysclk() as usize/200 {quant.stop(&tuner,"STOPPED - SCHEDULING GAP");return;}
+        }
+        quant.last_cycle=start;
+        for n in ((now as usize&1)*2)..((now as usize&1)*2+2) {
+            let lane=&mut quant.lanes[n];
+            if let Some(command)=lane.tick(now,quant_cv(&tuner,lane.input),quant_status(&tuner,n),true) {
+                quant_command(&tuner,n,command);
+            }
+        }
+        let elapsed=playback_cycles().wrapping_sub(start);quant.max_cycles=quant.max_cycles.max(elapsed);
+        if elapsed>pac::clock::sysclk() as usize/2000 {quant.stop(&tuner,"STOPPED - CPU BUDGET");}
+        else {quant.running=quant.lanes.iter().any(|lane|lane.active);}
     });
     critical_section::with(|cs| {
         let mut play=PLAYBACK.borrow_ref_mut(cs);
@@ -1077,7 +1152,7 @@ fn publish_quantizer(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,menu:b
         }
         write_centered(text,29,"SAVE INCLUDES ALL FOUR NOTE PATTERNS",42);
         write_centered(text,32,"LOAD DOES NOT START OUTPUT",38);
-        write_centered(text,35,"ONE OUTPUT ACTIVE AT A TIME FOR NOW",42);
+        write_centered(text,35,"QUANT RUN STARTS ALL FOUR OUTPUTS",42);
         let (status_slot,status)=critical_section::with(|cs|*SETUP_STATUS.borrow_ref(cs));
         write!(line,"SLOT {}: {}",slot,if slot==status_slot {status} else {"SAVE OR LOAD A SETUP"}).ok();
         write_centered(text,39,&line,42);
@@ -1115,8 +1190,8 @@ fn publish_quantizer(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,menu:b
     let (input,output,zero)=with_app(|app|(app.ui.opts.quantizer.input.value,
         app.ui.opts.quantizer.output.value,app.ui.opts.quantizer.zero_note.value));
     let (active,status,uv,out,pitch,updates,cycles)=critical_section::with(|cs| {
-        let p=PLAYBACK.borrow_ref(cs);
-        (p.active,p.status,p.input_uv,p.output_uv,p.pitch,p.updates,p.max_cycles)
+        let q=MULTI_QUANT.borrow_ref(cs);let p=&q.lanes[output as usize];
+        (p.active,p.status,p.input_uv,p.output_uv,p.pitch,p.updates,q.max_cycles)
     });
     let mut line=String::<96>::new();
     write_centered(text,4,"QUANTIZER",28);
@@ -1129,12 +1204,12 @@ fn publish_quantizer(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,menu:b
     });
     write!(line,"{} {}; TRANSPOSE {:+}",root_name,scale_name,transpose).ok();
     write_centered(text,14,&line,38);line.clear();
-    write_centered(text,17,"PER-OUTPUT SETTINGS; ONE ACTIVE",38);
+    write_centered(text,17,"FOUR OUTPUTS; 500 HZ PER CHANNEL",38);
     write!(line,"0 V = ").ok();pitch_units::write_note(&mut line,zero as i32).ok();
     write_centered(text,21,&line,32);line.clear();
     let equal=with_app(|app|app.ui.opts.quantizer.mapping.value==options::Distribution::Equal);
     write_centered(text,24,if equal {"EQUAL BINS; OUT -5 TO +5 V"} else {"NEAREST; OUT -5 TO +5 V"},38);
-    write_centered(text,27,"RUN STARTS / STOPS; EXIT STOPS",34);
+    write_centered(text,27,"RUN ALL / STOP ALL; EXIT STOPS",38);
     write_centered(text,30,status,42);
     write!(line,"IN {:+.4} V -> OUT {:+.4} V",uv as f32/1e6,out as f32/1e6).ok();
     write_centered(text,34,&line,42);line.clear();
@@ -1148,6 +1223,20 @@ fn publish_quantizer(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,menu:b
 
 pub fn playback_visible()->bool {with_app(|app|matches!(app.ui.opts.tracker.page.value,Page::Play|Page::Quantizer))}
 pub fn write_playback_status(out:&mut impl core::fmt::Write,value:ChannelMeasurement)->core::fmt::Result {
+    if with_app(|app|app.ui.opts.tracker.page.value==Page::Quantizer) {
+        let (running,cycles,gap,lanes)=critical_section::with(|cs| {
+            let q=MULTI_QUANT.borrow_ref(cs);
+            let lanes:[_;4]=core::array::from_fn(|n| {let p=&q.lanes[n];
+                (p.active,p.input,p.input_uv,p.output_uv,p.updates,p.status,q.configs[n])});
+            (q.running,q.max_cycles,q.max_gap,lanes)
+        });
+        writeln!(out,"QUANT4 ACTIVE={} RATE_HZ=500 MAX_BATCH_CYCLES={} MAX_GAP_CYCLES={}",running,cycles,gap)?;
+        for (n,(active,input,uv,voltage,updates,status,c)) in lanes.iter().enumerate() {
+            writeln!(out,"Q{} ACTIVE={} IN={} UV={} OUT_UV={} UPDATES={} STATUS={}",n,active,input,uv,voltage,updates,status)?;
+            writeln!(out,"Q{} SCALE={} ROOT={} TRANSPOSE={} EQUAL={} A={:03X} B={:03X}",n,c.scale,c.root,c.transpose,c.equal as u8,c.masks[0],c.masks[1])?;
+        }
+        return Ok(());
+    }
     let now=with_app(|app|app.now_ms as u32);
     let (active,status,input,output,uv,voltage,updates,cycles,gap,pitch,chromatic,settled)=critical_section::with(|cs| {
         let p=PLAYBACK.borrow_ref(cs);
@@ -1366,6 +1455,7 @@ fn poll_ui_frame() -> UiFrame {
         true
     }));
     if changed {critical_section::with(|cs| {
+        MULTI_QUANT.borrow_ref_mut(cs).stop(&unsafe{pac::Peripherals::steal()}.TUNER_PERIPH,"STOPPED - OUTPUT CHANGED");
         let command=PLAYBACK.borrow_ref_mut(cs).stop("STOPPED - OUTPUT CHANGED");
         unsafe{pac::Peripherals::steal()}.TUNER_PERIPH.cal_command().write(|w|unsafe{w.value().bits(command)});
     });}
@@ -1433,7 +1523,7 @@ type TunerPersistence = FlashOptionsPersistence<SPIFlash0,1100>;
 
 #[inline(never)]
 fn persist_setup(storage:&mut Option<TunerPersistence>,save:bool)->&'static str {
-    if critical_section::with(|cs|PLAYBACK.borrow_ref(cs).active) {return "STOP OUTPUT FIRST";}
+    if critical_section::with(|cs|PLAYBACK.borrow_ref(cs).active || MULTI_QUANT.borrow_ref(cs).running) {return "STOP OUTPUT FIRST";}
     let slot=with_app(|app|app.ui.opts.quant_setups.slot.value);
     let Some(key)=quantizer_setup::key(slot) else {return "INVALID SETUP SLOT";};
     if with_app(|app|app.ui.opts.all().any(|o|o.key().value()==key)) {return "SETUP KEY CONFLICT";}
@@ -1467,7 +1557,7 @@ fn persist_setup(storage:&mut Option<TunerPersistence>,save:bool)->&'static str 
 
 #[inline(never)]
 fn persist_notes(storage:&mut Option<TunerPersistence>,save:bool)->&'static str {
-    if critical_section::with(|cs|PLAYBACK.borrow_ref(cs).active) {return "STOP OUTPUT FIRST";}
+    if critical_section::with(|cs|PLAYBACK.borrow_ref(cs).active || MULTI_QUANT.borrow_ref(cs).running) {return "STOP OUTPUT FIRST";}
     let slot=with_app(|app|app.ui.opts.quant_notes.slot.value);
     let Some(key)=note_pattern::key(slot) else {return "INVALID NOTE SLOT";};
     if with_app(|app|app.ui.opts.all().any(|o|o.key().value()==key)) {return "NOTE KEY CONFLICT";}
@@ -1744,8 +1834,20 @@ fn run(resources: &mut RuntimeResources) -> ! {
             if ui_elapsed_ms<ui_period_ms {continue;}
             last_ui_ms=now;
             let ui_frame = poll_ui_frame();
+            if ui_frame.run_play && ui_frame.controls.mode==runtime::OperatingMode::Quantizer {
+                critical_section::with(|cs| {
+                    let mut q=MULTI_QUANT.borrow_ref_mut(cs);
+                    if q.running {q.stop(&tuner,"STOPPED BY USER");}
+                    else if calibration.active() || calibration.pending_profile.is_some() || PLAYBACK.borrow_ref(cs).active {
+                        q.stop(&tuner,"STOP CAL / PLAY FIRST");
+                    } else {
+                        let channels=with_app(|app|app.quant_channels);
+                        q.start(&tuner,channels,ui_frame.now_ms as u32,counts_per_v as i32);
+                    }
+                });
+            }
             if ui_frame.run_play && matches!(ui_frame.controls.mode,
-                runtime::OperatingMode::Play|runtime::OperatingMode::Quantizer) {
+                runtime::OperatingMode::Play) {
                 critical_section::with(|cs| {
                     let mut play=PLAYBACK.borrow_ref_mut(cs);
                     if play.active {
@@ -1753,25 +1855,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     } else if calibration.pending_profile.is_some() {
                         play.status="ACCEPT OR DISCARD CAL FIRST";
                     } else if !calibration.active() {
-                        if ui_frame.controls.mode==runtime::OperatingMode::Quantizer {
-                            let (input,output,zero)=with_app(|app|(app.ui.opts.quantizer.input.value,
-                                app.ui.opts.quantizer.output.value,app.ui.opts.quantizer.zero_note.value));
-                            if play.arm_nominal(input,output,zero,counts_per_v as i32,
-                                ui_frame.now_ms as u32,tuner.cal_status().read().value().bits()) {
-                                let (id,root,transpose)=with_app(|app|(app.ui.opts.quantizer.scale.value as u8,
-                                    app.ui.opts.quantizer.root.value as u8,app.ui.opts.quantizer.transpose.value));
-                                play.scale_id=id;play.root=root;play.transpose=transpose;
-                                play.equal=with_app(|app|app.ui.opts.quantizer.mapping.value==options::Distribution::Equal);
-                                if id==6 {
-                                    let masks=*QUANT_NOTES.borrow_ref(cs);
-                                    match scale::Pattern::compile(masks) {
-                                        Ok(pattern)=>play.pattern=pattern,
-                                        Err(_)=>{play.stop("EMPTY PATTERN - ADD NOTES");}
-                                    }
-                                }
-                                tuner.cv_channel().write(|w|unsafe{w.channel().bits(input)});
-                            }
-                        } else if let (Some(profile),Some(route))=(calibration.profile.as_ref(),calibration.profile_route) {
+                        if let (Some(profile),Some(route))=(calibration.profile.as_ref(),calibration.profile_route) {
                             let input=with_app(|app|app.ui.opts.play.input.value);
                             if play.arm(profile,input,route.output(),ui_frame.controls.zero_note,
                                 counts_per_v as i32,ui_frame.now_ms as u32,tuner.cal_status().read().value().bits()) {

@@ -74,8 +74,13 @@ pub fn chromatic_pitch(pitch:i32,previous:Option<i32>)->i32 {
 }
 
 /// One output owner, serviced at 1 kHz. No UI/flash operations in tick.
-pub struct Engine {
-    profile:Option<Profile>,
+pub trait ProfileStorage {fn measured(&self)->Option<&Profile>;}
+impl ProfileStorage for Profile {fn measured(&self)->Option<&Profile>{Some(self)}}
+impl ProfileStorage for () {fn measured(&self)->Option<&Profile>{None}}
+pub type Engine=PlaybackEngine<Profile>;
+pub type QuantEngine=PlaybackEngine<()>;
+pub struct PlaybackEngine<P:ProfileStorage> {
+    profile:Option<P>,
     pub active:bool,
     pub status:&'static str,
     pub input:u8,
@@ -104,18 +109,18 @@ pub struct Engine {
     last_command:Option<u32>,
     target_since:u32,
 }
-impl Engine {
+impl<P:ProfileStorage> PlaybackEngine<P> {
     pub const fn new()->Self {Self{profile:None,active:false,status:"STOPPED - RUN TO START",
         input:0,output:0,zero_note:60,input_uv:0,output_uv:0,pitch:0,sequence:None,
         last_sample:0,pending:None,token:0,counts_per_v:4000,updates:0,max_cycles:0,last_irq_cycle:0,max_gap_cycles:0,
         chromatic:false,standalone:false,scale_id:0,root:0,transpose:0,equal:false,
         pattern:crate::scale::Pattern::empty(),quantized_pitch:None,last_command:None,target_since:0}}
-    pub fn arm(&mut self,profile:&Profile,input:u8,output:u8,zero:u8,counts:i32,now:u32,status:u32)->bool {
+    pub fn arm(&mut self,profile:&Profile,input:u8,output:u8,zero:u8,counts:i32,now:u32,status:u32)->bool where P:From<Profile> {
         if self.active || status&768!=0 || input>3 || output>3 || counts<=0
             || profile.points().len()<2 || !(12..=108).contains(&zero) {
             self.status="CANNOT ARM - CHECK PROFILE";return false;
         }
-        self.profile=Some(profile.clone());self.standalone=false;
+        self.profile=Some(profile.clone().into());self.standalone=false;
         self.start(input,output,zero,counts,now)
     }
     pub fn arm_nominal(&mut self,input:u8,output:u8,zero:u8,counts:i32,now:u32,status:u32)->bool {
@@ -202,7 +207,9 @@ impl Engine {
             Ok(Target{pitch_millicents:pitch,requested_microvolts:self.output_uv,
                 applied_microvolts:self.output_uv,dac_bits:self.last_command.unwrap() as u16})
         } else if self.standalone {map_nominal(pitch,self.zero_note)}
-            else {map_pitch(self.profile.as_ref().unwrap(),pitch)};
+            else {match self.profile.as_ref().and_then(ProfileStorage::measured) {
+                Some(profile)=>map_pitch(profile,pitch),None=>return Some(self.stop("STOPPED - NO PROFILE")),
+            }};
         let target=match mapping {
             Ok(target)=>target,
             Err(MappingError::Profile(Error::PitchOutsideRange))=>{
@@ -238,6 +245,22 @@ impl Engine {
 #[cfg(test)] mod tests {
     use super::*;
     use crate::oscillator_calibration::Point;
+    #[test] fn four_lightweight_lanes_keep_history_and_faults_independent() {
+        assert!(core::mem::size_of::<QuantEngine>()<384);
+        assert!(core::mem::size_of::<Engine>()>core::mem::size_of::<QuantEngine>()+900);
+        let mut lanes:[QuantEngine;4]=core::array::from_fn(|_|QuantEngine::new());
+        let mut commands=[0;4];
+        for (n,lane) in lanes.iter_mut().enumerate() {
+            assert!(lane.arm_nominal(n as u8,n as u8,60,4000,0,0));
+            lane.transpose=n as i8;
+            commands[n]=lane.tick(1,sample(1,0),0,true).unwrap();
+            assert_eq!(lane.pitch,6_000_000+n as i32*100_000);
+        }
+        for (n,lane) in lanes.iter_mut().enumerate() {
+            lane.tick(3,sample(2,0),if n==1 {512} else {ack(commands[n])},true);
+            assert_eq!(lane.active,n!=1);
+        }
+    }
     #[test] fn repeated_note_still_checks_ack_freshness_and_controls() {
         let mut e=Engine::new();assert!(e.arm_nominal(1,1,60,4000,0,0));
         let first=e.tick(1,sample(1,0),0,true).unwrap();

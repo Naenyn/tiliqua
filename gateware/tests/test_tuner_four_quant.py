@@ -1,0 +1,55 @@
+from amaranth.sim import Simulator
+from tiliqua.dsp.tuner import TunerPeripheral
+
+
+def test_four_cv_outputs_fault_isolation_and_cal_priority():
+    dut = TunerPeripheral(sample_rate=192000, multichannel=True,
+                          with_reference=False, with_legacy_pitch=False)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+
+    async def bench(ctx):
+        async def write(address, value):
+            for byte in range(4):
+                ctx.set(dut.bus.addr, address + byte)
+                ctx.set(dut.bus.w_data, (value >> (byte * 8)) & 255)
+                ctx.set(dut.bus.w_stb, 1)
+                await ctx.tick()
+            ctx.set(dut.bus.w_stb, 0)
+            await ctx.tick().repeat(3)
+
+        ctx.set(dut.i.valid, 1)
+        ctx.set(dut.reference_advance, 1)
+        values = [-12000, -4000, 4000, 16000]
+        for n, value in enumerate(values):
+            ctx.set(dut.i.payload[n].as_value(), value)
+        await ctx.tick().repeat(64)
+        for n, value in enumerate(values):
+            packed = ctx.get(dut._quant_cv[n].f.value.r_data)
+            assert packed >> 31 and packed & 65535 == value & 65535
+            await write(0x90 + n * 4, (value & 65535) | (1 << 18) | ((n + 1) << 21) | (1 << 29))
+        for n, value in enumerate(values):
+            assert ctx.get(dut.quant_value[n]) == value & 65535
+            assert ctx.get(dut._quant_status[n].f.value.r_data) == 256 + n + 1
+        # A bad command faults just its own output, not its neighbors.
+        await write(0x94, 25000 | (1 << 18))
+        assert ctx.get(dut.quant_value[1]) == 0
+        assert ctx.get(dut._quant_status[1].f.value.r_data) & 512
+        for n in [0, 2, 3]:
+            assert ctx.get(dut.quant_value[n]) == values[n] & 65535
+        # Legacy calibration/playback owns the DACs until explicitly disabled.
+        await write(0x5c, 8000 | (1 << 18) | (1 << 21))
+        assert ctx.get(dut.cal_active)
+        for n in range(4):
+            assert ctx.get(dut.quant_value[n]) == 0
+            await write(0x90 + 4*n, 4000 | (1 << 18))
+            assert ctx.get(dut.quant_value[n]) == 0
+        await write(0x5c, 0)
+        assert not ctx.get(dut.cal_active)
+        for n in range(4):
+            assert ctx.get(dut.quant_value[n]) == 0  # no surprise rearming
+        await write(0x90, 4000 | (1 << 18))
+        assert ctx.get(dut.quant_value[0]) == 4000
+
+    sim.add_testbench(bench)
+    sim.run()

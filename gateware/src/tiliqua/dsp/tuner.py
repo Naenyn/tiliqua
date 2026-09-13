@@ -154,7 +154,7 @@ class TunerPeripheral(wiring.Component):
         self.dc_filter_shift = (max(1, round(math.log2(self.sample_rate * 4096 / 192000)))
                                 if dc_filter_shift is None else dc_filter_shift)
 
-        regs = csr.Builder(addr_width=7, data_width=8)
+        regs = csr.Builder(addr_width=8, data_width=8)
         self._control = regs.add("control", self.Control(), offset=0x00)
         self._info = regs.add("info", self.Info(), offset=0x04)
         self._pitch_sequence = regs.add(
@@ -194,6 +194,9 @@ class TunerPeripheral(wiring.Component):
         self._capture_data = regs.add("capture_data", self.CaptureData(), offset=0x74)
         self._cv_channel = regs.add("cv_channel", self.Control(), offset=0x78)
         self._cv_sample = regs.add("cv_sample", self.SignedLevel(), offset=0x7c)
+        self._quant_cv = [regs.add(f"quant_cv{n}", self.SignedLevel(), offset=0x80+4*n) for n in range(4)]
+        self._quant_command = [regs.add(f"quant_command{n}", self.ReferenceIncrement(), offset=0x90+4*n) for n in range(4)]
+        self._quant_status = [regs.add(f"quant_status{n}", self.SignedLevel(), offset=0xa0+4*n) for n in range(4)]
         self._bridge = csr.Bridge(regs.as_memory_map())
 
         super().__init__({
@@ -206,6 +209,7 @@ class TunerPeripheral(wiring.Component):
             "reference_enabled": Out(1),
             "cal_value": Out(16), "cal_channel": Out(2),
             "cal_active": Out(1), "cal_fault": Out(1),
+            "quant_value": Out(data.ArrayLayout(16, 4)),
             "bus": In(csr.Signature(
                 addr_width=regs.addr_width, data_width=regs.data_width)),
         })
@@ -230,6 +234,19 @@ class TunerPeripheral(wiring.Component):
                      self.cal_value.eq(cal.value), self.cal_channel.eq(cal.channel),
                      self.cal_active.eq(cal.active), self.cal_fault.eq(cal.fault),
                      self._cal_status.f.value.r_data.eq(Cat(cal.token, cal.active, cal.fault))]
+        # Each input is measured continuously, regardless of UI selection.
+        # Each output owns its ACK/token/watchdog; CAL/PLAY has hard priority.
+        for n in range(4):
+            m.submodules[f"quant_cv{n}"] = snapshot = CVSnapshot()
+            m.d.comb += [snapshot.sample.eq(samples[n]), snapshot.accept.eq(self.i.valid),
+                         snapshot.clear.eq(0), self._quant_cv[n].f.value.r_data.eq(snapshot.packed)]
+            m.submodules[f"quant_output{n}"] = lane = CalibrationOutput()
+            inhibit = cal.active | cal.fault | self._cal_command.element.w_stb
+            m.d.comb += [lane.command.eq(Mux(inhibit, 0, self._quant_command[n].element.w_data)),
+                         lane.write.eq(inhibit | self._quant_command[n].element.w_stb),
+                         lane.advance.eq(self.reference_advance),
+                         self.quant_value[n].eq(Mux(inhibit, 0, lane.value)),
+                         self._quant_status[n].f.value.r_data.eq(Cat(lane.token, lane.active, lane.fault))]
         selected = self._control.f.channel.data
         last_selected = Signal(2)
         m.d.sync += last_selected.eq(selected)

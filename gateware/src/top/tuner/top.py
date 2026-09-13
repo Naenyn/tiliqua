@@ -134,7 +134,7 @@ class TunerSoc(TiliquaSoc):
             m.d.comb += pmod.i_cal.payload[channel].as_value().eq(Mux(
                 self.tuner_periph.cal_fault, 0, Mux(self.tuner_periph.cal_active,
                 Mux(self.tuner_periph.cal_channel == channel, self.tuner_periph.cal_value, 0),
-                0)))
+                self.tuner_periph.quant_value[channel])))
 
         return m
 
