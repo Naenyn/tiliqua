@@ -1424,3 +1424,11 @@ the ~100-ms low window fails the unchanged clarity gate, while stationary and
 slower sweeps qualify. This demonstrates a motion limitation, not proof of the
 physical low-end cause; thresholds remain unchanged pending stronger evidence.
 No FPGA, persistent buffer or acquisition scheduling changes.
+
+Validation/handoff: 136 focused tests pass. Firmware `f1c0f323` built and
+flashed to slot 1, exit zero / Refresh DONE, normal display and 192 kHz audio,
+profiles preserved. Archive firmware 179784 bytes; same qualified FPGA hash.
+.data=1632, .bss=8, heap=0; RAM remains 32 KiB (no measured stack high-water).
+Build/flash logs `/tmp/tuner-nsdf-motion-{build,flash}.log`. User needs to reopen
+TUNER with the unchanged LFO patch before post-change serial capture. Remaining
+low-end rejection is explicitly unresolved; do not claim full sweep tracking.
