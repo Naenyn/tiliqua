@@ -1,5 +1,10 @@
 # NSDF integration trial
 
+**Current decision:** see [DETECTOR_DECISION.md](DETECTOR_DECISION.md). The
+alternative-algorithm investigation is closed for feature development: retain
+NSDF tuner views and baseline calibration/playback measurements. Sections below
+are chronological checkpoints; early "diagnostic only" statements are historical.
+
 Branch: `codex/tuner-nsdf-integration`, based on `739cc7b4`. This is an opt-in
 parallel hardware diagnostic, **not yet a replacement for the working tuner**.
 The baseline display, detector, calibrator and PLAY/quantizer remain authoritative.

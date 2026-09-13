@@ -1,8 +1,14 @@
 # TUNER proof of concept
 
+On the selected NSDF feature-development build (`TILIQUA_TUNER_NSDF=1`), both
+tuner views use the shared NSDF detector; calibration and playback audio checks
+retain the original measurement path. See the [detector decision](DETECTOR_DECISION.md)
+for evidence, resource tradeoffs and the boundary between those consumers.
+
 See [detector accuracy baseline](ACCURACY.md) for measured synthetic-signal
 limits and the low-level/DC-filter correction. Four-channel acquisition is
-implemented; general fundamental estimation is not.
+implemented. That accuracy document describes the original crossing-based path,
+not the current NSDF tuner's absolute accuracy.
 
 This bitstream continuously measures all four monophonic audio inputs and displays:
 
