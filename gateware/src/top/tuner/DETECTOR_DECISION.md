@@ -1,5 +1,13 @@
 # Detector decision: close the alternative-algorithm experiment
 
+**Migration update:** user chose to trial NSDF for calibration rather than keep
+two analysis paths indefinitely. The NSDF build now supplies the measurement
+bank for CAL/VERIFY and optional PLAY audio checks as well as the tuner. Hardware
+acceptance is pending; the old detector/verifier is retained temporarily for
+rollback/diagnostic comparison, not the intended final architecture. No resource
+reclamation is credited until removal and a fresh full build are verified.
+The original decision below records the preceding checkpoint.
+
 ## Decision
 
 Keep the installed **NSDF tuner views plus existing calibration/playback detector**

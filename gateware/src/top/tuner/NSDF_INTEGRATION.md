@@ -1,5 +1,8 @@
 # NSDF integration trial
 
+**Latest migration:** NSDF calibration/verification trial implemented following
+the user's resource concern. See the final entry and updated detector decision.
+
 **Current decision:** see [DETECTOR_DECISION.md](DETECTOR_DECISION.md). The
 alternative-algorithm investigation is closed for feature development: retain
 NSDF tuner views and baseline calibration/playback measurements. Sections below
@@ -1501,3 +1504,29 @@ a firmware-only drop-in improvement and is beyond this bounded investigation.
 No production changes, build, flash, or user hardware test required. Installed
 firmware remains `f1c0f323`; aggressive low-frequency FM tracking is a documented
 limitation rather than a reason to spend feature headroom now.
+
+## NSDF authoritative calibration trial
+
+NSDF now populates the common pitch measurement bank in continuous builds,
+including CAL, VERIFY, refinement and optional PLAY audio checks. Raw baseline
+reads remain solely for level meters and serial comparison/rollback. No DAC,
+CV quantization, profile format, settling, stability or confidence thresholds
+changed. Old verifier rejection lag/factor details are disabled on this path
+because they do not describe NSDF failures; NSDF COMP remains available.
+
+Per-input identity adapter maps (bank, acquisition generation) to u16 consumer
+sequence. Re-reading a frame does not advance it; switching back to an already
+consumed other-bank frame is rejected until that bank acquires again. Generations
+are saturating in the scheduler; consumer sequence wraps as the legacy interface
+expects. Four adapters total <=48 bytes, target-checked, separate from the
+unchanged <=1024-byte scheduler. Qualification uses the same guarded display
+policy, and conservative whole-window/end ages flow into existing post-output
+settling gates. No fabricated independent observations or stale pitch holding.
+
+Host test drives the actual live calibration controller with ~90-ms acquisition
+cadence and 10-ms repeated UI reads through real NSDF publication/identity code:
+limited-range bipolar sweep, explicit acceptance, POINTS verification and SCAN
+all complete and release output. It models an ideal oscillator and command ACKs,
+not physical detector accuracy. Identity reuse, channel isolation and wrapping
+are separately tested. Full FPGA still contains the old verifier; physical
+calibration/verify acceptance must precede hardware removal and full requalification.

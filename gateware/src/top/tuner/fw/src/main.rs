@@ -1417,6 +1417,8 @@ fn run(resources: &mut RuntimeResources) -> ! {
         let mut frame_ticks = FRAME_PERIOD_TICKS;
         let mut smoothed_midi = [None; 4];
         let mut measurements = MeasurementBank::default();
+        #[cfg(tuner_nsdf_continuous)]
+        let mut nsdf_sequences=[nsdf_trace::Sequence::default();4];
         let mut verification: [pitch_verification::Verification;4] = core::array::from_fn(|_| Default::default());
         let mut verification_frames = 0u8;
         let mut calibration = calibration_live::Live::new();
@@ -1626,6 +1628,13 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     #[cfg(tuner_nsdf_continuous)]
                     nsdf_trace.observe_baseline(input,measurement.frequency_hz,
                         measurement.valid && measurement.qualified,measurement.end_age_ms,ui_frame.now_ms);
+                    #[cfg(tuner_nsdf_continuous)]
+                    let measurement = {
+                        let (hz,qualified,sequence,window_age_ms,end_age_ms)=
+                            nsdf_trace.measurement(input,ui_frame.now_ms,&mut nsdf_sequences[input as usize]);
+                        ChannelMeasurement {frequency_hz:hz,valid:qualified,qualified,
+                            sequence,window_age_ms,end_age_ms,..measurement}
+                    };
                     measurements.update(input, measurement);
                 }
                 if previous_capture_mode!=tuner.verify_capture().read().mode().bits() {
@@ -1642,8 +1651,13 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     let next = (tuner.verify_channel().read().channel().bits()+1) & 3;
                     tuner.verify_channel().write(|w| unsafe { w.channel().bits(next) });
                 }
+                #[cfg(not(tuner_nsdf_continuous))]
                 let previous_rejection=calibration.tracking_failure.map(|f|f.rejected.millicents);
                 calibration.tick(&tuner, measurements.channel(calibration.input), controls, ui_frame.now_ms);
+                // Legacy lag/factor diagnostics describe the old verifier,
+                // not the NSDF measurements now used by the calibration run.
+                #[cfg(not(tuner_nsdf_continuous))]
+                {
                 if calibration.tracking_failure.is_none() {
                     capture_trace.cancel(&tuner);
                     calibration.rejected_detector=None;
@@ -1657,6 +1671,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     let v=&verification[calibration.input as usize];
                     let (raw,factor)=v.reading();
                     capture_trace.arm(&tuner,ui_frame.now_ms,raw,factor,v.diagnostic());
+                }
                 }
                 if let Some(note)=calibration.take_suggested_note() {
                     with_app(|app| {
@@ -1705,32 +1720,10 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     }
                 } else {
                 write_static_text(&mut text, scene, requested_scene != scene, changed);
-                // A local display-only copy: calibration, verification and
-                // playback retain the original measurement bank and identity.
-                // Audio levels still come from the independent level meters.
-                #[cfg(tuner_nsdf_continuous)]
-                let display_measurements = {
-                    let mut bank = measurements;
-                    for channel in 0..4u8 {
-                        let mut value = bank.channel(channel);
-                        let pitch = nsdf_trace.display_hz(channel, ui_frame.now_ms);
-                        value.frequency_hz = pitch.unwrap_or(0.0);
-                        value.valid = pitch.is_some();
-                        // Not an authoritative measurement/sequence for CAL.
-                        value.qualified = false;
-                        value.sequence = 0;
-                        value.window_age_ms = u32::MAX;
-                        value.end_age_ms = u32::MAX;
-                        bank.update(channel, value);
-                    }
-                    bank
-                };
-                #[cfg(not(tuner_nsdf_continuous))]
-                let display_measurements = measurements;
                 publish_tuner(
                     &tuner_display,
                     &mut text,
-                    &display_measurements,
+                    &measurements,
                     reference_hz,
                     controls.tuner_input,
                     if scene == ui_scene::Scene::Linear { DisplayMode::Linear }

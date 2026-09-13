@@ -5,6 +5,8 @@
 #[path="../src/top/tuner/fw/src/calibration_live.rs"] mod calibration_live;
 #[path="../src/top/tuner/fw/src/serial_report.rs"] mod serial_report;
 #[path="../src/top/tuner/fw/src/pitch_units.rs"] mod pitch_units;
+#[path="../src/top/tuner/fw/src/nsdf_publish.rs"] mod nsdf_publish;
+#[path="../src/top/tuner/fw/src/nsdf_sequence.rs"] mod nsdf_sequence;
 // The same bipolar controller and signed conversion used by the live firmware.
 #[path="../src/top/tuner/fw/src/calibration/bipolar.rs"] mod bipolar;
 #[path="../src/top/tuner/fw/src/calibration/bipolar_sweep.rs"] mod bipolar_sweep;
@@ -36,6 +38,63 @@ mod pac {
 
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn nsdf_window_and_generation_handoff_completes_sweep() {
+        let p=pac::TUNER_PERIPH::default();let mut live=ready();let c=controls();
+        let mut identity=nsdf_sequence::Sequence::default();
+        let empty=nsdf_publish::Frame{mhz:0,count:0,completed:0,request_ms:4,qualified:false};
+        let mut native=empty;let mut low=empty;let mut generation=0;
+        live.toggle(&p,c,0);
+        for tick in 1..30000u64 {
+            let now=tick*10;p.ack();
+            // Approximately the measured per-bank cadence; UI reads repeat
+            // each frame many times and must not create extra observations.
+            if tick%9==0 {
+                generation+=1;
+                let volts=p.command.get() as u16 as i16 as f64/4000.0;
+                let mhz=(440000.0*2.0f64.powf(volts)) as u32;
+                native=nsdf_publish::Frame{mhz,count:generation,completed:now,request_ms:4,
+                    qualified:(600000..=20000000).contains(&mhz)};
+                low=nsdf_publish::Frame{qualified:(20000..=1500000).contains(&mhz),..native};
+            }
+            let pitch=nsdf_publish::display(native,low,now);
+            let sequence=identity.observe(pitch.source,pitch.generation);
+            live.tick(&p,ChannelMeasurement{sequence:sequence.unwrap_or(0),
+                frequency_hz:pitch.mhz as f32/1000.0,valid:sequence.is_some(),qualified:sequence.is_some(),
+                window_age_ms:pitch.window_age_ms,end_age_ms:pitch.end_age_ms},c,now);
+            if !live.active(){break;}
+        }
+        assert!(live.pending_profile.is_some(),"{}",live.status);
+        assert!(!live.active());
+        assert!(live.pending_profile.as_ref().unwrap().points().len()>100);
+        assert_eq!(p.command.get()&(1<<18),0);
+        p.ack();live.accept_scan(&p);assert!(live.pending_profile.is_none());
+        for (pass,points) in [true,false].iter().enumerate() {
+            let mut verify=c;verify.mode=OperatingMode::Verify;
+            verify.verify_scan=true;verify.verify_points=*points;
+            let start=(pass as u64+1)*400000;
+            live.toggle_verify(&p,verify,start);assert!(live.verifying,"{}",live.status);
+            for tick in 1..30000u64 {
+                let now=start+tick*10;p.ack();
+                if tick%9==0 {
+                    generation+=1;
+                    let volts=p.command.get() as u16 as i16 as f64/4000.0;
+                    let mhz=(440000.0*2.0f64.powf(volts)) as u32;
+                    native=nsdf_publish::Frame{mhz,count:generation,completed:now,request_ms:4,
+                        qualified:(600000..=20000000).contains(&mhz)};
+                    low=nsdf_publish::Frame{qualified:(20000..=1500000).contains(&mhz),..native};
+                }
+                let pitch=nsdf_publish::display(native,low,now);
+                let sequence=identity.observe(pitch.source,pitch.generation);
+                live.tick(&p,ChannelMeasurement{sequence:sequence.unwrap_or(0),
+                    frequency_hz:pitch.mhz as f32/1000.0,valid:sequence.is_some(),qualified:sequence.is_some(),
+                    window_age_ms:pitch.window_age_ms,end_age_ms:pitch.end_age_ms},verify,now);
+                if !live.verifying {break;}
+            }
+            assert_eq!(live.status,"SCAN DONE - OUTPUT ZERO");
+            assert!(live.scan.as_ref().unwrap().complete);
+            assert_eq!(p.command.get(),0);
+        }
+    }
     #[test] fn completed_scan_requires_review_and_keeps_prior_until_accept() {
         for accept in [false,true] {
             let p=pac::TUNER_PERIPH::default();let mut live=ready();let c=controls();

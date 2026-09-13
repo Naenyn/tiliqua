@@ -7,6 +7,8 @@ use tiliqua_pac as pac;
 mod resolve;
 #[path="nsdf_publish.rs"]
 mod publish;
+#[path="nsdf_sequence.rs"] mod sequence;
+pub use sequence::Sequence;
 
 #[derive(Clone,Copy)]
 struct Latest {
@@ -49,6 +51,18 @@ impl Scheduler {
     pub fn display_hz(&self,input:u8,now:u64)->Option<f32> {
         let pitch=self.selected(input,now);
         if matches!(pitch.source,1|2) {Some(pitch.mhz as f32/1000.0)} else {None}
+    }
+    /// Frequency, qualification, consumer sequence, full-window and endpoint
+    /// ages. CAL's existing post-output settling gate uses these conservative
+    /// ages; repeated UI reads are not additional acquired measurements.
+    pub fn measurement(&self,input:u8,now:u64,identity:&mut Sequence)->(f32,bool,u16,u32,u32) {
+        let p=self.selected(input,now);
+        if input<4 {
+            if let Some(sequence)=identity.observe(p.source,p.generation) {
+                return (p.mhz as f32/1000.0,true,sequence,p.window_age_ms,p.end_age_ms);
+            }
+        }
+        (0.0,false,0,u32::MAX,u32::MAX)
     }
     fn finish(&mut self,now:u64) {
         self.active=false;self.slot=(self.slot+1)&7;

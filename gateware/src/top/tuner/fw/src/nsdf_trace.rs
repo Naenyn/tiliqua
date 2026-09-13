@@ -11,6 +11,8 @@ const ALL: bool = matches!(env!("TILIQUA_TUNER_NSDF_TRACE").as_bytes(),b"fast-al
 mod schedule;
 #[cfg(tuner_nsdf_continuous)]
 pub use schedule::Scheduler as Trace;
+#[cfg(tuner_nsdf_continuous)]
+pub use schedule::Sequence;
 
 #[cfg(not(tuner_nsdf_continuous))]
 pub struct Trace {
