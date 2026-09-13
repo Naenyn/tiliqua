@@ -67,6 +67,10 @@ fn main() {
     let scenario=std::env::args().nth(1).map_or(0,|s|s.parse::<u8>().unwrap());
     STATE.with(|s|s.borrow_mut().scenario=scenario);
     let mut trace=trace::Trace::new();let uart=UART0;
+    #[cfg(tuner_nsdf_continuous)]
+    let (mut status_due,mut status_offset)=(2450u64,0usize);
+    #[cfg(tuner_nsdf_continuous)]
+    let status="VERIFY MOCK immutable status report\n".repeat(28);
     assert_eq!(trace.ui_period_ms(false,5),5);
     let all=env!("TILIQUA_TUNER_NSDF_TRACE")=="fast-all";
     let continuous=env!("TILIQUA_TUNER_NSDF_TRACE")=="continuous";
@@ -75,6 +79,22 @@ fn main() {
         // Approximate 115200-baud 8N1 draining between 1-ms foreground visits.
         // Ready falls within a service call, unlike the old always-ready mock.
         let before=STATE.with(|s|{let mut s=s.borrow_mut();s.now=now;s.ready=!(2500..2900).contains(&now);s.space=(s.space+11).min(16);s.out.len()});
+        #[cfg(tuner_nsdf_continuous)]
+        if scenario==3 {
+            let due=now>=status_due;
+            trace.tick_reporting(&uart,now,!due);
+            if due && trace.serial_idle() {
+                for _ in 0..32 {
+                    if !uart.tx_ready().read().txe().bit() {break;}
+                    uart.tx_data().write(|w|unsafe {w.data().bits(status.as_bytes()[status_offset].into())});
+                    status_offset+=1;
+                    if status_offset==status.len() {
+                        status_offset=0;status_due=now+1000;break;
+                    }
+                }
+            }
+        } else {trace.tick(&uart,now);}
+        #[cfg(not(tuner_nsdf_continuous))]
         trace.tick(&uart,now);
         #[cfg(tuner_nsdf_continuous)]
         {

@@ -1446,7 +1446,20 @@ fn run(resources: &mut RuntimeResources) -> ! {
             let now=with_app(|app|app.now_ms);
             // Fast diagnostic is foreground-only, never an ISR job. It gets
             // opportunities between UI frames; UART writes remain bounded.
-            #[cfg(tuner_nsdf)]
+            #[cfg(tuner_nsdf_continuous)]
+            {
+                let status_due=capture_trace.status_due(now);
+                nsdf_trace.tick_reporting(uart,now,!status_due);
+                if status_due && nsdf_trace.serial_idle() {
+                    // One owner at a time, including under UART backpressure.
+                    // Reuse the existing report storage; no new RAM buffer.
+                    for _ in 0..32 {
+                        capture_trace.tick(&tuner,uart,now,&calibration,
+                            measurements.channel(calibration.input));
+                    }
+                }
+            }
+            #[cfg(all(tuner_nsdf,not(tuner_nsdf_continuous)))]
             if nsdf_trace.fast() {nsdf_trace.tick(uart,now);}
             let ui_period_ms=TIMER0_ISR_PERIOD_MS as u64;
             // Opt-in transition capture trades idle tuner UI refresh for UART

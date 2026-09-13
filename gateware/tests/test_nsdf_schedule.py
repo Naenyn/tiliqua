@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import capture_nsdf_cpu
 
 
-@pytest.mark.parametrize('scenario',[0,1,2])
+@pytest.mark.parametrize('scenario',[0,1,2,3])
 def test_real_scheduler_keeps_acquiring_during_uart_stall(tmp_path,scenario):
     here=Path(__file__).parent
     exe=tmp_path/'scheduler'
@@ -17,6 +17,14 @@ def test_real_scheduler_keeps_acquiring_during_uart_stall(tmp_path,scenario):
                     '--cfg','tuner_nsdf_continuous',str(here/'nsdf_trace_mock.rs'),
                     '-o',str(exe)],env=dict(os.environ,TILIQUA_TUNER_NSDF_TRACE='continuous'),check=True)
     text=subprocess.check_output([exe,str(scenario)],text=True)
+    if scenario==3:
+        status='VERIFY MOCK immutable status report\n'*28
+        assert text.count(status)>=7
+        # A competing multi-line report survives partial UART writes/stalls
+        # intact. It cannot splice into RUN/PICK/COMP or vice versa.
+        assert 'VERIFY' not in text.replace(status,'')
+        assert all(line.startswith(('NSDF RUN ','NSDF PICK ','NSDF COMP ','VERIFY MOCK '))
+                   for line in text.splitlines())
     checked=list(analyze_schedule(text))
     picks=list(analyze_picks(text))
     comparisons=list(analyze_comparisons(text))

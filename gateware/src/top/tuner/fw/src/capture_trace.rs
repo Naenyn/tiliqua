@@ -14,6 +14,10 @@ pub struct Trace {
 }
 
 impl Trace {
+    /// Retain UART ownership until the immutable status report is drained.
+    pub fn status_due(&self,now:u64)->bool {
+        self.started.is_none() && (self.ready_offset!=0 || now>=self.ready_at)
+    }
     pub fn with_calibration(report:Option<(i32,i32,u8)>,hardware_bits:u8)->Self {
         let mut trace=Self::default();
         trace.capture_status="IDLE";

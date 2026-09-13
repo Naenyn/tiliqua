@@ -1542,3 +1542,28 @@ completed exit zero / Refresh DONE, profile storage preserved. Logs:
 provide steady sine IN0 and OUT1 -> V/oct, select matching CAL route, then
 coordinate a serial-monitored fresh sweep and verification. No serial owner
 was started while waiting for this physical patch change.
+
+### NSDF calibration hardware result and serial status handoff
+
+Local Parks sine on IN0, OUT1 to V/oct: user photo records a completed
+97-point calibration spanning -3.000..+5.000 V, 8.02 octaves,
+E0 +0.1c through E8 +20.3c. Subsequent user-reported VERIFY SCAN completed,
+output zero, worst +2.39 cents. This validates this oscillator/patch trial,
+not universal accuracy or an independent frequency reference. The pending
+profile was accepted for verification; save-slot confirmation is outstanding.
+Do not flash away the RAM profile before it is saved.
+
+The continuous NSDF build had suppressed capture_trace's CAL/VERIFY status
+reporting. Restore it using explicit UART handoff: when a status report is
+due, drain the existing NSDF batch and pause new telemetry batches until the
+status report finishes. Acquisition continues throughout. Reuse the existing
+1024-byte status buffer; no added persistent buffer or FPGA change. Reports
+repeat five seconds after completion, allowing late serial connections.
+Existing report formatting includes profile range, verification completion,
+worst error/target, spread, interpolation bracket and refinement results.
+
+Actual scheduler UART mock now tests immutable multi-line competing reports
+through a finite FIFO and 400 ms stall, with no line interleaving and ongoing
+acquisition. Existing live-calibration fixtures check result formatting and
+buffer allowance. Firmware-only build succeeds; not flashed pending save.
+Build log: /tmp/tuner-nsdf-serial-status-build.log.

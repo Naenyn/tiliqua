@@ -70,6 +70,12 @@ impl Scheduler {
         self.due=now.max(self.started.saturating_add(10));
     }
     pub fn tick(&mut self,uart:&pac::UART0,now:u64) {
+        self.tick_reporting(uart,now,true);
+    }
+    pub fn serial_idle(&self)->bool {self.offset==self.pending.len()}
+    /// Pause telemetry generation, not acquisition, during a status report.
+    /// Always drain the old batch before handing UART ownership to its writer.
+    pub fn tick_reporting(&mut self,uart:&pac::UART0,now:u64,reports:bool) {
         let nsdf=unsafe {&*pac::NSDF_PERIPH::ptr()};
         // UART service never gates acquisition, even when disconnected/stalled.
         for _ in 0..32 {
@@ -131,7 +137,7 @@ impl Scheduler {
                 }
             }
         }
-        if self.offset==self.pending.len() && now>=self.report_due {
+        if reports && self.serial_idle() && now>=self.report_due {
             self.pending.clear();self.offset=0;
             let r=self.latest[self.report as usize];
             let age=now.saturating_sub(r.done).min(u32::MAX as u64) as u32;
