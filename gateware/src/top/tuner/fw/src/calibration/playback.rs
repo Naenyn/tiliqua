@@ -84,6 +84,8 @@ pub struct Engine {
     pub scale_id:u8,
     pub root:u8,
     pub transpose:i8,
+    pub equal:bool,
+    pub pattern:crate::scale::Pattern,
     quantized_pitch:Option<i32>,
     last_command:Option<u32>,
     target_since:u32,
@@ -92,7 +94,8 @@ impl Engine {
     pub const fn new()->Self {Self{profile:None,active:false,status:"STOPPED - RUN TO START",
         input:0,output:0,zero_note:60,input_uv:0,output_uv:0,pitch:0,sequence:None,
         last_sample:0,pending:None,token:0,counts_per_v:4000,updates:0,max_cycles:0,last_irq_cycle:0,max_gap_cycles:0,
-        chromatic:false,standalone:false,scale_id:0,root:0,transpose:0,quantized_pitch:None,last_command:None,target_since:0}}
+        chromatic:false,standalone:false,scale_id:0,root:0,transpose:0,equal:false,
+        pattern:crate::scale::Pattern::empty(),quantized_pitch:None,last_command:None,target_since:0}}
     pub fn arm(&mut self,profile:&Profile,input:u8,output:u8,zero:u8,counts:i32,now:u32,status:u32)->bool {
         if self.active || status&768!=0 || input>3 || output>3 || counts<=0
             || profile.points().len()<2 || !(12..=108).contains(&zero) {
@@ -106,7 +109,7 @@ impl Engine {
             self.status="CANNOT ARM - CHECK ROUTE";return false;
         }
         self.profile=None;self.standalone=true;self.chromatic=true;
-        self.scale_id=0;self.root=0;self.transpose=0;
+        self.scale_id=0;self.root=0;self.transpose=0;self.equal=false;
         self.start(input,output,zero,counts,now)
     }
     fn start(&mut self,input:u8,output:u8,zero:u8,counts:i32,now:u32)->bool {
@@ -151,7 +154,8 @@ impl Engine {
             return Some(self.stop("STOPPED - INPUT CONVERSION"));
         };
         if self.standalone {
-            let Some(scale)=crate::scale::preset(self.scale_id) else {
+            let scale=if self.scale_id==6 {self.pattern.scale()} else {crate::scale::preset(self.scale_id)};
+            let Some(scale)=scale else {
                 return Some(self.stop("STOPPED - INVALID SCALE"));
             };
             if self.root>11 || !(-12..=12).contains(&self.transpose) {
@@ -160,7 +164,8 @@ impl Engine {
             let root=(self.zero_note as i32/12*12+self.root as i32)*100_000;
             let shift=self.transpose as i32*100_000;
             let previous=self.quantized_pitch.and_then(|p|p.checked_sub(shift));
-            let Ok(target)=scale.quantize(pitch,root,previous) else {
+            let target=if self.equal {scale.distribute(pitch,root,previous)} else {scale.quantize(pitch,root,previous)};
+            let Ok(target)=target else {
                 return Some(self.stop("STOPPED - SCALE OVERFLOW"));
             };
             let Some(target)=target.checked_add(shift) else {
@@ -207,6 +212,20 @@ impl Engine {
 #[cfg(test)] mod tests {
     use super::*;
     use crate::oscillator_calibration::Point;
+    #[test] fn custom_two_octaves_equal_mapping_hold_and_reentry() {
+        let mut e=Engine::new();assert!(e.arm_nominal(1,1,60,4000,0,0));
+        e.scale_id=6;e.equal=true;
+        e.pattern=crate::scale::Pattern::compile([1,1|16|128]).unwrap();
+        // +0.75 V lies in second equal bin -> +1 V output.
+        let command=e.tick(1,sample(1,3000),0,true).unwrap();
+        assert_eq!(e.output_uv,1_000_000);
+        assert_eq!(e.tick(2,sample(2,26000),ack(command),true),Some(command));
+        assert!(e.active);assert_eq!(e.output_uv,1_000_000);
+        let command=e.tick(3,sample(3,0),ack(command),true).unwrap();
+        assert_eq!(e.output_uv,0);
+        assert_eq!(e.tick(4,sample(4,0),ack(command),false),Some(0));
+        assert!(!e.active);
+    }
     #[test] fn standalone_scales_root_transpose_and_quarter_tones() {
         let mut e=Engine::new();
         assert!(e.arm_nominal(1,1,60,4000,0,0));

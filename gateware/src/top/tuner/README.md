@@ -123,6 +123,25 @@ still determines CV-to-pitch conversion, not the oscillator's actual tuning.
 Changing input/output/zero-note/scale/root/transpose or leaving the page stops output; RUN is
 required again. It never arms automatically at startup, recall, or page entry.
 
+MAPPING selects NEAREST or EQUAL. EQUAL divides the full repeating input span
+into equal-width bins, one per selected degree, beginning at the root. Output
+intervals remain the selected pitches; this does not mean equal temperament.
+For a five-note one-octave pattern each bin spans 0.2 V of input. A two-octave
+pattern with four total notes uses four 0.5 V bins, even if the halves contain
+different numbers of notes. Changing mapping also stops output and requires RUN.
+
+CUSTOM 2 uses the NOTES menu: choose octave A/B, choose a note, then TOGGLE.
+CLEAR and FILL affect only the selected octave. Both active halves repeat as
+one two-octave pattern across the voltage range; nearest mode searches across
+the internal boundary and the repeat boundary. If either half is empty, the
+remaining pitch classes repeat every octave (including when only B is populated).
+Both halves empty prevents RUN. Notes are relative to C before root and transpose
+are applied. The editor starts with chromatic A and empty B and is **RAM-only**:
+power cycling/flashing loses these custom masks; saving oscillator profiles or
+settings does not save them. Opening NOTES stops output. Return to QUANT, select
+CUSTOM 2, and RUN to audition. No new renderer or microtonal-format restriction
+is introduced by this conventional 24-note editor.
+
 The shared engine uses nearest-degree rounding with midpoint hysteresis (up to
 five cents, capped to a quarter of each adjacent interval for dense scales), retains
 the last valid note for out-of-range CV, and stops on stale CV, rails, output

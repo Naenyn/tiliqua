@@ -15,6 +15,7 @@ pub enum Page {
     Help,
     Play,
     Quantizer,
+    QuantNotes,
 }
 
 #[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default,
@@ -50,6 +51,28 @@ pub enum ScalePreset {
     #[strum(serialize="MAJ PENTA")] MajorPentatonic,
     #[strum(serialize="MIN PENTA")] MinorPentatonic,
     #[strum(serialize="24 EDO")] Edo24,
+    #[strum(serialize="CUSTOM 2")] Custom2,
+}
+
+#[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]
+pub enum Distribution {
+    #[default] #[strum(serialize="NEAREST")] Nearest,
+    #[strum(serialize="EQUAL")] Equal,
+}
+int_params!(OctaveParams<u8> { step: 1, min: 0, max: 1 });
+
+#[derive(OptionPage, Clone)]
+pub struct QuantNotesOpts {
+    #[option(0)]
+    pub octave: IntOption<OctaveParams>,
+    #[option]
+    pub note: EnumOption<ScaleRoot>,
+    #[option(false)]
+    pub toggle: ButtonOption<OneShotButtonParams>,
+    #[option(false)]
+    pub clear: ButtonOption<OneShotButtonParams>,
+    #[option(false)]
+    pub fill: ButtonOption<OneShotButtonParams>,
 }
 
 #[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]
@@ -137,6 +160,8 @@ pub struct QuantizerOpts {
     pub root: EnumOption<ScaleRoot>,
     #[option(0)]
     pub transpose: IntOption<TransposeParams>,
+    #[option]
+    pub mapping: EnumOption<Distribution>,
 }
 
 #[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default,
@@ -195,4 +220,6 @@ pub struct Opts {
     pub play: PlayOpts,
     #[page(Page::Quantizer)]
     pub quantizer: QuantizerOpts,
+    #[page(Page::QuantNotes)]
+    pub quant_notes: QuantNotesOpts,
 }

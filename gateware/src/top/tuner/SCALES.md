@@ -29,6 +29,26 @@ quantization semitone shift. Changing either, scale, or routing stops playback
 and requires RUN. Corrected PLAY retains its existing chromatic behavior.
 Hardware testing of this build is pending; the rack was powered down.
 
+## Two-octave editor and input distribution
+
+CUSTOM 2 compiles two 12-bit masks once at RUN into a 24-entry maximum pattern.
+This adapter does not replace the general microtonal format. NOTES editing is
+RAM-only and stops output; imported microtonal tables remain a separate path.
+Both populated halves repeat every 2400 cents. One empty half collapses to the
+other mask's pitch classes over 1200 cents, discarding which half they occupied.
+Both empty refuses to arm. Patterns may omit unison, so nearest lookup handles
+both wrap boundaries without inventing a C note. Exhaustive-reference tests
+cover all 4095 nonempty first-half masks with complementary second halves.
+
+EQUAL is available for presets and CUSTOM 2. It gives each degree one equal
+input bin across the **entire** period, not a separately divided bin allocation
+per octave. Bins are left-inclusive/right-exclusive before hysteresis. Degree
+zero's bin begins at root even when the first selected pitch lies above root.
+Negative voltages repeat using floor/Euclidean division. Hysteresis is in input
+space, capped at five cents or one quarter of bin width. Output stays on actual
+selected degrees; transpose and output limits apply afterwards. This is a
+defined behavior to audition, not a claim to reproduce Instruo dail's behavior.
+
 ## Offline Scala import
 
 Run `python gateware/tests/tuner_scale_import.py input.scl output.tscale`.

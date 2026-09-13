@@ -72,6 +72,8 @@ struct App {
 // becoming part of `main()`'s stack frame, which previously corrupted an
 // already constrained main RAM after the first interrupt.
 static APP: Mutex<RefCell<Option<App>>> = Mutex::new(RefCell::new(None));
+// Conventional two-octave editor, RAM only; never part of oscillator profiles.
+static QUANT_NOTES:Mutex<RefCell<[u16;2]>>=Mutex::new(RefCell::new([0xfff,0]));
 static PLAYBACK:Mutex<RefCell<oscillator_calibration::playback::Engine>>=
     Mutex::new(RefCell::new(oscillator_calibration::playback::Engine::new()));
 
@@ -116,7 +118,7 @@ fn playback_cycles()->usize {
 }
 
 fn timer0_handler() {
-    let (now,allowed,input,chromatic,nominal,output,zero,scale_id,root,transpose)=with_app(|app| {
+    let (now,allowed,input,chromatic,nominal,output,zero,scale_id,root,transpose,equal)=with_app(|app| {
         // Never perform an unbounded motherboard-I2C transaction in this ISR.
         // Encoder/options and PMOD LEDs are all CSR-backed and deterministic.
         app.now_ms += PLAYBACK_PERIOD_MS as u64;
@@ -129,7 +131,8 @@ fn timer0_handler() {
             nominal || app.ui.opts.play.quantize.value==options::QuantizeMode::Chromatic,
             nominal,app.ui.opts.quantizer.output.value,app.ui.opts.quantizer.zero_note.value,
             app.ui.opts.quantizer.scale.value as u8,app.ui.opts.quantizer.root.value as u8,
-            app.ui.opts.quantizer.transpose.value)
+            app.ui.opts.quantizer.transpose.value,
+            app.ui.opts.quantizer.mapping.value==options::Distribution::Equal)
     });
     critical_section::with(|cs| {
         let mut play=PLAYBACK.borrow_ref_mut(cs);
@@ -147,7 +150,7 @@ fn timer0_handler() {
         play.last_irq_cycle=start;
         let allowed=allowed && input==play.input && chromatic==play.chromatic
             && nominal==play.standalone && (!nominal || (output==play.output && zero==play.zero_note
-                && scale_id==play.scale_id && root==play.root && transpose==play.transpose));
+                && scale_id==play.scale_id && root==play.root && transpose==play.transpose && equal==play.equal));
         if let Some(command)=play.tick(now,tuner.cv_sample().read().value().bits(),
             tuner.cal_status().read().value().bits(),allowed) {
             tuner.cal_command().write(|w|unsafe{w.value().bits(command)});
@@ -616,6 +619,7 @@ impl MenuSnapshot {
             Page::Help => "HELP",
             Page::Play => "PLAY",
             Page::Quantizer => "QUANT",
+            Page::QuantNotes => "NOTES",
         };
         let page_bold = opts.selected().is_none();
         let options = opts.view().options();
@@ -637,7 +641,10 @@ impl MenuSnapshot {
                     (Page::Settings, 2) => "reset",
                     _ => option.name(),
                 };
-                let value=if (page==Page::Verify && index==0) || (page==Page::Calibrate && index==2)
+                let value=if page==Page::QuantNotes && index==0 {
+                    let mut value=OptionString::new();
+                    value.push_str(if opts.quant_notes.octave.value==0 {"A"} else {"B"}).ok();value
+                } else if (page==Page::Verify && index==0) || (page==Page::Calibrate && index==2)
                     || (page==Page::Quantizer && index==2) {
                     let mut value=OptionString::new();
                     let note=if page==Page::Verify {opts.verify.note.value}
@@ -1034,6 +1041,29 @@ fn publish_playback(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,
 }
 
 fn publish_quantizer(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,menu:bool) {
+    if with_app(|app|app.ui.opts.tracker.page.value==Page::QuantNotes) {
+        let masks=critical_section::with(|cs|*QUANT_NOTES.borrow_ref(cs));
+        let (octave,note)=with_app(|app|(app.ui.opts.quant_notes.octave.value as usize,
+            app.ui.opts.quant_notes.note.value as usize));
+        let mut line=String::<96>::new();
+        write_centered(text,4,"TWO OCTAVE NOTE PATTERN",38);
+        write_centered(text,7,"RELATIVE TO C; ROOT SHIFTS PATTERN",40);
+        for (index,mask) in masks.iter().enumerate() {
+            write!(line,"{}:",if index==0 {"A"} else {"B"}).ok();
+            for n in 0..12 {if mask&(1<<n)!=0 {write!(line," {}",NOTE_NAMES[n]).ok();}}
+            if *mask==0 {line.push_str(" EMPTY").ok();}
+            write_centered(text,12+index as u8*4,&line,42);line.clear();
+        }
+        write!(line,"EDIT {} {}: {}",if octave==0 {"A"} else {"B"},NOTE_NAMES[note],
+            if masks[octave]&(1<<note)!=0 {"ON"} else {"OFF"}).ok();
+        write_centered(text,22,&line,38);
+        write_centered(text,27,"TOGGLE NOTE; CLEAR/FILL OCTAVE",40);
+        write_centered(text,31,"SELECT CUSTOM 2 IN QUANT",38);
+        write_centered(text,35,if masks==[0,0] {"EMPTY PATTERN - CANNOT RUN"}
+            else if masks[0]==0 || masks[1]==0 {"ONE OCTAVE REPEAT"} else {"TWO OCTAVE REPEAT"},38);
+        write_centered(text,39,"RAM ONLY - NOT SAVED",38);
+        publish_markers(display,Markers([None;4]),false,menu);return;
+    }
     let (input,output,zero)=with_app(|app|(app.ui.opts.quantizer.input.value,
         app.ui.opts.quantizer.output.value,app.ui.opts.quantizer.zero_note.value));
     let (active,status,uv,out,pitch,updates,cycles)=critical_section::with(|cs| {
@@ -1054,7 +1084,8 @@ fn publish_quantizer(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,menu:b
     write_centered(text,17,"NO OSCILLATOR PROFILE APPLIED",34);
     write!(line,"0 V = ").ok();pitch_units::write_note(&mut line,zero as i32).ok();
     write_centered(text,21,&line,32);line.clear();
-    write_centered(text,24,"OUTPUT RANGE -5 TO +5 V",34);
+    let equal=with_app(|app|app.ui.opts.quantizer.mapping.value==options::Distribution::Equal);
+    write_centered(text,24,if equal {"EQUAL BINS; OUT -5 TO +5 V"} else {"NEAREST; OUT -5 TO +5 V"},38);
     write_centered(text,27,"RUN STARTS / STOPS; EXIT STOPS",34);
     write_centered(text,30,status,42);
     write!(line,"IN {:+.4} V -> OUT {:+.4} V",uv as f32/1e6,out as f32/1e6).ok();
@@ -1080,10 +1111,13 @@ pub fn write_playback_status(out:&mut impl core::fmt::Write,value:ChannelMeasure
     let nominal=with_app(|app|app.ui.opts.tracker.page.value==Page::Quantizer);
     writeln!(out,"PLAY QUANTIZE={}",if nominal {"SCALE"} else if chromatic {"CHROMATIC"} else {"OFF"})?;
     if with_app(|app|app.ui.opts.tracker.page.value==Page::Quantizer) {
-        let (id,root,transpose)=critical_section::with(|cs| {
-            let p=PLAYBACK.borrow_ref(cs);(p.scale_id,p.root,p.transpose)
+        let (id,root,transpose,equal)=critical_section::with(|cs| {
+            let p=PLAYBACK.borrow_ref(cs);(p.scale_id,p.root,p.transpose,p.equal)
         });
         writeln!(out,"QUANTIZER SCALE_ID={} ROOT_CLASS={} TRANSPOSE_SEMITONES={}",id,root,transpose)?;
+        let masks=critical_section::with(|cs|*QUANT_NOTES.borrow_ref(cs));
+        writeln!(out,"QUANTIZER MAPPING={} MASK_A={:03X} MASK_B={:03X}",
+            if equal {"EQUAL"} else {"NEAREST"},masks[0],masks[1])?;
         writeln!(out,"QUANTIZER MAPPING=NOMINAL_1V_OCT PROFILE=NONE TARGET_MC={} OUTPUT_RANGE_UV=-5000000..5000000",pitch)?;
         return Ok(());
     }
@@ -1259,6 +1293,18 @@ struct UiFrame {
 
 fn poll_ui_frame() -> UiFrame {
     with_app(|app| {
+        let toggle=app.ui.opts.quant_notes.toggle.poll();
+        let clear=app.ui.opts.quant_notes.clear.poll();
+        let fill=app.ui.opts.quant_notes.fill.poll();
+        if app.ui.opts.tracker.page.value==Page::QuantNotes && (toggle || clear || fill) {
+            let octave=app.ui.opts.quant_notes.octave.value as usize;
+            let note=app.ui.opts.quant_notes.note.value as u8;
+            critical_section::with(|cs| {
+                let mut masks=QUANT_NOTES.borrow_ref_mut(cs);
+                if clear {masks[octave]=0;} else if fill {masks[octave]=0xfff;}
+                else if toggle {masks[octave]^=1<<note;}
+            });
+        }
         let save = app.ui.opts.settings.save_opts.poll();
         let wipe = app.ui.opts.settings.wipe_opts.poll();
         let menu_active = app.ui.draw();
@@ -1573,6 +1619,14 @@ fn run(resources: &mut RuntimeResources) -> ! {
                                 let (id,root,transpose)=with_app(|app|(app.ui.opts.quantizer.scale.value as u8,
                                     app.ui.opts.quantizer.root.value as u8,app.ui.opts.quantizer.transpose.value));
                                 play.scale_id=id;play.root=root;play.transpose=transpose;
+                                play.equal=with_app(|app|app.ui.opts.quantizer.mapping.value==options::Distribution::Equal);
+                                if id==6 {
+                                    let masks=*QUANT_NOTES.borrow_ref(cs);
+                                    match scale::Pattern::compile(masks) {
+                                        Ok(pattern)=>play.pattern=pattern,
+                                        Err(_)=>{play.stop("EMPTY PATTERN - ADD NOTES");}
+                                    }
+                                }
                                 tuner.cv_channel().write(|w|unsafe{w.channel().bits(input)});
                             }
                         } else if let (Some(profile),Some(route))=(calibration.profile.as_ref(),calibration.profile_route) {
