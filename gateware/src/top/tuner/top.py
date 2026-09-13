@@ -28,6 +28,13 @@ except ImportError:
     from background import BackgroundLayout
 
 
+def configure_archive(archiver):
+    """TUNER-specific clock policy; do not change other bitstreams' defaults."""
+    archiver.with_option_storage(size=24576)
+    if archiver.external_pll_config is not None:
+        archiver.external_pll_config.spread_spectrum = 0.0
+
+
 class TunerSoc(TiliquaSoc):
     # Keep enough CPU RAM for the retained options/UI state plus nested calls
     # and interrupt frames. See the constructor comment below.
@@ -149,7 +156,7 @@ if __name__ == "__main__":
         # production panel.  Do not infer this from mutable bootloader state.
         argparse_callback=lambda parser: parser.set_defaults(
             modeline=modeline, name=name, fs_192khz=True),
-        archiver_callback=lambda archiver: archiver.with_option_storage(size=24576),
+        archiver_callback=configure_archive,
         # A generated archive must not silently contain timing-failed logic.
         # TILIQUA_TUNER_SEED permits explicit, reproducible qualification runs.
         nextpnr_opts=f"--seed {seed}",

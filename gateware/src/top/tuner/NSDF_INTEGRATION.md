@@ -1643,3 +1643,11 @@ deadline and each protected case; live calibration test suite and firmware
 build pass. Logs /tmp/tuner-leading-discovery-tests.log and
 /tmp/tuner-leading-discovery-build.log. Physical boundary equivalence needs
 validation on a later run; allow the current fresh-profile test to finish first.
+
+User requested spread_spectrum=0.0 for HDMI reliability with capture-card setup.
+TUNER's archive callback now overrides only that external PLL field, preserving
+both clock rates and the 24576-byte options reservation. Shared CLI defaults
+are untouched. Callback tests cover external/non-external PLL configurations;
+firmware/package build passes. Applies on subsequent boot of the new archive;
+does not alter the currently running scan. Not flashed while the fresh profile
+remains unsaved. Build log /tmp/tuner-no-spread-build.log.
