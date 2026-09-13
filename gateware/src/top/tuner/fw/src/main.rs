@@ -1705,10 +1705,32 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     }
                 } else {
                 write_static_text(&mut text, scene, requested_scene != scene, changed);
+                // A local display-only copy: calibration, verification and
+                // playback retain the original measurement bank and identity.
+                // Audio levels still come from the independent level meters.
+                #[cfg(tuner_nsdf_continuous)]
+                let display_measurements = {
+                    let mut bank = measurements;
+                    for channel in 0..4u8 {
+                        let mut value = bank.channel(channel);
+                        let pitch = nsdf_trace.display_hz(channel, ui_frame.now_ms);
+                        value.frequency_hz = pitch.unwrap_or(0.0);
+                        value.valid = pitch.is_some();
+                        // Not an authoritative measurement/sequence for CAL.
+                        value.qualified = false;
+                        value.sequence = 0;
+                        value.window_age_ms = u32::MAX;
+                        value.end_age_ms = u32::MAX;
+                        bank.update(channel, value);
+                    }
+                    bank
+                };
+                #[cfg(not(tuner_nsdf_continuous))]
+                let display_measurements = measurements;
                 publish_tuner(
                     &tuner_display,
                     &mut text,
-                    &measurements,
+                    &display_measurements,
                     reference_hz,
                     controls.tuner_input,
                     if scene == ui_scene::Scene::Linear { DisplayMode::Linear }

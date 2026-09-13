@@ -1371,3 +1371,18 @@ acted: this verifies recovered steady state, not reconnect latency. Existing
 production consumers and firmware remain unchanged (`ca50614f`). No serial
 capture remains open. Disconnect/reconnect publication checks are complete;
 no further patch adjustment required for the next offline integration work.
+
+## Tuner display handoff
+
+Continuous NSDF now drives both spiral and linear tuner views on this branch,
+without an additional experimental flag. NSDF-enabled builds default to
+continuous mode; explicit legacy acquisition trace modes remain diagnostic tools.
+Rendering uses a local copy of the measurement bank, replaces only pitch for
+display, preserves independent RMS/Vpp, and clears authoritative qualification,
+sequence and age fields on the copy. Calibration, verification and playback
+continue to consume the unchanged baseline bank. Invalid/stale/conflicting NSDF
+results clear display pitch and existing cosmetic smoothing; there is no baseline
+fallback. Scheduler tests exercise this display accessor before acquisition,
+during source unavailability and after recovery, including UART backpressure.
+134 focused NSDF tests pass. No FPGA changes or additional persistent buffers.
+Physical display validation is pending the firmware build/flash.

@@ -76,6 +76,19 @@ fn main() {
         // Ready falls within a service call, unlike the old always-ready mock.
         let before=STATE.with(|s|{let mut s=s.borrow_mut();s.now=now;s.ready=!(2500..2900).contains(&now);s.space=(s.space+11).min(16);s.out.len()});
         trace.tick(&uart,now);
+        #[cfg(tuner_nsdf_continuous)]
+        {
+            assert_eq!(trace.display_hz(4,now),None);
+            for channel in 0..4 {
+                let hz=trace.display_hz(channel,now);
+                if now<2000 || (scenario==2 && (4350..4900).contains(&now)) {
+                    // No samples yet, or both banks have aged out. The UI
+                    // must remove markers rather than holding the last pitch.
+                    assert_eq!(hz,None);
+                }
+                if now>11000 {assert_eq!(hz,Some(880.0));}
+            }
+        }
         STATE.with(|s|{let s=s.borrow();assert!(s.out.len()-before<=32);
             if !s.ready {assert_eq!(s.out.len(),before);}
         });

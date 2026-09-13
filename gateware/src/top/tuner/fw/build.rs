@@ -1,6 +1,8 @@
 fn main() {
     println!("cargo:rerun-if-env-changed=TILIQUA_TUNER_NSDF_TRACE");
-    let trace=std::env::var("TILIQUA_TUNER_NSDF_TRACE").unwrap_or_else(|_|"full".into());
+    let trace=std::env::var("TILIQUA_TUNER_NSDF_TRACE").unwrap_or_else(|_| {
+        if std::env::var("TILIQUA_TUNER_NSDF").as_deref()==Ok("1") {"continuous"} else {"full"}.into()
+    });
     assert!(matches!(trace.as_str(),"full"|"fast-native"|"fast-low"|"fast-all"|"continuous"),"invalid NSDF trace mode");
     println!("cargo:rustc-check-cfg=cfg(tuner_nsdf_continuous)");
     if trace=="continuous" { println!("cargo:rustc-cfg=tuner_nsdf_continuous"); }

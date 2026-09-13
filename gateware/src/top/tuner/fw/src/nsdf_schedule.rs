@@ -1,4 +1,4 @@
-//! Diagnostic-only continuous acquisition. No DAC or authoritative pitch writes.
+//! Continuous acquisition for tuner display and diagnostics. No DAC writes.
 //! Latest-value storage is bounded; a blocked UART cannot hold the score engine.
 use core::fmt::Write;
 use heapless::String;
@@ -43,6 +43,12 @@ impl Scheduler {
         let frame=|r:Latest|publish::Frame {mhz:r.mhz,count:r.count,completed:r.done,
             request_ms:r.dt,qualified:r.valid && r.raw && r.guard};
         publish::publish(frame(self.latest[input as usize*2]),frame(self.latest[input as usize*2+1]),now)
+    }
+    /// Display-only pitch. Re-evaluate freshness on every render; never fall
+    /// back to an old result or the baseline detector when unqualified.
+    pub fn display_hz(&self,input:u8,now:u64)->Option<f32> {
+        let pitch=self.selected(input,now);
+        if matches!(pitch.source,1|2) {Some(pitch.mhz as f32/1000.0)} else {None}
     }
     fn finish(&mut self,now:u64) {
         self.active=false;self.slot=(self.slot+1)&7;
