@@ -1530,3 +1530,15 @@ all complete and release output. It models an ideal oscillator and command ACKs,
 not physical detector accuracy. Identity reuse, channel isolation and wrapping
 are separately tested. Full FPGA still contains the old verifier; physical
 calibration/verify acceptance must precede hardware removal and full requalification.
+
+Trial handoff: 142 focused pytest tests pass (live Rust fixture also exercises
+the new identity tests, sweep and both verification modes). Firmware `b69f15bc`
+built with 179168-byte payload, .data 1632, .bss 8, heap zero, 32 KiB RAM.
+No measured whole-program stack high-water claim. Verified 1280x720p60 / 192 kHz
+archive uses unchanged qualified FPGA hash `83dfbb3a...288e373f`. Flash slot 1
+completed exit zero / Refresh DONE, profile storage preserved. Logs:
+`/tmp/tuner-nsdf-cal-build.log`, `/tmp/tuner-nsdf-cal-flash.log`,
+`/tmp/tuner-nsdf-cal-tests.log`. User must reopen TUNER, remove LFO modulation,
+provide steady sine IN0 and OUT1 -> V/oct, select matching CAL route, then
+coordinate a serial-monitored fresh sweep and verification. No serial owner
+was started while waiting for this physical patch change.
