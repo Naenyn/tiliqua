@@ -32,8 +32,13 @@ Hardware testing of this build is pending; the rack was powered down.
 ## Two-octave editor and input distribution
 
 CUSTOM 2 compiles two 12-bit masks once at RUN into a 24-entry maximum pattern.
-This adapter does not replace the general microtonal format. NOTES editing is
-RAM-only and stops output; imported microtonal tables remain a separate path.
+This adapter does not replace the general microtonal format. NOTES editing
+stops output; imported microtonal tables remain a separate path. Explicit SAVE
+and LOAD preserve the two conventional masks as a separate record (key TNP1)
+in the original settings journal. The expanded oscillator-profile journal is
+untouched. Writes are read back and compared; invalid loads don't replace edits.
+Nothing is automatically armed or loaded. Settings reset does not erase this
+separate record. This is one saved custom pattern, not yet a scale library.
 Both populated halves repeat every 2400 cents. One empty half collapses to the
 other mask's pitch classes over 1200 cents, discarding which half they occupied.
 Both empty refuses to arm. Patterns may omit unison, so nearest lookup handles

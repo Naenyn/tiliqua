@@ -39,6 +39,23 @@ type Journal=FlashOptionsPersistence<Flash,384>;
 fn open(flash:&Flash)->Journal {Journal::with_buffer(flash.clone(),0..8192)}
 const KEY:u32=0x54555031;
 
+#[path="../../../top/tuner/fw/src/note_pattern.rs"] mod tuner_notes;
+#[test] fn tuner_note_record_survives_gc_without_changing_profiles() {
+    let f=expanded_flash();
+    let mut storage=ExpandedJournal::with_reserved_buffer(f.clone(),0..8192,0..24576).unwrap();
+    for slot in 0..4 {storage.save_key_in(8192..24576,KEY+slot,&[slot as u8;1008]).unwrap();}
+    let profiles=f.0.borrow().bytes[8192..].to_vec();
+    for mask in 0..500u16 {
+        let bytes=tuner_notes::encode([mask,0xfff^mask]).unwrap();
+        storage.save_key(tuner_notes::KEY,&bytes).unwrap();
+    }
+    let mut storage=ExpandedJournal::with_reserved_buffer(f.clone(),0..8192,0..24576).unwrap();
+    let mut bytes=[0;13];
+    let n=storage.load_key(tuner_notes::KEY,&mut bytes).unwrap().unwrap();
+    assert_eq!(tuner_notes::decode(&bytes[..n]),Some([499,0xfff^499]));
+    assert_eq!(&f.0.borrow().bytes[8192..],profiles);
+}
+
 // Proposed TUNER layout: leave the legacy 8 KiB options/profile journal
 // untouched and use a separate 16 KiB journal for expanded profiles. Tests
 // exercise real GC; production must explicitly reserve this in its manifest.

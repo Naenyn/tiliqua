@@ -1,5 +1,6 @@
 //! Host integration of the real live adapter with simulated CSR acknowledgments.
 #[path="../src/top/tuner/fw/src/scale.rs"] mod scale;
+#[path="../src/top/tuner/fw/src/note_pattern.rs"] mod note_pattern;
 #[path="../src/top/tuner/fw/src/pitch_math.rs"] mod pitch_math;
 #[path="../src/top/tuner/fw/src/pitch_verification.rs"] mod pitch_verification;
 #[path="../src/top/tuner/fw/src/calibration.rs"] mod oscillator_calibration;

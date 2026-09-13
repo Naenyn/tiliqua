@@ -73,6 +73,10 @@ pub struct QuantNotesOpts {
     pub clear: ButtonOption<OneShotButtonParams>,
     #[option(false)]
     pub fill: ButtonOption<OneShotButtonParams>,
+    #[option(false)]
+    pub save: ButtonOption<OneShotButtonParams>,
+    #[option(false)]
+    pub load: ButtonOption<OneShotButtonParams>,
 }
 
 #[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]
