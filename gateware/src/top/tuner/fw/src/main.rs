@@ -2,6 +2,7 @@
 #![no_main]
 
 mod ui_text;
+mod scale;
 mod feedback;
 mod ui_canvas;
 mod ui_scene;
@@ -115,7 +116,7 @@ fn playback_cycles()->usize {
 }
 
 fn timer0_handler() {
-    let (now,allowed,input,chromatic,nominal,output,zero)=with_app(|app| {
+    let (now,allowed,input,chromatic,nominal,output,zero,scale_id,root,transpose)=with_app(|app| {
         // Never perform an unbounded motherboard-I2C transaction in this ISR.
         // Encoder/options and PMOD LEDs are all CSR-backed and deterministic.
         app.now_ms += PLAYBACK_PERIOD_MS as u64;
@@ -126,7 +127,9 @@ fn timer0_handler() {
         (app.now_ms as u32,nominal || app.ui.opts.tracker.page.value==Page::Play,
             if nominal {app.ui.opts.quantizer.input.value} else {app.ui.opts.play.input.value},
             nominal || app.ui.opts.play.quantize.value==options::QuantizeMode::Chromatic,
-            nominal,app.ui.opts.quantizer.output.value,app.ui.opts.quantizer.zero_note.value)
+            nominal,app.ui.opts.quantizer.output.value,app.ui.opts.quantizer.zero_note.value,
+            app.ui.opts.quantizer.scale.value as u8,app.ui.opts.quantizer.root.value as u8,
+            app.ui.opts.quantizer.transpose.value)
     });
     critical_section::with(|cs| {
         let mut play=PLAYBACK.borrow_ref_mut(cs);
@@ -143,7 +146,8 @@ fn timer0_handler() {
         }
         play.last_irq_cycle=start;
         let allowed=allowed && input==play.input && chromatic==play.chromatic
-            && nominal==play.standalone && (!nominal || (output==play.output && zero==play.zero_note));
+            && nominal==play.standalone && (!nominal || (output==play.output && zero==play.zero_note
+                && scale_id==play.scale_id && root==play.root && transpose==play.transpose));
         if let Some(command)=play.tick(now,tuner.cv_sample().read().value().bits(),
             tuner.cal_status().read().value().bits(),allowed) {
             tuner.cal_command().write(|w|unsafe{w.value().bits(command)});
@@ -1040,7 +1044,13 @@ fn publish_quantizer(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,menu:b
     write_centered(text,4,"QUANTIZER",28);
     write!(line,"PITCH CV IN {} -> V/OCT OUT {}",input,output).ok();
     write_centered(text,10,&line,38);line.clear();
-    write_centered(text,14,"CHROMATIC; NOMINAL 1 V/OCT",34);
+    let (scale_name,root_name,transpose)=with_app(|app| {
+        let name:&'static str=app.ui.opts.quantizer.scale.value.into();
+        let root:&'static str=app.ui.opts.quantizer.root.value.into();
+        (name,root,app.ui.opts.quantizer.transpose.value)
+    });
+    write!(line,"{} {}; TRANSPOSE {:+}",root_name,scale_name,transpose).ok();
+    write_centered(text,14,&line,38);line.clear();
     write_centered(text,17,"NO OSCILLATOR PROFILE APPLIED",34);
     write!(line,"0 V = ").ok();pitch_units::write_note(&mut line,zero as i32).ok();
     write_centered(text,21,&line,32);line.clear();
@@ -1067,8 +1077,13 @@ pub fn write_playback_status(out:&mut impl core::fmt::Write,value:ChannelMeasure
     });
     writeln!(out,"PLAY ACTIVE={} STATUS={} IN={} OUT={} INPUT_UV={} OUTPUT_UV={} UPDATES={} MAX_CYCLES={} MAX_GAP_CYCLES={}",
         active,status,input,output,uv,voltage,updates,cycles,gap)?;
-    writeln!(out,"PLAY QUANTIZE={}",if chromatic {"CHROMATIC"} else {"OFF"})?;
+    let nominal=with_app(|app|app.ui.opts.tracker.page.value==Page::Quantizer);
+    writeln!(out,"PLAY QUANTIZE={}",if nominal {"SCALE"} else if chromatic {"CHROMATIC"} else {"OFF"})?;
     if with_app(|app|app.ui.opts.tracker.page.value==Page::Quantizer) {
+        let (id,root,transpose)=critical_section::with(|cs| {
+            let p=PLAYBACK.borrow_ref(cs);(p.scale_id,p.root,p.transpose)
+        });
+        writeln!(out,"QUANTIZER SCALE_ID={} ROOT_CLASS={} TRANSPOSE_SEMITONES={}",id,root,transpose)?;
         writeln!(out,"QUANTIZER MAPPING=NOMINAL_1V_OCT PROFILE=NONE TARGET_MC={} OUTPUT_RANGE_UV=-5000000..5000000",pitch)?;
         return Ok(());
     }
@@ -1555,6 +1570,9 @@ fn run(resources: &mut RuntimeResources) -> ! {
                                 app.ui.opts.quantizer.output.value,app.ui.opts.quantizer.zero_note.value));
                             if play.arm_nominal(input,output,zero,counts_per_v as i32,
                                 ui_frame.now_ms as u32,tuner.cal_status().read().value().bits()) {
+                                let (id,root,transpose)=with_app(|app|(app.ui.opts.quantizer.scale.value as u8,
+                                    app.ui.opts.quantizer.root.value as u8,app.ui.opts.quantizer.transpose.value));
+                                play.scale_id=id;play.root=root;play.transpose=transpose;
                                 tuner.cv_channel().write(|w|unsafe{w.channel().bits(input)});
                             }
                         } else if let (Some(profile),Some(route))=(calibration.profile.as_ref(),calibration.profile_route) {

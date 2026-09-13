@@ -3,7 +3,7 @@
 Primary development branch: `codex/tuner`. TUNER is a working product name.
 The prior `codex/tuner-nsdf-integration` branch is retained as a checkpoint.
 
-## Implemented foundation (not yet connected to live QUANT)
+## Implemented scale engine and preset integration
 
 `fw/src/scale.rs` implements allocation-free nearest-degree quantization over
 validated, borrowed interval tables. Values are signed millicents (0.001 cent),
@@ -22,20 +22,54 @@ DAC limits, range holding, stale-CV checks, and explicit output arming.
 Host tests cover chromatic compatibility, irregular and fractional intervals,
 non-octave repetition, negative pitches, root offsets, dense-scale hysteresis,
 invalid tables, maximum size, overflow, and comparison with an exhaustive oracle.
-The installed firmware still uses its previously qualified chromatic path.
+The new firmware connects this engine to standalone QUANT for chromatic,
+major, natural minor, major/minor pentatonic, and 24-EDO presets. Root is a pitch
+class anchored in the octave of the 0 V note; transpose is a separate post-
+quantization semitone shift. Changing either, scale, or routing stops playback
+and requires RUN. Corrected PLAY retains its existing chromatic behavior.
+Hardware testing of this build is pending; the rack was powered down.
+
+## Offline Scala import
+
+Run `python gateware/tests/tuner_scale_import.py input.scl output.tscale`.
+This implements a documented subset of the
+[Scala format](https://www.huygens-fokker.org/scala/scl_format.html): comments,
+description (including empty description), count, positive ascending ratios or
+decimal cents, and trailing pitch annotations. Integer pitch tokens are ratios,
+not cents. The last interval supplies the repeat period; implicit unison is
+inserted into the table. Ratio components through 2147483647 are supported.
+
+Explicit limits: 1..128 degrees, 1 MiB file input, 256-character pitch tokens,
+positive strictly increasing intervals representable as signed millicents.
+Zero-degree scales, descending/negative intervals, and intervals that collapse
+at 0.001-cent resolution are rejected, even if permitted by the broader Scala
+format. No sorting, truncation, or silent coalescing. Keyboard mappings are not
+implemented. UTF-8 (including BOM) and Latin-1 descriptions are supported.
+
+The output envelope is `TSC1`, little-endian u16 degree count, u16 reserved zero,
+i32 period, count i32 degrees, and IEEE CRC32 of all preceding bytes. Maximum
+size is 528 bytes. No root, routing, keyboard mapping, or oscillator profile is
+embedded. This is a versioned staging format, not a flash slot layout.
+The converter refuses to overwrite any existing output file. Firmware decoding
+validates the entire envelope and table before changing caller-owned staging
+storage. Cross-language tests check conversion, corruption, truncation, and
+failed-import atomicity. CRC detects corruption; it is not authentication.
+
+There is **no device upload or persistent custom-scale slot yet**. The decoder
+is ready for transport integration but is not reachable from the UI or serial
+port. No thumb-drive support is implied. Users can author `.scl` files on a
+computer without using the encoder, but cannot load them into this build yet.
 
 ## Next integration
 
-1. Add preset selection and root controls using this representation, then wire
-   the shared engine into standalone QUANT. Test output ownership and reset
-   quantizer history on tuning changes; do not alter calibrated PLAY implicitly.
+1. Validate preset selection, root, transpose, 24 EDO, and processing budget on
+   hardware. Host tests already cover the real playback engine and DAC mapping.
 2. Add independent channel routing with measured CPU/FPGA budgets. Keep scale
    storage shared where possible and profile correction downstream of scale
    quantization, so nominal operation never requires an oscillator profile.
-3. Add computer-side Scala `.scl` import and scale editing. Read the authoritative
-   format specification before implementing its parser. Convert ratios/cents
-   outside the real-time loop; reject malformed, oversized, or unrepresentable
-   scales with useful errors. Keyboard mapping (`.kbm`) is a separate feature.
+3. Connect the implemented Scala importer/decoder to a user-controlled transport
+   and add a friendly computer-side editor. Keep conversion outside playback.
+   Keyboard mapping (`.kbm`) is a separate feature.
 4. Define versioned scale storage independently from oscillator profiles. Import
    into staging storage, validate completely, then publish while outputs are
    stopped. A failed import must leave the previous scale and profiles intact.
@@ -47,5 +81,27 @@ The installed firmware still uses its previously qualified chromatic path.
    Keep file transport separate from parsing and playback. Encoder editing is
    a convenience, not the only long-term authoring/import mechanism.
 
-No Scala import, thumb-drive support, USB MIDI, custom-scale persistence, or
-multi-channel quantization is claimed implemented by this foundation.
+## Four-channel interface work still required
+
+Current gateware has one selected `CVSnapshot`, cleared when selection changes,
+and one `CalibrationOutput` command/ACK/watchdog owner. Cycling channel selection
+inside the ISR would repeatedly discard CV history, and sending four commands
+to the existing output owner would only replace its single active channel.
+Neither is a valid four-channel implementation.
+
+The next hardware change needs four coherent CV snapshots and independent
+output state/acknowledgements, with an explicit mutually exclusive CAL/PLAY vs
+QUANT owner. Preserve signed bounds, zero-on-disable, fault reset, and watchdogs.
+The firmware must not duplicate the current Engine's embedded Profile four
+times: share immutable scales/profiles, retain small per-channel runtime state.
+Budget and simulate these changes before a full synthesis/timing build.
+
+## Hardware checklist after power-up
+
+- Flash normal 1280x720 TUNER slot 1 only after user confirms rack is on.
+- Slow CV/LFO IN1, OUT1 to V/oct: test C major, D minor, both pentatonics.
+- Chromatic +12 transpose must move output up 1 V; 24 EDO gives 1/24 V steps.
+- Changing scale/root/transpose stops safely and requires RUN again.
+- Check range holding/reentry, then inspect serial cycle/gap maxima and faults.
+- Confirm tuner/calibration menus still work. Profiles and spread spectrum=0.0
+  remain unchanged. No calibration run is needed merely to use QUANT.

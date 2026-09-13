@@ -3,8 +3,50 @@
 //! Degree zero is implicit in imported Scala files, but explicit in this table.
 pub const MAX_DEGREES: usize = 128;
 
+/// Immutable presets shared by every channel. IDs are not a storage format.
+pub fn preset(id: u8) -> Option<Scale<'static>> {
+    let (degrees, period): (&[i32], i32) = match id {
+        0 => (&[0,100000,200000,300000,400000,500000,600000,700000,800000,900000,1000000,1100000],1200000),
+        1 => (&[0,200000,400000,500000,700000,900000,1100000],1200000),
+        2 => (&[0,200000,300000,500000,700000,800000,1000000],1200000),
+        3 => (&[0,200000,400000,700000,900000],1200000),
+        4 => (&[0,300000,500000,700000,1000000],1200000),
+        5 => (&[0,50000,100000,150000,200000,250000,300000,350000,400000,450000,500000,550000,
+            600000,650000,700000,750000,800000,850000,900000,950000,1000000,1050000,1100000,1150000],1200000),
+        _ => return None,
+    };
+    Some(Scale { degrees, period })
+}
+
 #[derive(Debug, PartialEq)]
-pub enum Error { Empty, TooManyDegrees, InvalidPeriod, InvalidDegrees, Overflow }
+pub enum Error { Empty, TooManyDegrees, InvalidPeriod, InvalidDegrees, Overflow, InvalidFile }
+
+/// Offline import envelope: magic TSC1, u16 count, u16 reserved=0, i32 period,
+/// count i32 degrees, then IEEE CRC32 over the preceding bytes; little endian.
+/// Validate everything before touching staging storage. Call only while stopped,
+/// outside the real-time loop. Persistence and transport deliberately live elsewhere.
+pub fn decode<'a>(bytes: &[u8], storage: &'a mut [i32; MAX_DEGREES]) -> Result<Scale<'a>, Error> {
+    if bytes.len()<20 || &bytes[..4]!=b"TSC1" || bytes[6..8]!=[0,0] {return Err(Error::InvalidFile);}
+    let count=u16::from_le_bytes([bytes[4],bytes[5]]) as usize;
+    if !(1..=MAX_DEGREES).contains(&count) || bytes.len()!=16+count*4 {return Err(Error::InvalidFile);}
+    let read=|offset| i32::from_le_bytes(bytes[offset..offset+4].try_into().unwrap());
+    let mut crc=0xffff_ffffu32;
+    for byte in &bytes[..bytes.len()-4] {
+        crc^=*byte as u32;
+        for _ in 0..8 {crc=(crc>>1) ^ (0xedb8_8320u32.wrapping_mul(crc&1));}
+    }
+    if !crc!=read(bytes.len()-4) as u32 {return Err(Error::InvalidFile);}
+    let period=read(8);
+    if period<=0 {return Err(Error::InvalidPeriod);}
+    let mut previous=-1;
+    for i in 0..count {
+        let degree=read(12+i*4);
+        if (i==0 && degree!=0) || degree<=previous || degree>=period {return Err(Error::InvalidDegrees);}
+        previous=degree;
+    }
+    for (i,degree) in storage[..count].iter_mut().enumerate() {*degree=read(12+i*4);}
+    Ok(Scale{degrees:&storage[..count],period})
+}
 
 /// A validated borrowed table. The importer owns storage; channels can share it.
 pub struct Scale<'a> { degrees: &'a [i32], period: i32 }
@@ -68,6 +110,22 @@ impl<'a> Scale<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn presets_are_valid_and_represent_expected_intervals() {
+        for id in 0..=5 {
+            let scale=preset(id).unwrap();
+            assert!(Scale::new(scale.degrees,scale.period).is_ok());
+            for root in [-1_200_000,0,300_000,6_000_000] {
+                for degree in scale.degrees {
+                    assert_eq!(scale.quantize(root+degree,root,None),Ok(root+degree));
+                }
+            }
+        }
+        assert!(preset(6).is_none());
+        assert_eq!(preset(1).unwrap().degrees,&[0,200000,400000,500000,700000,900000,1100000]);
+        assert_eq!(preset(2).unwrap().degrees,&[0,200000,300000,500000,700000,800000,1000000]);
+        assert_eq!(preset(5).unwrap().degrees.len(),24);
+    }
     #[test]
     fn rejects_invalid_tables() {
         for (degrees, period) in [(&[][..], 1200), (&[1][..], 1200),

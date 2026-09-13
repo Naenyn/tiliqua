@@ -110,21 +110,33 @@ corrections to a shifted or unstable oscillator response.
 
 ## Standalone quantizer
 
-The QUANT menu opens a separate, single-channel chromatic quantizer. It does
+The QUANT menu opens a separate, single-channel scale quantizer. It does
 not require a loaded oscillator profile or qualified audio. Select CV input,
 output (both physical 0–3), and the note name for 0 V, then explicitly RUN.
 The output is nominal 1 V/oct over -5..+5 V, with the motherboard's normal
 DAC calibration still applied, but no oscillator-specific correction curve.
-Changing input/output/zero-note or leaving the page stops output; RUN is
+Choose CHROMATIC, MAJOR, natural MINOR, MAJ PENTA, MIN PENTA, or 24 EDO
+(quarter tones). ROOT selects the scale's pitch class; TRANSPOSE shifts the
+quantized result by -12..+12 semitones, including in chromatic mode. The scale
+root is anchored in the octave containing the selected 0 V note. The 0 V note
+still determines CV-to-pitch conversion, not the oscillator's actual tuning.
+Changing input/output/zero-note/scale/root/transpose or leaving the page stops output; RUN is
 required again. It never arms automatically at startup, recall, or page entry.
 
-The shared engine uses nearest-note rounding with five-cent hysteresis, retains
+The shared engine uses nearest-degree rounding with midpoint hysteresis (up to
+five cents, capped to a quarter of each adjacent interval for dense scales), retains
 the last valid note for out-of-range CV, and stops on stale CV, rails, output
 faults, or missed processing deadlines. STOP commands 0 V, not an audio mute.
 The tuner acquisition continues independently. This first standalone version
-has one active output and no scale selection or trigger input; multichannel
+has one active output and no trigger input; multichannel
 quantization and optional oscillator-profile correction remain future work.
 No new renderer, pitch engine, FPGA logic, or retained profile copy is added.
+The scale math supports non-octave periods and fractional intervals. See
+[SCALES.md](SCALES.md) for the offline Scala converter, explicit format limits,
+and the remaining device-import/storage work. The converter does not yet
+upload files to the module. Numerical table precision is 0.001 cent; nominal
+DAC steps are 250 microvolts (0.3 cent at 1 V/oct), so table precision is not a
+claim of analog output accuracy or distinguishability of arbitrarily close notes.
 
 ## Corrected pitch-CV playback
 

@@ -40,6 +40,24 @@ pub enum VerifyMode {
 }
 
 int_params!(InputParams<u8> { step: 1, min: 0, max: 3 });
+int_params!(TransposeParams<i8> { step: 1, min: -12, max: 12 });
+
+#[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]
+pub enum ScalePreset {
+    #[default] #[strum(serialize="CHROMATIC")] Chromatic,
+    #[strum(serialize="MAJOR")] Major,
+    #[strum(serialize="MINOR")] Minor,
+    #[strum(serialize="MAJ PENTA")] MajorPentatonic,
+    #[strum(serialize="MIN PENTA")] MinorPentatonic,
+    #[strum(serialize="24 EDO")] Edo24,
+}
+
+#[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]
+pub enum ScaleRoot {
+    #[default] C, #[strum(serialize="C#")] Cs, D, #[strum(serialize="D#")] Ds,
+    E, F, #[strum(serialize="F#")] Fs, G, #[strum(serialize="G#")] Gs,
+    A, #[strum(serialize="A#")] As, B,
+}
 int_params!(NoteParams<u8> { step: 1, min: 12, max: 108 });
 int_params!(CentsParams<i16> { step: 1, min: -50, max: 50 });
 int_params!(ReferenceParams<u16> {
@@ -113,6 +131,12 @@ pub struct QuantizerOpts {
     pub zero_note: IntOption<NoteParams>,
     #[option(false)]
     pub run: ButtonOption<OneShotButtonParams>,
+    #[option]
+    pub scale: EnumOption<ScalePreset>,
+    #[option]
+    pub root: EnumOption<ScaleRoot>,
+    #[option(0)]
+    pub transpose: IntOption<TransposeParams>,
 }
 
 #[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default,

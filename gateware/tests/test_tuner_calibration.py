@@ -49,7 +49,7 @@ def test_standalone_quantizer_menu_and_mode_have_independent_controls():
     firmware = Path(__file__).parents[1] / "src/top/tuner/fw/src"
     options=(firmware/'options.rs').read_text()
     fields=re.findall(r'pub (\w+):',options.split('pub struct QuantizerOpts {')[1].split('}')[0])
-    assert fields==['input','output','zero_note','run']
+    assert fields==['input','output','zero_note','run','scale','root','transpose']
     main=(firmware/'main.rs').read_text()
     assert '(Page::Quantizer, 2) => "0v note"' in main
     assert 'page==Page::Quantizer && index==2' in main
@@ -57,6 +57,10 @@ def test_standalone_quantizer_menu_and_mode_have_independent_controls():
     assert 'nominal==play.standalone' in main
     assert 'output==play.output && zero==play.zero_note' in main
     assert 'play.arm_nominal(input,output,zero' in main
+    assert 'scale_id==play.scale_id && root==play.root && transpose==play.transpose' in main
+    presets=options.split('pub enum ScalePreset {')[1].split('}')[0]
+    assert re.findall(r'\] (\w+),',presets)==[
+        'Chromatic','Major','Minor','MajorPentatonic','MinorPentatonic','Edo24']
     assert 'Page::Quantizer' in (firmware/'runtime.rs').read_text()
 
 
