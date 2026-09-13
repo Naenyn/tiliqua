@@ -127,9 +127,14 @@ impl<'a> Scale<'a> {
         let relative = pitch as i64 - root as i64;
         if let Some(previous) = previous {
             let prev = previous as i64 - root as i64;
-            let (degree, next) = self.bracket(prev);
-            if degree == prev {
-                let (before, _) = self.bracket(prev - 1);
+            // Find membership and both neighbors together. Two bracket calls
+            // would repeat cycle division and search for the same held note.
+            let (cycle,phase)=cycle_phase(prev,self.period);
+            if let Ok(index)=self.degrees.binary_search(&(phase as i32)) {
+                let before=if index==0 {cycle-self.period as i64+self.degrees[self.degrees.len()-1] as i64}
+                    else {cycle+self.degrees[index-1] as i64};
+                let next=if index+1==self.degrees.len() {cycle+self.period as i64+self.degrees[0] as i64}
+                    else {cycle+self.degrees[index+1] as i64};
                 let down = prev - before;
                 let up = next - prev;
                 // Doubled arithmetic preserves half-millicent midpoints.
@@ -171,6 +176,26 @@ impl<'a> Scale<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn shared_neighbor_lookup_matches_previous_bracket_algorithm() {
+        for masks in [[1,0],[0xaaa,0x555],[0xfdb,0],[0x800,1],[0xfff,0xfff]] {
+            let pattern=Pattern::compile(masks).unwrap();let s=pattern.scale().unwrap();
+            for root in [-12345,0,7654321] {
+                for prev in (-3_000_000..=3_000_000).step_by(100_000) {
+                    for offset in [-200001,-155001,-155000,-55001,-55000,-1,0,1,55000,55001,155000,155001,200001] {
+                        let pitch=prev+offset;
+                        let (degree,next)=s.bracket(prev as i64);
+                        let (before,_)=s.bracket(prev as i64-1);
+                        let hold=degree==prev as i64
+                            && 2*pitch as i64>=before+prev as i64-2*((prev as i64-before)/4).min(5000)
+                            && 2*pitch as i64<=prev as i64+next+2*((next-prev as i64)/4).min(5000);
+                        let expected=if hold {Ok(prev+root)} else {s.quantize(pitch+root,root,None)};
+                        assert_eq!(s.quantize(pitch+root,root,Some(prev+root)),expected);
+                    }
+                }
+            }
+        }
+    }
     #[test]
     fn native_cycle_math_matches_wide_reference() {
         for period in [1,3,100_000,1_200_000,2_400_000,i32::MAX] {

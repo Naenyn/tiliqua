@@ -195,7 +195,13 @@ impl Engine {
         } else if self.chromatic {
             pitch=chromatic_pitch(pitch,self.quantized_pitch);
         }
-        let mapping=if self.standalone {map_nominal(pitch,self.zero_note)}
+        // A held quantized note already has a validated DAC mapping. Reuse it,
+        // but continue all freshness, ACK, watchdog and command-token handling.
+        // start/stop clear last_command; live control changes are rejected above.
+        let mapping=if self.chromatic && self.last_command.is_some() && pitch==self.pitch {
+            Ok(Target{pitch_millicents:pitch,requested_microvolts:self.output_uv,
+                applied_microvolts:self.output_uv,dac_bits:self.last_command.unwrap() as u16})
+        } else if self.standalone {map_nominal(pitch,self.zero_note)}
             else {map_pitch(self.profile.as_ref().unwrap(),pitch)};
         let target=match mapping {
             Ok(target)=>target,
@@ -232,6 +238,24 @@ impl Engine {
 #[cfg(test)] mod tests {
     use super::*;
     use crate::oscillator_calibration::Point;
+    #[test] fn repeated_note_still_checks_ack_freshness_and_controls() {
+        let mut e=Engine::new();assert!(e.arm_nominal(1,1,60,4000,0,0));
+        let first=e.tick(1,sample(1,0),0,true).unwrap();
+        let second=e.tick(2,sample(2,1),ack(first),true).unwrap();
+        assert_eq!(first as u16,second as u16);
+        assert_ne!(first,second); // watchdog commands still carry fresh tokens
+        assert_eq!(e.updates,2);
+        assert_eq!(e.tick(5,sample(3,1),ack(first),true),Some(0));
+        assert_eq!(e.status,"STOPPED - OUTPUT NO ACK");
+        assert!(e.arm_nominal(1,1,60,4000,6,0));
+        let command=e.tick(7,sample(4,0),0,true).unwrap();
+        assert_eq!(e.tick(17,sample(4,0),ack(command),true),Some(0));
+        assert_eq!(e.status,"STOPPED - CV STALE");
+        assert!(e.arm_nominal(1,1,60,4000,18,0));
+        let command=e.tick(19,sample(5,0),0,true).unwrap();
+        assert_eq!(e.tick(20,sample(6,0),ack(command),false),Some(0));
+        assert_eq!(e.status,"STOPPED - CONTROLS CHANGED");
+    }
     #[test] fn native_conversions_match_original_wide_arithmetic() {
         for zero in 12u8..=108 {
             for counts in i16::MIN..=i16::MAX {
