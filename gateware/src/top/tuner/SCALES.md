@@ -96,11 +96,12 @@ computer without using the encoder, but cannot load them into this build yet.
 
 ## Next integration
 
-1. Validate preset selection, root, transpose, 24 EDO, and processing budget on
-   hardware. Host tests already cover the real playback engine and DAC mapping.
-2. Add independent channel routing with measured CPU/FPGA budgets. Keep scale
-   storage shared where possible and profile correction downstream of scale
-   quantization, so nominal operation never requires an oscillator profile.
+1. Preserve the working presets, two-octave patterns, Nearest/Equal mapping,
+   independent routing and eight setup slots. User tests have exercised these;
+   expand edge-case coverage without treating that as exhaustive qualification.
+2. Complete direct CV timing qualification of the synchronized four-output
+   implementation. Optional per-output calibration-profile correction remains
+   future work; nominal QUANT must never require an oscillator profile.
 3. Connect the implemented Scala importer/decoder to a user-controlled transport
    and add a friendly computer-side editor. Keep conversion outside playback.
    Keyboard mapping (`.kbm`) is a separate feature.
@@ -115,20 +116,17 @@ computer without using the encoder, but cannot load them into this build yet.
    Keep file transport separate from parsing and playback. Encoder editing is
    a convenience, not the only long-term authoring/import mechanism.
 
-## Four-channel interface work still required
+## Four-channel interface implemented
 
-Current gateware has one selected `CVSnapshot`, cleared when selection changes,
-and one `CalibrationOutput` command/ACK/watchdog owner. Cycling channel selection
-inside the ISR would repeatedly discard CV history, and sending four commands
-to the existing output owner would only replace its single active channel.
-Neither is a valid four-channel implementation.
+Current gateware retains the selected CV/command path for CAL/PLAY and adds
+four continuous CV snapshots, four independent command/ACK/watchdog owners,
+and a shared commit register for QUANT. CAL/PLAY has hard priority.
 
-The next hardware change needs four coherent CV snapshots and independent
-output state/acknowledgements, with an explicit mutually exclusive CAL/PLAY vs
-QUANT owner. Preserve signed bounds, zero-on-disable, fault reset, and watchdogs.
-The firmware must not duplicate the current Engine's embedded Profile four
-times: share immutable scales/profiles, retain small per-channel runtime state.
-Budget and simulate these changes before a full synthesis/timing build.
+Firmware calculates two lanes per interrupt from a shared set of input readings
+and commits the four results together. The nominal lanes do not embed oscillator
+profiles. Bounds, immediate disables, fault isolation and watchdogs remain.
+Simulation, routed timing and live CPU budgets pass; see [checkpoint](CHECKPOINT.md)
+for the outstanding physical CV timing check and current resource counts.
 
 ## Hardware checklist after power-up
 

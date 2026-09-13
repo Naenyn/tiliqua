@@ -2,8 +2,9 @@
 
 On the selected NSDF feature-development build (`TILIQUA_TUNER_NSDF=1`), both
 tuner views, calibration, verification and playback audio checks use the shared
-NSDF detector (calibration hardware trial pending). The original detector remains
-temporarily for diagnostic comparison and rollback. See the [detector decision](DETECTOR_DECISION.md)
+NSDF detector. Calibration hardware trials have passed; the original detector
+and verifier are not synthesized in this configuration. See the [pause checkpoint](CHECKPOINT.md)
+for current feature status, qualification, remaining work and build instructions, and the [detector decision](DETECTOR_DECISION.md)
 for evidence, resource tradeoffs and the boundary between those consumers.
 
 See [detector accuracy baseline](ACCURACY.md) for measured synthetic-signal
@@ -21,12 +22,12 @@ This bitstream continuously measures all four monophonic audio inputs and displa
 
 The reference-tone feature has been removed from production firmware and
 gateware. All outputs remain at calibrated zero unless an explicitly started
-calibration sweep, corrected-note verification, or explicitly armed PLAY owns one. A4 remains configurable as a tuning reference,
+calibration sweep, corrected-note verification, explicitly armed PLAY, or QUANT owns them. A4 remains configurable as a tuning reference,
 not an audio output.
 
 All channel labels follow the physical panel's 0–3 numbering.
-The bitstream does not yet emit a
-general-purpose reference CV or quantization. CAL now exposes an explicitly
+Standalone QUANT now supports four independently configured CV outputs without
+requiring an oscillator calibration profile. CAL exposes an explicitly
 started -5..+5 V oscillator tracking sweep with up to 121 points; see
 [calibration status and hardware test](CALIBRATION.md). VERIFY can apply the
 RAM profile to a requested note name/octave and cents offset, showing measured error
@@ -41,7 +42,7 @@ while sitting on CAL before a run.
 Press the encoder to open an OSCIO/SONORO-style boxed menu over the live tuner.
 Rotate to navigate, press to begin editing, rotate to change the selected value,
 and press again to finish. Select the page heading to switch between TUNER,
-CAL, VERIFY, PROFILES, SETTINGS, HELP, and PLAY. CAL contains input,
+CAL, VERIFY, PROFILES, SETTINGS, HELP, PLAY, QUANT, NOTES, and SETUPS. CAL contains input,
 output, 0v note, run, accept, and discard. Every sweep uses nominal semitone voltage spacing,
 up to 121 points across -5..+5 V, scanning upward from low to high.
 Unmeasurable edges and qualified boundary plateaus can produce a limited-range
@@ -163,8 +164,9 @@ all outputs and requires RUN again. An empty custom pattern cannot arm its lane.
 Per-lane stale CV, missing ACK, rail, and output faults stop that lane; scheduling
 or shared CPU-budget faults stop the whole group. Calibration/corrected PLAY has
 hardware priority and disables the quantizer outputs without automatic rearming.
-The 500 Hz rate is a conservative first implementation, pending hardware timing
-measurements. Four lightweight lanes share the scale/mapping implementation;
+The 500 Hz implementation has passed live operation and routed FPGA timing.
+Direct physical CV edge alignment remains unmeasured; see the checkpoint.
+Four lightweight lanes share the scale/mapping implementation;
 they do not retain four copies of the oscillator calibration profile.
 
 **SETUPS** offers eight explicit SAVE/LOAD slots for all four channels together,
@@ -278,7 +280,7 @@ The main view uses 9x15 glyphs on a centered, 12-pixel horizontal pitch (previou
 edges free. Main-view labels are positioned for this pitch; the established
 OSCIO/SONORO menu geometry and font spacing are unchanged.
 
-## Detector
+## Original detector (historical, not the selected NSDF build)
 
 The first detector is intentionally oscillator-oriented. Gateware removes slow
 DC, applies hysteresis, and counts positive-going cycles over at least 20 ms.
@@ -318,7 +320,7 @@ RAM, and the live loop consumes only a small copyable control snapshot. This is
 intentional: calibration profiles and quantizer scales must not enlarge the
 real-time stack as their menus grow.
 
-Four independent measurement lanes populate a retained four-entry bank through
+The original implementation's four independent measurement lanes populate a retained four-entry bank through
 a foreground-owned CSR read selector. Selecting a read bank does not reset any
 lane. Only the bounded harmonic verifier is time-shared; its history is cleared
 when it changes channels. The renderer remains shared.

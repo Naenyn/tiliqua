@@ -1,5 +1,9 @@
 # Calibration implementation boundary
 
+For the September 13 pause and current combined instrument, see
+[checkpoint](CHECKPOINT.md). This document retains the calibration investigation
+history; old slot assignments and pending-trial statements are not current.
+
 ## Current status and remaining scope
 
 Latest PLAY qualification: the user reports good LFO-driven chromatic playback

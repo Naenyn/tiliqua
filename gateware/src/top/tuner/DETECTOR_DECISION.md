@@ -1,5 +1,10 @@
 # Detector decision: close the alternative-algorithm experiment
 
+September 13 update: feature development is now on `codex/tuner`, using NSDF
+without the legacy pitch hardware. Four-output nominal QUANT is implemented.
+See [pause checkpoint](CHECKPOINT.md) for current qualification and remaining
+work; earlier branch names and pending multi-channel plans below are historical.
+
 **Current decision:** NSDF is the single pitch engine for tuner, CAL/VERIFY and
 optional PLAY audio checks on `codex/tuner-nsdf-integration`. The legacy detector
 and verifier have been removed from the NSDF FPGA configuration. Firmware

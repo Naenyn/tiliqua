@@ -1,5 +1,10 @@
 # Resource headroom audit: tuner, calibrator, quantizer
 
+**Current September 13 checkpoint:** the combined NSDF/four-output build now
+uses 19312 LUT4, 44/56 EBR and 14/28 DSP, with all routed clocks passing.
+See [current checkpoint](CHECKPOINT.md) for measured clocks and live CPU budgets.
+The allocation model below is historical, not the current netlist count.
+
 Analysis checkpoint, September 11, 2026. Production firmware is unchanged.
 Actual netlist counts are distinguished from planned allocations and schedule
 models. This is not a combined bitstream fit/timing result.
