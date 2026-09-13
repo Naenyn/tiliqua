@@ -60,6 +60,7 @@ pub enum Distribution {
     #[strum(serialize="EQUAL")] Equal,
 }
 int_params!(OctaveParams<u8> { step: 1, min: 0, max: 1 });
+int_params!(PatternSlotParams<u8> { step: 1, min: 1, max: 8 });
 
 #[derive(OptionPage, Clone)]
 pub struct QuantNotesOpts {
@@ -77,6 +78,8 @@ pub struct QuantNotesOpts {
     pub save: ButtonOption<OneShotButtonParams>,
     #[option(false)]
     pub load: ButtonOption<OneShotButtonParams>,
+    #[option(1)]
+    pub slot: IntOption<PatternSlotParams>,
 }
 
 #[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]

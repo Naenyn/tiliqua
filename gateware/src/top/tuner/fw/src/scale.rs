@@ -51,6 +51,18 @@ pub fn decode<'a>(bytes: &[u8], storage: &'a mut [i32; MAX_DEGREES]) -> Result<S
 /// A validated borrowed table. The importer owns storage; channels can share it.
 pub struct Scale<'a> { degrees: &'a [i32], period: i32 }
 
+/// The live CV domain fits i32. Use the CPU's native divider there, while
+/// retaining a wide fallback for the public API's extreme pitch/root pairs.
+fn cycle_phase(pitch:i64,period:i32)->(i64,i64) {
+    if let Ok(narrow)=i32::try_from(pitch) {
+        let quotient=narrow.div_euclid(period);
+        let phase=narrow.rem_euclid(period);
+        (quotient as i64*period as i64,phase as i64)
+    } else {
+        (pitch.div_euclid(period as i64)*period as i64,pitch.rem_euclid(period as i64))
+    }
+}
+
 /// Small compiled conventional-note pattern, not the microtonal storage format.
 /// An empty half collapses to the other half's pitch classes over one octave.
 pub struct Pattern { degrees:[i32;24], count:usize, period:i32 }
@@ -92,8 +104,7 @@ impl<'a> Scale<'a> {
     // The two degrees bracketing a pitch, including across period boundaries.
     fn bracket(&self, pitch: i64) -> (i64, i64) {
         let period = self.period as i64;
-        let cycle = pitch.div_euclid(period) * period;
-        let phase = pitch.rem_euclid(period);
+        let (cycle,phase) = cycle_phase(pitch,self.period);
         let mut lo = 0;
         let mut hi = self.degrees.len();
         while lo < hi {
@@ -141,17 +152,18 @@ impl<'a> Scale<'a> {
         let count=self.degrees.len() as i64;
         if let Some(previous)=previous {
             let prev=previous as i64-root as i64;
-            let phase=prev.rem_euclid(period);
+            let (cycle,phase)=cycle_phase(prev,self.period);
             if let Ok(index)=self.degrees.binary_search(&(phase as i32)) {
-                let cycle=prev.div_euclid(period)*period;
-                let margin=5_000.min(period/(count*4));
+                let margin=5_000.min(self.period/(self.degrees.len() as i32*4)) as i64;
                 let position=(relative-cycle)*count;
                 if position>=index as i64*period-margin*count
                     && position<(index as i64+1)*period+margin*count {return Ok(previous);}
             }
         }
-        let cycle=relative.div_euclid(period)*period;
-        let index=(relative.rem_euclid(period)*count/period) as usize;
+        let (cycle,phase)=cycle_phase(relative,self.period);
+        let index=if let Some(product)=(phase as u32).checked_mul(count as u32) {
+            (product/self.period as u32) as usize
+        } else {(phase*count/period) as usize};
         i32::try_from(cycle+self.degrees[index] as i64+root as i64).map_err(|_|Error::Overflow)
     }
 }
@@ -159,6 +171,26 @@ impl<'a> Scale<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_cycle_math_matches_wide_reference() {
+        for period in [1,3,100_000,1_200_000,2_400_000,i32::MAX] {
+            for pitch in [-4_294_967_295i64,i32::MIN as i64-1,i32::MIN as i64,-2_400_001,-1,
+                0,1,2_400_001,i32::MAX as i64,i32::MAX as i64+1,4_294_967_295] {
+                assert_eq!(cycle_phase(pitch,period),
+                    (pitch.div_euclid(period as i64)*period as i64,pitch.rem_euclid(period as i64)));
+            }
+        }
+        let s=Scale::new(&[0,1_000_000_000],i32::MAX).unwrap();
+        for pitch in [i32::MIN,-1,0,1,i32::MAX] {
+            for root in [i32::MIN,0,i32::MAX] {
+                let relative=pitch as i64-root as i64;
+                let cycle=relative.div_euclid(i32::MAX as i64)*i32::MAX as i64;
+                let index=(relative.rem_euclid(i32::MAX as i64)*2/i32::MAX as i64) as usize;
+                let expected=i32::try_from(cycle+s.degrees[index] as i64+root as i64).map_err(|_|Error::Overflow);
+                assert_eq!(s.distribute(pitch,root,None),expected);
+            }
+        }
+    }
     #[test]
     fn two_octave_patterns_cross_boundaries_and_collapse_empty_halves() {
         let pattern=Pattern::compile([1<<11,1]).unwrap();

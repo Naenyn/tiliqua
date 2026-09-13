@@ -34,11 +34,13 @@ Hardware testing of this build is pending; the rack was powered down.
 CUSTOM 2 compiles two 12-bit masks once at RUN into a 24-entry maximum pattern.
 This adapter does not replace the general microtonal format. NOTES editing
 stops output; imported microtonal tables remain a separate path. Explicit SAVE
-and LOAD preserve the two conventional masks as a separate record (key TNP1)
+and LOAD preserve the two conventional masks in one of eight selected slots
+(keys TNP1 through TNP8; legacy saves remain in slot 1)
 in the original settings journal. The expanded oscillator-profile journal is
 untouched. Writes are read back and compared; invalid loads don't replace edits.
 Nothing is automatically armed or loaded. Settings reset does not erase this
-separate record. This is one saved custom pattern, not yet a scale library.
+separate storage. These are conventional note-pattern slots, not yet imported
+microtonal-scale slots or four-channel setup slots.
 Both populated halves repeat every 2400 cents. One empty half collapses to the
 other mask's pitch classes over 1200 cents, discarding which half they occupied.
 Both empty refuses to arm. Patterns may omit unison, so nearest lookup handles

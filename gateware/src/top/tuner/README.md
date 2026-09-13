@@ -136,10 +136,13 @@ one two-octave pattern across the voltage range; nearest mode searches across
 the internal boundary and the repeat boundary. If either half is empty, the
 remaining pitch classes repeat every octave (including when only B is populated).
 Both halves empty prevents RUN. Notes are relative to C before root and transpose
-are applied. The editor starts with chromatic A and empty B. NOTES **SAVE** stores
-both masks in one independent, checksummed record and verifies the write; **LOAD**
+are applied. The editor starts with chromatic A and empty B. NOTES **SLOT** selects
+one of eight pattern slots. **SAVE** stores both masks in that slot's independent,
+checksummed record and verifies the write; **LOAD**
 explicitly recalls it, including after a reboot or flash. Edits alone remain in
-RAM. Saving oscillator profiles or settings does not save these masks. The status
+RAM. Existing single-pattern saves remain in slot 1 without migration. These slots
+store note masks, not channel setups or imported microtonal scales.
+Saving oscillator profiles or settings does not save these masks. The status
 line distinguishes edited, saved, loaded, missing, and failed records. Loading
 invalid data leaves the current edits intact. Opening NOTES stops output. Return to QUANT, select
 CUSTOM 2, and RUN to audition. No new renderer or microtonal-format restriction

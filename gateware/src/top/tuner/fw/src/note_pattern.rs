@@ -1,5 +1,10 @@
 //! Versioned custom-note record, separate from settings and oscillator profiles.
 pub const KEY:u32=0x544e5031;
+pub const SLOTS:u8=8;
+/// Slot 1 retains the original key, so existing saved notes need no migration.
+pub fn key(slot:u8)->Option<u32> {
+    if (1..=SLOTS).contains(&slot) {Some(KEY+slot as u32-1)} else {None}
+}
 pub const LEN:usize=12;
 fn crc(bytes:&[u8])->u32 {
     let mut crc=0xffff_ffffu32;
@@ -25,6 +30,8 @@ pub fn decode(bytes:&[u8])->Option<[u16;2]> {
 #[cfg(test)] mod tests {
     use super::*;
     #[test] fn roundtrip_and_corruption() {
+        assert_eq!(key(1),Some(KEY));assert_eq!(key(0),None);assert_eq!(key(9),None);
+        for slot in 1..=SLOTS {assert_eq!(key(slot),Some(KEY+slot as u32-1));}
         for mask in 0..=0xfff {
             let masks=[mask,0xfff^mask];let record=encode(masks).unwrap();
             assert_eq!(decode(&record),Some(masks));

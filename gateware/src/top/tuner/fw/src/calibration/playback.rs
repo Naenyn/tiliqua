@@ -146,7 +146,13 @@ impl Engine {
         self.sequence=Some(sequence);self.last_sample=now;
         let counts=packed as u16 as i16 as i32;
         if counts.abs()>=32760 {return Some(self.stop("STOPPED - INPUT AT RAIL"));}
-        let Ok(uv)=i32::try_from(counts as i64*1_000_000/self.counts_per_v as i64) else {
+        // The hardware's nominal CV snapshot scale is exactly 4000 counts/V.
+        // Avoid a software 64-bit divide on that normal path; retain the general
+        // conversion for other supported scales, with the same overflow guard.
+        let uv=if self.counts_per_v==4000 {Ok(counts*250)} else {
+            i32::try_from(counts as i64*1_000_000/self.counts_per_v as i64)
+        };
+        let Ok(uv)=uv else {
             return Some(self.stop("STOPPED - INPUT CONVERSION"));
         };
         self.input_uv=uv;

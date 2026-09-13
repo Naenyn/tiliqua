@@ -47,12 +47,15 @@ const KEY:u32=0x54555031;
     let profiles=f.0.borrow().bytes[8192..].to_vec();
     for mask in 0..500u16 {
         let bytes=tuner_notes::encode([mask,0xfff^mask]).unwrap();
-        storage.save_key(tuner_notes::KEY,&bytes).unwrap();
+        storage.save_key(tuner_notes::key((mask%8+1) as u8).unwrap(),&bytes).unwrap();
     }
     let mut storage=ExpandedJournal::with_reserved_buffer(f.clone(),0..8192,0..24576).unwrap();
     let mut bytes=[0;13];
-    let n=storage.load_key(tuner_notes::KEY,&mut bytes).unwrap().unwrap();
-    assert_eq!(tuner_notes::decode(&bytes[..n]),Some([499,0xfff^499]));
+    for slot in 1..=8 {
+        let mask=(0..500u16).rev().find(|mask|mask%8+1==slot as u16).unwrap();
+        let n=storage.load_key(tuner_notes::key(slot).unwrap(),&mut bytes).unwrap().unwrap();
+        assert_eq!(tuner_notes::decode(&bytes[..n]),Some([mask,0xfff^mask]));
+    }
     assert_eq!(&f.0.borrow().bytes[8192..],profiles);
 }
 

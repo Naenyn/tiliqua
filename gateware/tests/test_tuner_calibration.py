@@ -64,6 +64,19 @@ def test_standalone_quantizer_menu_and_mode_have_independent_controls():
     assert 'Page::Quantizer' in (firmware/'runtime.rs').read_text()
 
 
+def test_note_slots_fit_menu_and_legacy_slot_is_preserved():
+    firmware=Path(__file__).parents[1]/'src/top/tuner/fw/src'
+    options=(firmware/'options.rs').read_text()
+    fields=re.findall(r'pub (\w+):',options.split('pub struct QuantNotesOpts {')[1].split('}')[0])
+    assert fields==['octave','note','toggle','clear','fill','save','load','slot']
+    assert 'min: 1, max: 8' in options
+    record=(firmware/'note_pattern.rs').read_text()
+    assert 'KEY+slot as u32-1' in record
+    main=(firmware/'main.rs').read_text()
+    assert 'note_pattern::key(slot)' in main
+    assert 'slot==status_slot' in main
+
+
 def test_playback_audio_verifier_is_pinned_before_measurement_reads():
     main = (Path(__file__).parents[1] / "src/top/tuner/fw/src/main.rs").read_text()
     pin = main.index("let playback_audio=if controls.mode==runtime::OperatingMode::Play")

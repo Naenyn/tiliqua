@@ -75,7 +75,7 @@ struct App {
 static APP: Mutex<RefCell<Option<App>>> = Mutex::new(RefCell::new(None));
 // Conventional two-octave editor, RAM only; never part of oscillator profiles.
 static QUANT_NOTES:Mutex<RefCell<[u16;2]>>=Mutex::new(RefCell::new([0xfff,0]));
-static NOTE_STATUS:Mutex<RefCell<&'static str>>=Mutex::new(RefCell::new("DEFAULT NOTES - LOAD OR EDIT"));
+static NOTE_STATUS:Mutex<RefCell<(u8,&'static str)>>=Mutex::new(RefCell::new((1,"DEFAULT NOTES - LOAD OR EDIT")));
 static PLAYBACK:Mutex<RefCell<oscillator_calibration::playback::Engine>>=
     Mutex::new(RefCell::new(oscillator_calibration::playback::Engine::new()));
 
@@ -1063,8 +1063,11 @@ fn publish_quantizer(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,menu:b
         write_centered(text,31,"SELECT CUSTOM 2 IN QUANT",38);
         write_centered(text,35,if masks==[0,0] {"EMPTY PATTERN - CANNOT RUN"}
             else if masks[0]==0 || masks[1]==0 {"ONE OCTAVE REPEAT"} else {"TWO OCTAVE REPEAT"},38);
-        let status=critical_section::with(|cs|*NOTE_STATUS.borrow_ref(cs));
-        write_centered(text,39,status,40);
+        let slot=with_app(|app|app.ui.opts.quant_notes.slot.value);
+        let (status_slot,status)=critical_section::with(|cs|*NOTE_STATUS.borrow_ref(cs));
+        line.clear();
+        write!(line,"SLOT {}: {}",slot,if slot==status_slot {status} else {"LOAD OR SAVE SELECTED SLOT"}).ok();
+        write_centered(text,39,&line,42);
         publish_markers(display,Markers([None;4]),false,menu);return;
     }
     let (input,output,zero)=with_app(|app|(app.ui.opts.quantizer.input.value,
@@ -1308,7 +1311,7 @@ fn poll_ui_frame() -> UiFrame {
                 let mut masks=QUANT_NOTES.borrow_ref_mut(cs);
                 if clear {masks[octave]=0;} else if fill {masks[octave]=0xfff;}
                 else if toggle {masks[octave]^=1<<note;}
-                *NOTE_STATUS.borrow_ref_mut(cs)="EDITED - SAVE TO KEEP";
+                *NOTE_STATUS.borrow_ref_mut(cs)=(app.ui.opts.quant_notes.slot.value,"EDITED - SAVE TO KEEP");
             });
         }
         let save = app.ui.opts.settings.save_opts.poll();
@@ -1360,19 +1363,21 @@ type TunerPersistence = FlashOptionsPersistence<SPIFlash0,1100>;
 #[inline(never)]
 fn persist_notes(storage:&mut Option<TunerPersistence>,save:bool)->&'static str {
     if critical_section::with(|cs|PLAYBACK.borrow_ref(cs).active) {return "STOP OUTPUT FIRST";}
-    if with_app(|app|app.ui.opts.all().any(|o|o.key().value()==note_pattern::KEY)) {return "NOTE KEY CONFLICT";}
+    let slot=with_app(|app|app.ui.opts.quant_notes.slot.value);
+    let Some(key)=note_pattern::key(slot) else {return "INVALID NOTE SLOT";};
+    if with_app(|app|app.ui.opts.all().any(|o|o.key().value()==key)) {return "NOTE KEY CONFLICT";}
     let Some(storage)=storage.as_mut() else {return "NO FLASH STORAGE";};
     let mut check=[0u8;note_pattern::LEN+1];
     if save {
         let masks=critical_section::with(|cs|*QUANT_NOTES.borrow_ref(cs));
         let Some(bytes)=note_pattern::encode(masks) else {return "INVALID NOTES";};
-        if storage.save_key(note_pattern::KEY,&bytes).is_err() {return "NOTE SAVE FAILED";}
-        match storage.load_key(note_pattern::KEY,&mut check) {
+        if storage.save_key(key,&bytes).is_err() {return "NOTE SAVE FAILED";}
+        match storage.load_key(key,&mut check) {
             Ok(Some(n)) if n==bytes.len() && check[..n]==bytes=>"NOTES SAVED",
             _=>"NOTE READBACK FAILED",
         }
     } else {
-        let bytes=match storage.load_key(note_pattern::KEY,&mut check) {
+        let bytes=match storage.load_key(key,&mut check) {
             Ok(Some(n))=>&check[..n],Ok(None)=>return "NO SAVED NOTES",Err(_)=>return "NOTE LOAD FAILED",
         };
         let Some(masks)=note_pattern::decode(bytes) else {return "INVALID SAVED NOTES";};
@@ -1724,7 +1729,8 @@ fn run(resources: &mut RuntimeResources) -> ! {
             if (ui_frame.save_notes || ui_frame.load_notes) && !calibration.active()
                 && with_app(|app|app.ui.opts.tracker.page.value==Page::QuantNotes) {
                 let status=persist_notes(persistence,ui_frame.save_notes);
-                critical_section::with(|cs|*NOTE_STATUS.borrow_ref_mut(cs)=status);
+                let slot=with_app(|app|app.ui.opts.quant_notes.slot.value);
+                critical_section::with(|cs|*NOTE_STATUS.borrow_ref_mut(cs)=(slot,status));
             }
             if ui_frame.save && !calibration.active() {
                 let result = if let Some(storage) = persistence.as_mut() {
