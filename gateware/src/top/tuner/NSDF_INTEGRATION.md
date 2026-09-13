@@ -1445,3 +1445,54 @@ signal. Next physical control: raise the oscillator base tuning so the unchanged
 rate/depth sweep bottoms safely above 20 Hz (roughly 50..100 Hz); distinguish
 band-edge loss from within-range motion rejection before changing thresholds.
 Capture exited normally and closed serial. No additional flash needed.
+
+## Bounded modulation investigation: retain current window lengths
+
+The user's approximate retuning was sufficient for a different useful control:
+`/tmp/tuner-nsdf-raised-sweep.log` completed 600 RUN / 300 PICK / 300 COMP,
+zero faults. IN0 qualified in all 75 display snapshots, all native, reported
+799.550..13611.409 Hz. Other inputs also qualified throughout. This confirms
+wide-range motion handling in the short-window band; it does not isolate low
+pitch motion, establish instantaneous endpoints, or prove every UI frame valid.
+No further precision knob adjustments were requested.
+
+`tests/nsdf_motion_budget.py` runs 1104 modeled cases over 80 groups, comparing
+the current selector, no later-lag refinement, and a hypothetical 304-sample /
+151-lag low bank (40 Hz minimum instead of 20 Hz). Synthetic exponential sine
+chirps: endpoints 25/55/110/220/440 Hz low and 880/2000/10000 Hz native; rates
+0, +/-0.5, +/-2, +/-8 octaves/s; four phases and amplitudes 72/14000 counts.
+Only windows wholly inside the corresponding bank's frequency range are counted.
+This isolates sample/score/selector behavior, NOT ADC/FIR filtering, scheduling,
+noise rejection, or physical absolute accuracy. Generated report is
+`/tmp/tuner-nsdf-motion-budget.json`; rerun the script to reproduce it.
+
+Findings for this grid:
+
+- Current low bank qualified all tested stationary, 0.5 and 2 octaves/s cases,
+  but none at 8 octaves/s. Native qualified all tested cases, including 8 octaves/s.
+- Removing later-lag refinement does not improve qualification (the acceptance
+  gate precedes refinement), and worsens some stationary estimates. At 440 Hz,
+  worst stationary error was 0.035 cents current versus 0.415 without refinement.
+- Short low window qualified the tested 55..440 Hz / 8 octaves/s chirps, but
+  does not cover 25 Hz. At 55 Hz, worst stationary error rose from 0.070 to
+  0.291 cents in this limited clean-sine grid. These small errors are not a
+  universal noise/waveform characterization.
+- Qualification does not mean instantaneous pitch: the current low window
+  at 2 octaves/s trails the endpoint by roughly 120 cents, while estimates
+  remain within 7 cents of the known window-midpoint pitch. The short window
+  still trails by roughly 240 cents at 8 octaves/s. Do not call these endpoint
+  differences stationary tuning errors or claim shortening fixes all live FM.
+
+`test_nsdf_motion_budget.py` checks all 440 current-window cases through the
+actual Rust selector, matching model qualification and frequency within 0.005
+cents. Full focused suite: 138 passed. Alternative short-window scores are
+host hypotheses, not deployed or timing/resource-qualified designs.
+
+Decision: retain the installed short-window-primary display fix and both
+existing frame lengths. Do not lower confidence gates, hold stale pitch, or
+remove refinement. Preserving 20 Hz coverage while adding shorter low windows
+would require adaptive acquisition/window policy and broader tests; it is not
+a firmware-only drop-in improvement and is beyond this bounded investigation.
+No production changes, build, flash, or user hardware test required. Installed
+firmware remains `f1c0f323`; aggressive low-frequency FM tracking is a documented
+limitation rather than a reason to spend feature headroom now.
