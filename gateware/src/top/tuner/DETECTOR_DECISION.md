@@ -1,12 +1,22 @@
 # Detector decision: close the alternative-algorithm experiment
 
-**Migration update:** user chose to trial NSDF for calibration rather than keep
-two analysis paths indefinitely. The NSDF build now supplies the measurement
-bank for CAL/VERIFY and optional PLAY audio checks as well as the tuner. Hardware
-acceptance is pending; the old detector/verifier is retained temporarily for
-rollback/diagnostic comparison, not the intended final architecture. No resource
-reclamation is credited until removal and a fresh full build are verified.
-The original decision below records the preceding checkpoint.
+**Current decision:** NSDF is the single pitch engine for tuner, CAL/VERIFY and
+optional PLAY audio checks on `codex/tuner-nsdf-integration`. The legacy detector
+and verifier have been removed from the NSDF FPGA configuration. Firmware
+`4e13ffcc` passed hardware verification with the saved 97-point Local Parks
+profile: 192/192 scan targets, worst +3.82c, following +2.61c on the preceding
+combined-hardware build. A subsequent local check found only +0.21c residual
+after accounting for neighboring points' shared approximately +3c offset.
+This supports continuing feature development; it does not prove absolute
+accuracy or establish the cause of that offset. Keep the original branch for
+rollback, not two pitch engines in the deployed build.
+
+The single-engine full build passes all configured clocks, uses 17974/24288
+LUT4, 44/56 EBR and 14/28 DSP. CPU RAM remains 32 KiB. This reclaims 2 EBR and
+1 DSP versus the combined build, but NSDF remains more expensive than the
+original pre-experiment detector. Details and captures: `NSDF_INTEGRATION.md`.
+
+Everything below is the historical decision preceding that migration.
 
 ## Decision
 

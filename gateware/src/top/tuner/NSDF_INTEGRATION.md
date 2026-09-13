@@ -1603,3 +1603,24 @@ flashing this new FPGA image; saved profile format is unchanged.
 USB cable change: apfbug now enumerates as /dev/cu.usbmodem114402,
 VID:PID 1209:c0ca, serial E46534A193222B21. Ten-second read-only connection
 opened successfully but received no bytes; awaiting confirmation TUNER is open.
+
+Single-engine hardware follow-up: 4e13ffcc flashed successfully (exit zero,
+Refresh DONE), profile storage preserved. New bitstream SHA256
+a819a355532e0bd55b3aebebcab88e3aa1f403ee481c3bc36494424d192046c5;
+firmware 186352 bytes. After user reopened TUNER and started verification,
+the relocated debug port streamed successfully. Profile 4 VERIFY SCAN completed
+192/192, worst +3.82c at B7 +0.0c, max within-target span 2.93c,
+P0 +1.56c and P1 +2.11c; final ACTIVE=false, MV=0. Prior run on the same
+stored profile reported P0 -0.80c, P1 -0.04c and worst +2.61c. An overall
+offset/drift contribution is plausible, not proven; do not claim identical
+accuracy or blame the oscillator without a fresh calibration/verification or
+controlled A/B. Transcript /tmp/tuner-nsdf-only-verify.serial.log.
+
+Local check after that scan: endpoint means +3.15c/+3.29c; target +3.47c;
+endpoint-adjusted residual +0.21c, passes +0.32/+0.17/+0.13c. Between-repeat
+ranges 0.31/0.11/0.31c. The prior "REFINE NOT REPEATABLE" message actually
+triggered on residual below 1c, not excessive repeat variation. Split reporting:
+repeatability failures keep that message; stable small errors now report
+"LOCAL ERROR <1C - NO REFINE". No changed thresholds or newly permitted curve
+changes. Tests cover near-zero sign changes, genuine nonrepeatability, the
+1c boundary, and refusal to propose/edit a profile for this shared-offset case.

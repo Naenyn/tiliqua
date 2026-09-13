@@ -14,10 +14,15 @@ impl LocalCheck {
     pub fn refinement_issue(&self)->Option<&'static str> {
         let Some(values)=self.residuals() else {return Some("LOCAL CHECK INCOMPLETE");};
         let residual=self.residual().unwrap();
-        if residual.abs()<1.0 || values.iter().any(|r|r.signum()!=residual.signum())
-            || values.iter().copied().fold(f32::NEG_INFINITY,f32::max)
+        if values.iter().copied().fold(f32::NEG_INFINITY,f32::max)
                 -values.iter().copied().fold(f32::INFINITY,f32::min)>0.75
             || (0..3).any(|i|self.aggregate(i).unwrap().2>0.75) {
+            return Some("REFINE NOT REPEATABLE");
+        }
+        // A repeatable near-zero residual needs no curve correction. Do not
+        // mislabel this as noisy acquisition, including sign flips near zero.
+        if residual.abs()<1.0 {return Some("LOCAL ERROR <1C - NO REFINE");}
+        if values.iter().any(|r|r.signum()!=residual.signum()) {
             return Some("REFINE NOT REPEATABLE");
         }
         if self.aggregate(2).unwrap().0.abs()>10.0
@@ -162,7 +167,13 @@ impl Scan {
         // Fresh-baseline hardware residuals: too variable to recommend fitting.
         assert_eq!(make(0.0,[-0.82,-1.80,-1.67]).advice(),"REFINE NOT REPEATABLE");
         assert_eq!(make(-4.0,[-1.5;3]).advice(),"REFINE DRIFT - RECALIBRATE");
-        assert_eq!(make(0.0,[-0.2;3]).advice(),"REFINE NOT REPEATABLE");
+        assert_eq!(make(0.0,[-0.2;3]).advice(),"LOCAL ERROR <1C - NO REFINE");
+        // Observed hardware local residuals with a shared roughly +3c bias.
+        assert_eq!(make(3.2,[0.32,0.17,0.13]).advice(),"LOCAL ERROR <1C - NO REFINE");
+        assert_eq!(make(0.0,[-0.1,0.1,0.0]).advice(),"LOCAL ERROR <1C - NO REFINE");
+        assert_eq!(make(0.0,[-0.9,0.9,0.0]).advice(),"REFINE NOT REPEATABLE");
+        assert_eq!(make(0.0,[0.99;3]).advice(),"LOCAL ERROR <1C - NO REFINE");
+        assert_eq!(make(0.0,[1.0;3]).advice(),"LOCAL ERROR: TRY REFINE");
     }
     #[test] fn local_repeats_preserve_directional_results_and_reject_partial_residual() {
         let p=profile(6000000,8400000);

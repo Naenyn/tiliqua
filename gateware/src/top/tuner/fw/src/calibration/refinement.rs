@@ -67,6 +67,18 @@ pub struct Refinement {
         for n in 0..MAX_POINTS as i32 {full.push(Point{microvolts:n*1000,millicents:n*1000}).unwrap();}
         assert!(Refinement::new(&full,500).is_err());
     }
+    #[test] fn small_local_error_never_proposes_a_curve_change() {
+        let p=profile();let original=p.points().to_vec();
+        let mut r=Refinement::new(&p,6050000).unwrap();
+        for (i,target) in LocalCheck::ORDER.into_iter().enumerate() {
+            let mean=3.2+if target==2 {[0.32,0.17,0.13][i/3]} else {0.0};
+            r.record(&p,Summary{mean,spread:1.0,count:8});
+        }
+        assert_eq!(r.stage,Stage::Rejected);
+        assert_eq!(r.reason,"LOCAL ERROR <1C - NO REFINE");
+        assert!(r.take_candidate(&p).is_none());
+        assert_eq!(p.points(),original);
+    }
 }
 impl Refinement {
     pub fn new(profile:&Profile,pitch:i32)->Result<Self,&'static str> {
