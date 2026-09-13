@@ -6,13 +6,27 @@ use super::{Error,Profile};
 #[derive(Clone,Copy,Debug,PartialEq)]
 pub enum MappingError { InvalidOrigin, InputOverflow, Profile(Error), OutputOutsideLimits }
 
+// Exact rational conversion with symmetric rounding. Normal CV/pitch values
+// use native arithmetic; extreme public API inputs retain the wide fallback.
+fn rounded_ratio(value:i64,numerator:i32,denominator:i32)->i64 {
+    if let Ok(value)=i32::try_from(value) {
+        if let Some(magnitude)=value.checked_abs()
+            .and_then(|v|v.checked_mul(numerator))
+            .and_then(|v|v.checked_add(denominator/2)) {
+            let result=magnitude/denominator;
+            return if value<0 {-(result as i64)} else {result as i64};
+        }
+    }
+    let result=(value.abs()*numerator as i64+denominator as i64/2)/denominator as i64;
+    if value<0 {-result} else {result}
+}
+
 /// 0 V's musical meaning is independent of the oscillator's physical 0 V pitch.
 /// This initial input convention is 1 V/oct, without quantization or clamping.
 pub fn pitch_from_cv(microvolts:i32,zero_note:u8)->Result<i32,MappingError> {
     if !(12..=108).contains(&zero_note) {return Err(MappingError::InvalidOrigin);}
-    let scaled=microvolts as i64*1_200_000;
-    let delta=if scaled>=0 {(scaled+500_000)/1_000_000}
-        else {-((-scaled+500_000)/1_000_000)};
+    // 1,200,000 / 1,000,000 reduces exactly to 6/5.
+    let delta=rounded_ratio(microvolts as i64,6,5);
     i32::try_from(zero_note as i64*100_000+delta).map_err(|_|MappingError::InputOverflow)
 }
 
@@ -41,7 +55,7 @@ pub fn map_cv(profile:&Profile,microvolts:i32,zero_note:u8)->Result<Target,Mappi
 pub fn map_nominal(pitch:i32,zero_note:u8)->Result<Target,MappingError> {
     if !(12..=108).contains(&zero_note) {return Err(MappingError::InvalidOrigin);}
     let delta=pitch as i64-zero_note as i64*100_000;
-    let uv=if delta>=0 {(delta*5+3)/6} else {-((-delta*5+3)/6)};
+    let uv=rounded_ratio(delta,5,6);
     let uv=i32::try_from(uv).map_err(|_|MappingError::OutputOutsideLimits)?;
     let bits=crate::bipolar::encode_voltage(uv).ok_or(MappingError::OutputOutsideLimits)?;
     Ok(Target{pitch_millicents:pitch,requested_microvolts:uv,
@@ -218,6 +232,30 @@ impl Engine {
 #[cfg(test)] mod tests {
     use super::*;
     use crate::oscillator_calibration::Point;
+    #[test] fn native_conversions_match_original_wide_arithmetic() {
+        for zero in 12u8..=108 {
+            for counts in i16::MIN..=i16::MAX {
+                let uv=counts as i32*250;
+                let scaled=uv as i64*1_200_000;
+                let delta=if scaled>=0 {(scaled+500_000)/1_000_000}
+                    else {-((-scaled+500_000)/1_000_000)};
+                assert_eq!(pitch_from_cv(uv,zero),Ok((zero as i64*100_000+delta) as i32));
+            }
+        }
+        for value in (-100_000i64..=100_000).chain([
+            i32::MIN as i64-10_800_000,i32::MIN as i64,-357_913_941,
+            357_913_941,i32::MAX as i64, i32::MAX as i64+10_800_000]) {
+            for (n,d) in [(6,5),(5,6)] {
+                let magnitude=(value.abs()*n+d/2)/d;
+                assert_eq!(rounded_ratio(value,n as i32,d as i32),if value<0 {-magnitude} else {magnitude});
+            }
+        }
+        for uv in [i32::MIN,-357_913_942,357_913_942,i32::MAX] {
+            let scaled=uv as i64*1_200_000;
+            let delta=if scaled>=0 {(scaled+500_000)/1_000_000} else {-((-scaled+500_000)/1_000_000)};
+            assert_eq!(pitch_from_cv(uv,60),i32::try_from(6_000_000+delta).map_err(|_|MappingError::InputOverflow));
+        }
+    }
     #[test] fn custom_two_octaves_equal_mapping_hold_and_reentry() {
         let mut e=Engine::new();assert!(e.arm_nominal(1,1,60,4000,0,0));
         e.scale_id=6;e.equal=true;
