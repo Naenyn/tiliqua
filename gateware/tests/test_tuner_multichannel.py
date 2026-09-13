@@ -5,6 +5,36 @@ from amaranth.hdl import Fragment
 from tiliqua.dsp.tuner import TunerPeripheral
 
 
+def test_nsdf_level_only_peripheral_has_no_legacy_verifier():
+    dut=TunerPeripheral(sample_rate=192000,multichannel=True,with_reference=False,
+                        with_legacy_pitch=False,level_window_log2=5)
+    fragment=Fragment.get(dut,None)
+    assert 'period_verifier' not in [name for _,name,*_ in fragment.subfragments]
+    sim=Simulator(fragment);sim.add_clock(1e-6)
+    async def bench(ctx):
+        ctx.set(dut.i.valid,1)
+        amplitudes=[200,400,800,1600]
+        for n in range(128):
+            for ch,a in enumerate(amplitudes):
+                ctx.set(dut.i.payload[ch].as_value(),a if n%8<4 else -a)
+            await ctx.tick()
+        ctx.set(dut.i.valid,0)
+        for ch,a in enumerate(amplitudes):
+            ctx.set(dut.bus.addr,0);ctx.set(dut.bus.w_data,ch);ctx.set(dut.bus.w_stb,1)
+            await ctx.tick();ctx.set(dut.bus.w_stb,0);await ctx.tick().repeat(2)
+            assert ctx.get(dut._mean_square.f.value.r_data)==a*a
+            assert ctx.get(dut._minimum.f.value.r_data)==(-a)&0xffffffff
+            assert ctx.get(dut._maximum.f.value.r_data)==a
+            assert ctx.get(dut._level_sequence.f.sequence.r_data)>0
+            assert ctx.get(dut._period_cycles.f.cycles.r_data)==0
+            assert ctx.get(dut._period_samples.f.samples.r_data)==0
+            assert ctx.get(dut._pitch_sequence.f.sequence.r_data)==0
+            assert ctx.get(dut._pitch_age.f.samples.r_data)==0xffffffff
+            assert ctx.get(dut._verify_status.f.done.r_data)==0
+            assert ctx.get(dut._capture_data.f.ready.r_data)==0
+    sim.add_testbench(bench);sim.run()
+
+
 def test_four_lanes_cover_audio_band_at_192khz():
     fs = 192000
     frequencies = [20, 997, 7040, 20000]

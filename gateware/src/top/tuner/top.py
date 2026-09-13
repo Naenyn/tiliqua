@@ -76,6 +76,9 @@ class TunerSoc(TiliquaSoc):
             sample_rate=self.clock_settings.audio_clock.fs(),
             multichannel=True,
             with_reference=False,
+            # NSDF owns pitch. Preserve level/CV/DAC CSRs, but synthesize no
+            # crossing detector or legacy period-verifier/capture hardware.
+            with_legacy_pitch=os.getenv("TILIQUA_TUNER_NSDF") != "1",
             # A 50ms observation window limited new pitch estimates to 20Hz.
             # 20ms still gives sub-cent resolution at the normal 192kHz audio
             # rate while responding much more promptly to oscillator changes.

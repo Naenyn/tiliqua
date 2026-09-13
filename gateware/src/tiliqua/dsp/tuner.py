@@ -135,7 +135,9 @@ class TunerPeripheral(wiring.Component):
 
     def __init__(self, *, sample_rate, min_pitch_window_s=0.05,
                  level_window_log2=13, hysteresis_counts=64,
-                 dc_filter_shift=None, multichannel=False, with_reference=True):
+                 dc_filter_shift=None, multichannel=False, with_reference=True,
+                 with_legacy_pitch=True):
+        self.with_legacy_pitch = with_legacy_pitch
         self.with_reference = with_reference
         self.multichannel = multichannel
         self.sample_rate = int(sample_rate)
@@ -257,39 +259,40 @@ class TunerPeripheral(wiring.Component):
         m.d.comb += self._minimum.f.value.r_data.eq(Array(lane.minimum for lane in lanes)[read_lane])
         m.d.comb += self._maximum.f.value.r_data.eq(Array(lane.maximum for lane in lanes)[read_lane])
         m.d.comb += self._dc.f.value.r_data.eq(Array(lane.dc for lane in lanes)[read_lane])
+        if self.with_legacy_pitch:
 
-        verification_channel = self._verify_channel.f.channel.data if self.multichannel else selected
-        last_verification_channel = Signal(2)
-        m.d.sync += last_verification_channel.eq(verification_channel)
-        verification_lane = verification_channel if self.multichannel else Const(0)
-        m.submodules.period_verifier = verifier = PeriodVerifier(decimation=self.verifier_decimation, adaptive=True)
-        m.d.comb += [
-            verifier.sample.eq(samples[verification_channel]),
-            verifier.accept.eq(self.i.valid & self.i.ready),
-            # Disable is not cal.changed (which only describes enabled steps).
-            # An armed diagnostic must freeze before disable returns the DAC
-            # to zero, not at a later background channel switch.
-            verifier.clear.eq((last_verification_channel != verification_channel) | cal.changed |
-                              (self._capture_control.f.arm.data &
-                               self._cal_command.element.w_stb &
-                               ~self._cal_command.element.w_data[18]) |
-                              Array(lane.expired for lane in lanes)[verification_lane]),
-            verifier.request.eq(self._verify_request.element.w_stb),
-            verifier.lag_q8.eq(self._verify_request.f.lag_q8.w_data),
-            self._verify_status.f.busy.r_data.eq(verifier.busy),
-            self._verify_status.f.done.r_data.eq(verifier.done),
-            self._verify_status.f.factor.r_data.eq(verifier.factor),
-            self._verify_lag.f.lag_q8.r_data.eq(verifier.result_lag_q8),
-            verifier.capture_mode.eq(self._verify_capture.f.mode.data),
-            self._verify_info.f.decimation.r_data.eq(verifier.capture_divisor),
-            self._verify_error.f.value.r_data.eq(verifier.first_error),
-            self._verify_span.f.value.r_data.eq(verifier.first_span),
-            verifier.capture_arm.eq(self._capture_control.f.arm.data),
-            verifier.capture_address.eq(self._capture_control.f.address.data),
-            self._capture_data.f.sample.r_data.eq(verifier.capture_sample),
-            self._capture_data.f.frozen.r_data.eq(verifier.capture_frozen),
-            self._capture_data.f.ready.r_data.eq(verifier.capture_ready),
-        ]
+            verification_channel = self._verify_channel.f.channel.data if self.multichannel else selected
+            last_verification_channel = Signal(2)
+            m.d.sync += last_verification_channel.eq(verification_channel)
+            verification_lane = verification_channel if self.multichannel else Const(0)
+            m.submodules.period_verifier = verifier = PeriodVerifier(decimation=self.verifier_decimation, adaptive=True)
+            m.d.comb += [
+                verifier.sample.eq(samples[verification_channel]),
+                verifier.accept.eq(self.i.valid & self.i.ready),
+                # Disable is not cal.changed (which only describes enabled steps).
+                # An armed diagnostic must freeze before disable returns the DAC
+                # to zero, not at a later background channel switch.
+                verifier.clear.eq((last_verification_channel != verification_channel) | cal.changed |
+                                  (self._capture_control.f.arm.data &
+                                   self._cal_command.element.w_stb &
+                                   ~self._cal_command.element.w_data[18]) |
+                                  Array(lane.expired for lane in lanes)[verification_lane]),
+                verifier.request.eq(self._verify_request.element.w_stb),
+                verifier.lag_q8.eq(self._verify_request.f.lag_q8.w_data),
+                self._verify_status.f.busy.r_data.eq(verifier.busy),
+                self._verify_status.f.done.r_data.eq(verifier.done),
+                self._verify_status.f.factor.r_data.eq(verifier.factor),
+                self._verify_lag.f.lag_q8.r_data.eq(verifier.result_lag_q8),
+                verifier.capture_mode.eq(self._verify_capture.f.mode.data),
+                self._verify_info.f.decimation.r_data.eq(verifier.capture_divisor),
+                self._verify_error.f.value.r_data.eq(verifier.first_error),
+                self._verify_span.f.value.r_data.eq(verifier.first_span),
+                verifier.capture_arm.eq(self._capture_control.f.arm.data),
+                verifier.capture_address.eq(self._capture_control.f.address.data),
+                self._capture_data.f.sample.r_data.eq(verifier.capture_sample),
+                self._capture_data.f.frozen.r_data.eq(verifier.capture_frozen),
+                self._capture_data.f.ready.r_data.eq(verifier.capture_ready),
+            ]
         if self.with_reference:
             m.submodules.reference_oscillator = reference = ReferenceOscillator()
             m.d.comb += [
@@ -307,6 +310,7 @@ class TunerPeripheral(wiring.Component):
 class MeasurementLane(wiring.Component):
     """Independent small crossing/level state; no verifier or reference oscillator."""
     def __init__(self, config):
+        self.with_legacy_pitch = config.with_legacy_pitch
         for name in ("sample_rate", "dc_filter_shift", "hysteresis_counts",
                      "pitch_timeout_samples", "min_pitch_samples",
                      "level_window_log2", "level_window_samples"):
@@ -356,12 +360,12 @@ class MeasurementLane(wiring.Component):
         m.d.comb += [
             elapsed.eq(sample_clock - first_crossing),
             expired.eq(pitch_age >= self.pitch_timeout_samples),
-            self.expired.eq(self.accept & have_crossing & expired),
+            self.expired.eq(self.accept & have_crossing & expired if self.with_legacy_pitch else 0),
             crossing.eq(armed & (ac_sample >= self.hysteresis_counts)),
-            self.pitch_sequence.eq(pitch_sequence),
-            self.period_samples.eq(period_samples),
-            self.period_cycles.eq(period_cycles),
-            self.pitch_age.eq(pitch_age),
+            self.pitch_sequence.eq(pitch_sequence if self.with_legacy_pitch else 0),
+            self.period_samples.eq(period_samples if self.with_legacy_pitch else 0),
+            self.period_cycles.eq(period_cycles if self.with_legacy_pitch else 0),
+            self.pitch_age.eq(pitch_age if self.with_legacy_pitch else 0xffffffff),
         ]
 
         # Level measurement state. The power-of-two window avoids a divider;
@@ -413,7 +417,7 @@ class MeasurementLane(wiring.Component):
                 with m.Elif(elapsed >= self.min_pitch_samples):
                     m.d.sync += [
                         period_samples.eq(elapsed),
-                        self.pitch_end.eq(sample_clock),
+                        self.pitch_end.eq(sample_clock if self.with_legacy_pitch else 0),
                         period_cycles.eq(interval_count + 1),
                         pitch_sequence.eq(pitch_sequence + 1),
                         first_crossing.eq(sample_clock),

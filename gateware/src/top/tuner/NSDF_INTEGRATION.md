@@ -1567,3 +1567,39 @@ through a finite FIFO and 400 ms stall, with no line interleaving and ongoing
 acquisition. Existing live-calibration fixtures check result formatting and
 buffer allowance. Firmware-only build succeeds; not flashed pending save.
 Build log: /tmp/tuner-nsdf-serial-status-build.log.
+
+Hardware follow-up: user saved this Local Parks profile to profile slot 4.
+Firmware cd54788e flashed to bitstream slot 1 with options preserved; flash
+exited zero / Refresh DONE. FPGA hash remains unchanged. Firmware 189288 bytes.
+After reopening and loading profile 4, serial confirmed 97 points and the
+matching -3..+5 V / E0..E8 range. Live VERIFY SCAN completed 192/192 targets:
+worst +2.61c at F#7 -50.0c; maximum within-target span 2.76c;
+first target errors -0.80c and -0.04c. Final CAL status SCAN DONE - OUTPUT ZERO,
+ACTIVE=false, MV=0. This repeats the earlier user-reported +2.39c result
+reasonably closely, without establishing independent absolute accuracy.
+Transcript: /tmp/tuner-nsdf-status-profile4.serial.log.
+Read-only logger session 35341, PID 86495, has a bounded 1800-second lifetime.
+
+### Single pitch-engine build after calibration validation
+
+NSDF-enabled TunerSoc now disables legacy crossing and PeriodVerifier hardware
+in TunerPeripheral. Compatibility CSRs remain at their original addresses;
+retired pitch results read unavailable. Other users retain the default legacy
+configuration. Independent level/DC meters, CV snapshot, DAC command/ACK and
+output safety are unchanged. Continuous firmware reads only the level snapshot,
+then NSDF publishes pitch; COMP baseline fields are now unavailable, not an
+independent detector comparison. No verifier requests are made by this reader.
+
+Full r5 / 192 kHz / 1280x720p60 seed-17 build passes routed timing:
+main 65.51/60 MHz, pixel 90.93/74.25, serializer 443.85/371.33,
+audio 68.09/49.15. Synthesis reports 17974/24288 LUT4, 10948 FF,
+44/56 EBR and 14/28 DSP (previous combined design 46 EBR / 15 DSP).
+Netlist inspection finds no legacy verifier or crossing-state cells.
+31 peripheral/live/scheduler tests and the 143-test NSDF regression suite pass.
+Logs: /tmp/tuner-nsdf-only-build.log, /tmp/tuner-nsdf-only-tests.log,
+/tmp/tuner-nsdf-only-regression.log. Hardware validation still required after
+flashing this new FPGA image; saved profile format is unchanged.
+
+USB cable change: apfbug now enumerates as /dev/cu.usbmodem114402,
+VID:PID 1209:c0ca, serial E46534A193222B21. Ten-second read-only connection
+opened successfully but received no bytes; awaiting confirmation TUNER is open.

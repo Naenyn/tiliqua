@@ -155,6 +155,33 @@ fn timer0_handler() {
 }
 
 #[inline(never)]
+#[cfg(tuner_nsdf_continuous)]
+fn read_measurement(tuner: &pac::TUNER_PERIPH, counts_per_v:f32,
+                    input:u8, _verification:&mut pitch_verification::Verification)->ChannelMeasurement {
+    tuner.control().write(|w|unsafe {w.channel().bits(input)});
+    if tuner.control().read().channel().bits()!=input {return ChannelMeasurement::default();}
+    let snapshot=measurement_snapshot::read(|| {
+        let before=tuner.level_sequence().read().sequence().bits();
+        let power=tuner.mean_square().read().value().bits();
+        let minimum=tuner.minimum().read().value().bits() as i32;
+        let maximum=tuner.maximum().read().value().bits() as i32;
+        let end=tuner.level_end().read().value().bits();
+        let after=tuner.level_sequence().read().sequence().bits();
+        (before,(power,minimum,maximum,end),after)
+    });
+    let Some((power,minimum,maximum,end))=snapshot else {return ChannelMeasurement::default();};
+    let age=tuner.sample_clock().read().value().bits().wrapping_sub(end);
+    if tuner.control().read().channel().bits()!=input || age>=tuner.info().read().sample_rate().bits()/2 {
+        return ChannelMeasurement::default();
+    }
+    // NSDF supplies pitch separately. Never request the retired verifier or
+    // label its zero-filled compatibility registers as a baseline measurement.
+    ChannelMeasurement {vrms:(power as f32).sqrt()/counts_per_v,
+        vpp:(maximum-minimum) as f32/counts_per_v,..ChannelMeasurement::default()}
+}
+
+#[inline(never)]
+#[cfg(not(tuner_nsdf_continuous))]
 fn read_measurement(tuner: &pac::TUNER_PERIPH, counts_per_v: f32,
                     input: u8, verification: &mut pitch_verification::Verification) -> ChannelMeasurement {
     tuner.control().write(|w| unsafe { w.channel().bits(input) });
