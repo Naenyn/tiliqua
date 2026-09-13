@@ -1432,3 +1432,16 @@ profiles preserved. Archive firmware 179784 bytes; same qualified FPGA hash.
 Build/flash logs `/tmp/tuner-nsdf-motion-{build,flash}.log`. User needs to reopen
 TUNER with the unchanged LFO patch before post-change serial capture. Remaining
 low-end rejection is explicitly unresolved; do not claim full sweep tracking.
+
+Post-flash unchanged-LFO capture `/tmp/tuner-nsdf-motion-after.log`: completed
+600 RUN / 300 PICK / 300 COMP, zero faults. IN0: 40 low, 30 native, five
+unavailable display selections out of 75. All seven strict-arbitration conflicts
+published valid native pitch to the display. Other lanes qualified in all 75
+snapshots each. Original IN0 PICK/COMP retained in
+`tests/fixtures/nsdf-motion-after-in0.txt`, covered by regression test. Remaining
+gaps recur ~6.16 seconds apart at sweep bottom. Baseline reports 17.800..39.255 Hz
+there but is unqualified, so not independent truth or proof of an out-of-band
+signal. Next physical control: raise the oscillator base tuning so the unchanged
+rate/depth sweep bottoms safely above 20 Hz (roughly 50..100 Hz); distinguish
+band-edge loss from within-range motion rejection before changing thresholds.
+Capture exited normally and closed serial. No additional flash needed.

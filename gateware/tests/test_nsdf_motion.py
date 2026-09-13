@@ -2,10 +2,26 @@
 from pathlib import Path
 import subprocess
 import numpy as np
-from analyze_nsdf_schedule import analyze_picks
+from analyze_nsdf_schedule import analyze_picks,analyze_comparisons
 from nsdf_refinement_probe import scores_for
 
 HERE=Path(__file__).parent
+
+def test_physical_motion_display_does_not_blank_on_bank_disagreement():
+    text=(HERE/'fixtures/nsdf-motion-after-in0.txt').read_text()
+    picks=list(analyze_picks(text));display=list(analyze_comparisons(text))
+    assert len(picks)==len(display)==75
+    conflicts=absent=0
+    for p,d in zip(picks,display):
+        assert p['ms']==d['ms']
+        if p['src']==3:
+            conflicts+=1
+            assert d['src']==2 and d['mhz']==p['n']
+        if d['src']==0:
+            absent+=1
+            assert p['src']==0 and not d['bq']
+    assert conflicts==7 and absent==5
+    # Decimated hardware snapshots; not a measurement of every UI frame.
 
 def compile_fixture(tmp_path,name):
     exe=tmp_path/name
