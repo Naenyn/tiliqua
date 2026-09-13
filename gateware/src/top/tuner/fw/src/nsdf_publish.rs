@@ -14,6 +14,12 @@ impl Pitch {
     pub const NONE:Self=Self {mhz:0,source:0,generation:0,end_age_ms:u32::MAX,window_age_ms:u32::MAX};
 }
 pub fn publish(native:Frame,low:Frame,now:u64)->Pitch {
+    publish_with(native,low,now,false)
+}
+pub fn display(native:Frame,low:Frame,now:u64)->Pitch {
+    publish_with(native,low,now,true)
+}
+fn publish_with(native:Frame,low:Frame,now:u64,live:bool)->Pitch {
     let candidate=|f:Frame| {
         // Reject a future timestamp instead of saturating it into apparent youth.
         let age=now.checked_sub(f.completed).unwrap_or(u64::MAX)
@@ -21,14 +27,14 @@ pub fn publish(native:Frame,low:Frame,now:u64)->Pitch {
         resolve::Candidate {mhz:f.mhz,age,qualified:f.qualified && f.count>0}
     };
     let n=candidate(native);let l=candidate(low);
-    let r=resolve::resolve(n,l);
+    let r=if live {resolve::resolve_display(n,l)} else {resolve::resolve(n,l)};
     if r.source!=1 && r.source!=2 {return Pitch {source:r.source,..Pitch::NONE};}
     let (f,age)=if r.source==1 {(low,l.age)} else {(native,n.age)};
     // Conservative request-time age, not completion age. Two ms allow tick
     // rounding/foreground observation. Include the older comparison candidate
     // if both banks participated, not just the chosen pitch's window.
     let end_age_ms=age.saturating_add(2);
-    let both=n.qualified && l.qualified && n.age<=250 && l.age<=250
+    let both=!live && n.qualified && l.qualified && n.age<=250 && l.age<=250
         && (600000..=20000000).contains(&n.mhz) && (20000..=1500000).contains(&l.mhz);
     let support_age=if both {n.age.max(l.age)}else{age};
     // Source energy spans 20480/192000 s (107 ms rounded up), and its

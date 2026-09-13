@@ -42,7 +42,7 @@ impl Scheduler {
         if input>=4 {return publish::Pitch::NONE;}
         let frame=|r:Latest|publish::Frame {mhz:r.mhz,count:r.count,completed:r.done,
             request_ms:r.dt,qualified:r.valid && r.raw && r.guard};
-        publish::publish(frame(self.latest[input as usize*2]),frame(self.latest[input as usize*2+1]),now)
+        publish::display(frame(self.latest[input as usize*2]),frame(self.latest[input as usize*2+1]),now)
     }
     /// Display-only pitch. Re-evaluate freshness on every render; never fall
     /// back to an old result or the baseline detector when unqualified.

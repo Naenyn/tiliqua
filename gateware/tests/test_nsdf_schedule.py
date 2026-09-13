@@ -21,7 +21,9 @@ def test_real_scheduler_keeps_acquiring_during_uart_stall(tmp_path,scenario):
     picks=list(analyze_picks(text))
     comparisons=list(analyze_comparisons(text))
     assert len(comparisons)>40
-    assert all(c['src']==1 for c in comparisons[-4:])
+    # COMP follows the display's short-window preference; PICK retains the
+    # strict two-bank comparison as a diagnostic, not a live-display veto.
+    assert all(c['src']==2 for c in comparisons[-4:])
     assert len(picks)>40
     assert {p['ch'] for p in picks}=={0,1,2,3}
     assert all(p['src']==1 for p in picks[-4:])

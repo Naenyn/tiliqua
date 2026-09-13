@@ -1397,3 +1397,30 @@ measured). Slot 1 flash exited zero with Refresh DONE; options payload absent
 and storage preserved. Logs: `/tmp/tuner-nsdf-display-build.log` and
 `/tmp/tuner-nsdf-display-flash.log`. Await user reopening TUNER and checking
 both four-channel views; hardware acquisition diagnostics remain available.
+
+## Live pitch-motion policy
+
+User supplied slow FM on Local Parks IN0. Read-only serial capture
+`/tmp/tuner-nsdf-lfo-sweep.log` completed 600 RUN / 300 PICK / 300 COMP
+records over 30.753 seconds, zero acquisition faults. IN0's 75 selections:
+62 valid, eight two-bank conflicts (34.56..100.15 cents disagreement), five
+unqualified. All other inputs qualified in every reported selection. Bank
+completion ages <=87 ms. IN0 valid reported range 96.342..969.651 Hz is not
+the oscillator's full instantaneous range. Original IN0 PICK records retained
+in `tests/fixtures/nsdf-lfo-in0-picks.txt`; full original log remains in /tmp.
+
+Display now prefers the qualified native short window in its 600..20000 Hz
+range, otherwise the qualified low window. No asynchronous agreement veto,
+no held-result fallback, and no changes to energy, clarity or freshness gates.
+Tradeoff: the low bank no longer corroborates native fundamental selection;
+harmonic-waveform testing remains important. Strict arbitration stays visible
+in PICK; COMP now reports the actual display policy (and baseline comparison).
+Calibration/verification/playback baseline consumers remain unchanged.
+
+Actual Rust replay recovers all eight recorded conflicts while leaving the
+five absent results absent. This is snapshot replay, not a continuous hardware
+dropout-rate claim. A synthetic chirped sine at 50 Hz center / 300 Hz/s over
+the ~100-ms low window fails the unchanged clarity gate, while stationary and
+slower sweeps qualify. This demonstrates a motion limitation, not proof of the
+physical low-end cause; thresholds remain unchanged pending stronger evidence.
+No FPGA, persistent buffer or acquisition scheduling changes.

@@ -3,6 +3,16 @@
 pub struct Candidate {pub mhz:u32,pub age:u32,pub qualified:bool}
 #[derive(Clone,Copy,Debug,PartialEq)]
 pub struct Resolved {pub mhz:u32,pub source:u8}
+/// Live display policy: the shorter native window is primary wherever it
+/// qualifies. The asynchronous low-rate window is not a veto on moving pitch.
+/// This does not relax either bank's confidence, energy, or freshness gates.
+pub fn resolve_display(native:Candidate,low:Candidate)->Resolved {
+    if native.qualified && native.age<=250 && (600000..=20000000).contains(&native.mhz) {
+        Resolved {mhz:native.mhz,source:2}
+    } else if low.qualified && low.age<=250 && (20000..=1500000).contains(&low.mhz) {
+        Resolved {mhz:low.mhz,source:1}
+    } else {Resolved {mhz:0,source:0}}
+}
 // source: 0 unavailable, 1 low, 2 native, 3 conflicting qualified candidates.
 pub fn resolve(native:Candidate,low:Candidate)->Resolved {
     let n=native.qualified && native.age<=250 && (600000..=20000000).contains(&native.mhz);

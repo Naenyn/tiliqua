@@ -24,4 +24,17 @@ fn main() {
     // No cross-channel state: a call for another channel cannot alter an outcome.
     let first=publish(n,l,120);let _=publish(f(2000000,10,1),empty,30);
     assert_eq!(publish(n,l,120),first);
+    // Moving pitch: display follows the native window without requiring the
+    // older/longer window to agree. Strict diagnostic publication is unchanged.
+    let moving=f(930490,110,2);let current=f(889312,115,3);
+    assert_eq!(publish(current,moving,120).source,3);
+    assert_eq!(publish::display(current,moving,120).mhz,889312);
+    assert_eq!(publish::display(n,l,120).source,2);
+    assert_eq!(publish::display(empty,l,120).source,1);
+    assert_eq!(publish::display(n,l,357),Pitch::NONE);
+    assert_eq!(publish::display(empty,empty,120),Pitch::NONE);
+    assert_eq!(publish::display(Frame{qualified:false,..n},l,120).source,1);
+    assert_eq!(publish::display(Frame{count:0,..n},l,120).source,1);
+    assert_eq!(publish::display(f(599999,110,2),l,120).source,1);
+    assert_eq!(publish::display(f(20000001,110,2),l,120).source,1);
 }
