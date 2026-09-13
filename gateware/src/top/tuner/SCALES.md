@@ -43,7 +43,9 @@ separate storage. These are conventional note-pattern slots, not yet imported
 microtonal-scale slots. Eight separate SETUPS slots now retain the four output
 configurations and independent mask snapshots in 48-byte CRC-protected TQS1
 records. No running state is stored. QUANT RUN now starts all four outputs at
-500 Hz per channel, staggered two per 1 ms interrupt. Selecting output selects its
+500 Hz per channel. Calculations are staggered two per 1 ms interrupt using a
+shared input snapshot; all four voltages commit at one DAC update boundary.
+Safety disables remain immediate. Selecting output selects its
 settings and stops the group. Hardware timing/resource qualification and live
 four-channel testing are required for this adapter change.
 Both populated halves repeat every 2400 cents. One empty half collapses to the

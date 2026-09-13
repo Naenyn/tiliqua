@@ -99,10 +99,11 @@ type QuantEngine=oscillator_calibration::playback::QuantEngine;
 struct MultiQuant {
     lanes:[QuantEngine;4],configs:[quantizer_setup::Channel;4],
     running:bool,max_cycles:usize,last_cycle:usize,max_gap:usize,
+    phase:usize,samples:[u32;4],
 }
 static MULTI_QUANT:Mutex<RefCell<MultiQuant>>=Mutex::new(RefCell::new(MultiQuant {
     lanes:[QuantEngine::new(),QuantEngine::new(),QuantEngine::new(),QuantEngine::new()],
-    configs:quantizer_setup::DEFAULT,running:false,max_cycles:0,last_cycle:0,max_gap:0,
+    configs:quantizer_setup::DEFAULT,running:false,max_cycles:0,last_cycle:0,max_gap:0,phase:0,samples:[0;4],
 }));
 fn quant_command(t:&pac::TUNER_PERIPH,n:usize,value:u32) {
     match n {
@@ -122,7 +123,7 @@ fn quant_cv(t:&pac::TUNER_PERIPH,n:u8)->u32 {match n {
 }}
 impl MultiQuant {
     fn stop(&mut self,t:&pac::TUNER_PERIPH,reason:&'static str) {
-        self.running=false;
+        self.running=false;self.phase=0;
         for (n,lane) in self.lanes.iter_mut().enumerate() {quant_command(t,n,lane.stop(reason));}
     }
     fn start(&mut self,t:&pac::TUNER_PERIPH,configs:[quantizer_setup::Channel;4],now:u32,counts:i32) {
@@ -222,15 +223,23 @@ fn timer0_handler() {
             if gap>pac::clock::sysclk() as usize/200 {quant.stop(&tuner,"STOPPED - SCHEDULING GAP");return;}
         }
         quant.last_cycle=start;
-        for n in ((now as usize&1)*2)..((now as usize&1)*2+2) {
+        // Both batches use the same input snapshot. In particular, outputs
+        // sharing one input must not cross its note boundary on different ticks.
+        if quant.phase==0 {quant.samples=core::array::from_fn(|n|quant_cv(&tuner,n as u8));}
+        let samples=quant.samples;
+        for n in (quant.phase*2)..(quant.phase*2+2) {
             let lane=&mut quant.lanes[n];
-            if let Some(command)=lane.tick(now,quant_cv(&tuner,lane.input),quant_status(&tuner,n),true) {
+            if let Some(command)=lane.tick(now,samples[lane.input as usize],quant_status(&tuner,n),true) {
                 quant_command(&tuner,n,command);
             }
         }
         let elapsed=playback_cycles().wrapping_sub(start);quant.max_cycles=quant.max_cycles.max(elapsed);
         if elapsed>pac::clock::sysclk() as usize/2000 {quant.stop(&tuner,"STOPPED - CPU BUDGET");}
-        else {quant.running=quant.lanes.iter().any(|lane|lane.active);}
+        else {
+            if quant.phase==1 {tuner.quant_commit().write(|w|unsafe{w.value().bits(1)});}
+            quant.phase^=1;
+            quant.running=quant.lanes.iter().any(|lane|lane.active);
+        }
     });
     critical_section::with(|cs| {
         let mut play=PLAYBACK.borrow_ref_mut(cs);

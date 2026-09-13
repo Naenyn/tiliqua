@@ -154,8 +154,11 @@ Switching output stops playback and recalls that output's settings in RAM.
 NOTES edits/loads only the selected output's pattern. Pattern slots are reusable
 copies: editing a channel does not modify a saved pattern or another channel.
 QUANT **RUN starts/stops all four outputs**, each using its own configuration.
-Two outputs are serviced per 1 ms interrupt, giving each output a 500 Hz update
-rate. Editing controls, switching the channel selector, or leaving QUANT stops
+Two outputs are calculated per 1 ms interrupt, giving each output a 500 Hz update
+rate. Both batches use the same captured input readings, and all four staged
+voltages are committed together at one DAC update boundary. Safety disables
+remain immediate rather than waiting for a group commit.
+Editing controls, switching the channel selector, or leaving QUANT stops
 all outputs and requires RUN again. An empty custom pattern cannot arm its lane.
 Per-lane stale CV, missing ACK, rail, and output faults stop that lane; scheduling
 or shared CPU-budget faults stop the whole group. Calibration/corrected PLAY has

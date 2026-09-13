@@ -197,6 +197,7 @@ class TunerPeripheral(wiring.Component):
         self._quant_cv = [regs.add(f"quant_cv{n}", self.SignedLevel(), offset=0x80+4*n) for n in range(4)]
         self._quant_command = [regs.add(f"quant_command{n}", self.ReferenceIncrement(), offset=0x90+4*n) for n in range(4)]
         self._quant_status = [regs.add(f"quant_status{n}", self.SignedLevel(), offset=0xa0+4*n) for n in range(4)]
+        self._quant_commit = regs.add("quant_commit", self.ReferenceIncrement(), offset=0xb0)
         self._bridge = csr.Bridge(regs.as_memory_map())
 
         super().__init__({
@@ -236,15 +237,23 @@ class TunerPeripheral(wiring.Component):
                      self._cal_status.f.value.r_data.eq(Cat(cal.token, cal.active, cal.fault))]
         # Each input is measured continuously, regardless of UI selection.
         # Each output owns its ACK/token/watchdog; CAL/PLAY has hard priority.
+        inhibit = cal.active | cal.fault | self._cal_command.element.w_stb
+        commit_pending = Signal()
+        with m.If(self._quant_commit.element.w_stb & ~inhibit):
+            m.d.sync += commit_pending.eq(1)
+        with m.If((commit_pending & self.reference_advance) | inhibit):
+            m.d.sync += commit_pending.eq(0)
         for n in range(4):
             m.submodules[f"quant_cv{n}"] = snapshot = CVSnapshot()
             m.d.comb += [snapshot.sample.eq(samples[n]), snapshot.accept.eq(self.i.valid),
                          snapshot.clear.eq(0), self._quant_cv[n].f.value.r_data.eq(snapshot.packed)]
             m.submodules[f"quant_output{n}"] = lane = CalibrationOutput()
-            inhibit = cal.active | cal.fault | self._cal_command.element.w_stb
             m.d.comb += [lane.command.eq(Mux(inhibit, 0, self._quant_command[n].element.w_data)),
-                         lane.write.eq(inhibit | self._quant_command[n].element.w_stb),
-                         lane.advance.eq(self.reference_advance),
+                         # Freeze the staged frame under DAC backpressure.
+                         # Explicit disables still take effect immediately.
+                         lane.write.eq(inhibit | (self._quant_command[n].element.w_stb &
+                             (~commit_pending | ~self._quant_command[n].element.w_data[18]))),
+                         lane.advance.eq(self.reference_advance & commit_pending & ~inhibit),
                          self.quant_value[n].eq(Mux(inhibit, 0, lane.value)),
                          self._quant_status[n].f.value.r_data.eq(Cat(lane.token, lane.active, lane.fault))]
         selected = self._control.f.channel.data
