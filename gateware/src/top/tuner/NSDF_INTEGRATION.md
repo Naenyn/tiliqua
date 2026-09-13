@@ -1386,3 +1386,14 @@ fallback. Scheduler tests exercise this display accessor before acquisition,
 during source unavailability and after recovery, including UART backpressure.
 134 focused NSDF tests pass. No FPGA changes or additional persistent buffers.
 Physical display validation is pending the firmware build/flash.
+
+Build/flash handoff: `cb772440` firmware-only build completed with NSDF enabled
+and no TRACE override, confirming the new continuous default via Cargo output.
+Normal 1280x720p60, 192 kHz audio, archive firmware 179976 bytes (+360).
+FPGA SHA256 remains
+`83dfbb3a6becc72b2ade62396a47c09d186f8fceb3b37ca65c96e58d288e373f`.
+CPU .data=1632, .bss=8, .heap=0; 32 KiB RAM unchanged (stack high-water not
+measured). Slot 1 flash exited zero with Refresh DONE; options payload absent
+and storage preserved. Logs: `/tmp/tuner-nsdf-display-build.log` and
+`/tmp/tuner-nsdf-display-flash.log`. Await user reopening TUNER and checking
+both four-channel views; hardware acquisition diagnostics remain available.
