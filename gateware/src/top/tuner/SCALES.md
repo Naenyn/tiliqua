@@ -40,7 +40,10 @@ in the original settings journal. The expanded oscillator-profile journal is
 untouched. Writes are read back and compared; invalid loads don't replace edits.
 Nothing is automatically armed or loaded. Settings reset does not erase this
 separate storage. These are conventional note-pattern slots, not yet imported
-microtonal-scale slots or four-channel setup slots.
+microtonal-scale slots. Eight separate SETUPS slots now retain the four output
+configurations and independent mask snapshots in 48-byte CRC-protected TQS1
+records. No running state is stored. The current adapter still enables only one
+output at a time; selecting output selects its settings and stops playback.
 Both populated halves repeat every 2400 cents. One empty half collapses to the
 other mask's pitch classes over 1200 cents, discarding which half they occupied.
 Both empty refuses to arm. Patterns may omit unison, so nearest lookup handles

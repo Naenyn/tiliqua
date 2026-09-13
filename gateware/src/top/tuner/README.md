@@ -148,6 +148,21 @@ invalid data leaves the current edits intact. Opening NOTES stops output. Return
 CUSTOM 2, and RUN to audition. No new renderer or microtonal-format restriction
 is introduced by this conventional 24-note editor.
 
+QUANT's **output** selector now selects independent settings for OUT 0–3:
+input, 0 V note, scale, root, transpose, mapping, and the two note masks.
+Switching output stops playback and recalls that output's settings in RAM.
+NOTES edits/loads only the selected output's pattern. Pattern slots are reusable
+copies: editing a channel does not modify a saved pattern or another channel.
+Only **one output runs at a time** in this firmware; this is the configuration
+foundation, not simultaneous four-output quantization.
+
+**SETUPS** offers eight explicit SAVE/LOAD slots for all four channels together,
+including their note masks. Save is read-back verified; load validates the entire
+record before replacing RAM settings and never arms output. SETTINGS/Save still
+only saves menu settings; use SETUPS/Save to retain all four configurations.
+Missing/invalid setups leave current settings intact. Setup slots, pattern slots,
+and oscillator profile slots are separate; existing records are preserved.
+
 The shared engine uses nearest-degree rounding with midpoint hysteresis (up to
 five cents, capped to a quarter of each adjacent interval for dense scales), retains
 the last valid note for out-of-range CV, and stops on stale CV, rails, output

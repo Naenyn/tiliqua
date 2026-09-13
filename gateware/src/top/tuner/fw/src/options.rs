@@ -16,6 +16,7 @@ pub enum Page {
     Play,
     Quantizer,
     QuantNotes,
+    QuantSetups,
 }
 
 #[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default,
@@ -61,6 +62,16 @@ pub enum Distribution {
 }
 int_params!(OctaveParams<u8> { step: 1, min: 0, max: 1 });
 int_params!(PatternSlotParams<u8> { step: 1, min: 1, max: 8 });
+
+#[derive(OptionPage, Clone)]
+pub struct QuantSetupOpts {
+    #[option(1)]
+    pub slot: IntOption<PatternSlotParams>,
+    #[option(false)]
+    pub save: ButtonOption<OneShotButtonParams>,
+    #[option(false)]
+    pub load: ButtonOption<OneShotButtonParams>,
+}
 
 #[derive(OptionPage, Clone)]
 pub struct QuantNotesOpts {
@@ -229,4 +240,6 @@ pub struct Opts {
     pub quantizer: QuantizerOpts,
     #[page(Page::QuantNotes)]
     pub quant_notes: QuantNotesOpts,
+    #[page(Page::QuantSetups)]
+    pub quant_setups: QuantSetupOpts,
 }

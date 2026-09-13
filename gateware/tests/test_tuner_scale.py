@@ -9,8 +9,9 @@ import pytest
 from tuner_scale_import import parse_scl, encode
 
 
-def test_scale_engine(tmp_path):
-    source = Path(__file__).parents[1] / 'src/top/tuner/fw/src/scale.rs'
+@pytest.mark.parametrize('module', ['scale', 'quantizer_setup'])
+def test_scale_engine(tmp_path, module):
+    source = Path(__file__).parents[1] / f'src/top/tuner/fw/src/{module}.rs'
     compiler = shutil.which('rustc') or str(Path.home() / '.cargo/bin/rustc')
     executable = tmp_path / 'scale-tests'
     subprocess.run([compiler, '--edition=2021', '--test', str(source), '-o',

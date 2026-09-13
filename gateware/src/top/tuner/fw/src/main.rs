@@ -4,6 +4,7 @@
 mod ui_text;
 mod scale;
 mod note_pattern;
+mod quantizer_setup;
 mod feedback;
 mod ui_canvas;
 mod ui_scene;
@@ -66,6 +67,21 @@ const ROUND_DISPLAY: bool = matches!(FIXED_MODELINE, Some((720, 720)));
 struct App {
     ui: ui::UI<Encoder0, EurorackPmod0, I2c0, Opts>,
     now_ms: u64,
+    quant_channels:[quantizer_setup::Channel;4],
+    quant_selected:u8,
+}
+
+fn quant_settings(opts:&options::QuantizerOpts,masks:[u16;2])->quantizer_setup::Channel {
+    quantizer_setup::Channel{input:opts.input.value,zero:opts.zero_note.value,
+        scale:opts.scale.value as u8,root:opts.root.value as u8,transpose:opts.transpose.value,
+        equal:opts.mapping.value==options::Distribution::Equal,masks}
+}
+fn show_quant_settings(opts:&mut options::QuantizerOpts,c:quantizer_setup::Channel) {
+    use strum::IntoEnumIterator;
+    opts.input.value=c.input;opts.zero_note.value=c.zero;opts.transpose.value=c.transpose;
+    opts.scale.value=options::ScalePreset::iter().nth(c.scale as usize).unwrap_or_default();
+    opts.root.value=options::ScaleRoot::iter().nth(c.root as usize).unwrap_or_default();
+    opts.mapping.value=if c.equal {options::Distribution::Equal} else {options::Distribution::Nearest};
 }
 
 // The timer interrupt and foreground loop share one long-lived UI object.
@@ -76,17 +92,22 @@ static APP: Mutex<RefCell<Option<App>>> = Mutex::new(RefCell::new(None));
 // Conventional two-octave editor, RAM only; never part of oscillator profiles.
 static QUANT_NOTES:Mutex<RefCell<[u16;2]>>=Mutex::new(RefCell::new([0xfff,0]));
 static NOTE_STATUS:Mutex<RefCell<(u8,&'static str)>>=Mutex::new(RefCell::new((1,"DEFAULT NOTES - LOAD OR EDIT")));
+static SETUP_STATUS:Mutex<RefCell<(u8,&'static str)>>=Mutex::new(RefCell::new((1,"SAVE OR LOAD A SETUP")));
 static PLAYBACK:Mutex<RefCell<oscillator_calibration::playback::Engine>>=
     Mutex::new(RefCell::new(oscillator_calibration::playback::Engine::new()));
 
 impl App {
     #[inline(never)]
     fn new(opts: Opts) -> Self {
+        let quant_selected=opts.quantizer.output.value.min(3);
+        let mut quant_channels=quantizer_setup::DEFAULT;
+        quant_channels[quant_selected as usize]=quant_settings(&opts.quantizer,[0xfff,0]);
         let peripherals = unsafe { pac::Peripherals::steal() };
         let encoder = Encoder0::new(peripherals.ENCODER0);
         let pca9635 = Pca9635Driver::new(I2c0::new(peripherals.I2C0));
         let pmod = EurorackPmod0::new(peripherals.PMOD0_PERIPH);
         Self {
+            quant_channels,quant_selected,
             now_ms: 0,
             ui: ui::UI::new_with_fade(
                 opts,
@@ -622,6 +643,7 @@ impl MenuSnapshot {
             Page::Play => "PLAY",
             Page::Quantizer => "QUANT",
             Page::QuantNotes => "NOTES",
+            Page::QuantSetups => "SETUPS",
         };
         let page_bold = opts.selected().is_none();
         let options = opts.view().options();
@@ -1043,12 +1065,32 @@ fn publish_playback(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,
 }
 
 fn publish_quantizer(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,menu:bool) {
+    if with_app(|app|app.ui.opts.tracker.page.value==Page::QuantSetups) {
+        let (channels,slot)=with_app(|app|(app.quant_channels,app.ui.opts.quant_setups.slot.value));
+        let mut line=String::<96>::new();
+        write_centered(text,4,"QUANTIZER SETUPS",38);
+        write_centered(text,7,"FOUR INDEPENDENT CHANNEL SETTINGS",42);
+        for (output,c) in channels.iter().enumerate() {
+            write!(line,"OUT {}: IN {} ROOT {} {:+} {}",output,c.input,NOTE_NAMES[c.root as usize],c.transpose,
+                if c.equal {"EQUAL"} else {"NEAREST"}).ok();
+            write_centered(text,12+output as u8*4,&line,42);line.clear();
+        }
+        write_centered(text,29,"SAVE INCLUDES ALL FOUR NOTE PATTERNS",42);
+        write_centered(text,32,"LOAD DOES NOT START OUTPUT",38);
+        write_centered(text,35,"ONE OUTPUT ACTIVE AT A TIME FOR NOW",42);
+        let (status_slot,status)=critical_section::with(|cs|*SETUP_STATUS.borrow_ref(cs));
+        write!(line,"SLOT {}: {}",slot,if slot==status_slot {status} else {"SAVE OR LOAD A SETUP"}).ok();
+        write_centered(text,39,&line,42);
+        publish_markers(display,Markers([None;4]),false,menu);return;
+    }
     if with_app(|app|app.ui.opts.tracker.page.value==Page::QuantNotes) {
         let masks=critical_section::with(|cs|*QUANT_NOTES.borrow_ref(cs));
         let (octave,note)=with_app(|app|(app.ui.opts.quant_notes.octave.value as usize,
             app.ui.opts.quant_notes.note.value as usize));
         let mut line=String::<96>::new();
-        write_centered(text,4,"TWO OCTAVE NOTE PATTERN",38);
+        let output=with_app(|app|app.quant_selected);
+        write!(line,"OUT {} NOTE PATTERN",output).ok();
+        write_centered(text,4,&line,38);line.clear();
         write_centered(text,7,"RELATIVE TO C; ROOT SHIFTS PATTERN",40);
         for (index,mask) in masks.iter().enumerate() {
             write!(line,"{}:",if index==0 {"A"} else {"B"}).ok();
@@ -1087,7 +1129,7 @@ fn publish_quantizer(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,menu:b
     });
     write!(line,"{} {}; TRANSPOSE {:+}",root_name,scale_name,transpose).ok();
     write_centered(text,14,&line,38);line.clear();
-    write_centered(text,17,"NO OSCILLATOR PROFILE APPLIED",34);
+    write_centered(text,17,"PER-OUTPUT SETTINGS; ONE ACTIVE",38);
     write!(line,"0 V = ").ok();pitch_units::write_note(&mut line,zero as i32).ok();
     write_centered(text,21,&line,32);line.clear();
     let equal=with_app(|app|app.ui.opts.quantizer.mapping.value==options::Distribution::Equal);
@@ -1125,6 +1167,11 @@ pub fn write_playback_status(out:&mut impl core::fmt::Write,value:ChannelMeasure
         writeln!(out,"QUANTIZER MAPPING={} MASK_A={:03X} MASK_B={:03X}",
             if equal {"EQUAL"} else {"NEAREST"},masks[0],masks[1])?;
         writeln!(out,"QUANTIZER MAPPING=NOMINAL_1V_OCT PROFILE=NONE TARGET_MC={} OUTPUT_RANGE_UV=-5000000..5000000",pitch)?;
+        let channels=with_app(|app|app.quant_channels);
+        for (index,c) in channels.iter().enumerate() {
+            writeln!(out,"QCFG OUT={} IN={} ZERO={} SCALE={} ROOT={} TRANSPOSE={} EQUAL={} A={:03X} B={:03X}",
+                index,c.input,c.zero,c.scale,c.root,c.transpose,c.equal as u8,c.masks[0],c.masks[1])?;
+        }
         return Ok(());
     }
     if active && value.valid && value.qualified {
@@ -1276,6 +1323,8 @@ fn publish_markers(display: &pac::TUNER_DISPLAY, markers: Markers,
 
 #[derive(Clone, Copy)]
 struct UiFrame {
+    save_setup:bool,
+    load_setup:bool,
     save_notes:bool,
     load_notes:bool,
     run_play:bool,
@@ -1300,6 +1349,26 @@ struct UiFrame {
 }
 
 fn poll_ui_frame() -> UiFrame {
+    // The output selector also selects its independent configuration. Capture
+    // the old editor before loading the new channel. Never automatically arm.
+    let changed=with_app(|app|critical_section::with(|cs| {
+        let old=app.quant_selected as usize;
+        let edited=quant_settings(&app.ui.opts.quantizer,*QUANT_NOTES.borrow_ref(cs));
+        if app.quant_channels[old]!=edited {
+            *SETUP_STATUS.borrow_ref_mut(cs)=(app.ui.opts.quant_setups.slot.value,"EDITED - SAVE SETUP");
+        }
+        let selected=app.ui.opts.quantizer.output.value.min(3);
+        let Some(settings)=quantizer_setup::select(&mut app.quant_channels,&mut app.quant_selected,edited,selected)
+            else {return false;};
+        show_quant_settings(&mut app.ui.opts.quantizer,settings);
+        *QUANT_NOTES.borrow_ref_mut(cs)=settings.masks;
+        *NOTE_STATUS.borrow_ref_mut(cs)=(app.ui.opts.quant_notes.slot.value,"CHANNEL NOTES - SAVE TO KEEP");
+        true
+    }));
+    if changed {critical_section::with(|cs| {
+        let command=PLAYBACK.borrow_ref_mut(cs).stop("STOPPED - OUTPUT CHANGED");
+        unsafe{pac::Peripherals::steal()}.TUNER_PERIPH.cal_command().write(|w|unsafe{w.value().bits(command)});
+    });}
     with_app(|app| {
         let toggle=app.ui.opts.quant_notes.toggle.poll();
         let clear=app.ui.opts.quant_notes.clear.poll();
@@ -1319,6 +1388,8 @@ fn poll_ui_frame() -> UiFrame {
         let menu_active = app.ui.draw();
         app.ui.set_menu_visible(menu_active);
         UiFrame {
+            save_setup:app.ui.opts.quant_setups.save.poll(),
+            load_setup:app.ui.opts.quant_setups.load.poll(),
             save_notes:app.ui.opts.quant_notes.save.poll(),
             load_notes:app.ui.opts.quant_notes.load.poll(),
             run_play:app.ui.opts.play.run.poll() | app.ui.opts.quantizer.run.poll(),
@@ -1359,6 +1430,40 @@ fn reset_options() {
 }
 
 type TunerPersistence = FlashOptionsPersistence<SPIFlash0,1100>;
+
+#[inline(never)]
+fn persist_setup(storage:&mut Option<TunerPersistence>,save:bool)->&'static str {
+    if critical_section::with(|cs|PLAYBACK.borrow_ref(cs).active) {return "STOP OUTPUT FIRST";}
+    let slot=with_app(|app|app.ui.opts.quant_setups.slot.value);
+    let Some(key)=quantizer_setup::key(slot) else {return "INVALID SETUP SLOT";};
+    if with_app(|app|app.ui.opts.all().any(|o|o.key().value()==key)) {return "SETUP KEY CONFLICT";}
+    let Some(storage)=storage.as_mut() else {return "NO FLASH STORAGE";};
+    let mut check=[0u8;quantizer_setup::LEN+1];
+    if save {
+        let channels=with_app(|app|app.quant_channels);
+        let Some(bytes)=quantizer_setup::encode(&channels) else {return "INVALID SETUP";};
+        if storage.save_key(key,&bytes).is_err() {return "SETUP SAVE FAILED";}
+        match storage.load_key(key,&mut check) {
+            Ok(Some(n)) if n==bytes.len() && check[..n]==bytes=>"SETUP SAVED",
+            _=>"SETUP READBACK FAILED",
+        }
+    } else {
+        let bytes=match storage.load_key(key,&mut check) {
+            Ok(Some(n))=>&check[..n],Ok(None)=>return "NO SAVED SETUP",Err(_)=>return "SETUP LOAD FAILED",
+        };
+        let Some(channels)=quantizer_setup::decode(bytes) else {return "INVALID SAVED SETUP";};
+        with_app(|app| {
+            app.quant_channels=channels;
+            let current=channels[app.quant_selected as usize];
+            show_quant_settings(&mut app.ui.opts.quantizer,current);
+            critical_section::with(|cs| {
+                *QUANT_NOTES.borrow_ref_mut(cs)=current.masks;
+                *NOTE_STATUS.borrow_ref_mut(cs)=(app.ui.opts.quant_notes.slot.value,"NOTES FROM SETUP");
+            });
+        });
+        "SETUP LOADED - STOPPED"
+    }
+}
 
 #[inline(never)]
 fn persist_notes(storage:&mut Option<TunerPersistence>,save:bool)->&'static str {
@@ -1731,6 +1836,12 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 let status=persist_notes(persistence,ui_frame.save_notes);
                 let slot=with_app(|app|app.ui.opts.quant_notes.slot.value);
                 critical_section::with(|cs|*NOTE_STATUS.borrow_ref_mut(cs)=(slot,status));
+            }
+            if (ui_frame.save_setup || ui_frame.load_setup) && !calibration.active()
+                && with_app(|app|app.ui.opts.tracker.page.value==Page::QuantSetups) {
+                let status=persist_setup(persistence,ui_frame.save_setup);
+                let slot=with_app(|app|app.ui.opts.quant_setups.slot.value);
+                critical_section::with(|cs|*SETUP_STATUS.borrow_ref_mut(cs)=(slot,status));
             }
             if ui_frame.save && !calibration.active() {
                 let result = if let Some(storage) = persistence.as_mut() {

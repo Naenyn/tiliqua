@@ -40,14 +40,20 @@ fn open(flash:&Flash)->Journal {Journal::with_buffer(flash.clone(),0..8192)}
 const KEY:u32=0x54555031;
 
 #[path="../../../top/tuner/fw/src/note_pattern.rs"] mod tuner_notes;
+#[path="../../../top/tuner/fw/src/quantizer_setup.rs"] mod tuner_setup;
 #[test] fn tuner_note_record_survives_gc_without_changing_profiles() {
     let f=expanded_flash();
     let mut storage=ExpandedJournal::with_reserved_buffer(f.clone(),0..8192,0..24576).unwrap();
     for slot in 0..4 {storage.save_key_in(8192..24576,KEY+slot,&[slot as u8;1008]).unwrap();}
     let profiles=f.0.borrow().bytes[8192..].to_vec();
+    // Representative menu settings coexist with all eight pattern/setup slots.
+    for option in 0..64 {storage.save_key(0x1000+option,&[option as u8;8]).unwrap();}
     for mask in 0..500u16 {
         let bytes=tuner_notes::encode([mask,0xfff^mask]).unwrap();
         storage.save_key(tuner_notes::key((mask%8+1) as u8).unwrap(),&bytes).unwrap();
+        let mut channels=tuner_setup::DEFAULT;
+        channels[0].masks=[mask,0xfff^mask];
+        storage.save_key(tuner_setup::key((mask%8+1) as u8).unwrap(),&tuner_setup::encode(&channels).unwrap()).unwrap();
     }
     let mut storage=ExpandedJournal::with_reserved_buffer(f.clone(),0..8192,0..24576).unwrap();
     let mut bytes=[0;13];
@@ -55,6 +61,14 @@ const KEY:u32=0x54555031;
         let mask=(0..500u16).rev().find(|mask|mask%8+1==slot as u16).unwrap();
         let n=storage.load_key(tuner_notes::key(slot).unwrap(),&mut bytes).unwrap().unwrap();
         assert_eq!(tuner_notes::decode(&bytes[..n]),Some([mask,0xfff^mask]));
+        let mut setup=[0;tuner_setup::LEN+1];
+        let n=storage.load_key(tuner_setup::key(slot).unwrap(),&mut setup).unwrap().unwrap();
+        let mut expected=tuner_setup::DEFAULT;expected[0].masks=[mask,0xfff^mask];
+        assert_eq!(tuner_setup::decode(&setup[..n]),Some(expected));
+    }
+    for option in 0..64 {
+        let mut value=[0;8];assert_eq!(storage.load_key(0x1000+option,&mut value).unwrap(),Some(8));
+        assert_eq!(value,[option as u8;8]);
     }
     assert_eq!(&f.0.borrow().bytes[8192..],profiles);
 }
