@@ -1624,3 +1624,22 @@ repeatability failures keep that message; stable small errors now report
 "LOCAL ERROR <1C - NO REFINE". No changed thresholds or newly permitted curve
 changes. Tests cover near-zero sign changes, genuine nonrepeatability, the
 1c boundary, and refusal to propose/edit a profile for this shared-offset case.
+
+Fresh CAL on installed 76e99c83 completed 97 points, -3..+5 V,
+E0 +3.8c to E8 +24.5c; pending acceptance, output disabled. Compared with
+saved profile 4's endpoints this is +3.7c / +4.2c higher. This supports a
+shared offset in the old-profile verification, without identifying its cause.
+Transcript /tmp/tuner-fresh-cal.serial.log, read-only monitor session 35982.
+Do not flash away this pending result before ACCEPT/VERIFY and explicit save.
+
+No-signal discovery improvement (not yet flashed): previously every empty
+leading semitone point spent the full 5000 ms deadline. Ascending discovery
+with fewer than two retained points and no settled qualified evidence now
+advances after 2000 ms following DAC acknowledgment. All original full timeouts
+remain for output acknowledgments, origin/end checks, established ranges,
+tracking failures and unstable-but-qualified pitch. No larger voltage steps,
+fabricated curve points or relaxed pitch gates. Tests cover the ACK-relative
+deadline and each protected case; live calibration test suite and firmware
+build pass. Logs /tmp/tuner-leading-discovery-tests.log and
+/tmp/tuner-leading-discovery-build.log. Physical boundary equivalence needs
+validation on a later run; allow the current fresh-profile test to finish first.

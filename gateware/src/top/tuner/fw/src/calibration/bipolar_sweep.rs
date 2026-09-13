@@ -59,6 +59,7 @@ pub struct Sweep {
     tracking_failure:Option<TrackingFailure>,
     measured_zero:bool,
     upper_flat_points:u8,
+    saw_qualified:bool,
 }
 impl Sweep {
     pub fn tracking_failure(&self)->Option<TrackingFailure> {self.tracking_failure}
@@ -69,7 +70,7 @@ impl Sweep {
         Some(Self{candidate:Some(Curve::new()),route,density,policy,phase:Phase::Origin,
             state:State::Applying,index:0,token:1,point_started:now,last_now:now,
             last_sequence:None,count:0,minimum:0,maximum:0,sum:0,origin:0,origin_tolerance,origin_error:None,
-            tracking_failure:None,measured_zero:false,upper_flat_points:0})
+            tracking_failure:None,measured_zero:false,upper_flat_points:0,saw_qualified:false})
     }
     fn voltage(&self)->i32 {
         match self.phase {
@@ -84,7 +85,7 @@ impl Sweep {
     fn advance(&mut self,phase:Phase,index:usize,now:u64) {
         if matches!(phase,Phase::CheckEnd) {self.origin_error=None;}
         self.phase=phase;self.index=index;self.token+=1;self.point_started=now;
-        self.state=State::Applying;self.count=0;
+        self.state=State::Applying;self.count=0;self.saw_qualified=false;
     }
     fn restore(&mut self,outcome:Outcome) {
         if matches!(self.state,State::Finished(_)) {return;}
@@ -104,8 +105,18 @@ impl Sweep {
     fn clock(&mut self,now:u64)->bool {
         if now<self.last_now {self.restore(Outcome::Failed(Failure::Clock));return false;}
         self.last_now=now;
+        // Leading range discovery need not spend the full unstable-pitch
+        // deadline on silence/out-of-band inputs. Wait two seconds AFTER DAC
+        // acknowledgment, and never accelerate a point with qualified evidence.
+        // Keep origin/final checks, established curves and ACK failures intact.
+        let empty_leading=matches!(self.phase,Phase::Ascending)
+            && self.candidate.as_ref().map_or(false,|c|c.count<2)
+            && !self.saw_qualified && self.tracking_failure.is_none()
+            && self.upper_flat_points==0
+            && matches!(self.state,State::Measuring{since}
+                if now-since>=2000 && now-since>self.policy.settle_ms);
         if matches!(self.state,State::Applying|State::Measuring{..})
-            && now-self.point_started>=self.policy.point_timeout_ms {
+            && (now-self.point_started>=self.policy.point_timeout_ms || empty_leading) {
             // No DAC acknowledgment is an output failure, not a range boundary.
             if matches!(self.state,State::Applying) {self.output_failed();return true;}
             match self.phase {
@@ -232,6 +243,7 @@ impl Sweep {
                     && now-s.window_end_ms<=100
                     && self.last_sequence.map_or(true,|last|s.sequence>last) {
                     self.last_sequence=Some(s.sequence);
+                    self.saw_qualified|=s.qualified;
                     let checking=matches!(self.phase,Phase::CheckEnd);
                     if checking && s.qualified {
                         self.origin_error=Some(s.millicents.saturating_sub(self.origin));
@@ -300,6 +312,32 @@ impl Sweep {
         panic!("bounded sweep did not finish")
     }
     fn ideal(uv:i32)->i32 {6000000+(uv as i64*1200000/1000000) as i32}
+    #[test] fn only_empty_leading_points_use_short_discovery_deadline() {
+        let make_live=||Sweep::new(Route::new(2,3).unwrap(),Density::Semitone,
+            Policy{settle_ms:350,point_timeout_ms:5000,stable_samples:8,
+                tolerance_millicents:3000},5000,0).unwrap();
+        let mut s=make_live();
+        // An unacknowledged output is never mistaken for a range boundary.
+        s.advance(Phase::Ascending,0,0);
+        assert!(matches!(s.poll(2000,None),Request::Apply{microvolts:-5000000,..}));
+        assert!(s.acknowledge(s.token,2100));
+        assert_eq!(s.poll(4099,None),Request::Wait);
+        assert!(matches!(s.poll(4100,None),Request::Apply{..}));
+        assert_eq!(s.index,1);
+        for phase in [Phase::Origin,Phase::CheckEnd] {
+            let mut s=make_live();s.advance(phase,0,0);s.acknowledge(s.token,0);
+            assert_eq!(s.poll(2000,None),Request::Wait);
+        }
+        let mut s=make_live();s.advance(Phase::Ascending,0,0);s.acknowledge(s.token,0);
+        // Even one settled qualified observation retains the full deadline.
+        assert_eq!(s.poll(500,Some(sample(500,Some(6000000)))),Request::Wait);
+        assert_eq!(s.poll(2000,None),Request::Wait);
+        let mut s=make_live();
+        s.candidate.as_mut().unwrap().add(Point{microvolts:-5000000,millicents:0});
+        s.candidate.as_mut().unwrap().add(Point{microvolts:-4916667,millicents:100000});
+        s.advance(Phase::Ascending,2,0);s.acknowledge(s.token,0);
+        assert_eq!(s.poll(2000,None),Request::Wait);
+    }
     #[test] fn full_bipolar_sweeps_acquire_strictly_upward_after_zero_preflight() {
         for d in [Density::QuarterVolt,Density::Semitone] {
             let (o,curve,trace)=walk(d,|uv|Some(ideal(uv)));
