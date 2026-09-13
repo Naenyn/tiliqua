@@ -1651,3 +1651,35 @@ are untouched. Callback tests cover external/non-external PLL configurations;
 firmware/package build passes. Applies on subsequent boot of the new archive;
 does not alter the currently running scan. Not flashed while the fresh profile
 remains unsaved. Build log /tmp/tuner-no-spread-build.log.
+
+Fresh-profile VERIFY first attempt timed out at D#1 (~38.9 Hz), 21/192:
+mean +0.38c but 5.38c span exceeded the unchanged 3c acceptance limit.
+Repeat without recalibration completed 192/192: worst +1.00c at G4 +0.0c,
+max span 2.67c, final output disabled. Timeout did not repeat at that target;
+cause of transient spread remains unproven. This is recorded in
+/tmp/tuner-fresh-cal.serial.log. Archive d09b6d2e builds successfully and its
+manifest explicitly contains spread_spectrum 0.0, unchanged clock rates,
+firmware 186544 bytes. Await user saving the fresh profile before flashing.
+
+User saved the fresh Local Parks calibration over profile slot 4. d09b6d2e
+flashed with exit zero / Refresh DONE, all option storage preserved. User
+confirmed disabling spread spectrum resolved HDMI flakiness on this setup.
+
+### Standalone chromatic quantizer, first integration
+
+QUANT page provides input/output/0 V note/RUN independently of loaded oscillator
+profiles. Reuses the existing single-output interrupt engine and nominal
+1 V/oct mapping with signed rounding, +/-5 V bounds and existing motherboard
+DAC calibration. No second engine/profile copy/renderer or FPGA changes.
+Calibrated PLAY still uses the measured curve; mode transitions stop output.
+ISR guards standalone-vs-calibrated ownership, input, output, origin and
+chromatic mode. Routing changes, stale CV, rails, watchdog/ACK/budget faults
+retain explicit-stop semantics. Out-of-range CV holds the last valid command.
+Standalone quantization never requires qualified audio and serial marks
+PROFILE=NONE to avoid implying calibrated oscillator pitch accuracy.
+
+Tests cover nominal mapping for every semitone across +/-5 V for all supported
+zero-note settings, hysteresis, holds/reentry/stale stop, invalid routes/faults,
+switching back to calibrated PLAY and menu wiring. 27 focused tests pass
+(including the real Rust fixture's embedded unit tests). Multichannel, scales,
+triggers and optional profile assignment remain follow-up work.

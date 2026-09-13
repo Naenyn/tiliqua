@@ -108,11 +108,28 @@ Advice and local comparison are not a full-range accuracy certificate: verify
 the accepted profile again before saving. Recalibrate rather than fitting
 corrections to a shifted or unstable oscillator response.
 
+## Standalone quantizer
+
+The QUANT menu opens a separate, single-channel chromatic quantizer. It does
+not require a loaded oscillator profile or qualified audio. Select CV input,
+output (both physical 0–3), and the note name for 0 V, then explicitly RUN.
+The output is nominal 1 V/oct over -5..+5 V, with the motherboard's normal
+DAC calibration still applied, but no oscillator-specific correction curve.
+Changing input/output/zero-note or leaving the page stops output; RUN is
+required again. It never arms automatically at startup, recall, or page entry.
+
+The shared engine uses nearest-note rounding with five-cent hysteresis, retains
+the last valid note for out-of-range CV, and stops on stale CV, rails, output
+faults, or missed processing deadlines. STOP commands 0 V, not an audio mute.
+The tuner acquisition continues independently. This first standalone version
+has one active output and no scale selection or trigger input; multichannel
+quantization and optional oscillator-profile correction remain future work.
+No new renderer, pitch engine, FPGA logic, or retained profile copy is added.
+
 ## Corrected pitch-CV playback
 
-PLAY now includes `quantize`: OFF (default) or CHROMATIC. CHROMATIC is the first
-single-channel quantizer integration, temporarily hosted in PLAY rather than a
-separate quantizer page. It rounds incoming pitch to the nearest semitone before
+PLAY includes `quantize`: OFF (default) or CHROMATIC. Unlike standalone QUANT,
+this mode uses the loaded oscillator profile. It rounds incoming pitch to the nearest semitone before
 applying the same measured calibration curve. Midpoint ties round upward; once
 a note is selected, it is retained until pitch moves more than 55 cents from it
 (five cents beyond the usual boundary). Large changes jump directly to the
@@ -132,9 +149,8 @@ prevent a qualified, settled reading; CV quantization does not depend on this
 optional audio check.
 There is no trigger,
 scale selection, polyphonic quantization or automatic output arming yet.
-The planned standalone quantizer must support multiple independent CV channels
-without requiring tuner operation or a calibration profile. Applying an oscillator
-profile is an optional correction stage, not a prerequisite for quantization.
+The standalone quantizer will be extended to multiple independent CV channels.
+Applying an oscillator profile will be optional, not a prerequisite.
 
 Load a profile, keep its oscillator tuning unchanged, then select PLAY (after
 HELP in the page list). PLAY/input selects the pitch-CV source; the output comes

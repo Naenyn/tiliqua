@@ -48,6 +48,8 @@ impl RuntimeControls {
                 OperatingMode::Profiles
             } else if opts.tracker.page.value == crate::options::Page::Play {
                 OperatingMode::Play
+            } else if opts.tracker.page.value == crate::options::Page::Quantizer {
+                OperatingMode::Quantizer
             } else { OperatingMode::Tuner },
             target_millicents: opts.verify.note.value as i32 * 100000
                 + opts.verify.cents.value as i32 * 1000,

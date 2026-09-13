@@ -14,6 +14,7 @@ pub enum Page {
     Settings,
     Help,
     Play,
+    Quantizer,
 }
 
 #[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default,
@@ -102,6 +103,18 @@ pub struct PlayOpts {
     pub quantize: EnumOption<QuantizeMode>,
 }
 
+#[derive(OptionPage, Clone)]
+pub struct QuantizerOpts {
+    #[option(1)]
+    pub input: IntOption<InputParams>,
+    #[option(1)]
+    pub output: IntOption<InputParams>,
+    #[option(60)]
+    pub zero_note: IntOption<NoteParams>,
+    #[option(false)]
+    pub run: ButtonOption<OneShotButtonParams>,
+}
+
 #[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default,
          Serialize, Deserialize)]
 #[strum(serialize_all = "SCREAMING-KEBAB-CASE")]
@@ -156,4 +169,6 @@ pub struct Opts {
     pub help: HelpOpts,
     #[page(Page::Play)]
     pub play: PlayOpts,
+    #[page(Page::Quantizer)]
+    pub quantizer: QuantizerOpts,
 }

@@ -37,6 +37,17 @@ pub fn map_cv(profile:&Profile,microvolts:i32,zero_note:u8)->Result<Target,Mappi
     map_pitch(profile,pitch_from_cv(microvolts,zero_note)?)
 }
 
+/// Nominal 1 V/oct output, independent of an oscillator calibration profile.
+pub fn map_nominal(pitch:i32,zero_note:u8)->Result<Target,MappingError> {
+    if !(12..=108).contains(&zero_note) {return Err(MappingError::InvalidOrigin);}
+    let delta=pitch as i64-zero_note as i64*100_000;
+    let uv=if delta>=0 {(delta*5+3)/6} else {-((-delta*5+3)/6)};
+    let uv=i32::try_from(uv).map_err(|_|MappingError::OutputOutsideLimits)?;
+    let bits=crate::bipolar::encode_voltage(uv).ok_or(MappingError::OutputOutsideLimits)?;
+    Ok(Target{pitch_millicents:pitch,requested_microvolts:uv,
+        applied_microvolts:crate::bipolar::decode_voltage(bits).unwrap(),dac_bits:bits})
+}
+
 /// Nearest chromatic note, ties upward. Five cents of hysteresis beyond each
 /// midpoint prevents ADC noise from retriggering adjacent notes. Euclidean
 /// division preserves the same behavior below note zero.
@@ -69,6 +80,7 @@ pub struct Engine {
     pub last_irq_cycle:usize,
     pub max_gap_cycles:usize,
     pub chromatic:bool,
+    pub standalone:bool,
     quantized_pitch:Option<i32>,
     last_command:Option<u32>,
     target_since:u32,
@@ -77,13 +89,24 @@ impl Engine {
     pub const fn new()->Self {Self{profile:None,active:false,status:"STOPPED - RUN TO START",
         input:0,output:0,zero_note:60,input_uv:0,output_uv:0,pitch:0,sequence:None,
         last_sample:0,pending:None,token:0,counts_per_v:4000,updates:0,max_cycles:0,last_irq_cycle:0,max_gap_cycles:0,
-        chromatic:false,quantized_pitch:None,last_command:None,target_since:0}}
+        chromatic:false,standalone:false,quantized_pitch:None,last_command:None,target_since:0}}
     pub fn arm(&mut self,profile:&Profile,input:u8,output:u8,zero:u8,counts:i32,now:u32,status:u32)->bool {
         if self.active || status&768!=0 || input>3 || output>3 || counts<=0
             || profile.points().len()<2 || !(12..=108).contains(&zero) {
             self.status="CANNOT ARM - CHECK PROFILE";return false;
         }
-        self.profile=Some(profile.clone());self.input=input;self.output=output;self.zero_note=zero;
+        self.profile=Some(profile.clone());self.standalone=false;
+        self.start(input,output,zero,counts,now)
+    }
+    pub fn arm_nominal(&mut self,input:u8,output:u8,zero:u8,counts:i32,now:u32,status:u32)->bool {
+        if self.active || status&768!=0 || input>3 || output>3 || counts<=0 || !(12..=108).contains(&zero) {
+            self.status="CANNOT ARM - CHECK ROUTE";return false;
+        }
+        self.profile=None;self.standalone=true;self.chromatic=true;
+        self.start(input,output,zero,counts,now)
+    }
+    fn start(&mut self,input:u8,output:u8,zero:u8,counts:i32,now:u32)->bool {
+        self.input=input;self.output=output;self.zero_note=zero;
         self.counts_per_v=counts;self.sequence=None;self.last_sample=now;self.pending=None;
         self.quantized_pitch=None;
         self.last_command=None;self.target_since=now;self.output_uv=0;
@@ -126,7 +149,9 @@ impl Engine {
         if self.chromatic {
             pitch=chromatic_pitch(pitch,self.quantized_pitch);
         }
-        let target=match map_pitch(self.profile.as_ref().unwrap(),pitch) {
+        let mapping=if self.standalone {map_nominal(pitch,self.zero_note)}
+            else {map_pitch(self.profile.as_ref().unwrap(),pitch)};
+        let target=match mapping {
             Ok(target)=>target,
             Err(MappingError::Profile(Error::PitchOutsideRange))=>{
                 self.quantized_pitch=None;
@@ -134,6 +159,12 @@ impl Engine {
                     else {"WAITING FOR IN-RANGE PITCH"};
                 // Renew the last acknowledged command's hardware watchdog.
                 // Before any valid target there is nothing to hold: stay off.
+                return Some(self.last_command.unwrap_or(0));
+            }
+            Err(MappingError::OutputOutsideLimits) if self.standalone=>{
+                self.quantized_pitch=None;
+                self.status=if self.last_command.is_some() {"HOLDING - OUTPUT OUT OF RANGE"}
+                    else {"WAITING FOR IN-RANGE PITCH"};
                 return Some(self.last_command.unwrap_or(0));
             }
             Err(_)=>return Some(self.stop("STOPPED - INVALID MAPPING")),
@@ -144,7 +175,8 @@ impl Engine {
         if self.chromatic {self.quantized_pitch=Some(pitch);}
         self.output_uv=target.applied_microvolts;self.pitch=target.pitch_millicents;
         self.token=self.token.wrapping_add(1);self.pending=Some((self.token,now));
-        self.updates=self.updates.wrapping_add(1);self.status="PLAYING - CORRECTED CV";
+        self.updates=self.updates.wrapping_add(1);
+        self.status=if self.standalone {"QUANTIZING - NOMINAL CV"} else {"PLAYING - CORRECTED CV"};
         let command=target.dac_bits as u32 | ((self.output as u32)<<16) | (1<<18)
             | ((self.input as u32)<<19) | ((self.token as u32)<<21) | (1<<29);
         self.last_command=Some(command);Some(command)
@@ -154,6 +186,41 @@ impl Engine {
 #[cfg(test)] mod tests {
     use super::*;
     use crate::oscillator_calibration::Point;
+    #[test] fn nominal_mapping_covers_bipolar_notes_without_profile() {
+        for origin in 12..=108 {
+            for step in -60..=60 {
+                let target=map_nominal(origin as i32*100_000+step*100_000,origin).unwrap();
+                let ideal=step as f64*1_000_000.0/12.0;
+                assert!((target.applied_microvolts as f64-ideal).abs()<=126.0);
+            }
+            assert!(map_nominal(origin as i32*100_000+6_100_000,origin).is_err());
+            assert!(map_nominal(origin as i32*100_000-6_100_000,origin).is_err());
+        }
+        assert!(map_nominal(0,0).is_err());
+    }
+    #[test] fn standalone_arms_without_profile_and_preserves_safety_and_hysteresis() {
+        let mut e=Engine::new();
+        assert!(e.arm_nominal(1,2,60,4000,0,0));assert!(e.profile.is_none());
+        let command=e.tick(1,sample(1,200),0,true).unwrap();
+        assert_eq!(e.pitch,6_100_000);assert_eq!(e.output_uv,83_250);
+        let command=e.tick(2,sample(2,160),ack(command),true).unwrap();
+        assert_eq!(e.pitch,6_100_000);
+        assert_eq!((command>>16)&3,2);
+        assert_eq!(e.tick(3,sample(3,24000),ack(command),true),Some(command));
+        assert!(e.active);assert_eq!(e.output_uv,83_250);
+        let command=e.tick(4,sample(4,-4000),ack(command),true).unwrap();
+        assert_eq!(e.output_uv,-1_000_000);
+        assert_eq!(e.tick(14,sample(4,-4000),ack(command),true),Some(0));
+        assert_eq!(e.status,"STOPPED - CV STALE");
+        assert!(e.arm_nominal(0,3,60,4000,20,0));
+        assert_eq!(e.tick(21,sample(5,0),0,false),Some(0));
+        assert!(!e.active);
+        assert!(e.arm(&curve(),1,1,60,4000,30,0));assert!(!e.standalone);
+        e.stop("test");
+        assert!(!e.arm_nominal(4,0,60,4000,31,0));
+        assert!(!e.arm_nominal(0,4,60,4000,31,0));
+        assert!(!e.arm_nominal(0,1,60,4000,31,512));
+    }
     #[test] fn chromatic_rounding_and_hysteresis_are_symmetric_across_zero() {
         for note in -24..140 {
             let center=note*100_000;

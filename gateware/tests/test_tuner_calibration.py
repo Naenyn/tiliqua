@@ -45,6 +45,21 @@ def test_all_menu_pages_fit_without_hidden_scrolling():
         constants["MENU_Y"] + constants["MENU_H"]
 
 
+def test_standalone_quantizer_menu_and_mode_have_independent_controls():
+    firmware = Path(__file__).parents[1] / "src/top/tuner/fw/src"
+    options=(firmware/'options.rs').read_text()
+    fields=re.findall(r'pub (\w+):',options.split('pub struct QuantizerOpts {')[1].split('}')[0])
+    assert fields==['input','output','zero_note','run']
+    main=(firmware/'main.rs').read_text()
+    assert '(Page::Quantizer, 2) => "0v note"' in main
+    assert 'page==Page::Quantizer && index==2' in main
+    assert 'Page::Quantizer => "QUANT"' in main
+    assert 'nominal==play.standalone' in main
+    assert 'output==play.output && zero==play.zero_note' in main
+    assert 'play.arm_nominal(input,output,zero' in main
+    assert 'Page::Quantizer' in (firmware/'runtime.rs').read_text()
+
+
 def test_playback_audio_verifier_is_pinned_before_measurement_reads():
     main = (Path(__file__).parents[1] / "src/top/tuner/fw/src/main.rs").read_text()
     pin = main.index("let playback_audio=if controls.mode==runtime::OperatingMode::Play")

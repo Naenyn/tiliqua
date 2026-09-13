@@ -115,15 +115,18 @@ fn playback_cycles()->usize {
 }
 
 fn timer0_handler() {
-    let (now,allowed,input,chromatic)=with_app(|app| {
+    let (now,allowed,input,chromatic,nominal,output,zero)=with_app(|app| {
         // Never perform an unbounded motherboard-I2C transaction in this ISR.
         // Encoder/options and PMOD LEDs are all CSR-backed and deterministic.
         app.now_ms += PLAYBACK_PERIOD_MS as u64;
         if app.now_ms%TIMER0_ISR_PERIOD_MS as u64==0 {app.ui.update_realtime();}
         // Measurement bank selection is owned by the foreground reader, not
         // the encoder ISR. All four acquisition lanes run independently.
-        (app.now_ms as u32,app.ui.opts.tracker.page.value==Page::Play,app.ui.opts.play.input.value,
-            app.ui.opts.play.quantize.value==options::QuantizeMode::Chromatic)
+        let nominal=app.ui.opts.tracker.page.value==Page::Quantizer;
+        (app.now_ms as u32,nominal || app.ui.opts.tracker.page.value==Page::Play,
+            if nominal {app.ui.opts.quantizer.input.value} else {app.ui.opts.play.input.value},
+            nominal || app.ui.opts.play.quantize.value==options::QuantizeMode::Chromatic,
+            nominal,app.ui.opts.quantizer.output.value,app.ui.opts.quantizer.zero_note.value)
     });
     critical_section::with(|cs| {
         let mut play=PLAYBACK.borrow_ref_mut(cs);
@@ -139,7 +142,8 @@ fn timer0_handler() {
             }
         }
         play.last_irq_cycle=start;
-        let allowed=allowed && input==play.input && chromatic==play.chromatic;
+        let allowed=allowed && input==play.input && chromatic==play.chromatic
+            && nominal==play.standalone && (!nominal || (output==play.output && zero==play.zero_note));
         if let Some(command)=play.tick(now,tuner.cv_sample().read().value().bits(),
             tuner.cal_status().read().value().bits(),allowed) {
             tuner.cal_command().write(|w|unsafe{w.value().bits(command)});
@@ -607,6 +611,7 @@ impl MenuSnapshot {
             Page::Settings => "SETTINGS",
             Page::Help => "HELP",
             Page::Play => "PLAY",
+            Page::Quantizer => "QUANT",
         };
         let page_bold = opts.selected().is_none();
         let options = opts.view().options();
@@ -619,6 +624,7 @@ impl MenuSnapshot {
                     // acquired continuously, this selects only tuner focus.
                     (Page::Tuner, 0) => "focus",
                     (Page::Calibrate, 2) => "0v note",
+                    (Page::Quantizer, 2) => "0v note",
                     (Page::Verify, 0) => "note",
                     (Page::Profiles, 1) => "name pos",
                     (Page::Profiles, 2) => "letter",
@@ -627,9 +633,12 @@ impl MenuSnapshot {
                     (Page::Settings, 2) => "reset",
                     _ => option.name(),
                 };
-                let value=if (page==Page::Verify && index==0) || (page==Page::Calibrate && index==2) {
+                let value=if (page==Page::Verify && index==0) || (page==Page::Calibrate && index==2)
+                    || (page==Page::Quantizer && index==2) {
                     let mut value=OptionString::new();
-                    let note=if page==Page::Verify {opts.verify.note.value} else {opts.calibrate.zero_note.value};
+                    let note=if page==Page::Verify {opts.verify.note.value}
+                        else if page==Page::Quantizer {opts.quantizer.zero_note.value}
+                        else {opts.calibrate.zero_note.value};
                     pitch_units::write_note(&mut value,note as i32).ok();value
                 } else if page==Page::Profiles && index==2 {
                     let mut value=OptionString::new();
@@ -1020,7 +1029,35 @@ fn publish_playback(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,
     publish_markers(display,Markers([None;4]),false,menu);
 }
 
-pub fn playback_visible()->bool {with_app(|app|app.ui.opts.tracker.page.value==Page::Play)}
+fn publish_quantizer(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,menu:bool) {
+    let (input,output,zero)=with_app(|app|(app.ui.opts.quantizer.input.value,
+        app.ui.opts.quantizer.output.value,app.ui.opts.quantizer.zero_note.value));
+    let (active,status,uv,out,pitch,updates,cycles)=critical_section::with(|cs| {
+        let p=PLAYBACK.borrow_ref(cs);
+        (p.active,p.status,p.input_uv,p.output_uv,p.pitch,p.updates,p.max_cycles)
+    });
+    let mut line=String::<96>::new();
+    write_centered(text,4,"QUANTIZER",28);
+    write!(line,"PITCH CV IN {} -> V/OCT OUT {}",input,output).ok();
+    write_centered(text,10,&line,38);line.clear();
+    write_centered(text,14,"CHROMATIC; NOMINAL 1 V/OCT",34);
+    write_centered(text,17,"NO OSCILLATOR PROFILE APPLIED",34);
+    write!(line,"0 V = ").ok();pitch_units::write_note(&mut line,zero as i32).ok();
+    write_centered(text,21,&line,32);line.clear();
+    write_centered(text,24,"OUTPUT RANGE -5 TO +5 V",34);
+    write_centered(text,27,"RUN STARTS / STOPS; EXIT STOPS",34);
+    write_centered(text,30,status,42);
+    write!(line,"IN {:+.4} V -> OUT {:+.4} V",uv as f32/1e6,out as f32/1e6).ok();
+    write_centered(text,34,&line,42);line.clear();
+    if active && updates>0 {pitch_units::write_pitch(&mut line,pitch).ok();}
+    else {write!(line,"RUN TO QUANTIZE").ok();}
+    write_centered(text,37,&line,32);line.clear();
+    write!(line,"UPDATES {} MAX {} CPU CYCLES",updates,cycles).ok();
+    write_centered(text,40,&line,42);
+    publish_markers(display,Markers([None;4]),false,menu);
+}
+
+pub fn playback_visible()->bool {with_app(|app|matches!(app.ui.opts.tracker.page.value,Page::Play|Page::Quantizer))}
 pub fn write_playback_status(out:&mut impl core::fmt::Write,value:ChannelMeasurement)->core::fmt::Result {
     let now=with_app(|app|app.now_ms as u32);
     let (active,status,input,output,uv,voltage,updates,cycles,gap,pitch,chromatic,settled)=critical_section::with(|cs| {
@@ -1031,6 +1068,10 @@ pub fn write_playback_status(out:&mut impl core::fmt::Write,value:ChannelMeasure
     writeln!(out,"PLAY ACTIVE={} STATUS={} IN={} OUT={} INPUT_UV={} OUTPUT_UV={} UPDATES={} MAX_CYCLES={} MAX_GAP_CYCLES={}",
         active,status,input,output,uv,voltage,updates,cycles,gap)?;
     writeln!(out,"PLAY QUANTIZE={}",if chromatic {"CHROMATIC"} else {"OFF"})?;
+    if with_app(|app|app.ui.opts.tracker.page.value==Page::Quantizer) {
+        writeln!(out,"QUANTIZER MAPPING=NOMINAL_1V_OCT PROFILE=NONE TARGET_MC={} OUTPUT_RANGE_UV=-5000000..5000000",pitch)?;
+        return Ok(());
+    }
     if active && value.valid && value.qualified {
         if settled {
             writeln!(out,"PLAY AUDIO_HZ={:.3} TARGET_MC={} ERROR_C={:+.2}",value.frequency_hz,pitch,
@@ -1208,7 +1249,7 @@ fn poll_ui_frame() -> UiFrame {
         let menu_active = app.ui.draw();
         app.ui.set_menu_visible(menu_active);
         UiFrame {
-            run_play:app.ui.opts.play.run.poll(),
+            run_play:app.ui.opts.play.run.poll() | app.ui.opts.quantizer.run.poll(),
             run_calibration: app.ui.opts.calibrate.run.poll(),
             accept_scan:app.ui.opts.calibrate.accept.poll(),
             discard_scan:app.ui.opts.calibrate.discard.poll(),
@@ -1500,7 +1541,8 @@ fn run(resources: &mut RuntimeResources) -> ! {
             if ui_elapsed_ms<ui_period_ms {continue;}
             last_ui_ms=now;
             let ui_frame = poll_ui_frame();
-            if ui_frame.run_play && ui_frame.controls.mode==runtime::OperatingMode::Play {
+            if ui_frame.run_play && matches!(ui_frame.controls.mode,
+                runtime::OperatingMode::Play|runtime::OperatingMode::Quantizer) {
                 critical_section::with(|cs| {
                     let mut play=PLAYBACK.borrow_ref_mut(cs);
                     if play.active {
@@ -1508,7 +1550,14 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     } else if calibration.pending_profile.is_some() {
                         play.status="ACCEPT OR DISCARD CAL FIRST";
                     } else if !calibration.active() {
-                        if let (Some(profile),Some(route))=(calibration.profile.as_ref(),calibration.profile_route) {
+                        if ui_frame.controls.mode==runtime::OperatingMode::Quantizer {
+                            let (input,output,zero)=with_app(|app|(app.ui.opts.quantizer.input.value,
+                                app.ui.opts.quantizer.output.value,app.ui.opts.quantizer.zero_note.value));
+                            if play.arm_nominal(input,output,zero,counts_per_v as i32,
+                                ui_frame.now_ms as u32,tuner.cal_status().read().value().bits()) {
+                                tuner.cv_channel().write(|w|unsafe{w.channel().bits(input)});
+                            }
+                        } else if let (Some(profile),Some(route))=(calibration.profile.as_ref(),calibration.profile_route) {
                             let input=with_app(|app|app.ui.opts.play.input.value);
                             if play.arm(profile,input,route.output(),ui_frame.controls.zero_note,
                                 counts_per_v as i32,ui_frame.now_ms as u32,tuner.cal_status().read().value().bits()) {
@@ -1588,7 +1637,8 @@ fn run(resources: &mut RuntimeResources) -> ! {
             }
 
             let calibration_view = matches!(ui_frame.controls.mode,
-                runtime::OperatingMode::Calibrator | runtime::OperatingMode::Verify | runtime::OperatingMode::Profiles | runtime::OperatingMode::Play);
+                runtime::OperatingMode::Calibrator | runtime::OperatingMode::Verify | runtime::OperatingMode::Profiles
+                    | runtime::OperatingMode::Play | runtime::OperatingMode::Quantizer);
             let requested_scene = if ui_frame.controls.display_mode == DisplayMode::Linear {
                 ui_scene::Scene::Linear
             } else { ui_scene::Scene::Spiral };
@@ -1744,7 +1794,9 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 // Dynamic fields still replace their full bounded footprint.
                 if calibration_view {
                     text.clear(false);
-                    if controls.mode == runtime::OperatingMode::Play {
+                    if controls.mode == runtime::OperatingMode::Quantizer {
+                        publish_quantizer(&tuner_display,&mut text,ui_frame.menu_active);
+                    } else if controls.mode == runtime::OperatingMode::Play {
                         publish_playback(&tuner_display,&mut text,&calibration,controls,
                             measurements.channel(calibration.input),ui_frame.menu_active);
                     } else if controls.mode == runtime::OperatingMode::Profiles {
