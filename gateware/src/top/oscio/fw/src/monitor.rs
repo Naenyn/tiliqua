@@ -499,9 +499,9 @@ where
     let mut line: String<48> = String::new();
 
     if ready {
-        write!(line, "CH{}  {}", ch + 1, voltage_text(measurement.level)).ok();
+        write!(line, "CH{}  {}", ch, voltage_text(measurement.level)).ok();
     } else {
-        write!(line, "CH{}  --", ch + 1).ok();
+        write!(line, "CH{}  --", ch).ok();
     }
     Text::new(&line, Point::new(8, 23), bold).draw(display)?;
 

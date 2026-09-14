@@ -128,6 +128,9 @@ def top_level_cli(
                         help="nextpnr: deterministic placement seed (default: tool default).")
     parser.add_argument('--timing-strict', action='store_true',
                         help="nextpnr: fail the build when routed timing is not met.")
+    parser.add_argument('--spread-spectrum', type=float, default=0.01,
+                        choices=[0.0, 0.01],
+                        help="External PLL spread spectrum (0.0 disables it; default: 0.01).")
     if ila_supported:
         parser.add_argument('--ila', action='store_true',
                             help="debug: add ila to design, program bitstream after build, poll UART for data.")
@@ -237,7 +240,7 @@ def top_level_cli(
             clk0_hz=kwargs["clock_settings"].frequencies.audio,
             clk1_hz=kwargs["clock_settings"].frequencies.dvi,
             clk1_inherit=kwargs["clock_settings"].dynamic_modeline,
-            spread_spectrum=0.01)
+            spread_spectrum=args.spread_spectrum)
         # Ensure PnR/LPF constraints match the external PLL settings above
         hw_platform.resources[('clkex', 0)].clock.frequency = archiver.external_pll_config.clk0_hz
         hw_platform.resources[('clkex', 1)].clock.frequency = archiver.external_pll_config.clk1_hz

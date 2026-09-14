@@ -1,6 +1,6 @@
 # OSCIO development handoff
 
-Updated: 2026-09-02
+Updated: 2026-09-13
 
 This document describes the implemented OSCIO scope and CV/LFO design,
 its verification state, and the main constraints to preserve during future
@@ -37,6 +37,12 @@ The normal four-channel oscilloscope supports:
 - edge-aware interpolation for sharp waveforms; and
 - grid, palette, hue, intensity, rotation, and persistent settings.
 
+Clean acquisition now uses a local three-sample median only near detected
+edges. It preserves monotonic transitions bit-for-bit instead of snapping to
+distant window endpoints, which could fabricate backward hooks on rounded
+square-wave edges. It may reduce genuine isolated extrema as well as spikes;
+raw bypasses this display-only cleanup. Both modes retain display resampling.
+
 ### CV/LFO
 
 The CV/LFO view is intended for control voltages, gates, envelopes, and LFOs.
@@ -71,7 +77,7 @@ required.
 
 - Rectangular displays show all four lanes across the active display.
 - A 720x720 display uses a centered circular-safe frame and paginates the monitor
-  into CH 1-2 and CH 3-4.
+  into CH 0-1 and CH 2-3.
 - The channel-pair selector appears only on the circular display.
 
 The normal menu is right-aligned on rectangular video modes and centered inside
@@ -79,14 +85,21 @@ the safe region on 720x720 video.
 
 ## Menu organization
 
+All user-facing input/output references use the physical jack labels **0-3**:
+input 0 passes through to output 0, and likewise for 1, 2, and 3. Trigger
+source values and CV/LFO statistics use the same numbering. Legacy Rust
+option identifiers (`Ch1` through `Ch4`, `ch1_*` through `ch4_*`, and
+`Chan12`/`Chan34`) are retained for saved-setting compatibility; they map in
+order to physical jacks 0-3. Hardware indices were already zero-based.
+
 The menu is mode-aware and begins on the `OSCIO` page with `mode` as the first
 item.
 
 Scope navigation:
 
 1. `OSCIO`: mode, time/div, acquire
-2. `CH 1-2`: offset, scale, and enable for channels 1 and 2
-3. `CH 3-4`: offset, scale, and enable for channels 3 and 4
+2. `CH 0-1`: offset, scale, and enable for channels 0 and 1
+3. `CH 2-3`: offset, scale, and enable for channels 2 and 3
 4. `TRIGGER`: type, source, level, and filter
 5. `DISPLAY`: grid, grid intensity, trace intensity, hue, and palette
 6. `SYSTEM`: UI hue, hide behavior, rotation, save, and reset
@@ -95,7 +108,7 @@ Scope navigation:
 CV/LFO navigation:
 
 1. `OSCIO`: mode, time/div, max freq, plus channels on 720x720
-2. `RANGES`: CH1 through CH4
+2. `RANGES`: CH0 through CH3
 3. `DISPLAY`: trace intensity, hue, and palette
 4. `SYSTEM`
 5. `HELP`
@@ -144,6 +157,25 @@ definitions when the build changes them.
 
 ## Timing and resource state
 
+The 2026-09-13 conservative edge-cleanup build uses `--timing-strict --seed 3
+--spread-spectrum 0.0 --fs-192khz` and ASQ 2/18. Its final routed clocks all pass:
+
+```text
+dvi5x 403.71 MHz required 371.33 MHz
+dvi    79.50 MHz required  74.25 MHz
+audio  58.88 MHz required  49.15 MHz
+sync   61.63 MHz required  60.00 MHz
+```
+
+Archive: `oscio-3015209c-edge-clean-spread0-seed3-r5.tar.gz`. Its base commit
+tag does not include the uncommitted cleanup and CH0-CH3 labeling changes.
+Bitstream SHA-256:
+`4c7686d01711cf5f33d041293d441b4a0e05d94ad81af2cc228e305f9554237a`.
+The selected DSP/raster/frequency/CDC suite passes 75 tests plus 12 subtests;
+the rounded-edge regression fails in six subcases against the old code.
+Hardware visual confirmation is still required. The known-working earlier
+route below is retained as a reference, not the bitstream in this new archive.
+
 The earlier default route missed the 60 MHz sync target. The retained seed-3
 route closes all domains; the relevant report is
 `build/oscio-r5/top-seed3-rangefix.tim`:
@@ -174,7 +206,7 @@ source ~/.zshrc
 pdm run pytest tests/test_dsp.py tests/test_raster.py tests/test_frequency_detector.py
 
 TILIQUA_ASQ_I_BITS=2 TILIQUA_ASQ_WIDTH=18 \
-  pdm run oscio build --fs-192khz
+  pdm run oscio build --fs-192khz --timing-strict --seed 3 --spread-spectrum 0.0
 
 pdm flash archive build/oscio-r5/<archive>.tar.gz --slot 7 --noconfirm
 ```

@@ -1,5 +1,5 @@
 pub const UI_NAME: &str = "OSCIO";
-pub const UI_TAG: &str = "aac4efca";
+pub const UI_TAG: &str = "3015209c";
 pub const HW_REV_MAJOR: u32 = 5;
 pub const USE_EXTERNAL_PLL: bool = true;
 pub const CLOCK_SYNC_HZ: u32 = 60000000;
@@ -29,12 +29,12 @@ matching output with no USB or delay-line processing.
 
     .. code-block:: text
 
+        in0 ───────────────────────► out0
         in1 ───────────────────────► out1
         in2 ───────────────────────► out2
         in3 ───────────────────────► out3
-        in4 ───────────────────────► out4
 
-        trigger source: selectable from in1, in2, in3, or in4
+        trigger source: selectable from in0, in1, in2, or in3
 
 Turn the encoder to move through the menu. Press it to select a page or
 parameter, then turn to edit. The menu hides automatically; turning resumes
@@ -44,13 +44,13 @@ On the HELP page, turn the encoder to scroll. Select the HELP page title to
 return to the preceding menu pages.
 
 OSCIO is the first menu page, with mode as its first option. In scope mode it
-also provides time/div and acquire. CHANNEL 1-2 and CHANNEL 3-4 then set each
+also provides time/div and acquire. CHANNEL 0-1 and CHANNEL 2-3 then set each
 trace's vertical offset, volts per division, and visibility. The TRIGGER page
 contains trigger type, source, level, and filter. These channel and trigger
 pages are omitted from menu navigation in CV/LFO mode.
 
 In CV/LFO mode the OSCIO page provides time/div and max freq. On a 720x720
-display it also provides channels, which switches between CH 1-2 and CH 3-4;
+display it also provides channels, which switches between CH 0-1 and CH 2-3;
 rectangular displays show all four and omit that option. The RANGES page gives
 every channel an independent full-window voltage range:
 -5..+5 V, -10..+10 V, 0..+10 V, or 0..+5 V.
@@ -79,11 +79,11 @@ Start with off or 5kHz and use the highest cutoff that gives stable lock. Lower
 cutoffs (1.2kHz, 300Hz, and 75Hz) reject progressively more harmonics, but may
 attenuate the trigger waveform or make its crossing arrive later.
 
-Use acquire clean for normal viewing. It is the recommended default and makes
-square, saw, and other sharp-edged waves look more like their intended shape.
-Use acquire raw when diagnosing the input itself and you want OSCIO to show the
-calibrated samples without edge cleanup. Raw may make sharp transitions look
-rougher or spikier, so it is usually less useful as the everyday display mode.
+Acquire clean reduces local spikes near detected edges using nearby samples.
+Rounded transitions are preserved, not sharpened into guessed square edges.
+Cleanup can also reduce genuine one-sample peaks. Use acquire raw to inspect
+the calibrated samples without this cleanup. Both modes share the display
+resampler; neither can recover detail beyond the input's sampling bandwidth.
 
 DISPLAY sets trace intensity, trace hue, and graph palette. Scope mode also
 shows grid style and grid intensity; those unused controls are omitted in

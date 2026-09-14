@@ -276,7 +276,7 @@ class DSPTests(unittest.TestCase):
         self.assertEqual(edge[:7], [-0.5] * 7)
         self.assertEqual(edge[7], 0.5)
 
-    def test_discontinuity_reconstruct_sharpens_settling_edge(self):
+    def test_discontinuity_reconstruct_limits_local_overshoot(self):
         m = Module()
         m.submodules.dut = dut = dsp.DiscontinuityReconstruct(shape=ASQ)
         samples = ([-0.5] * 20 +
@@ -301,7 +301,60 @@ class DSPTests(unittest.TestCase):
         sim.add_testbench(testbench)
         sim.run()
 
-        self.assertEqual(set(outputs), {-0.5, 0.5})
+        expected = samples[8:-8]
+        expected[23 - 8] = 0.45
+        expected[24 - 8] = 0.5
+        self.assertEqual(outputs, [fixed.Const(v, shape=ASQ).as_float()
+                                   for v in expected])
+
+    def test_reconstruct_preserves_rounded_edges_and_backpressure(self):
+        # The old endpoint snap fabricated a backward hook on a monotonic
+        # exponential when the moving-window detector stopped qualifying it.
+        # Exercise both implementations, both polarities, offsets, different
+        # settling times, hard edges, raw bypass, and stalled consumers.
+        for multichannel in (False, True):
+            for tau in (0, 1, 3, 6, 12, 24):
+                with self.subTest(multichannel=multichannel, tau=tau):
+                    samples = [0.0 if n < 24 else
+                               (0.6 if tau == 0 else
+                                0.6 * (1 - math.exp(-(n - 24) / tau)))
+                               for n in range(128)]
+                    samples += list(reversed(samples))
+                    frames = [[v, -v, v - 0.3, 0.2] for v in samples]
+                    dut = (dsp.MultichannelDiscontinuityReconstruct(
+                        n_channels=4, shape=ASQ) if multichannel else
+                        dsp.DiscontinuityReconstruct(shape=ASQ))
+                    outputs = []
+                    expected = [[fixed.Const(v, shape=ASQ).as_value().value
+                                 for v in (frame if multichannel else frame[:1])]
+                                for frame in frames[8:-8]]
+
+                    async def stimulus(ctx):
+                        for n, frame in enumerate(frames):
+                            if multichannel:
+                                ctx.set(dut.enable, (n // 11) % 2)
+                            values = [fixed.Const(v, shape=ASQ) for v in frame]
+                            await stream.put(ctx, dut.i,
+                                             values if multichannel else values[0])
+
+                    async def testbench(ctx):
+                        for cycle in range(10000):
+                            ctx.set(dut.o.ready, cycle % 7 >= 3)
+                            if ctx.get(dut.o.valid & dut.o.ready):
+                                outputs.append([
+                                    ctx.get(dut.o.payload[ch]).as_value().value
+                                    for ch in range(4)] if multichannel else
+                                    [ctx.get(dut.o.payload).as_value().value])
+                            await ctx.tick()
+                            if len(outputs) == len(expected):
+                                break
+                        self.assertEqual(outputs, expected)
+
+                    sim = Simulator(dut)
+                    sim.add_clock(1e-6)
+                    sim.add_process(stimulus)
+                    sim.add_testbench(testbench)
+                    sim.run()
 
     def test_discontinuity_reconstruct_preserves_smooth_signal(self):
         m = Module()
@@ -409,6 +462,59 @@ class DSPTests(unittest.TestCase):
         sim.run()
 
         self.assertEqual(outputs, expected)
+
+    def test_multichannel_reconstruct_matches_local_cleanup_reference(self):
+        dut = dsp.MultichannelDiscontinuityReconstruct(n_channels=4, shape=ASQ)
+        samples = ([-0.5] * 24 + [-0.25, 0.10, 0.40, 0.60, 0.45] +
+                   [0.5] * 24 + [0.25, -0.10, -0.40, -0.60, -0.45] +
+                   [-0.5] * 24)
+        # Different sign, amplitude, and DC offset for each channel.
+        frames = [[fixed.Const(v, shape=ASQ).as_value().value
+                   for v in (sample, -sample, sample / 2, sample + 0.7)]
+                  for sample in samples]
+        expected = []
+        for n in range(8, len(frames) - 8):
+            result = []
+            for ch in range(4):
+                left, right = frames[n - 8][ch], frames[n + 8][ch]
+                step = abs(right - left)
+                qualifies = (step >= dut.min_step and
+                             abs(frames[n - 7][ch] - left) * 32 < step and
+                             abs(right - frames[n + 7][ch]) * 32 < step)
+                result.append(sorted(frames[k][ch] for k in (n - 1, n, n + 1))[1]
+                              if qualifies else frames[n][ch])
+            expected.append(result)
+        self.assertNotEqual(expected, frames[8:-8])
+
+        async def stimulus(ctx):
+            for frame in frames:
+                await stream.put(ctx, dut.i, [fixed.Const(v / (1 << ASQ.f_bits), shape=ASQ)
+                                             for v in frame])
+
+        async def testbench(ctx):
+            outputs = []
+            held = None
+            for cycle in range(3000):
+                ctx.set(dut.o.ready, cycle % 9 >= 4)
+                valid = ctx.get(dut.o.valid)
+                payload = [ctx.get(dut.o.payload[ch]).as_value().value
+                           for ch in range(4)]
+                if held is not None:
+                    self.assertTrue(valid)
+                    self.assertEqual(payload, held)
+                held = payload if valid and not ctx.get(dut.o.ready) else None
+                if valid and ctx.get(dut.o.ready):
+                    outputs.append(payload)
+                await ctx.tick()
+                if len(outputs) == len(expected):
+                    break
+            self.assertEqual(outputs, expected)
+
+        sim = Simulator(dut)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
 
     def test_multichannel_fixed_point_convert_rounds_symmetrically(self):
         from tiliqua.raster import PSQ

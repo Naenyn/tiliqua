@@ -29,24 +29,24 @@ enum MenuRow {
 }
 
 const CHAN12_ROWS: &[MenuRow] = &[
-    MenuRow::Header("Channel 1"),
+    MenuRow::Header("Channel 0"),
     MenuRow::Opt(0, "offset"),
     MenuRow::Opt(1, "scale"),
     MenuRow::Opt(2, "enabled"),
     MenuRow::Spacer,
-    MenuRow::Header("Channel 2"),
+    MenuRow::Header("Channel 1"),
     MenuRow::Opt(3, "offset"),
     MenuRow::Opt(4, "scale"),
     MenuRow::Opt(5, "enabled"),
 ];
 
 const CHAN34_ROWS: &[MenuRow] = &[
-    MenuRow::Header("Channel 3"),
+    MenuRow::Header("Channel 2"),
     MenuRow::Opt(0, "offset"),
     MenuRow::Opt(1, "scale"),
     MenuRow::Opt(2, "enabled"),
     MenuRow::Spacer,
-    MenuRow::Header("Channel 4"),
+    MenuRow::Header("Channel 3"),
     MenuRow::Opt(3, "offset"),
     MenuRow::Opt(4, "scale"),
     MenuRow::Opt(5, "enabled"),
@@ -79,10 +79,10 @@ const SCOPE_ROWS: &[MenuRow] = &[
 ];
 
 const MONITOR_ROWS: &[MenuRow] = &[
-    MenuRow::Opt(0, "CH1"),
-    MenuRow::Opt(1, "CH2"),
-    MenuRow::Opt(2, "CH3"),
-    MenuRow::Opt(3, "CH4"),
+    MenuRow::Opt(0, "CH0"),
+    MenuRow::Opt(1, "CH1"),
+    MenuRow::Opt(2, "CH2"),
+    MenuRow::Opt(3, "CH3"),
 ];
 
 const DISPLAY_ROWS: &[MenuRow] = &[

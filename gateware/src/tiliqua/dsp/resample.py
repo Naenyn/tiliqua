@@ -372,14 +372,16 @@ class HoldResample(wiring.Component):
 
 class DiscontinuityReconstruct(wiring.Component):
 
-    """Sharpen hard display edges without modifying smooth waveforms.
+    """Conservative display-only spike cleanup around detected edges.
 
-    The center of a seventeen-sample window is replaced by its nearer endpoint only
-    when the endpoint separation is much larger than the local motion at both
-    ends. This removes short codec settling/overshoot around square and saw
-    transitions, while a sine or ramp fails the 32:1 step-to-slope test and is
-    passed through unchanged. The visual path gains eight input samples of
-    latency; sample rate and throughput are unchanged.
+    A seventeen-sample window detects edges with quiet endpoints. At those
+    edges, clamp the center to the interval between its immediate neighbors
+    (a three-point median), rather than guessing the underlying plateau.
+    Monotonic transitions are therefore bit-exact, even when the detector
+    changes its decision midway through a rounded edge. Local overshoot can
+    be reduced, but genuine one-sample extrema can also be affected; raw mode
+    on the multichannel variant bypasses this cleanup. The visual path retains
+    eight input samples of latency and its original startup/handshake behavior.
     """
 
     def __init__(self, *, shape=ASQ, min_step=0.02):
@@ -407,33 +409,27 @@ class DiscontinuityReconstruct(wiring.Component):
         left = extended(history[0])
         left_next = extended(history[1])
         center = extended(history[8])
+        center_prev = extended(history[7])
+        center_next = extended(history[9])
         right_prev = extended(history[15])
         right = extended(self.i.payload)
 
         left_delta = Signal(signed(width + 2))
         right_delta = Signal(signed(width + 2))
         step_delta = Signal(signed(width + 2))
-        center_left_delta = Signal(signed(width + 2))
-        center_right_delta = Signal(signed(width + 2))
         left_motion = Signal(unsigned(width + 2))
         right_motion = Signal(unsigned(width + 2))
         step = Signal(unsigned(width + 2))
-        center_left = Signal(unsigned(width + 2))
-        center_right = Signal(unsigned(width + 2))
+        neighbor_low = Mux(center_prev < center_next, center_prev, center_next)
+        neighbor_high = Mux(center_prev < center_next, center_next, center_prev)
 
         m.d.comb += [
             left_delta.eq(left_next - left),
             right_delta.eq(right - right_prev),
             step_delta.eq(right - left),
-            center_left_delta.eq(center - left),
-            center_right_delta.eq(center - right),
             left_motion.eq(Mux(left_delta < 0, -left_delta, left_delta)),
             right_motion.eq(Mux(right_delta < 0, -right_delta, right_delta)),
             step.eq(Mux(step_delta < 0, -step_delta, step_delta)),
-            center_left.eq(Mux(center_left_delta < 0,
-                               -center_left_delta, center_left_delta)),
-            center_right.eq(Mux(center_right_delta < 0,
-                                -center_right_delta, center_right_delta)),
             self.i.ready.eq(~pending | self.o.ready),
             self.o.valid.eq(pending),
             self.o.payload.eq(result),
@@ -461,7 +457,8 @@ class DiscontinuityReconstruct(wiring.Component):
             with m.Else():
                 with m.If(reconstruct):
                     m.d.sync += result.as_value().eq(
-                        Mux(center_left <= center_right, left, right))
+                        Mux(center < neighbor_low, neighbor_low,
+                            Mux(center > neighbor_high, neighbor_high, center)))
                 with m.Else():
                     m.d.sync += result.eq(history[8])
                 m.d.sync += pending.eq(1)
@@ -522,33 +519,29 @@ class MultichannelDiscontinuityReconstruct(wiring.Component):
         left = extended(history_at(0))
         left_next = extended(history_at(1))
         center = extended(history_at(8))
+        center_prev = extended(history_at(7))
+        center_next = extended(history_at(9))
         right_prev = extended(history_at(15))
         right = extended(incoming[channel])
 
         left_delta = Signal(signed(width + 2))
         right_delta = Signal(signed(width + 2))
         step_delta = Signal(signed(width + 2))
-        center_left_delta = Signal(signed(width + 2))
-        center_right_delta = Signal(signed(width + 2))
         left_motion = Signal(unsigned(width + 2))
         right_motion = Signal(unsigned(width + 2))
         step = Signal(unsigned(width + 2))
-        center_left = Signal(unsigned(width + 2))
-        center_right = Signal(unsigned(width + 2))
 
         # Register the measured motions before applying the discontinuity
         # criteria.  At ASQ precision, selecting a channel, subtracting, taking
-        # five absolute values, comparing them, and selecting a replacement in
+        # absolute values, comparing them, and selecting a replacement in
         # one 60 MHz cycle was the final critical path.  Input bundles have
         # ample idle clocks, so this one-stage pipeline has no throughput cost.
-        analysis_left = Signal(signed(width + 1))
         analysis_center = Signal(signed(width + 1))
-        analysis_right = Signal(signed(width + 1))
+        analysis_low = Signal(signed(width + 1))
+        analysis_high = Signal(signed(width + 1))
         analysis_left_motion = Signal(unsigned(width + 2))
         analysis_right_motion = Signal(unsigned(width + 2))
         analysis_step = Signal(unsigned(width + 2))
-        analysis_center_left = Signal(unsigned(width + 2))
-        analysis_center_right = Signal(unsigned(width + 2))
         analysis_enable = Signal()
         analysis_reconstruct = Signal()
 
@@ -556,15 +549,9 @@ class MultichannelDiscontinuityReconstruct(wiring.Component):
             left_delta.eq(left_next - left),
             right_delta.eq(right - right_prev),
             step_delta.eq(right - left),
-            center_left_delta.eq(center - left),
-            center_right_delta.eq(center - right),
             left_motion.eq(Mux(left_delta < 0, -left_delta, left_delta)),
             right_motion.eq(Mux(right_delta < 0, -right_delta, right_delta)),
             step.eq(Mux(step_delta < 0, -step_delta, step_delta)),
-            center_left.eq(Mux(center_left_delta < 0,
-                               -center_left_delta, center_left_delta)),
-            center_right.eq(Mux(center_right_delta < 0,
-                                -center_right_delta, center_right_delta)),
             analysis_reconstruct.eq(
                 analysis_enable &
                 (analysis_step >= self.min_step) &
@@ -589,14 +576,12 @@ class MultichannelDiscontinuityReconstruct(wiring.Component):
         with m.If(processing):
             m.d.sync += [
                 analysis_channel.eq(channel),
-                analysis_left.eq(left),
                 analysis_center.eq(center),
-                analysis_right.eq(right),
+                analysis_low.eq(Mux(center_prev < center_next, center_prev, center_next)),
+                analysis_high.eq(Mux(center_prev < center_next, center_next, center_prev)),
                 analysis_left_motion.eq(left_motion),
                 analysis_right_motion.eq(right_motion),
                 analysis_step.eq(step),
-                analysis_center_left.eq(center_left),
-                analysis_center_right.eq(center_right),
                 analysis_enable.eq(self.enable),
                 analysis_valid.eq(1),
             ]
@@ -611,9 +596,10 @@ class MultichannelDiscontinuityReconstruct(wiring.Component):
                     Mux(
                         analysis_reconstruct,
                         Mux(
-                            analysis_center_left <= analysis_center_right,
-                            analysis_left,
-                            analysis_right,
+                            analysis_center < analysis_low,
+                            analysis_low,
+                            Mux(analysis_center > analysis_high,
+                                analysis_high, analysis_center),
                         ),
                         analysis_center,
                     )

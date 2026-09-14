@@ -5,6 +5,10 @@ use tiliqua_hal::dma_framebuffer::Rotate;
 use tiliqua_lib::palette::ColorPalette;
 use tiliqua_pac::constants::HELP_SCROLL_MAX;
 
+// Display labels follow the physical jack numbers 0-3. Keep legacy identifiers
+// (Ch1..Ch4, Chan12/Chan34, ch1_*..ch4_*) and enum order unchanged: they are
+// used by saved options. Ch1/ch1_* maps to jack 0, through Ch4/ch4_* to jack 3.
+
 /// OSCIO bitstream time/div menu. Kept separate from ``tiliqua_lib::scope::Timebase``
 /// so OSCIO can trim or extend its range without affecting other bitstreams.
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
@@ -202,9 +206,9 @@ pub enum ViewMode {
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 pub enum MonitorPair {
     #[default]
-    #[strum(serialize = "CH 1-2")]
+    #[strum(serialize = "CH 0-1")]
     Chan12,
-    #[strum(serialize = "CH 3-4")]
+    #[strum(serialize = "CH 2-3")]
     Chan34,
 }
 
@@ -256,9 +260,9 @@ pub enum Page {
     #[default]
     #[strum(serialize = "OSCIO")]
     Mode,
-    #[strum(serialize = "CH 1-2")]
+    #[strum(serialize = "CH 0-1")]
     Chan12,
-    #[strum(serialize = "CH 3-4")]
+    #[strum(serialize = "CH 2-3")]
     Chan34,
     #[strum(serialize = "TRIGGER")]
     Scope,
@@ -289,13 +293,13 @@ pub enum TriggerMode {
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 pub enum TriggerChannel {
     #[default]
-    #[strum(serialize = "1")]
+    #[strum(serialize = "0")]
     Ch1,
-    #[strum(serialize = "2")]
+    #[strum(serialize = "1")]
     Ch2,
-    #[strum(serialize = "3")]
+    #[strum(serialize = "2")]
     Ch3,
-    #[strum(serialize = "4")]
+    #[strum(serialize = "3")]
     Ch4,
 }
 
