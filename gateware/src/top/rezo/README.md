@@ -134,6 +134,33 @@ report, bitstream, manifest, and a commit-stamped `.tar.gz` archive suitable
 for the normal Tiliqua archive flashing workflow. Standard and circular
 artifacts have distinct names and cannot silently overwrite one another.
 
+## Arithmetic and overload behavior
+
+The group and feedback paths retain the full ten-band sum before limiting.
+Output routing retains overlapping group sums and mixed-sign cancellation
+until the final audio clamp. STREZO additionally retains the full wet-group
+domain through MID/SIDE, with room for its 2x component gains; feedback taps
+remain before that transform. Deliberate resonant overload is still possible,
+but these sums no longer wrap to the opposite polarity before limiting.
+
+INPUT VALUE fully down is mute, including old saved minimum positions. The
+retained fine byte preserves the edit path back to unity. REZOMO SHIFT's
+RANDOM and unpatched AUTO sources use the same bipolar modulation range as CV
+DATA. SHIFT retains all ten physical band positions, including silent disabled
+positions; it does not skip those positions.
+
+When retaining both spread-spectrum profiles, give the zero-spread build its
+own artifact name so the standard archive cannot be overwritten. For example:
+
+```bash
+TILIQUA_REZO_FAMILY_ARTIFACT_NAME=REZO-NOSS \
+  pdm run rezo build --fs-192khz --spread-spectrum 0.0
+```
+
+Use REZOMO-NOSS/rezomo and STREZO-NOSS/strezo for the other products. Circular
+targets already have distinct ROUND artifact names and apply the panel-mount
+rotation in the final display output.
+
 ## Verification
 
 Run the family tests before producing release archives:
