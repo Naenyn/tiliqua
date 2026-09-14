@@ -543,6 +543,7 @@ fn main() -> ! {
     // button gives it direct encoder-click behavior, so explicitly clear a
     // previously saved value after loading the remaining options.
     opts.sonoro.freeze.value = false;
+    opts.help.scroll.value = opts.help.scroll.value.min(HELP_SCROLL_MAX);
     let mut last_valid_page = opts.tracker.page.value;
     sanitize_options(&mut opts, &mut last_valid_page);
 

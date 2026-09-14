@@ -3,6 +3,7 @@ use serde_derive::{Deserialize, Serialize};
 use strum_macros::{EnumIter, IntoStaticStr};
 use tiliqua_hal::dma_framebuffer::Rotate;
 use tiliqua_lib::palette::ColorPalette;
+use tiliqua_pac::constants::HELP_SCROLL_MAX;
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 #[strum(serialize_all = "SCREAMING-KEBAB-CASE")]
@@ -158,14 +159,16 @@ impl SpectrumPeaks {
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 pub enum InputChannel {
+    // Keep the serialized variant names for saved-settings compatibility.
+    // Display labels follow the physical panel's zero-based jack numbering.
     #[default]
-    #[strum(serialize = "IN1")]
+    #[strum(serialize = "IN0")]
     In1,
-    #[strum(serialize = "IN2")]
+    #[strum(serialize = "IN1")]
     In2,
-    #[strum(serialize = "IN3")]
+    #[strum(serialize = "IN2")]
     In3,
-    #[strum(serialize = "IN4")]
+    #[strum(serialize = "IN3")]
     In4,
 }
 
@@ -301,7 +304,7 @@ impl DisplayNoiseFloor {
 
 int_params!(GainParams<u8>   { step: 1, min: 0, max: 12 });
 int_params!(HueParams<u8>    { step: 1, min: 0, max: 15 });
-int_params!(ScrollParams<u8> { step: 1, min: 0, max: 125 });
+int_params!(ScrollParams<u8> { step: 1, min: 0, max: HELP_SCROLL_MAX });
 int_params!(HideParams<u8>   { step: 1, min: 2, max: 16, format: IntFormat::Scaled { divisor: 2, precision: 1, suffix: "s" } });
 button_params!(OneShotButtonParams {
     mode: ButtonMode::OneShot

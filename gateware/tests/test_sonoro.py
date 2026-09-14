@@ -28,6 +28,7 @@ from spectrogram import (  # noqa: E402
     _dbfs_level_q4_to_height,
     _logical_scan_coordinates,
     _magnitude_raw_to_dbfs_level,
+    _approximate_magnitude_raw_to_dbfs_level,
 )
 
 
@@ -293,6 +294,36 @@ class SonoroMagnitudeTests(unittest.TestCase):
                 self.assertLessEqual(
                     abs(actual - self.expected_level(dbfs)), 1,
                     f"hardware approximation at {dbfs}dBFS")
+                await ctx.tick()
+
+        sim.add_testbench(bench)
+        sim.run()
+
+    def test_hardware_log_exponent_boundaries_are_monotonic(self):
+        dut = MagnitudeToDbfs(ASQ)
+        sim = Simulator(dut)
+        sim.add_clock(1e-6)
+
+        async def bench(ctx):
+            ctx.set(dut.o.ready, 1)
+            previous = 0
+            raw_values = [1]
+            for exponent in range(1, ASQ.as_shape().width):
+                raw_values.extend(((1 << exponent) - 1, 1 << exponent))
+            for raw in raw_values:
+                ctx.set(dut.i.payload.sample.as_value(), raw)
+                ctx.set(dut.i.valid, 1)
+                while not ctx.get(dut.i.ready):
+                    await ctx.tick()
+                await ctx.tick()
+                ctx.set(dut.i.valid, 0)
+                while not ctx.get(dut.o.valid):
+                    await ctx.tick()
+                actual = ctx.get(dut.o.payload.sample)
+                self.assertGreaterEqual(actual, previous, f"raw={raw}")
+                self.assertEqual(actual, _approximate_magnitude_raw_to_dbfs_level(raw))
+                self.assertLessEqual(abs(actual - _magnitude_raw_to_dbfs_level(raw)), 1)
+                previous = actual
                 await ctx.tick()
 
         sim.add_testbench(bench)

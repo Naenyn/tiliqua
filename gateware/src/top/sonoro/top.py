@@ -14,14 +14,16 @@ The analysis rate follows the selected 24/12/6/3kHz display range, using
 48/24/12/6kHz feeds respectively. This keeps the full selected bandwidth while
 progressively improving FFT resolution from 93.75Hz/bin to 11.72Hz/bin.
 
-All four analog inputs pass directly to their matching outputs:
+The physical input and output jacks are numbered 0--3. All four analog
+inputs pass directly to their matching outputs; the input menu selects
+IN0, IN1, IN2, or IN3 for analysis:
 
     .. code-block:: text
 
+        in0 ───────────────────────► out0
         in1 ───────────────────────► out1
         in2 ───────────────────────► out2
         in3 ───────────────────────► out3
-        in4 ───────────────────────► out4
 
 SONORO options select a live spectrum analyzer or historical 2D spectrograph,
 input, sensitivity, and maximum displayed frequency. Spectrum mode plots the
@@ -64,8 +66,8 @@ class SonoroSoc(TiliquaSoc):
 
     bitstream_help = BitstreamHelp(
         brief="Four-channel spectrum analyzer and spectrograph.",
-        io_left=['CH1 in', 'CH2 in', 'CH3 in', 'CH4 in',
-                 'CH1 thru', 'CH2 thru', 'CH3 thru', 'CH4 thru'],
+        io_left=['CH0 in', 'CH1 in', 'CH2 in', 'CH3 in',
+                 'CH0 thru', 'CH1 thru', 'CH2 thru', 'CH3 thru'],
         io_right=['menu / adjust', '', 'video out', '', '', '']
     )
 
@@ -93,6 +95,12 @@ class SonoroSoc(TiliquaSoc):
             name="overlay_periph",
         )
         self.finalize_csr_bridge()
+        # draw_help displays 28 source lines. Keep the final viewport useful
+        # as the documentation evolves, matching OSCIO's content-based bound.
+        help_scroll_max = max(0, len(self.module_docstring.splitlines()) - 28)
+        assert help_scroll_max <= 255
+        self.add_rust_constant(
+            f"pub const HELP_SCROLL_MAX: u8 = {help_scroll_max};")
 
     def elaborate(self, platform):
         m = Module()
