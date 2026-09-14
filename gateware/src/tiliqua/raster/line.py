@@ -28,7 +28,10 @@ class LineCmd(data.Struct):
     Single entry in line plotter command FIFO.
     """
     x: signed(12)
-    y: signed(11)
+    # Twelve bits are needed for a rotated 1280-pixel axis. The CSR-facing
+    # command remains eleven bits because it is packed into one 32-bit store;
+    # that value is sign-extended into this internal command.
+    y: signed(12)
     pixel: Pixel
     # Whether this is completing or continuing an existing line strip.
     cmd:   LineStripCmd
@@ -53,14 +56,14 @@ class _LinePlotter(wiring.Component):
 
         # Previous line segment
         prev_x = Signal(signed(12))
-        prev_y = Signal(signed(11))
+        prev_y = Signal(signed(12))
         has_prev_point = Signal()
 
         # Current line segmenet
         current_x = Signal(signed(12))
-        current_y = Signal(signed(11))
+        current_y = Signal(signed(12))
         target_x = Signal(signed(12))
-        target_y = Signal(signed(11))
+        target_y = Signal(signed(12))
         target_pixel = Signal(Pixel)
         current_pixel = Signal(Pixel)
         end_strip = Signal()

@@ -21,6 +21,50 @@ class RasterTests(unittest.TestCase):
 
     MODELINE = modeline.DVIModeline.all_timings()["1280x720p60"]
 
+    def test_line_core_preserves_twelve_bit_y_coordinates(self):
+        """Internal line commands must not wrap rotated portrait positions."""
+        m = Module()
+        dut = line._LinePlotter()
+        m.submodules.dut = dut
+        points = []
+
+        async def stimulus(ctx):
+            ctx.set(dut.o.ready, 1)
+            await stream.put(ctx, dut.i, {
+                "x": 10,
+                "y": 1200,
+                "pixel": {"color": 0xf, "intensity": 0xf},
+                "cmd": line.LineStripCmd.CONTINUE,
+            })
+            await stream.put(ctx, dut.i, {
+                "x": 12,
+                "y": 1200,
+                "pixel": {"color": 0xf, "intensity": 0xf},
+                "cmd": line.LineStripCmd.END,
+            })
+
+        async def response(ctx):
+            ctx.set(dut.o.ready, 1)
+            for _ in range(40):
+                if ctx.get(dut.o.valid):
+                    points.append((
+                        ctx.get(dut.o.payload.x),
+                        ctx.get(dut.o.payload.y),
+                    ))
+                    if points[-1] == (12, 1200):
+                        return
+                await ctx.tick()
+            raise AssertionError("line plotter did not finish")
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_testbench(stimulus)
+        sim.add_testbench(response)
+        sim.run()
+
+        self.assertEqual(points, [(10, 1200), (10, 1200),
+                                  (11, 1200), (12, 1200)])
+
     def test_persist(self):
 
         m = Module()

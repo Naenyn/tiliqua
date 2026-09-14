@@ -238,10 +238,13 @@ class Peripheral(wiring.Component):
     class SkipReg(csr.Register, access="w"):
         skip: csr.Field(csr.action.W, unsigned(8))
 
-    def __init__(self, bus_dma):
+    def __init__(self, bus_dma=None):
         self.en = Signal()
-        self.persist = Persistance(bus_signature=bus_dma.bus.signature.flip())
-        bus_dma.add_master(self.persist.bus)
+        self.persist = None
+        if bus_dma is not None:
+            self.persist = Persistance(
+                bus_signature=bus_dma.bus.signature.flip())
+            bus_dma.add_master(self.persist.bus)
 
         regs = csr.Builder(addr_width=5, data_width=8)
 
@@ -251,27 +254,34 @@ class Peripheral(wiring.Component):
 
         self._bridge = csr.Bridge(regs.as_memory_map())
 
-        super().__init__({
-            "bus": In(csr.Signature(addr_width=regs.addr_width, data_width=regs.data_width)),
-            "fbp": In(DMAFramebuffer.Properties()),
-        })
+        signature = {
+            "bus": In(csr.Signature(
+                addr_width=regs.addr_width, data_width=regs.data_width)),
+        }
+        if self.persist is not None:
+            signature["fbp"] = In(DMAFramebuffer.Properties())
+        super().__init__(signature)
         self.bus.memory_map = self._bridge.bus.memory_map
 
     def elaborate(self, platform):
         m = Module()
         m.submodules.bridge = self._bridge
-        m.submodules.persist = self.persist
 
         wiring.connect(m, wiring.flipped(self.bus), self._bridge.bus)
-        wiring.connect(m, wiring.flipped(self.fbp), self.persist.fbp)
+        if self.persist is not None:
+            m.submodules.persist = self.persist
+            wiring.connect(m, wiring.flipped(self.fbp), self.persist.fbp)
 
-        with m.If(self._persist.f.persist.w_stb):
-            m.d.sync += self.persist.holdoff.eq(self._persist.f.persist.w_data)
+            with m.If(self._persist.f.persist.w_stb):
+                m.d.sync += self.persist.holdoff.eq(
+                    self._persist.f.persist.w_data)
 
-        with m.If(self._decay.f.decay.w_stb):
-            m.d.sync += self.persist.decay.eq(self._decay.f.decay.w_data)
+            with m.If(self._decay.f.decay.w_stb):
+                m.d.sync += self.persist.decay.eq(
+                    self._decay.f.decay.w_data)
 
-        with m.If(self._skip.f.skip.w_stb):
-            m.d.sync += self.persist.skip.eq(self._skip.f.skip.w_data)
+            with m.If(self._skip.f.skip.w_stb):
+                m.d.sync += self.persist.skip.eq(
+                    self._skip.f.skip.w_data)
 
         return m

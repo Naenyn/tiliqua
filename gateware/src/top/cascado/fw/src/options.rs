@@ -3,13 +3,14 @@ use serde_derive::{Deserialize, Serialize};
 use strum_macros::{EnumIter, IntoStaticStr};
 use tiliqua_hal::dma_framebuffer::Rotate;
 use tiliqua_lib::palette::ColorPalette;
+use tiliqua_pac::constants::HELP_SCROLL_MAX;
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 #[strum(serialize_all = "SCREAMING-KEBAB-CASE")]
 pub enum Page {
     #[default]
-    Waterfall,
-    View,
+    Cascado,
+    Style,
     Display,
     Menu,
     Misc,
@@ -19,10 +20,10 @@ pub enum Page {
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 #[strum(serialize_all = "kebab-case")]
 pub enum Quality3d {
-    // Retain the old serialized discriminant so saved values migrate cleanly.
-    #[strum(disabled)]
-    Low,
+    // Reuse the retired legacy-low discriminant so existing saved lower and
+    // higher values keep their meaning while old low values gain the new LOD.
     #[default]
+    Adaptive,
     #[strum(serialize = "lower")]
     Medium,
     #[strum(serialize = "higher")]
@@ -32,22 +33,58 @@ pub enum Quality3d {
 impl Quality3d {
     pub fn hw_index(self) -> u8 {
         match self {
-            Self::Low | Self::Medium => 1,
+            Self::Adaptive => 0,
+            Self::Medium => 1,
             Self::High => 2,
         }
     }
 }
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
-pub enum InputChannel {
+#[strum(serialize_all = "kebab-case")]
+pub enum SurfaceStyle {
+    Wire,
     #[default]
-    #[strum(serialize = "IN1")]
+    Terrain,
+}
+
+impl SurfaceStyle {
+    pub fn hw_index(self) -> u8 {
+        match self {
+            Self::Wire => 0,
+            Self::Terrain => 1,
+        }
+    }
+}
+
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
+#[strum(serialize_all = "kebab-case")]
+pub enum FrequencyScale {
+    #[default]
+    Log,
+    Linear,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
+#[strum(serialize_all = "kebab-case")]
+pub enum ColorBy {
+    #[default]
+    Level,
+    Frequency,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
+pub enum InputChannel {
+    // Keep the serialized variant names for saved-settings compatibility.
+    // Display labels follow the physical panel's zero-based jack numbering.
+    #[default]
+    #[strum(serialize = "IN0")]
     In1,
-    #[strum(serialize = "IN2")]
+    #[strum(serialize = "IN1")]
     In2,
-    #[strum(serialize = "IN3")]
+    #[strum(serialize = "IN2")]
     In3,
-    #[strum(serialize = "IN4")]
+    #[strum(serialize = "IN3")]
     In4,
 }
 
@@ -91,8 +128,8 @@ pub enum ScrollRate {
     #[strum(serialize = "fast")]
     Fast,
     #[strum(serialize = "medium")]
-    Medium,
     #[default]
+    Medium,
     #[strum(serialize = "slow")]
     Slow,
     #[strum(serialize = "very-slow")]
@@ -119,14 +156,31 @@ pub enum OnOff {
 }
 
 #[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
+#[strum(serialize_all = "kebab-case")]
+pub enum YesNo {
+    #[default]
+    No,
+    Yes,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
+#[strum(serialize_all = "kebab-case")]
+pub enum AxisDetail {
+    Lines,
+    #[default]
+    Ticks,
+    Labels,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Serialize, Deserialize)]
 pub enum DisplayNoiseFloor {
     #[default]
     #[strum(serialize = "off")]
     Off,
-    #[strum(serialize = "-72dB")]
-    Db72,
     #[strum(serialize = "-66dB")]
     Db66,
+    #[strum(serialize = "-63dB")]
+    Db63,
     #[strum(serialize = "-60dB")]
     Db60,
 }
@@ -135,8 +189,8 @@ impl DisplayNoiseFloor {
     pub fn hw_index(self) -> u8 {
         match self {
             Self::Off => 0,
-            Self::Db72 => 1,
-            Self::Db66 => 2,
+            Self::Db66 => 1,
+            Self::Db63 => 2,
             Self::Db60 => 3,
         }
     }
@@ -152,15 +206,15 @@ pub enum EditHide {
 
 int_params!(GainParams<u8>   { step: 1, min: 0, max: 12 });
 int_params!(HueParams<u8>    { step: 1, min: 0, max: 15 });
-int_params!(AngleParams<i8>  { step: 15, min: -90, max: 90 });
-int_params!(ScrollParams<u8> { step: 1, min: 0, max: 125 });
+int_params!(AngleParams<i8>  { step: 5, min: -90, max: 90 });
+int_params!(ScrollParams<u8> { step: 1, min: 0, max: HELP_SCROLL_MAX });
 int_params!(HideParams<u8>   { step: 1, min: 2, max: 16, format: IntFormat::Scaled { divisor: 2, precision: 1, suffix: "s" } });
 button_params!(OneShotButtonParams {
     mode: ButtonMode::OneShot
 });
 
 #[derive(OptionPage, Clone)]
-pub struct WaterfallOpts {
+pub struct CascadoOpts {
     #[option]
     pub input: EnumOption<InputChannel>,
     #[option(0)]
@@ -169,12 +223,6 @@ pub struct WaterfallOpts {
     pub range: EnumOption<FrequencyRange>,
     #[option]
     pub rate: EnumOption<ScrollRate>,
-}
-
-#[derive(OptionPage, Clone)]
-pub struct ViewOpts {
-    #[option]
-    pub quality: EnumOption<Quality3d>,
     #[option(-15)]
     pub rot_x: IntOption<AngleParams>,
     #[option(15)]
@@ -184,9 +232,30 @@ pub struct ViewOpts {
 }
 
 #[derive(OptionPage, Clone)]
+pub struct StyleOpts {
+    #[option]
+    pub style: EnumOption<SurfaceStyle>,
+    #[option]
+    pub scale: EnumOption<FrequencyScale>,
+    #[option]
+    pub quality: EnumOption<Quality3d>,
+    #[option]
+    #[option_name("color by")]
+    pub color_by: EnumOption<ColorBy>,
+    #[option]
+    #[option_name("age fade")]
+    pub age_fade: EnumOption<OnOff>,
+    #[option(OnOff::Off)]
+    pub ridges: EnumOption<OnOff>,
+}
+
+#[derive(OptionPage, Clone)]
 pub struct DisplayOpts {
     #[option]
     pub axes: EnumOption<OnOff>,
+    #[option]
+    #[option_name("detail")]
+    pub axis_detail: EnumOption<AxisDetail>,
     #[option(0)]
     pub hue: IntOption<HueParams>,
     #[option(ColorPalette::Inferno)]
@@ -194,6 +263,9 @@ pub struct DisplayOpts {
     #[option]
     #[option_name("noise floor")]
     pub noise_floor: EnumOption<DisplayNoiseFloor>,
+    #[option]
+    #[option_name("show fps")]
+    pub show_fps: EnumOption<YesNo>,
 }
 
 #[derive(OptionPage, Clone)]
@@ -227,10 +299,10 @@ pub struct HelpOpts {
 #[derive(Options, Clone)]
 pub struct Opts {
     pub tracker: ScreenTracker<Page>,
-    #[page(Page::Waterfall)]
-    pub waterfall: WaterfallOpts,
-    #[page(Page::View)]
-    pub view: ViewOpts,
+    #[page(Page::Cascado)]
+    pub cascado: CascadoOpts,
+    #[page(Page::Style)]
+    pub style: StyleOpts,
     #[page(Page::Display)]
     pub display: DisplayOpts,
     #[page(Page::Menu)]
