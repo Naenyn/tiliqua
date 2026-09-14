@@ -6,6 +6,11 @@ clock-domain configuration transfers, and relevant tests. Findings below are
 not implemented by this review. The accompanying implementation changes are
 limited to jack numbering and explanatory documentation.
 
+Follow-up: the subsequent continuity patch addresses the first P1 finding
+with capture backpressure and atomic channel acceptance. Its spaced/burst
+equivalence tests are in `tests/test_scope_continuity.py`; the numerical
+examples below describe the original implementation, not the corrected one.
+
 ## Label changes
 
 User-facing channel numbers now match physical input and output jacks 0-3:

@@ -523,7 +523,10 @@ class ScopeRasterAccuracyTests(unittest.TestCase):
                 await push(0.99, 0.0)
                 await push(0.00, 0.0)
                 await push(0.01, volts)
-                flushed = await push(0.02, volts)
+                # The first new-voltage column includes its incoming connector.
+                # Check the following plateau column for the exact level.
+                await push(0.02, volts)
+                flushed = await push(0.03, volts)
                 self.assertTrue(flushed)
                 self.assertEqual(
                     self._unpack_ch0(flushed[-1]),

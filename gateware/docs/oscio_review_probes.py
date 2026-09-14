@@ -22,14 +22,18 @@ def capture(spacing):
             ctx.set(dut.visible[ch], 1)
             ctx.set(dut.scale_y[ch], 3)
         await ctx.tick()
-        for cycle in range(20 * spacing + 30):
-            n = cycle // spacing
-            valid = n < 20 and cycle % spacing == 0
+        n = 0
+        next_cycle = 0
+        for cycle in range(20 * max(spacing, 8) + 30):
+            valid = n < 20 and cycle >= next_cycle
             ctx.set(dut.sample_valid, valid)
             if valid:
                 ctx.set(dut.ramp.as_value(), -1000 + n * 32)
                 for ch in range(4):
                     ctx.set(dut.audio[ch].as_value(), 100 + n * 10 + ch * 100)
+            if valid and ctx.get(dut.sample_ready):
+                n += 1
+                next_cycle = cycle + spacing
             await ctx.tick()
             if ctx.get(dut.flush_valid):
                 word = ctx.get(dut.flush_word)

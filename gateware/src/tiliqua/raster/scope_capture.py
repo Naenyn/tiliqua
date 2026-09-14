@@ -23,11 +23,6 @@ ENVELOPE_COORD_BITS = 12
 ENVELOPE_CHANNEL_BITS = 1 + 2 * ENVELOPE_COORD_BITS
 ENVELOPE_WORD_BITS = 4 * ENVELOPE_CHANNEL_BITS
 
-# Bridge only genuine display discontinuities across a column boundary.  The
-# previous one-pixel threshold widened every ordinary slope and turned codec
-# settling at square/saw transitions into visible hooks and rounded shoulders.
-VERTICAL_DY_THRESH = 12
-
 # Eurorack-friendly V/div LUT for ``yscale_idx``. Entries 0-5 must match
 # ``ScopeVScale`` in OSCIO firmware. Entries 6-9 are the monitor's full-window
 # mappings: bipolar 10 V, bipolar 20 V, unipolar 10 V, and unipolar 5 V. The
@@ -104,9 +99,9 @@ class ColumnCapture(wiring.Component):
     a time, and per-channel min/max updates are skipped for channels with
     ``visible`` de-asserted (hidden channels stay at the envelope sentinel).
 
-    Each finished column is emitted on ``flush_*`` as a 1-cycle pulse.  It is
-    not back-pressured: if the downstream FIFO is full the column is simply
-    dropped, which only ever happens at very fast timebases.
+    Samples use a valid/ready handshake; the upstream bundle must remain stable
+    while stalled. Each finished column is emitted on ``flush_*`` as a one-cycle
+    pulse to the trace RAM, which accepts one write per clock.
     """
 
     def __init__(self, *, n_channels=4):
@@ -122,6 +117,7 @@ class ColumnCapture(wiring.Component):
             "scale_y": In(unsigned(4)).array(n_channels),
             "y_offset": In(signed(16)).array(n_channels),
             "sample_valid": In(1),
+            "sample_ready": Out(1),
             "ramp": In(PSQ),
             "ramp_end": In(PSQ, init=0.985),
             "audio": In(PSQ).array(n_channels),
@@ -217,16 +213,18 @@ class ColumnCapture(wiring.Component):
             ),
         ]
 
-        # Four input channels arrive as a bundle only once every ~39 sync clocks
-        # at the maximum 1.536 MHz plotting rate. Serialize their coordinate
-        # conversion through one multiplier instead of instantiating four DSPs.
-        # The completed bundle remains aligned and is consumed atomically.
+        # Average plotting cadence is ~39 clocks, but resampling emits bursts.
+        # Keep the bundle (including X and clipping metadata) locked until every
+        # coordinate has been consumed. This still accepts a bundle every eight
+        # clocks, well above the 1.536 MHz average plotting rate at 60 MHz.
+        m.d.comb += self.sample_ready.eq(
+            ~scaling & ~product_valid & ~coordinate_valid & ~sample_valid & ~self.clear)
         m.d.sync += [
             sample_valid.eq(0),
             product_valid.eq(0),
             coordinate_valid.eq(0),
         ]
-        with m.If(self.sample_valid & ~scaling):
+        with m.If(self.sample_valid & self.sample_ready):
             m.d.sync += [
                 scaled_x.eq(raw_x),
                 scaled_active.eq(self.active),
@@ -332,29 +330,28 @@ class ColumnCapture(wiring.Component):
         m.d.comb += col_changing.eq(
             in_plot & has_col & (col_index != latched_col)
         )
-        steep_step = Array(Signal(name=f"steep_step{ch}") for ch in range(self.n_channels))
+        connect_column = Signal()
+        # col_changing already excludes pen lifts and out-of-plot samples.
+        m.d.comb += connect_column.eq(col_changing & has_prev_x)
         bridge_lo = Array(Signal(signed(16), name=f"bridge_lo{ch}") for ch in range(self.n_channels))
         bridge_hi = Array(Signal(signed(16), name=f"bridge_hi{ch}") for ch in range(self.n_channels))
+        boundary_y = Array(Signal(signed(16), name=f"boundary_y{ch}") for ch in range(self.n_channels))
         for ch in range(self.n_channels):
-            dy_step = Signal(signed(17), name=f"dy_step{ch}")
             m.d.comb += [
-                dy_step.eq(in_y[ch] - prev_in_y[ch]),
-                steep_step[ch].eq(
-                    self.visible[ch] & col_changing & (
-                        (dy_step >= VERTICAL_DY_THRESH) |
-                        (dy_step <= -VERTICAL_DY_THRESH)
-                    )
-                ),
-                bridge_lo[ch].eq(Mux(in_y[ch] < prev_in_y[ch], in_y[ch], prev_in_y[ch])),
-                bridge_hi[ch].eq(Mux(in_y[ch] > prev_in_y[ch], in_y[ch], prev_in_y[ch])),
+                # Meet halfway between adjacent columns. Extending both all the
+                # way to the next sample thickens edges; extending neither
+                # leaves holes whenever a small slope crosses a column boundary.
+                boundary_y[ch].eq((in_y[ch] + prev_in_y[ch]) >> 1),
+                bridge_lo[ch].eq(Mux(boundary_y[ch] < in_y[ch], boundary_y[ch], in_y[ch])),
+                bridge_hi[ch].eq(Mux(boundary_y[ch] > in_y[ch], boundary_y[ch], in_y[ch])),
                 flush_ymin[ch].eq(
-                    Mux(steep_step[ch],
-                        Mux(bridge_lo[ch] < col_ymin[ch], bridge_lo[ch], col_ymin[ch]),
+                    Mux(self.visible[ch] & connect_column,
+                        Mux(boundary_y[ch] < col_ymin[ch], boundary_y[ch], col_ymin[ch]),
                         col_ymin[ch])
                 ),
                 flush_ymax[ch].eq(
-                    Mux(steep_step[ch],
-                        Mux(bridge_hi[ch] > col_ymax[ch], bridge_hi[ch], col_ymax[ch]),
+                    Mux(self.visible[ch] & connect_column,
+                        Mux(boundary_y[ch] > col_ymax[ch], boundary_y[ch], col_ymax[ch]),
                         col_ymax[ch])
                 ),
             ]
@@ -453,8 +450,8 @@ class ColumnCapture(wiring.Component):
                 for ch in range(self.n_channels):
                     with m.If(self.visible[ch]):
                         m.d.sync += [
-                            col_ymin[ch].eq(in_y[ch]),
-                            col_ymax[ch].eq(in_y[ch]),
+                            col_ymin[ch].eq(Mux(connect_column, bridge_lo[ch], in_y[ch])),
+                            col_ymax[ch].eq(Mux(connect_column, bridge_hi[ch], in_y[ch])),
                         ]
                     with m.Else():
                         m.d.sync += [

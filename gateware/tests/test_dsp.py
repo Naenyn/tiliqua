@@ -552,7 +552,8 @@ class DSPTests(unittest.TestCase):
 
         self.assertEqual(output, [1, -1, 1, -1])
 
-    def test_oscio_display_chain_emits_continuous_sample_bundles(self):
+    @parameterized.expand([(False,), (True,)])
+    def test_oscio_display_chain_emits_continuous_sample_bundles(self, with_capture):
         """The exact OSCIO DSP chain must survive downstream backpressure."""
         from tiliqua.raster import PSQ
 
@@ -571,6 +572,19 @@ class DSPTests(unittest.TestCase):
         wiring.connect(m, input_fifo.o, reconstruct.i)
         wiring.connect(m, reconstruct.o, resample.i)
         wiring.connect(m, resample.o, convert.i)
+        if with_capture:
+            from tiliqua.raster.digital_scope import DigitalScopePeripheral
+            from amaranth_soc import csr
+            from amaranth_soc.csr import wishbone as csr_wishbone
+            from tiliqua.test import csr as csr_util
+            m.submodules.scope = scope = DigitalScopePeripheral(
+                fs=1_536_000, native_fs=192_000)
+            wiring.connect(m, convert.o, scope.i)
+            decoder = csr.Decoder(addr_width=28, data_width=8)
+            decoder.add(scope.bus, addr=0, name="scope")
+            bridge = csr_wishbone.WishboneCSRBridge(decoder.bus, data_width=32)
+            m.submodules += [decoder, bridge]
+        configured = Signal(init=not with_capture)
 
         n_frames = 40
         frames = [
@@ -582,6 +596,7 @@ class DSPTests(unittest.TestCase):
         stage_counts = [0, 0]
 
         async def stimulus(ctx):
+            await ctx.tick().until(configured)
             for frame in frames:
                 await stream.put(
                     ctx,
@@ -590,12 +605,17 @@ class DSPTests(unittest.TestCase):
                 )
 
         async def testbench(ctx):
+            if with_capture:
+                await csr_util.wb_csr_w_dict(
+                    ctx, scope.bus, bridge.wb_bus, "flags", {"enable": 1})
+                ctx.set(configured, 1)
             expected_count = (n_frames - 17) * 8
             cycle = 0
             while len(outputs) < expected_count:
                 # Exercise replacement of a consumed converter word as well as
                 # a short periodic stall like the capture-side stream fanout.
-                ctx.set(convert.o.ready, (cycle % 11) not in (8, 9))
+                if not with_capture:
+                    ctx.set(convert.o.ready, (cycle % 11) not in (8, 9))
                 if ctx.get(reconstruct.o.valid & reconstruct.o.ready):
                     stage_counts[0] += 1
                 if ctx.get(resample.o.valid & resample.o.ready):
@@ -608,7 +628,7 @@ class DSPTests(unittest.TestCase):
                 await ctx.tick()
                 cycle += 1
                 self.assertLess(
-                    cycle, 20_000,
+                    cycle, n_frames * 312,
                     f"OSCIO display chain stalled: reconstruct={stage_counts[0]}, "
                     f"resample={stage_counts[1]}, convert={len(outputs)}",
                 )

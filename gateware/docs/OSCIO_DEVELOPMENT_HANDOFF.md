@@ -43,6 +43,19 @@ distant window endpoints, which could fabricate backward hooks on rounded
 square-wave edges. It may reduce genuine isolated extrema as well as spikes;
 raw bypasses this display-only cleanup. Both modes retain display resampling.
 
+Fast-sweep continuity: adjacent column envelopes now meet at the midpoint
+between the last sample in the old column and the first in the next. This
+removes the former 12-pixel connection threshold without extending both
+columns over the entire transition. Pen lifts still break connections.
+
+Column capture now exposes `sample_ready` and holds each four-channel bundle
+until its coordinate pipeline is consumed. The scope merges all channels
+atomically and propagates stalls upstream. This accepts one bundle every eight
+60 MHz clocks (7.5 million bundles/s), above the 1.536 million/s display rate,
+while avoiding the old burst-induced X/Y metadata overwrite and sample loss.
+The burst and continuity regressions are in `tests/test_scope_continuity.py`;
+the full DSP-chain regression also exercises the real scope backpressure.
+
 ### CV/LFO
 
 The CV/LFO view is intended for control voltages, gates, envelopes, and LFOs.
@@ -156,6 +169,18 @@ Generated PAC sources and `fw/memory.x` are committed alongside their source
 definitions when the build changes them.
 
 ## Timing and resource state
+
+Latest continuity/backpressure build (2026-09-13):
+`oscio-7addc0f9-continuity-spread0-seed3-r5.tar.gz`, strict timing, seed 3,
+192 kHz, ASQ 2/18, and `spread_spectrum=0.0`. Final routed maxima are
+472.81 MHz dvi5x, 80.61 MHz dvi, 57.63 MHz audio, and 63.01 MHz sync:
+all pass their unchanged targets. Bitstream SHA-256:
+`61d880ff9e97f68b9a1c8f62f2dc97fb250379b48303a24d671f31ddcb3ffbc6`.
+The relevant suite passes 78 tests plus 12 subtests, including burst
+equivalence, small/large slope connectivity, pen lift, rotations, lane clipping,
+and the DSP chain connected to the actual scope input. Hardware confirmation
+is pending. The archive tag is the pre-fix checkpoint; these rendering changes
+are additional working-tree changes. Earlier builds below remain references.
 
 The 2026-09-13 conservative edge-cleanup build uses `--timing-strict --seed 3
 --spread-spectrum 0.0 --fs-192khz` and ASQ 2/18. Its final routed clocks all pass:

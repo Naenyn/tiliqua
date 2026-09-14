@@ -1,5 +1,5 @@
 pub const UI_NAME: &str = "OSCIO";
-pub const UI_TAG: &str = "3015209c";
+pub const UI_TAG: &str = "7addc0f9";
 pub const HW_REV_MAJOR: u32 = 5;
 pub const USE_EXTERNAL_PLL: bool = true;
 pub const CLOCK_SYNC_HZ: u32 = 60000000;

@@ -355,12 +355,12 @@ class DigitalScopePeripheral(wiring.Component):
             wiring.connect(m, self.isplit4.o[ch], ch_merge4.i[1])
             ch_merges.append(ch_merge4)
 
-        for ch, merge in enumerate(ch_merges):
-            tap = _SampleTap(shape=data.ArrayLayout(PSQ, 4))
-            setattr(m.submodules, f"sample_tap{ch}", tap)
-            dsp.connect_peek(m, merge.o, tap.i, always_ready=True)
-
         m.submodules.capture = capture = ColumnCapture()
+        # Consume ramp and all four channels together, and propagate capture
+        # stalls back to the resampler instead of silently losing burst samples.
+        bundle_valid = Cat(merge.o.valid for merge in ch_merges).all()
+        for merge in ch_merges:
+            m.d.comb += merge.o.ready.eq(capture.sample_ready & bundle_valid)
         m.d.comb += [
             capture.active.eq(self.capture_active & self.soc_en),
             capture.clear.eq(self.capture_clear),
@@ -368,7 +368,7 @@ class DigitalScopePeripheral(wiring.Component):
             capture.plot_x_hi.eq(plot_x_hi),
             capture.scale_x.eq(scale_x),
             capture.x_offset.eq(x_offset),
-            capture.sample_valid.eq(ch0_merge4.o.valid),
+            capture.sample_valid.eq(bundle_valid),
             capture.ramp.eq(ch0_merge4.o.payload[0]),
             capture.ramp_end.eq(ramp_end),
             capture.audio[0].eq(ch0_merge4.o.payload[1]),
