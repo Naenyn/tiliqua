@@ -144,7 +144,8 @@ Each jack can be assigned as **LEFT**, **RIGHT**, or **CV**.
 
 For a LEFT or RIGHT audio input, **VALUE** sets its gain and the signal joins
 the corresponding stereo-side input mix. The activity line on VALUE shows that
-jack after its gain.
+jack after its gain. VALUE fully down is mute, including saved minimum
+settings; returning to the unity marker restores the original gain.
 
 The curved **L IN R** meters in the bottom arc show those completed left and
 right input mixes after all VALUE gains and summing, immediately before DRIVE
@@ -205,7 +206,10 @@ each fader marks that 1.0x position:
 
 MID 64 / SIDE 0 produces centered mono wet output. MID 0 / SIDE 64 removes
 common center content. Values above 64 provide up to 2x gain in the selected
-component and may reach the output limit sooner.
+component and may reach the output limit sooner. The complete wet-group signal
+is preserved when leaving unity: moving either control does not engage an
+extra input clamp. Lower the output sends if boosting MID or SIDE reaches
+the final output limit. These controls do not increase feedback-loop gain.
 
 ## BANDS page
 

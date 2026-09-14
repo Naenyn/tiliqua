@@ -68,7 +68,7 @@ def test_mid_side_transform_has_exact_unity_and_component_semantics():
     )
 
     assert [mid_side_reference(*vector, width) for vector in vectors] == [
-        12_000, 8_000, 4_000, 20_000, 16_000, 262_142, -262_144,
+        12_000, 8_000, 4_000, 20_000, 16_000, 524_287, -524_288,
     ]
 
 

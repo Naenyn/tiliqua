@@ -176,7 +176,8 @@ Each of IN0 through IN3 can be assigned as **AUDIO** or **CV**.
 For an AUDIO input:
 
 - **MODE** selects AUDIO.
-- **VALUE** sets its input gain.
+- **VALUE** sets its input gain. Fully down is mute; returning to the unity
+  marker restores the original gain. This also applies to saved minimum settings.
 - The signal joins the mono input mix feeding the resonators.
 - The activity line shows that jack after VALUE gain.
 
@@ -279,7 +280,8 @@ marker remains visible while modulation moves around it.
 
 The CLOCK main page intentionally matches BANK: PRESET, the ten band controls,
 DRIVE, RESONANCE, and FEEDBACK all edit the underlying BANK sound. Disabled
-bands are skipped by the clock algorithms.
+bands are silent. SHIFT retains all ten physical positions, so disabled bands
+act as gaps in its sequence; the other algorithms use enabled-band behavior.
 
 The following CLOCK page selects the clock algorithm and its settings.
 
@@ -287,7 +289,7 @@ The following CLOCK page selects the clock algorithm and its settings.
 
 #### MODE
 
-- **SHIFT** samples DATA and shifts captured values through the enabled bands.
+- **SHIFT** samples DATA and shifts captured values through all ten band positions.
 - **ROTATE** circulates a copy of the natural BANK shape as modulation.
 - **WALK** produces reflected random walks.
 - **TURING** evolves or locks a repeating internal random loop.
@@ -359,13 +361,17 @@ short parameter slew.
 DATA offers:
 
 - **CV**: always sample the assigned DAT input.
-- **RANDOM**: sample an independent internal bipolar pseudo-random source.
+- **RANDOM**: sample an independent internal bipolar pseudo-random source,
+  with the same modulation range as CV DATA.
 - **AUTO**: use DAT while its physical jack is patched, otherwise use internal
   random. The display reports AUTO CV or AUTO RAND.
 
-FORWARD inserts the new sample at the lowest enabled band and shifts older
-values upward. REVERSE inserts at the highest enabled band. RANDOM chooses one
-of those two directions on every pulse. Disabled bands are skipped.
+FORWARD inserts the new sample at the lowest band and shifts older values
+upward. REVERSE inserts at the highest band. RANDOM chooses one of those two
+directions on every pulse. All ten physical positions participate: a value
+passing through a disabled band is silent there, but can become audible again
+when it reaches an enabled band. DEPTH scales either CV or random modulation
+before it is added to the natural BANK level.
 
 ### ROTATE
 

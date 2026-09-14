@@ -1,7 +1,33 @@
 # REZO family continuation handoff
 
-Updated 2026-08-28. This is an operational handoff, not a project diary.
+Updated 2026-09-14. This is an operational handoff, not a project diary.
 Historical work remains available in git and `BUILD_PERFORMANCE.md`.
+
+## Current continuation checkpoint — 2026-09-14
+
+The older sections below are historical. Production is on `rezo`; the
+arithmetic fixes were developed on `codex/rezo-arithmetic-fixes` at
+`50384c31` and are being merged back with the current documentation.
+Use the isolated checkout `/private/tmp/tiliqua-rezo-review-20260914`;
+the main checkout is occupied by SONORO work.
+
+All three 50384c31 standard 720p images, with spread spectrum 0.0, passed
+the 3% timing-margin gate and were flashed to REZO 2, REZOMO 3, STREZO 4.
+This establishes build/flash success, not a new user listening qualification.
+The four corrections cover wide accumulation, minimum INPUT mute, STREZO
+MID/SIDE headroom, and REZOMO random SHIFT range. All 230 gateware cases passed
+across the full/focused runs, and all 10 Rust host tests passed.
+
+The next release set contains nine archives: three rotated circular at default
+spread spectrum (0.01), three standard 720p at default (0.01), and three
+standard 720p at 0.0. Flash only the latter set to slots 2/3/4. Preserve saved
+options. Use distinct NOSS artifact names for zero-spread builds. The README
+and three user guides describe current behavior; do not restore the older
+SHIFT skipped-band claims, 1.25% timing gate, CPU maps, or seed assumptions.
+
+At 50384c31, standard REZO qualified with seed 8 (seed 9 missed the video
+margin at 2.91%); REZOMO qualified with 3 and STREZO with 8. Requalify every
+new source revision. Avoid blind large seed sweeps.
 
 ## Current state
 

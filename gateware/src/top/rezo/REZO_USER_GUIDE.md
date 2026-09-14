@@ -187,7 +187,8 @@ Each of IN0 through IN3 can be assigned as **AUDIO** or **CV** in BANK mode.
 For an AUDIO input:
 
 - **MODE** selects AUDIO.
-- **VALUE** sets its input gain.
+- **VALUE** sets its input gain. Fully down is mute; returning to the unity
+  marker restores the original gain. This also applies to saved minimum settings.
 - The signal joins the mono input mix feeding the resonators.
 - The activity line shows that jack after VALUE gain. A mark at the right edge
   is held briefly if that individual post-gain signal reaches full scale.

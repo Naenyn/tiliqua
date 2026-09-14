@@ -1,12 +1,11 @@
 # REZOMO development handoff
 
-This is the canonical continuation document for current REZOMO work. Read it
-alongside [`BUILD_PERFORMANCE.md`](BUILD_PERFORMANCE.md) before changing,
-building, or flashing REZOMO.
-
-The older [`REZO_HANDOFF.md`](REZO_HANDOFF.md) contains useful project history,
-including earlier REZOMO notes, but its filename is now ambiguous. Keep it as a
-historical reference; use this file for the current state and operating rules.
+This document is historical. For current family state and build/flash rules,
+start with the dated checkpoint in [`REZO_HANDOFF.md`](REZO_HANDOFF.md) and
+[`README.md`](README.md). The records below and
+[`BUILD_PERFORMANCE.md`](BUILD_PERFORMANCE.md) retain earlier experiments;
+their seed choices, timing thresholds, UI behavior, and branch names may no
+longer apply.
 
 ## 2026-08-15 STREZO curve and capacity checkpoint
 
