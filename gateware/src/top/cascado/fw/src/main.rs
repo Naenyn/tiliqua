@@ -370,67 +370,8 @@ fn write_cascado_palette(
     }
 }
 
-/// Integer sine/cosine for the 5-degree camera steps, in Q8 format.
-fn sin_cos_q8(angle: i8) -> (i32, i32) {
-    // round(256 * sin(theta)) for theta = 0, 5, ... 90 degrees. Cosine is
-    // the same quarter-wave table read in reverse. AngleParams constrains all
-    // UI values to this grid; clamping also makes a damaged saved value safe.
-    const SIN_Q8: [i32; 19] = [
-        0, 22, 44, 66, 88, 108, 128, 147, 165, 181, 196, 210, 222, 232, 241, 247, 252, 255, 256,
-    ];
-    let index = core::cmp::min(angle.unsigned_abs() as usize / 5, SIN_Q8.len() - 1);
-    let sin = SIN_Q8[index];
-    let cos = SIN_Q8[SIN_Q8.len() - 1 - index];
-    (if angle < 0 { -sin } else { sin }, cos)
-}
-
-fn mul_q8(a: i32, b: i32) -> i32 {
-    let product = a * b;
-    // Arithmetic right shift floors negative products. Round both signs to
-    // the nearest Q8 value instead so rotations do not acquire a directional
-    // bias from repeated matrix multiplies.
-    let correction = if product < 0 { 127 } else { 128 };
-    (product + correction) >> 8
-}
-
-/// Build two rows of an Euler-rotated orthographic camera matrix. The base
-/// projection keeps frequency horizontal, amplitude vertical and sends time
-/// away from the viewer toward the upper-right of the display.
-fn projection_matrix(rot_x: i8, rot_y: i8, rot_z: i8) -> ([i16; 3], [i16; 3]) {
-    let (sx, cx) = sin_cos_q8(rot_x);
-    let (sy, cy) = sin_cos_q8(rot_y);
-    let (sz, cz) = sin_cos_q8(rot_z);
-
-    // R = Rz * Ry * Rx, Q8 throughout.
-    let rotation = [
-        [
-            mul_q8(cz, cy),
-            mul_q8(mul_q8(cz, sy), sx) - mul_q8(sz, cx),
-            mul_q8(mul_q8(cz, sy), cx) + mul_q8(sz, sx),
-        ],
-        [
-            mul_q8(sz, cy),
-            mul_q8(mul_q8(sz, sy), sx) + mul_q8(cz, cx),
-            mul_q8(mul_q8(sz, sy), cx) - mul_q8(cz, sx),
-        ],
-        [-sy, mul_q8(cy, sx), mul_q8(cy, cx)],
-    ];
-    let base_x = [384, 0, 90];
-    let base_y = [0, -320, -96];
-    let mut out_x = [0i16; 3];
-    let mut out_y = [0i16; 3];
-    for column in 0..3 {
-        let mut x = 0;
-        let mut y = 0;
-        for row in 0..3 {
-            x += mul_q8(base_x[row], rotation[row][column]);
-            y += mul_q8(base_y[row], rotation[row][column]);
-        }
-        out_x[column] = x as i16;
-        out_y[column] = y as i16;
-    }
-    (out_x, out_y)
-}
+mod projection;
+use projection::{project_offset, projection_matrix};
 
 fn project_axis_point(
     frequency: i32,
@@ -447,12 +388,8 @@ fn project_axis_point(
         frequency
     };
     let coordinates = [frequency, amplitude, history];
-    let mut x = h_active as i32 / 2 - 50;
-    let mut y = v_active as i32 / 2 + 185;
-    for index in 0..3 {
-        x += coordinates[index] * projection_x[index] as i32 >> 8;
-        y += coordinates[index] * projection_y[index] as i32 >> 8;
-    }
+    let x = h_active as i32 / 2 - 50 + project_offset(coordinates, projection_x);
+    let y = v_active as i32 / 2 + 185 + project_offset(coordinates, projection_y);
     Point::new(x, y)
 }
 
@@ -696,6 +633,7 @@ fn main() -> ! {
         let mut last_noise_floor: Option<u8> = None;
         let mut last_timings: Option<(u16, u16)> = None;
         let mut last_angles: Option<(i8, i8, i8)> = None;
+        let mut axis_projection_cache = None;
         let mut last_config_3d: Option<(u8, bool, bool, bool, bool, bool)> = None;
 
         loop {
@@ -884,8 +822,16 @@ fn main() -> ! {
                         opts.cascado.rot_y.value,
                         opts.cascado.rot_z.value,
                     );
-                    let (projection_x, projection_y) =
-                        projection_matrix(angles.0, angles.1, angles.2);
+                    // The surface changes every frame, but its camera usually
+                    // does not. Avoid repeating the fixed-point matrix work.
+                    let (projection_x, projection_y) = match axis_projection_cache {
+                        Some((cached_angles, matrix)) if cached_angles == angles => matrix,
+                        _ => {
+                            let matrix = projection_matrix(angles.0, angles.1, angles.2);
+                            axis_projection_cache = Some((angles, matrix));
+                            matrix
+                        }
+                    };
                     draw_axis_ticks(
                         &mut display,
                         h_active,
