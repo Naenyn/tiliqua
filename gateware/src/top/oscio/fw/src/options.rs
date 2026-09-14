@@ -545,37 +545,39 @@ pub const MONITOR_MENU_PAGES: [Page; 5] = [
 
 const SCOPE_HOME_OPTIONS: &[usize] = &[0, 1, 2];
 const MONITOR_HOME_OPTIONS: &[usize] = &[0, 3, 4];
-const MONITOR_CIRCULAR_HOME_OPTIONS: &[usize] = &[0, 3, 4, 5];
+const MONITOR_PAGINATED_HOME_OPTIONS: &[usize] = &[0, 3, 4, 5];
 const MONITOR_DISPLAY_OPTIONS: &[usize] = &[2, 3, 4];
 
-fn visible_option_indices(opts: &Opts, circular_display: bool) -> Option<&'static [usize]> {
+fn visible_option_indices(opts: &Opts, monitor_paginated: bool) -> Option<&'static [usize]> {
     match (opts.tracker.page.value, opts.mode.view.value) {
         (Page::Mode, ViewMode::Scope) => Some(SCOPE_HOME_OPTIONS),
-        (Page::Mode, ViewMode::Monitor) if circular_display => Some(MONITOR_CIRCULAR_HOME_OPTIONS),
+        (Page::Mode, ViewMode::Monitor) if monitor_paginated => {
+            Some(MONITOR_PAGINATED_HOME_OPTIONS)
+        }
         (Page::Mode, ViewMode::Monitor) => Some(MONITOR_HOME_OPTIONS),
         (Page::Display, ViewMode::Monitor) => Some(MONITOR_DISPLAY_OPTIONS),
         _ => None,
     }
 }
 
-pub fn scope_consume_ticks(opts: &mut Opts, ticks: i8, circular_display: bool) {
+pub fn scope_consume_ticks(opts: &mut Opts, ticks: i8, monitor_paginated: bool) {
     if ticks >= 1 {
         for _ in 0..ticks {
-            scope_tick_up(opts, circular_display);
+            scope_tick_up(opts, monitor_paginated);
         }
     }
     if ticks <= -1 {
         for _ in 0..(-ticks) {
-            scope_tick_down(opts, circular_display);
+            scope_tick_down(opts, monitor_paginated);
         }
     }
 }
 
-fn scope_tick_up(opts: &mut Opts, circular_display: bool) {
+fn scope_tick_up(opts: &mut Opts, monitor_paginated: bool) {
     if let Some(n_selected) = opts.selected() {
         if opts.modify() {
             opts.view_mut().options_mut()[n_selected].tick_up();
-        } else if let Some(indices) = visible_option_indices(opts, circular_display) {
+        } else if let Some(indices) = visible_option_indices(opts, monitor_paginated) {
             if let Some(position) = indices.iter().position(|&index| index == n_selected) {
                 if position + 1 < indices.len() {
                     opts.set_selected(Some(indices[position + 1]));
@@ -587,18 +589,18 @@ fn scope_tick_up(opts: &mut Opts, circular_display: bool) {
     } else if opts.modify() {
         scope_page_step(opts, 1);
     } else if !opts.view().options().is_empty() {
-        let first = visible_option_indices(opts, circular_display)
+        let first = visible_option_indices(opts, monitor_paginated)
             .and_then(|indices| indices.first().copied())
             .unwrap_or(0);
         opts.set_selected(Some(first));
     }
 }
 
-fn scope_tick_down(opts: &mut Opts, circular_display: bool) {
+fn scope_tick_down(opts: &mut Opts, monitor_paginated: bool) {
     if let Some(n_selected) = opts.selected() {
         if opts.modify() {
             opts.view_mut().options_mut()[n_selected].tick_down();
-        } else if let Some(indices) = visible_option_indices(opts, circular_display) {
+        } else if let Some(indices) = visible_option_indices(opts, monitor_paginated) {
             if let Some(position) = indices.iter().position(|&index| index == n_selected) {
                 if position == 0 {
                     opts.set_selected(None);

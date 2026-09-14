@@ -1,10 +1,23 @@
 # OSCIO development handoff
 
-Updated: 2026-09-13
+Updated: 2026-09-14
 
 This document describes the implemented OSCIO scope and CV/LFO design,
 its verification state, and the main constraints to preserve during future
 development.
+
+The frequency-state RAM experiment was also not retained: it saved 98 COMB
+and 620 FF, but its strict seed-3 route missed the HDMI serializer target
+(369.96/371.33 MHz). Production frequency logic was restored exactly; no
+shared video/clock code changed and nothing was flashed. The test-only
+prototype, equivalence coverage, and results are documented in
+`OSCIO_FREQUENCY_MEMORY_2026-09-14.md`.
+
+The serialized peak-tracker experiment was rejected: preserving ADC bursts
+reduced the net saving to only two logic cells. Source and hardware retain the
+smoke-tested parallel implementation, with an additional burst regression.
+See `OSCIO_SERIALIZED_PEAKS_2026-09-13.md` for the measurements and
+`OSCIO_CORRECTNESS_REVIEW_2026-09-13.md` for the retained build.
 
 ## Working conventions
 
@@ -77,6 +90,15 @@ Statistics are drawn into PSRAM-backed 1bpp scratch panels and diffed against
 their previous contents. This updates changed glyph pixels without visibly
 blanking the whole statistics area.
 
+Low/high and peak-to-peak include every native-rate input sample, not just
+the 1 kHz firmware polls. Parallel trackers accept even consecutive-clock
+bursts from the ADC crossing. Atomic four-channel snapshots partition samples
+into non-overlapping windows; a coincident sample belongs to the completed
+window. Firmware merges peaks into its existing slowly released peak hold.
+The level average remains at 1 kHz. Entering CV/LFO discards scope-mode peaks.
+Frequency is the latest rising-crossing interval, not a repeatability test;
+the help now states this explicitly and its scroll range is regenerated.
+
 Trace capture is invalidated after all new view geometry has been published to
 hardware. This ordering prevents a one-time vertical connector from old scope
 coordinates when entering monitor mode. Progressive capture also rearms at the
@@ -88,10 +110,14 @@ offscreen pass.
 Runtime video dimensions select the CV/LFO layout; separate artifacts are not
 required.
 
-- Rectangular displays show all four lanes across the active display.
+- Rectangular displays at least 688 pixels tall show all four lanes.
+- Shorter rectangular displays paginate into CH 0-1 and CH 2-3, using the full
+  rectangular frame. This includes 640x480, 800x600, and 1024x600.
 - A 720x720 display uses a centered circular-safe frame and paginates the monitor
   into CH 0-1 and CH 2-3.
-- The channel-pair selector appears only on the circular display.
+- The channel-pair selector appears whenever the layout is paginated.
+- The threshold reserves 172 pixels per lane for its 168-pixel statistics
+  bitmap and separators. It uses current logical dimensions, including rotation.
 
 The normal menu is right-aligned on rectangular video modes and centered inside
 the safe region on 720x720 video.
@@ -120,7 +146,7 @@ Scope navigation:
 
 CV/LFO navigation:
 
-1. `OSCIO`: mode, time/div, max freq, plus channels on 720x720
+1. `OSCIO`: mode, time/div, max freq, plus channels on paginated displays
 2. `RANGES`: CH0 through CH3
 3. `DISPLAY`: trace intensity, hue, and palette
 4. `SYSTEM`
@@ -170,6 +196,13 @@ definitions when the build changes them.
 
 ## Timing and resource state
 
+Latest resource/correctness pass: see `OSCIO_RESOURCE_REVIEW_2026-09-13.md`.
+Archive `oscio-2ed89680-resource-spread0-seed3-r5.tar.gz` uses strict timing,
+seed 3, 192 kHz, ASQ 2/18, and spread spectrum disabled. All clocks pass,
+including sync at 67.25 MHz against 60 MHz. Packed combinational use falls
+from 22,672 to 22,521 cells; sample widths and the renderer are unchanged.
+This also corrects signed DC-level filtering bias and 48 kHz activity windows.
+
 Latest continuity/backpressure build (2026-09-13):
 `oscio-7addc0f9-continuity-spread0-seed3-r5.tar.gz`, strict timing, seed 3,
 192 kHz, ASQ 2/18, and `spread_spectrum=0.0`. Final routed maxima are
@@ -178,9 +211,9 @@ all pass their unchanged targets. Bitstream SHA-256:
 `61d880ff9e97f68b9a1c8f62f2dc97fb250379b48303a24d671f31ddcb3ffbc6`.
 The relevant suite passes 78 tests plus 12 subtests, including burst
 equivalence, small/large slope connectivity, pen lift, rotations, lane clipping,
-and the DSP chain connected to the actual scope input. Hardware confirmation
-is pending. The archive tag is the pre-fix checkpoint; these rendering changes
-are additional working-tree changes. Earlier builds below remain references.
+and the DSP chain connected to the actual scope input. The user confirmed the
+rendering improvement on hardware, and it was committed as `2ed89680`.
+The archive tag is the pre-fix checkpoint. Earlier builds below remain references.
 
 The 2026-09-13 conservative edge-cleanup build uses `--timing-strict --seed 3
 --spread-spectrum 0.0 --fs-192khz` and ASQ 2/18. Its final routed clocks all pass:

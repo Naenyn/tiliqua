@@ -110,9 +110,9 @@ const SYSTEM_ROWS: &[MenuRow] = &[
 
 const HELP_ROWS: &[MenuRow] = &[MenuRow::Opt(0, "scroll")];
 
-fn rows_for_page(page: Page, mode: ViewMode, circular_display: bool) -> &'static [MenuRow] {
+fn rows_for_page(page: Page, mode: ViewMode, monitor_paginated: bool) -> &'static [MenuRow] {
     match page {
-        Page::Mode => match (mode, circular_display) {
+        Page::Mode => match (mode, monitor_paginated) {
             (ViewMode::Scope, _) => SCOPE_HOME_ROWS,
             (ViewMode::Monitor, false) => MONITOR_HOME_ROWS,
             (ViewMode::Monitor, true) => MONITOR_CIRCULAR_HOME_ROWS,
@@ -144,7 +144,7 @@ pub fn draw_scope_menu<D>(
     d: &mut D,
     opts: &Opts,
     page: Page,
-    circular_display: bool,
+    monitor_paginated: bool,
     hue: u8,
     menu_w: u32,
     menu_h: u32,
@@ -161,7 +161,7 @@ where
         .stroke_width(1)
         .build();
 
-    let rows = rows_for_page(page, opts.mode.view.value, circular_display);
+    let rows = rows_for_page(page, opts.mode.view.value, monitor_paginated);
     let row_spacing = row_spacing(page);
     let y0 = CONTENT_Y0;
     let page_hl = matches!((opts.selected(), opts.modify()), (None, _));

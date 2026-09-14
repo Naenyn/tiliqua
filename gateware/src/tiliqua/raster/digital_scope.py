@@ -12,6 +12,7 @@ from .. import dsp
 from . import PSQ, PSQ_BASE_FBITS, psq_from_volts
 from .frequency_detector import NativeFrequencyDetector
 from .scope_capture import MAX_CAPTURE_COLS, ENVELOPE_WORD_BITS, ColumnCapture
+from .native_extrema import NativeExtrema
 
 
 # Preserve the ramp's eight integer bits while adding four fractional bits for
@@ -115,6 +116,10 @@ class DigitalScopePeripheral(wiring.Component):
     class MonitorStatus(csr.Register, access="r"):
         valid: csr.Field(csr.action.R, unsigned(4))
         rapid: csr.Field(csr.action.R, unsigned(4))
+        extrema_valid: csr.Field(csr.action.R, unsigned(1))
+
+    class MonitorExtremum(csr.Register, access="r"):
+        value: csr.Field(csr.action.R, signed(32))
 
     class MonitorFs(csr.Register, access="r"):
         fs: csr.Field(csr.action.R, unsigned(32))
@@ -155,6 +160,10 @@ class DigitalScopePeripheral(wiring.Component):
         ]
         self._monitor_status = regs.add("monitor_status", self.MonitorStatus(), offset=0x94)
         self._monitor_fs = regs.add("monitor_fs", self.MonitorFs(), offset=0x98)
+        self._monitor_low = [regs.add(f"monitor_low{ch}", self.MonitorExtremum(),
+                                     offset=0xA0 + 4 * ch) for ch in range(n_channels)]
+        self._monitor_high = [regs.add(f"monitor_high{ch}", self.MonitorExtremum(),
+                                      offset=0xB0 + 4 * ch) for ch in range(n_channels)]
 
         self._bridge = csr.Bridge(regs.as_memory_map())
         super().__init__({
@@ -223,6 +232,11 @@ class DigitalScopePeripheral(wiring.Component):
         m.submodules.frequency_detector = frequency_detector = NativeFrequencyDetector(
             shape=dsp.ASQ,
             n_channels=self.n_channels,
+            # Keep the same 25 ms activity window and ~5.33 ms envelope block
+            # at both supported sample rates, instead of classifying a 20 Hz
+            # LFO as rapid activity in 48 kHz builds.
+            activity_window_samples=max(2, self.native_fs // 40),
+            envelope_block_samples=max(2, round(self.native_fs * 1024 / 192_000)),
         )
         m.d.comb += [
             self.native_i.ready.eq(1),
@@ -230,6 +244,20 @@ class DigitalScopePeripheral(wiring.Component):
         ]
         for ch in range(self.n_channels):
             m.d.comb += frequency_detector.sample[ch].eq(self.native_i.payload[ch])
+
+        m.submodules.native_extrema = native_extrema = NativeExtrema(shape=dsp.ASQ)
+        m.d.comb += [
+            native_extrema.sample.eq(self.native_i.payload),
+            native_extrema.tick.eq(self.native_i.valid & self.native_i.ready),
+            native_extrema.snapshot.eq(self._monitor_snapshot.f.snapshot.w_stb
+                                       & self._monitor_snapshot.f.snapshot.w_data),
+            self._monitor_status.f.extrema_valid.r_data.eq(native_extrema.valid),
+        ]
+        for ch in range(self.n_channels):
+            m.d.comb += [
+                self._monitor_low[ch].f.value.r_data.eq(native_extrema.low[ch]),
+                self._monitor_high[ch].f.value.r_data.eq(native_extrema.high[ch]),
+            ]
 
         monitor_period_snapshot = Array(
             Signal(unsigned(NativeFrequencyDetector.PERIOD_BITS),

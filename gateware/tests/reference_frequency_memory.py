@@ -5,7 +5,7 @@
 """Native-sample frequency and high-rate activity measurement."""
 
 from amaranth import *
-from amaranth.lib import data, wiring
+from amaranth.lib import data, memory, wiring
 from amaranth.lib.wiring import In, Out
 
 
@@ -87,20 +87,41 @@ class NativeFrequencyDetector(wiring.Component):
         block_count = Signal(range(self.envelope_block_samples))
         activity_window_count = Signal(range(self.activity_window_samples))
 
+        # Asynchronous read keeps the existing one-clock/channel schedule.
+        # Each RAM word retains full precision and is written only while its
+        # channel is processed. Output/snapshot registers remain unchanged.
+        # RAM contents do not reset with the sync domain. Mask stale words
+        # until their first write after reset to preserve register semantics.
+        state_valid = Array(Signal(name=f"state_valid{ch}")
+                            for ch in range(self.n_channels))
+        with m.If(processing):
+            m.d.sync += state_valid[channel].eq(1)
+
+        def state_memory(name, shape):
+            ram = memory.Memory(shape=shape, depth=self.n_channels, init=[])
+            m.submodules[name + "_state"] = ram
+            read = ram.read_port(domain="comb")
+            write = ram.write_port()
+            next_value = Signal(shape, name=name + "_next")
+            current = Signal(shape, name=name + "_current")
+            m.d.comb += [
+                read.addr.eq(channel),
+                current.eq(Mux(state_valid[channel], read.data, 0)),
+                next_value.eq(current),
+                write.addr.eq(channel),
+                write.data.eq(next_value),
+                write.en.eq(processing),
+            ]
+            return current, next_value
+
         initialized = Array(Signal(name=f"initialized{ch}")
                             for ch in range(self.n_channels))
-        block_low = Array(Signal(storage_shape, name=f"block_low{ch}")
-                          for ch in range(self.n_channels))
-        block_high = Array(Signal(storage_shape, name=f"block_high{ch}")
-                           for ch in range(self.n_channels))
-        envelope_low = Array(Signal(storage_shape, name=f"envelope_low{ch}")
-                             for ch in range(self.n_channels))
-        envelope_high = Array(Signal(storage_shape, name=f"envelope_high{ch}")
-                              for ch in range(self.n_channels))
-        threshold_low = Array(Signal(storage_shape, name=f"threshold_low{ch}")
-                              for ch in range(self.n_channels))
-        threshold_high = Array(Signal(storage_shape, name=f"threshold_high{ch}")
-                               for ch in range(self.n_channels))
+        block_low, block_low_next = state_memory("block_low", storage_shape)
+        block_high, block_high_next = state_memory("block_high", storage_shape)
+        envelope_low, envelope_low_next = state_memory("envelope_low", storage_shape)
+        envelope_high, envelope_high_next = state_memory("envelope_high", storage_shape)
+        threshold_low, threshold_low_next = state_memory("threshold_low", storage_shape)
+        threshold_high, threshold_high_next = state_memory("threshold_high", storage_shape)
         threshold_valid = Array(Signal(name=f"threshold_valid{ch}")
                                 for ch in range(self.n_channels))
 
@@ -108,17 +129,15 @@ class NativeFrequencyDetector(wiring.Component):
                             for ch in range(self.n_channels))
         have_crossing = Array(Signal(name=f"have_crossing{ch}")
                               for ch in range(self.n_channels))
-        elapsed = Array(Signal(unsigned(self.PERIOD_BITS), name=f"elapsed{ch}")
-                        for ch in range(self.n_channels))
+        elapsed, elapsed_next = state_memory("elapsed", unsigned(self.PERIOD_BITS))
         live_period = Array(Signal(unsigned(self.PERIOD_BITS), name=f"period{ch}")
                             for ch in range(self.n_channels))
         live_valid = Array(Signal(name=f"valid{ch}")
                            for ch in range(self.n_channels))
         # Reuse the elapsed period counter for staleness. A separate decrementing
         # timer duplicated a wide counter/update mux for every channel.
-        stale_timeout = Array(
-            Signal(unsigned(self.PERIOD_BITS), name=f"stale_limit{ch}")
-            for ch in range(self.n_channels))
+        stale_timeout, stale_timeout_next = state_memory(
+            "stale_timeout", unsigned(self.PERIOD_BITS))
 
         activity_count_shape = range(self.rapid_crossings + 1)
         activity_count = Array(Signal(activity_count_shape, name=f"activity_count{ch}")
@@ -134,9 +153,8 @@ class NativeFrequencyDetector(wiring.Component):
                 self.rapid[ch].eq(rapid_hold[ch] != 0),
             ]
 
-        # The four channels are processed on four successive sync clocks. At
-        # 192 kHz there are about 312 clocks between sample bundles, so this
-        # serialization shares the wide arithmetic without risking backlog.
+        # Preserve the existing four-successive-clock channel schedule and
+        # tick priority; the memory conversion adds no input buffering/latency.
         sample = Signal(storage_shape)
         block_low_candidate = Signal(storage_shape)
         block_high_candidate = Signal(storage_shape)
@@ -152,34 +170,32 @@ class NativeFrequencyDetector(wiring.Component):
         m.d.comb += [
             sample.eq(sample_r[channel]),
             block_low_candidate.eq(Mux(
-                sample < block_low[channel], sample, block_low[channel])),
+                sample < block_low, sample, block_low)),
             block_high_candidate.eq(Mux(
-                sample > block_high[channel], sample, block_high[channel])),
-            envelope_range.eq(envelope_high[channel] - envelope_low[channel]),
-            midpoint.eq(envelope_low[channel] + (envelope_range >> 1)),
+                sample > block_high, sample, block_high)),
+            envelope_range.eq(envelope_high - envelope_low),
+            midpoint.eq(envelope_low + (envelope_range >> 1)),
             hysteresis.eq(Mux(
                 (envelope_range >> 4) < self.min_hysteresis,
                 self.min_hysteresis,
                 envelope_range >> 4,
             )),
-            release_low_target.eq(envelope_low[channel] + self.envelope_release_step),
-            release_high_target.eq(envelope_high[channel] - self.envelope_release_step),
-            period_candidate.eq(elapsed[channel] + 1),
+            release_low_target.eq(envelope_low + self.envelope_release_step),
+            release_high_target.eq(envelope_high - self.envelope_release_step),
+            period_candidate.eq(elapsed + 1),
             timeout_candidate.eq(period_candidate + (period_candidate << 1)),
             rising.eq(
                 processing & threshold_valid[channel] & armed_below[channel]
-                & (sample >= threshold_high[channel])),
+                & (sample >= threshold_high)),
         ]
 
         with m.If(processing):
             with m.If(~initialized[channel]):
-                m.d.sync += [
-                    initialized[channel].eq(1),
-                    block_low[channel].eq(sample),
-                    block_high[channel].eq(sample),
-                    envelope_low[channel].eq(sample),
-                    envelope_high[channel].eq(sample),
-                ]
+                m.d.sync += initialized[channel].eq(1)
+                m.d.comb += block_low_next.eq(sample)
+                m.d.comb += block_high_next.eq(sample)
+                m.d.comb += envelope_low_next.eq(sample)
+                m.d.comb += envelope_high_next.eq(sample)
             with m.Else():
                 with m.If(block_count == self.envelope_block_samples - 1):
                     # Close the completed block before the current boundary
@@ -188,78 +204,68 @@ class NativeFrequencyDetector(wiring.Component):
                     # comparison into the wide envelope update path.
                     # Attack new extrema immediately; release by a small fixed
                     # amount per block.
-                    with m.If(block_low[channel] < envelope_low[channel]):
-                        m.d.sync += envelope_low[channel].eq(block_low[channel])
+                    with m.If(block_low < envelope_low):
+                        m.d.comb += envelope_low_next.eq(block_low)
                     with m.Else():
-                        m.d.sync += envelope_low[channel].eq(Mux(
-                            release_low_target < block_low[channel],
+                        m.d.comb += envelope_low_next.eq(Mux(
+                            release_low_target < block_low,
                             release_low_target,
-                            block_low[channel],
+                            block_low,
                         ))
-                    with m.If(block_high[channel] > envelope_high[channel]):
-                        m.d.sync += envelope_high[channel].eq(block_high[channel])
+                    with m.If(block_high > envelope_high):
+                        m.d.comb += envelope_high_next.eq(block_high)
                     with m.Else():
-                        m.d.sync += envelope_high[channel].eq(Mux(
-                            release_high_target > block_high[channel],
+                        m.d.comb += envelope_high_next.eq(Mux(
+                            release_high_target > block_high,
                             release_high_target,
-                            block_high[channel],
+                            block_high,
                         ))
 
                     # Registered thresholds isolate envelope arithmetic from
                     # the crossing/counter state path.
-                    m.d.sync += [
-                        threshold_valid[channel].eq(envelope_range >= self.min_range),
-                        threshold_low[channel].eq(midpoint - hysteresis),
-                        threshold_high[channel].eq(midpoint + hysteresis),
-                        block_low[channel].eq(sample),
-                        block_high[channel].eq(sample),
-                    ]
+                    m.d.sync += threshold_valid[channel].eq(envelope_range >= self.min_range)
+                    m.d.comb += threshold_low_next.eq(midpoint - hysteresis)
+                    m.d.comb += threshold_high_next.eq(midpoint + hysteresis)
+                    m.d.comb += block_low_next.eq(sample)
+                    m.d.comb += block_high_next.eq(sample)
                 with m.Else():
-                    m.d.sync += [
-                        block_low[channel].eq(block_low_candidate),
-                        block_high[channel].eq(block_high_candidate),
-                    ]
+                    m.d.comb += block_low_next.eq(block_low_candidate)
+                    m.d.comb += block_high_next.eq(block_high_candidate)
 
             with m.If(~threshold_valid[channel]):
-                m.d.sync += [
-                    armed_below[channel].eq(0),
-                    have_crossing[channel].eq(0),
-                    live_valid[channel].eq(0),
-                    elapsed[channel].eq(0),
-                    stale_timeout[channel].eq(0),
-                ]
-            with m.Elif(sample <= threshold_low[channel]):
+                m.d.sync += armed_below[channel].eq(0)
+                m.d.sync += have_crossing[channel].eq(0)
+                m.d.sync += live_valid[channel].eq(0)
+                m.d.comb += elapsed_next.eq(0)
+                m.d.comb += stale_timeout_next.eq(0)
+            with m.Elif(sample <= threshold_low):
                 m.d.sync += armed_below[channel].eq(1)
-                with m.If(have_crossing[channel] & (elapsed[channel] != period_max)):
-                    m.d.sync += elapsed[channel].eq(elapsed[channel] + 1)
+                with m.If(have_crossing[channel] & (elapsed != period_max)):
+                    m.d.comb += elapsed_next.eq(elapsed + 1)
                 with m.If(live_valid[channel]):
-                    with m.If(elapsed[channel] >= stale_timeout[channel]):
+                    with m.If(elapsed >= stale_timeout):
                         m.d.sync += live_valid[channel].eq(0)
             with m.Elif(rising):
-                m.d.sync += [
-                    armed_below[channel].eq(0),
-                    elapsed[channel].eq(0),
-                ]
+                m.d.sync += armed_below[channel].eq(0)
+                m.d.comb += elapsed_next.eq(0)
                 with m.If(have_crossing[channel]):
-                    m.d.sync += [
-                        live_period[channel].eq(period_candidate[:self.PERIOD_BITS]),
-                        live_valid[channel].eq(period_candidate <= period_max),
-                        stale_timeout[channel].eq(Mux(
-                            timeout_candidate > period_max,
-                            period_max,
-                            timeout_candidate[:self.PERIOD_BITS],
-                        )),
-                    ]
+                    m.d.sync += live_period[channel].eq(period_candidate[:self.PERIOD_BITS])
+                    m.d.sync += live_valid[channel].eq(period_candidate <= period_max)
+                    m.d.comb += stale_timeout_next.eq(Mux(
+                        timeout_candidate > period_max,
+                        period_max,
+                        timeout_candidate[:self.PERIOD_BITS],
+                    ))
                 with m.Else():
                     m.d.sync += have_crossing[channel].eq(1)
             with m.Else():
                 with m.If(have_crossing[channel]):
-                    with m.If(elapsed[channel] != period_max):
-                        m.d.sync += elapsed[channel].eq(elapsed[channel] + 1)
+                    with m.If(elapsed != period_max):
+                        m.d.comb += elapsed_next.eq(elapsed + 1)
                     with m.Else():
                         m.d.sync += live_valid[channel].eq(0)
                 with m.If(live_valid[channel]):
-                    with m.If(elapsed[channel] >= stale_timeout[channel]):
+                    with m.If(elapsed >= stale_timeout):
                         m.d.sync += live_valid[channel].eq(0)
 
             with m.If(activity_window_count == self.activity_window_samples - 1):

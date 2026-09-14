@@ -149,7 +149,7 @@ const MENU_DRAW_Y: u32 = 18;
 // with the previous panel. Removed glyph pixels are written black without a
 // visible clear/redraw interval, and the storage stays out of scarce BRAM.
 const MONITOR_STATS_W: usize = monitor::STATS_BITMAP_WIDTH as usize;
-const MONITOR_STATS_H: usize = 168;
+const MONITOR_STATS_H: usize = monitor::STATS_BITMAP_HEIGHT as usize;
 const MONITOR_STATS_WORDS: usize = (MONITOR_STATS_W * MONITOR_STATS_H + 31) / 32;
 const MONITOR_STATS_BYTES: usize = MONITOR_STATS_WORDS * 4;
 const MONITOR_STATS_BASE: usize = OVERLAY_UI_SCRATCH_BASE + 0x2000;
@@ -187,7 +187,7 @@ fn redraw_ui_menu(
     menu: &mut UiLayer<OVERLAY_UI_MENU_WORDS>,
     port: &impl UiLayerPort,
     opts: &Opts,
-    circular_display: bool,
+    monitor_paginated: bool,
     hue: u8,
 ) {
     menu.clear();
@@ -202,7 +202,7 @@ fn redraw_ui_menu(
         menu,
         opts,
         opts.tracker.page.value,
-        circular_display,
+        monitor_paginated,
         hue,
         OVERLAY_UI_MENU_W as u32,
         OVERLAY_UI_MENU_H as u32,
@@ -256,11 +256,11 @@ struct App {
     ui: ui::UI<Encoder0, EurorackPmod0, I2c0, Opts>,
     monitor: monitor::MonitorTracker,
     ui_update_ticks: u8,
-    circular_display: bool,
+    monitor_paginated: bool,
 }
 
 impl App {
-    pub fn new(opts: Opts, circular_display: bool) -> Self {
+    pub fn new(opts: Opts, monitor_paginated: bool) -> Self {
         let peripherals = unsafe { pac::Peripherals::steal() };
         let encoder = Encoder0::new(peripherals.ENCODER0);
         let i2cdev = I2c0::new(peripherals.I2C0);
@@ -276,7 +276,7 @@ impl App {
             ui,
             monitor: monitor::MonitorTracker::new(f_bits),
             ui_update_ticks: 0,
-            circular_display,
+            monitor_paginated,
         }
     }
 }
@@ -289,9 +289,9 @@ fn timer0_handler(app: &Mutex<RefCell<App>>) {
         app.ui_update_ticks = app.ui_update_ticks.saturating_add(1);
         if app.ui_update_ticks >= (UI_UPDATE_PERIOD_MS / TIMER0_ISR_PERIOD_MS) as u8 {
             app.ui_update_ticks = 0;
-            let circular_display = app.circular_display;
+            let monitor_paginated = app.monitor_paginated;
             app.ui.update_encoder(|opts, ticks| {
-                options::scope_consume_ticks(opts, ticks, circular_display)
+                options::scope_consume_ticks(opts, ticks, monitor_paginated)
             });
         }
     });
@@ -300,7 +300,10 @@ fn timer0_handler(app: &Mutex<RefCell<App>>) {
 /// Atomically snapshot the native-rate detector and merge it into the slower
 /// voltage-statistics frame. The write freezes all four periods and status
 /// bits before any of their multi-byte CSRs are read.
-fn merge_native_frequency(scope: &Scope0, frame: &mut monitor::MeasurementFrame) {
+fn merge_native_frequency(
+    scope: &Scope0,
+    frame: &mut monitor::MeasurementFrame,
+) -> Option<([i32; 4], [i32; 4])> {
     let registers = scope.registers();
     registers
         .monitor_snapshot()
@@ -319,6 +322,24 @@ fn merge_native_frequency(scope: &Scope0, frame: &mut monitor::MeasurementFrame)
         frame.channels[ch].period_ticks = periods[ch];
         frame.channels[ch].period_valid = valid & (1 << ch) != 0;
         frame.channels[ch].rapid_activity = rapid & (1 << ch) != 0;
+    }
+    if status.extrema_valid().bit_is_set() {
+        Some((
+            [
+                registers.monitor_low0().read().value().bits() as i32,
+                registers.monitor_low1().read().value().bits() as i32,
+                registers.monitor_low2().read().value().bits() as i32,
+                registers.monitor_low3().read().value().bits() as i32,
+            ],
+            [
+                registers.monitor_high0().read().value().bits() as i32,
+                registers.monitor_high1().read().value().bits() as i32,
+                registers.monitor_high2().read().value().bits() as i32,
+                registers.monitor_high3().read().value().bits() as i32,
+            ],
+        ))
+    } else {
+        None
     }
 }
 
@@ -370,8 +391,10 @@ fn main() -> ! {
     let mut last_hide = opts.system.hide.value;
     let mut last_edit_hide = opts.system.edit_hide.value;
     let boot_ui_hue = opts.system.ui_hue.value;
-    let circular_display = modeline.h_active == 720 && modeline.v_active == 720;
-    let app = Mutex::new(RefCell::new(App::new(opts, circular_display)));
+    let monitor_paginated =
+        monitor::MonitorLayout::new(modeline.h_active as u32, modeline.v_active as u32, 0)
+            .is_paginated();
+    let app = Mutex::new(RefCell::new(App::new(opts, monitor_paginated)));
     critical_section::with(|cs| {
         let mut app = app.borrow_ref_mut(cs);
         app.ui.clear_draw();
@@ -475,13 +498,17 @@ fn main() -> ! {
         loop {
             let h_active = display.size().width;
             let v_active = display.size().height;
+            let monitor_paginated =
+                monitor::MonitorLayout::new(h_active, v_active, 0).is_paginated();
 
             let (opts, draw_options, menu_dirty, save_opts, wipe_opts, mut monitor_frame) =
                 critical_section::with(|cs| {
                     let mut app = app.borrow_ref_mut(cs);
+                    let pagination_changed = app.monitor_paginated != monitor_paginated;
+                    app.monitor_paginated = monitor_paginated;
                     let save_opts = app.ui.opts.system.save_settings.poll();
                     let wipe_opts = app.ui.opts.system.reset_settings.poll();
-                    let menu_dirty = app.ui.take_menu_dirty();
+                    let menu_dirty = app.ui.take_menu_dirty() || pagination_changed;
                     (
                         app.ui.opts.clone(),
                         app.ui.draw(),
@@ -506,7 +533,21 @@ fn main() -> ! {
                 opts.monitor.ch4_range.value,
             ];
             if on_monitor {
-                merge_native_frequency(&scope, &mut monitor_frame);
+                if let Some((low, high)) = merge_native_frequency(&scope, &mut monitor_frame) {
+                    // The entry snapshot drains any peaks accumulated in scope
+                    // mode. Subsequent windows feed the existing peak hold.
+                    if was_monitor {
+                        critical_section::with(|cs| {
+                            let mut app = app.borrow_ref_mut(cs);
+                            app.monitor.include_native_extrema(low, high);
+                            let held = app.monitor.snapshot();
+                            for ch in 0..4 {
+                                monitor_frame.channels[ch].low = held.channels[ch].low;
+                                monitor_frame.channels[ch].high = held.channels[ch].high;
+                            }
+                        });
+                    }
+                }
             }
             let monitor_min_period_ms = opts.mode.monitor_frequency.value.minimum_period_ms();
             let monitor_spaced_limit_label = opts.mode.monitor_frequency.value.spaced_label();
@@ -572,7 +613,7 @@ fn main() -> ! {
                         &mut ui_menu,
                         &ui_port,
                         &opts,
-                        circular_display,
+                        monitor_paginated,
                         opts.system.ui_hue.value,
                     );
                     last_menu_page = opts.tracker.page.value;

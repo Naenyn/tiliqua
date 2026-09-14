@@ -22,6 +22,10 @@ const STATS_COLUMN_WIDTH: u32 = 190;
 const PLOT_MARGIN_X: u32 = 8;
 const CIRCULAR_FRAME_WIDTH: u32 = 596;
 const CIRCULAR_FRAME_HEIGHT: u32 = 396;
+pub const STATS_BITMAP_HEIGHT: u32 = 168;
+// Four pixels leave room for the bitmap origin and lane separators. The
+// 160-pixel waveform window also fits within this minimum.
+const MIN_LANE_HEIGHT: u32 = STATS_BITMAP_HEIGHT + 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MonitorLayout {
@@ -38,16 +42,21 @@ pub struct MonitorLayout {
 impl MonitorLayout {
     pub fn new(screen_width: u32, screen_height: u32, pair_first_channel: usize) -> Self {
         let circular = screen_width == 720 && screen_height == 720;
-        let (frame_width, frame_height, first_channel, channel_count) = if circular {
+        let (frame_width, frame_height) = if circular {
             (
                 CIRCULAR_FRAME_WIDTH.min(screen_width),
                 CIRCULAR_FRAME_HEIGHT.min(screen_height),
-                pair_first_channel.min(2),
-                2,
             )
         } else {
-            (screen_width, screen_height, 0, 4)
+            (screen_width, screen_height)
         };
+        let paginated = circular || frame_height / 4 < MIN_LANE_HEIGHT;
+        let first_channel = if paginated {
+            pair_first_channel.min(2) & !1
+        } else {
+            0
+        };
+        let channel_count = if paginated { 2 } else { 4 };
         Self {
             screen_width,
             screen_height,
@@ -251,6 +260,7 @@ impl MonitorGate {
 /// hardware and merged into each snapshot by the main loop.
 pub struct MonitorTracker {
     frame: MeasurementFrame,
+    level_remainder: [i32; 4],
     f_bits: u8,
     initialized: bool,
     update_ticks: u8,
@@ -260,6 +270,7 @@ impl MonitorTracker {
     pub fn new(f_bits: u8) -> Self {
         Self {
             frame: MeasurementFrame::default(),
+            level_remainder: [0; 4],
             f_bits,
             initialized: false,
             update_ticks: 0,
@@ -291,7 +302,14 @@ impl MonitorTracker {
             }
 
             // About a 32 ms DC/level average at the 1 kHz update rate.
-            measurement.level += (sample - measurement.level) >> LEVEL_FILTER_SHIFT;
+            // Preserve the division remainder instead of losing small positive
+            // corrections and rounding every negative correction downward.
+            // Wide subtraction also handles opposite-sign i32 endpoints.
+            let error = i64::from(sample) - i64::from(measurement.level)
+                + i64::from(self.level_remainder[ch]);
+            let adjustment = error / (1 << LEVEL_FILTER_SHIFT);
+            self.level_remainder[ch] = (error - (adjustment << LEVEL_FILTER_SHIFT)) as i32;
+            measurement.level += adjustment as i32;
 
             // Extrema attack immediately and release over roughly ten seconds.
             // This retains the peaks of slow LFOs without making a changed
@@ -320,6 +338,20 @@ impl MonitorTracker {
 
     pub fn snapshot(&self) -> MeasurementFrame {
         self.frame
+    }
+
+    /// Merge native-rate extrema into the existing slowly released peak hold.
+    /// The 1 kHz update still maintains the level average and release cadence.
+    pub fn include_native_extrema(&mut self, low: [i32; 4], high: [i32; 4]) {
+        if !self.initialized {
+            return;
+        }
+        for ch in 0..4 {
+            let low = self.q15(low[ch]);
+            let high = self.q15(high[ch]);
+            self.frame.channels[ch].low = self.frame.channels[ch].low.min(low);
+            self.frame.channels[ch].high = self.frame.channels[ch].high.max(high);
+        }
     }
 }
 
@@ -550,6 +582,59 @@ mod tests {
         is_above_monitor_band, ChannelMeasurement, LaneState, MeasurementFrame, MonitorGate,
         MonitorLayout, MonitorTracker, STATS_UPDATE_TICKS,
     };
+
+    #[test]
+    fn short_rectangles_paginate_without_circular_insets() {
+        for (width, height) in [(640, 480), (800, 600), (1024, 600), (480, 640)] {
+            for pair in [0, 2] {
+                let layout = MonitorLayout::new(width, height, pair);
+                assert!(layout.is_paginated());
+                assert_eq!(layout.first_channel(), pair);
+                assert_eq!(layout.frame_width, width);
+                assert_eq!(layout.frame_height, height);
+                assert_eq!(layout.frame_x, 0);
+                assert_eq!(layout.frame_y, 0);
+                assert!(layout.lane_height() >= super::MIN_LANE_HEIGHT);
+                assert!(layout.plot_bounds().0 < layout.plot_bounds().1);
+            }
+        }
+        for height in [688, 720, 800, 1080] {
+            assert!(!MonitorLayout::new(1280, height, 2).is_paginated());
+        }
+        assert!(MonitorLayout::new(1280, 687, 0).is_paginated());
+    }
+
+    #[test]
+    fn native_extrema_retain_pulses_missed_by_polling() {
+        let mut tracker = MonitorTracker::new(16);
+        tracker.update([0; 4]);
+        tracker.include_native_extrema([-8000, -4000, -2000, 0], [4000, 8000, 0, 2000]);
+        let frame = tracker.snapshot();
+        assert_eq!(frame.channels.map(|c| c.low), [-4000, -2000, -1000, 0]);
+        assert_eq!(frame.channels.map(|c| c.high), [2000, 4000, 0, 1000]);
+        tracker.update([0; 4]);
+        assert!(tracker.snapshot().channels[0].low < -3900);
+        assert!(tracker.snapshot().channels[1].high > 3900);
+        tracker.reset();
+        tracker.update([0; 4]);
+        assert_eq!(tracker.snapshot().channels.map(|c| c.low), [0; 4]);
+    }
+
+    #[test]
+    fn level_steps_settle_exactly_and_symmetrically() {
+        let mut tracker = MonitorTracker::new(15);
+        tracker.update([0; 4]);
+        for target in [4000, -4000, 1, -1, 0] {
+            for _ in 0..2000 {
+                tracker.update([target, -target, target / 2, -target / 2]);
+            }
+            let levels = tracker.snapshot().channels.map(|c| c.level);
+            assert_eq!(levels, [target, -target, target / 2, -target / 2]);
+        }
+        tracker.reset();
+        tracker.update([-4000; 4]);
+        assert_eq!(tracker.snapshot().channels.map(|c| c.level), [-4000; 4]);
+    }
 
     #[test]
     fn monitor_rejects_rates_above_two_hz() {

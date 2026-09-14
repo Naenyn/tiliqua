@@ -32,10 +32,10 @@ trace's vertical offset, volts per division, and visibility. The TRIGGER page
 contains trigger type, source, level, and filter. These channel and trigger
 pages are omitted from menu navigation in CV/LFO mode.
 
-In CV/LFO mode the OSCIO page provides time/div and max freq. On a 720x720
-display it also provides channels, which switches between CH 0-1 and CH 2-3;
-rectangular displays show all four and omit that option. The RANGES page gives
-every channel an independent full-window voltage range:
+In CV/LFO mode the OSCIO page provides time/div and max freq. The channels
+option selects CH 0-1 or CH 2-3 on circular displays and on rectangular displays
+too short for four lanes. Taller rectangular displays show all four channels.
+The RANGES page gives each channel an independent full-window voltage range:
 -5..+5 V, -10..+10 V, 0..+10 V, or 0..+5 V.
 
 CV/LFO is intended for control voltages, gates, envelopes, and LFOs. Its max
@@ -48,8 +48,10 @@ their voltage and frequency statistics remain visible. A trace must stay below
 max freq for three seconds before it appears. Once visible, it tolerates brief
 excursions above max freq, but is hidden after one second above the limit or
 immediately at 1.5 times the limit (30 Hz when max freq is 20 Hz).
-Frequency and period appear only after OSCIO observes a repeatable rising cycle;
-static, very small, or irregular signals display -- instead of a false reading.
+Frequency and period describe the latest measured rising-crossing interval.
+Static or very small signals show --; irregular signals may give changing values.
+Low/high and peak-to-peak capture native-rate extrema with a slowly released
+peak hold. The level readout uses a 1 kHz voltage average.
 
 Rising and falling are strict trigger modes: each sweep waits for the selected
 channel to cross trig lvl in the chosen direction. If no crossing arrives, the
