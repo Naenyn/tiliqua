@@ -209,7 +209,7 @@ class Peripheral(wiring.Component):
         plot_x = Signal(8)
         plot_y = Signal(8)
         sprite_x = Signal(16)
-        sprite_y = Signal(16)
+        sprite_row_byte_addr = Signal(16)
 
         # Calculate sprite memory address and bit position (in sprite memory) for current source pixel
         # TODO/WARN: currently this will only work if width (px) is divisible by 8!
@@ -219,7 +219,9 @@ class Peripheral(wiring.Component):
         sprite_memory_addr = Signal(self.memory_addr_width)
         pixel_bit_index = Signal(5)
         m.d.comb += [
-            byte_addr.eq(sprite_y * bytes_per_row + (sprite_x >> 3)),
+            # Compute the row base once per blit and advance it per row.
+            # Keep the multiplier out of the per-pixel sprite read path.
+            byte_addr.eq(sprite_row_byte_addr + (sprite_x >> 3)),
             sprite_memory_addr.eq(byte_addr>>2),
             pixel_bit_index.eq(((byte_addr & 3) << 3) | (sprite_x & 7)),
         ]
@@ -263,7 +265,7 @@ class Peripheral(wiring.Component):
                                 plot_x.eq(0),
                                 plot_y.eq(0),
                                 sprite_x.eq(current_src_x),
-                                sprite_y.eq(current_src_y),
+                                sprite_row_byte_addr.eq(current_src_y * bytes_per_row),
                                 current_dst_x.eq(cmd_fifo.o.payload.params.blit.dst_x),
                                 current_dst_y.eq(cmd_fifo.o.payload.params.blit.dst_y),
                                 current_pixel.eq(cmd_fifo.o.payload.params.blit.pixel),
@@ -294,7 +296,8 @@ class Peripheral(wiring.Component):
                         m.next = 'IDLE'
                     with m.Else():
                         m.d.sync += plot_y.eq(plot_y + 1)
-                        m.d.sync += sprite_y.eq(sprite_y + 1)
+                        m.d.sync += sprite_row_byte_addr.eq(
+                            sprite_row_byte_addr + bytes_per_row)
                         m.next = 'READ_SPRITE_DATA'
                 with m.Else():
                     m.d.sync += plot_x.eq(plot_x + 1)

@@ -649,6 +649,7 @@ fn main() -> ! {
     opts.tracker.page.value = Page::Cascado;
     opts.tracker.selected = None;
     opts.tracker.modify = false;
+    opts.help.scroll.value = opts.help.scroll.value.min(HELP_SCROLL_MAX);
 
     let mut last_palette = opts.display.palette.value;
     let mut last_color_by = opts.style.color_by.value;
