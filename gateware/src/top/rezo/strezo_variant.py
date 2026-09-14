@@ -202,15 +202,8 @@ def native_output_meter_bounds(y):
     return tuple(bounds)
 
 
-def mid_side_reference(selected, opposite, mid_gain, side_gain, width,
-                       input_width=18):
-    """Integer reference for STREZO's saturating wet-path M/S transform."""
-    if mid_gain == 64 and side_gain == 64:
-        return selected
-    input_min = -(1 << (input_width - 1))
-    input_max = (1 << (input_width - 1)) - 1
-    selected = max(input_min, min(input_max, selected))
-    opposite = max(input_min, min(input_max, opposite))
+def mid_side_reference(selected, opposite, mid_gain, side_gain, width):
+    """Integer M/S reference; preserve the full wet sum before output limiting."""
     value = (((mid_gain + side_gain) * selected +
               (mid_gain - side_gain) * opposite) >> 7)
     return max(-(1 << (width - 1)),
@@ -489,7 +482,11 @@ class RezoCore(RezoCoreConstants, wiring.Component):
         for n in range(4):
             m.d.comb += input_gain_diffs[n].eq(self.input_gains[n] - smooth_input_gains[n])
             m.d.comb += cv_depth_diffs[n].eq(self.cv_depths[n] - smooth_cv_depths[n])
-            with m.If(smooth_input_gains[n] <= self.INPUT_UNITY_POS):
+            # The UI retains the low byte so returning from minimum preserves
+            # the unity detent. Every position with a zero high byte is mute.
+            with m.If(smooth_input_gains[n] < 256):
+                m.d.comb += input_gain_coeffs[n].eq(0)
+            with m.Elif(smooth_input_gains[n] <= self.INPUT_UNITY_POS):
                 m.d.comb += input_gain_coeffs[n].eq(
                     (smooth_input_gains[n] >> 1) + (smooth_input_gains[n] >> 3)
                 )
@@ -750,13 +747,17 @@ class RezoCore(RezoCoreConstants, wiring.Component):
         bleed_state(alp_next_r, alp_store_raw_r, quiet_r)
         bleed_state(abp_next_r, abp_store_raw_r, quiet_r)
 
-        mix_shape = signed(ASQ.as_shape().width + 5)
+        # Ten bands can each contribute +/-4 FS. Keep their complete sum
+        # through feedback shaping; output routing must also retain cancellation.
+        mix_shape = signed(22)
+        output_shape = signed(25)
+        spatial_shape = signed(23)  # MID/SIDE can double a wet group.
         main_acc = Signal(mix_shape)
         feedback_acc = Signal(mix_shape)
         feedback_acc_r = Signal(mix_shape)
-        group_acc = [Signal(mix_shape, name=f"group_acc{n}")
+        group_acc = [Signal(spatial_shape, name=f"group_acc{n}")
                      for n in range(self.N_GROUPS)]
-        group_acc_r = [Signal(mix_shape, name=f"group_acc_r{n}")
+        group_acc_r = [Signal(spatial_shape, name=f"group_acc_r{n}")
                        for n in range(self.N_GROUPS)]
         feedback_group_acc = [
             Signal(mix_shape, name=f"feedback_group_acc{n}")
@@ -766,9 +767,9 @@ class RezoCore(RezoCoreConstants, wiring.Component):
             Signal(mix_shape, name=f"feedback_group_acc_r{n}")
             for n in range(self.N_GROUPS)
         ]
-        output_acc = [Signal(mix_shape, name=f"output_acc{n}") for n in range(4)]
+        output_acc = [Signal(output_shape, name=f"output_acc{n}") for n in range(4)]
         output_acc_array = Array(output_acc)
-        output_next = Signal(mix_shape)
+        output_next = Signal(output_shape)
         output_source = Signal(range(self.N_GROUPS + 1))
         output_send_index = Signal(unsigned(5))
         # Stored sends are 0..16, so five bits are sufficient throughout this
@@ -776,9 +777,9 @@ class RezoCore(RezoCoreConstants, wiring.Component):
         # its registers, multiplier, and rounding logic.
         output_send_gain = Signal(unsigned(5))
         output_send_gain_q = Signal(unsigned(5))
-        output_send_product = Signal(signed(mix_shape.width + 5))
-        output_send_term = Signal(mix_shape)
-        output_send_term_q = Signal(mix_shape)
+        output_send_product = Signal(signed(spatial_shape.width + 5))
+        output_send_term = Signal(spatial_shape)
+        output_send_term_q = Signal(spatial_shape)
         term = Signal(mix_shape)
         term_q = Signal(mix_shape)
         term_r = Signal(mix_shape)
@@ -998,26 +999,24 @@ class RezoCore(RezoCoreConstants, wiring.Component):
             *group_acc_r,
             input_mix_sample_r.as_value().as_signed(),
         ])
-        output_selected_source = Signal(mix_shape)
-        output_source_q = Signal(mix_shape)
+        output_selected_source = Signal(spatial_shape)
+        output_source_q = Signal(spatial_shape)
         spatial_group = Signal(range(self.N_GROUPS))
         spatial_source_l = Signal(mix_shape)
         spatial_source_r = Signal(mix_shape)
-        spatial_input_l = Signal(signed(18))
-        spatial_input_r = Signal(signed(18))
-        spatial_operand_l_q = Signal(signed(18))
-        spatial_operand_r_q = Signal(signed(18))
+        spatial_operand_l_q = Signal(mix_shape)
+        spatial_operand_r_q = Signal(mix_shape)
         spatial_coefficient_q = Signal(signed(10))
-        spatial_product_l = Signal(signed(28))
-        spatial_product_r = Signal(signed(28))
-        spatial_product_a_l_q = Signal(signed(28))
-        spatial_product_a_r_q = Signal(signed(28))
+        spatial_product_l = Signal(signed(mix_shape.width + 10))
+        spatial_product_r = Signal(signed(mix_shape.width + 10))
+        spatial_product_a_l_q = Signal.like(spatial_product_l)
+        spatial_product_a_r_q = Signal.like(spatial_product_r)
         mid_coefficient_a = Signal(signed(10))
         mid_coefficient_b = Signal(signed(10))
-        spatial_combined_l = Signal(signed(29))
-        spatial_combined_r = Signal(signed(29))
-        spatial_scaled_l = Signal(mix_shape)
-        spatial_scaled_r = Signal(mix_shape)
+        spatial_combined_l = Signal(signed(mix_shape.width + 11))
+        spatial_combined_r = Signal(signed(mix_shape.width + 11))
+        spatial_scaled_l = Signal(spatial_shape)
+        spatial_scaled_r = Signal(spatial_shape)
         input_mode_array = Array(self.input_modes)
         cv_target_array = Array(self.cv_targets)
         m.d.comb += [
@@ -1237,8 +1236,8 @@ class RezoCore(RezoCoreConstants, wiring.Component):
             # pairs across all output rows. Two registered 18x10 products run
             # in parallel; a small setup state lets all four groups share one
             # pair of source limiters as well as the multipliers.
-            # Four bits of pre-transform headroom retain deliberate overload
-            # while keeping both products in native ECP5 DSP blocks.
+            # Each group is transformed once, from its full untransformed sum.
+            # No pre-transform clamp: leaving unity must not reduce headroom.
             spatial_source_l.eq(Array(group_acc)[spatial_group]),
             spatial_source_r.eq(Array(group_acc_r)[spatial_group]),
             mid_coefficient_a.eq(mid_gain_q + side_gain_q),
@@ -1255,15 +1254,6 @@ class RezoCore(RezoCoreConstants, wiring.Component):
             output_send_term.eq(output_send_product >> 4),
             output_next.eq(output_acc_array[output_chan] + output_send_term_q),
         ]
-        for source, limited in (
-                (spatial_source_l, spatial_input_l),
-                (spatial_source_r, spatial_input_r)):
-            with m.If(source > 131071):
-                m.d.comb += limited.eq(131071)
-            with m.Elif(source < -131072):
-                m.d.comb += limited.eq(-131072)
-            with m.Else():
-                m.d.comb += limited.eq(source)
         m.d.comb += [
             group_cur.eq(group_offsets[band]),
             group_update_raw.eq(
@@ -1872,8 +1862,8 @@ class RezoCore(RezoCoreConstants, wiring.Component):
 
             with m.Case(state_mid_setup):
                 m.d.sync += [
-                    spatial_operand_l_q.eq(spatial_input_l),
-                    spatial_operand_r_q.eq(spatial_input_r),
+                    spatial_operand_l_q.eq(spatial_source_l),
+                    spatial_operand_r_q.eq(spatial_source_r),
                     spatial_coefficient_q.eq(mid_coefficient_a),
                     state.eq(state_mid_selected_commit),
                 ]
@@ -1882,8 +1872,8 @@ class RezoCore(RezoCoreConstants, wiring.Component):
                 m.d.sync += [
                     spatial_product_a_l_q.eq(spatial_product_l),
                     spatial_product_a_r_q.eq(spatial_product_r),
-                    spatial_operand_l_q.eq(spatial_input_r),
-                    spatial_operand_r_q.eq(spatial_input_l),
+                    spatial_operand_l_q.eq(spatial_source_r),
+                    spatial_operand_r_q.eq(spatial_source_l),
                     spatial_coefficient_q.eq(mid_coefficient_b),
                     state.eq(state_mid_opposite_commit),
                 ]

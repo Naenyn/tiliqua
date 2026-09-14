@@ -294,6 +294,23 @@ mod tests {
     }
 
     #[test]
+    fn input_edit_round_trip_preserves_unity_after_mute() {
+        let mut value = 0xcccc;
+        for _ in 0..204 {
+            value = step_coarse_byte(value, -1);
+        }
+        // Gateware treats the whole zero-high-byte interval as mute.
+        assert_eq!(value >> 8, 0);
+        assert_eq!(step_coarse_byte(value, -1), value);
+        for _ in 0..204 {
+            let next = step_coarse_byte(value, 1);
+            assert!(next > value);
+            value = next;
+        }
+        assert_eq!(value, 0xcccc);
+    }
+
+    #[test]
     fn acceleration_is_precise_then_progressive_and_bounded() {
         assert_eq!(progressive_edit_level(u8::MAX, 3, true, true), 0);
         assert_eq!(progressive_edit_level(0, 0, true, true), 1);

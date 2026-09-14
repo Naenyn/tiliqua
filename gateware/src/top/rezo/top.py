@@ -490,7 +490,11 @@ class RezoCore(wiring.Component):
         for n in range(4):
             m.d.comb += input_gain_diffs[n].eq(self.input_gains[n] - smooth_input_gains[n])
             m.d.comb += cv_depth_diffs[n].eq(self.cv_depths[n] - smooth_cv_depths[n])
-            with m.If(smooth_input_gains[n] <= self.INPUT_UNITY_POS):
+            # The UI retains the low byte so returning from minimum preserves
+            # the unity detent. Every position with a zero high byte is mute.
+            with m.If(smooth_input_gains[n] < 256):
+                m.d.comb += input_gain_coeffs[n].eq(0)
+            with m.Elif(smooth_input_gains[n] <= self.INPUT_UNITY_POS):
                 m.d.comb += input_gain_coeffs[n].eq(
                     (smooth_input_gains[n] >> 1) + (smooth_input_gains[n] >> 3)
                 )
@@ -644,14 +648,17 @@ class RezoCore(wiring.Component):
             svf_next.eq(svf_next_safe),
         ]
 
-        mix_shape = signed(ASQ.as_shape().width + 5)
+        # Ten bands can each contribute +/-4 FS. Keep their complete sum
+        # through feedback shaping; output routing must also retain cancellation.
+        mix_shape = signed(22)
+        output_shape = signed(24)
         main_acc = Signal(mix_shape)
         feedback_acc = Signal(mix_shape)
         group_acc = [Signal(mix_shape, name=f"group_acc{n}")
                      for n in range(self.N_GROUPS)]
-        output_acc = [Signal(mix_shape, name=f"output_acc{n}") for n in range(4)]
+        output_acc = [Signal(output_shape, name=f"output_acc{n}") for n in range(4)]
         output_acc_array = Array(output_acc)
-        output_next = Signal(mix_shape)
+        output_next = Signal(output_shape)
         output_source = Signal(range(self.N_GROUPS + 1))
         output_send_index = Signal(unsigned(5))
         output_send_gain = Signal(unsigned(7))
@@ -880,9 +887,11 @@ class RezoCore(wiring.Component):
             data_sample.eq(0),
             data_jack_patched.eq(0),
             lock_sample.eq(0),
+            # A signed 32-bit random word needs 17 shifts to match the
+            # signed 16-bit DATA input divided by two: -16384..16383.
             sampled_modulation.eq(Mux(
                 data_random_requested,
-                data_lfsr.as_signed() >> 1,
+                data_lfsr.as_signed() >> 17,
                 data_sample >> 1)),
             level_with_cv.eq(levels[band] + group_cur),
             # SVF state carries two fractional guard bits beyond SQNative.

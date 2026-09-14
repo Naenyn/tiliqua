@@ -139,15 +139,15 @@ artifacts have distinct names and cannot silently overwrite one another.
 Run the family tests before producing release archives:
 
 ```bash
-pdm run pytest -q tests/test_rezo*.py tests/test_rezomo*.py tests/test_strezo*.py
+pdm run pytest -q tests/test_rezo*.py tests/test_strezo*.py
 ```
 
 Every routed build must pass all constrained clocks. The release qualification
-also requires at least 1.25 percent headroom in the timing report:
+also requires at least 3 percent headroom in the timing report:
 
 ```bash
 pdm run python scripts/check_timing_margin.py \
-  build/<target>-r5/top.tim --minimum-headroom-percent 1.25
+  build/<target>-r5/top.tim --minimum-headroom-percent 3
 ```
 
 Replace `<target>` with `rezo`, `rezo-round`, `rezomo`, `rezomo-round`,
