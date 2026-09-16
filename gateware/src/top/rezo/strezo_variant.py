@@ -5179,6 +5179,9 @@ class RezoBeamTop(Elaboratable):
             # produce a receiver-lockable signal in hardware.
             m.submodules.dvi_gen = dvi_gen = dvi.DVIPHY(
                 split_load_strobes=True,
+                # The upper two data flops use SLICEA at Y4. Its adjacent
+                # SLICEB is free and avoids a long load-to-LSR detour at 5x.
+                colocate_upper_load_strobes=True,
                 serializer_lane_x=(70, 49, 60, 65))
             display_de0 = Signal()
             display_hsync0 = Signal()
