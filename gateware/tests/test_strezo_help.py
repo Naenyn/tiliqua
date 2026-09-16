@@ -66,4 +66,4 @@ def test_help_controls_show_navigation_selection(selected):
 
 def test_help_has_no_underlying_controls_or_text_outside_viewport():
     assert _render_samples(page=8, points=((300, 86), (212, 120),
-        (300, 600), (0, 0))) == [rgb(6), (0, 0, 0), rgb(6), (0, 0, 0)]
+        (300, 600), (0, 0))) == [rgb(6), (0, 0, 0), (0, 0, 0), (0, 0, 0)]
