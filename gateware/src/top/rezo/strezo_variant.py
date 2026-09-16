@@ -3004,8 +3004,11 @@ class RezoTileDisplay(wiring.Component):
         meter_curve_x = Signal(unsigned(10))
         meter_bound_lo = Signal(unsigned(10))
         meter_bound_hi = Signal(unsigned(10))
-        meter_value = Signal(unsigned(6))
-        meter_clip = Signal()
+        meter_inner_lane = Signal()
+        meter_outer_value = Signal(unsigned(6))
+        meter_inner_value = Signal(unsigned(6))
+        meter_outer_clip = Signal()
+        meter_inner_clip = Signal()
         m.d.comb += [
             meter_bottom_left.eq(
                 (x >= NATIVE_STEREO_INPUT_TRACK_LEFT_X0) &
@@ -3022,6 +3025,25 @@ class RezoTileDisplay(wiring.Component):
                 x - NATIVE_STEREO_INPUT_TRACK_RIGHT_X0)),
             meter_curve_x.eq(Mux(
                 meter_bottom, 719 - y, Mux(x[9], 719 - x, x))),
+            # Select the channel in parallel with the annulus comparison.
+            # The registered lane tag chooses outer/inner in the next stage;
+            # invalid lanes are masked by meter_lane_valid_q below. This
+            # removes the curve comparator from the channel-mux setup path
+            # without changing pixel latency or visible meter values.
+            meter_outer_value.eq(Mux(
+                meter_bottom,
+                Mux(meter_bottom_left, self.input_bus_meters[0],
+                    self.input_bus_meters[1]),
+                Mux(x[9], self.output_meters[3], self.output_meters[0]))),
+            meter_inner_value.eq(Mux(
+                x[9], self.output_meters[2], self.output_meters[1])),
+            meter_outer_clip.eq(Mux(
+                meter_bottom,
+                Mux(meter_bottom_left, self.input_bus_clips[0],
+                    self.input_bus_clips[1]),
+                Mux(x[9], self.output_clips[3], self.output_clips[0]))),
+            meter_inner_clip.eq(Mux(
+                x[9], self.output_clips[2], self.output_clips[1])),
         ]
         with m.If((meter_curve_x >= meter_curve_data[0:10]) &
                   (meter_curve_x < meter_curve_data[10:20])):
@@ -3029,18 +3051,6 @@ class RezoTileDisplay(wiring.Component):
                 meter_lane_valid.eq(1),
                 meter_bound_lo.eq(meter_curve_data[0:10]),
                 meter_bound_hi.eq(meter_curve_data[10:20]),
-                meter_value.eq(Mux(
-                    meter_bottom,
-                    Mux(meter_bottom_left, self.input_bus_meters[0],
-                        self.input_bus_meters[1]),
-                    Mux(x[9], self.output_meters[3],
-                        self.output_meters[0]))),
-                meter_clip.eq(Mux(
-                    meter_bottom,
-                    Mux(meter_bottom_left, self.input_bus_clips[0],
-                        self.input_bus_clips[1]),
-                    Mux(x[9], self.output_clips[3],
-                        self.output_clips[0]))),
             ]
         with m.Elif(
                 ~meter_bottom &
@@ -3050,12 +3060,7 @@ class RezoTileDisplay(wiring.Component):
                 meter_lane_valid.eq(1),
                 meter_bound_lo.eq(meter_curve_data[20:30]),
                 meter_bound_hi.eq(meter_curve_data[30:40]),
-                meter_value.eq(Mux(
-                    x[9], self.output_meters[2],
-                    self.output_meters[1])),
-                meter_clip.eq(Mux(
-                    x[9], self.output_clips[2],
-                    self.output_clips[1])),
+                meter_inner_lane.eq(1),
             ]
 
         meter_x_q = Signal.like(x)
@@ -3063,7 +3068,12 @@ class RezoTileDisplay(wiring.Component):
         meter_axis_q = Signal.like(meter_axis)
         meter_bound_lo_q = Signal.like(meter_bound_lo)
         meter_bound_hi_q = Signal.like(meter_bound_hi)
-        meter_value_q = Signal.like(meter_value)
+        meter_inner_lane_q = Signal()
+        meter_outer_value_q = Signal.like(meter_outer_value)
+        meter_inner_value_q = Signal.like(meter_inner_value)
+        meter_outer_clip_q = Signal()
+        meter_inner_clip_q = Signal()
+        meter_value_q = Signal(unsigned(6))
         meter_clip_q = Signal()
         meter_bottom_q = Signal()
         meter_lane_valid_q = Signal()
@@ -3073,14 +3083,21 @@ class RezoTileDisplay(wiring.Component):
             meter_axis_q.eq(meter_axis),
             meter_bound_lo_q.eq(meter_bound_lo),
             meter_bound_hi_q.eq(meter_bound_hi),
-            meter_value_q.eq(meter_value),
-            meter_clip_q.eq(meter_clip),
+            meter_inner_lane_q.eq(meter_inner_lane),
+            meter_outer_value_q.eq(meter_outer_value),
+            meter_inner_value_q.eq(meter_inner_value),
+            meter_outer_clip_q.eq(meter_outer_clip),
+            meter_inner_clip_q.eq(meter_inner_clip),
             meter_bottom_q.eq(meter_bottom),
             meter_lane_valid_q.eq(meter_lane_valid),
         ]
         meter_top = Signal(unsigned(10))
         input_meter_offset = Signal(unsigned(9))
         m.d.comb += [
+            meter_value_q.eq(Mux(
+                meter_inner_lane_q, meter_inner_value_q, meter_outer_value_q)),
+            meter_clip_q.eq(Mux(
+                meter_inner_lane_q, meter_inner_clip_q, meter_outer_clip_q)),
             meter_top.eq(460 - ((meter_value_q << 1) + meter_value_q)),
             input_meter_offset.eq(
                 native_stereo_input_bus_meter_offset(meter_value_q)),

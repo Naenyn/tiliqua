@@ -1,4 +1,5 @@
 from amaranth.sim import Simulator
+import pytest
 
 from rezo_display_support import sample_native_rgb
 from top.rezo.strezo_variant import (
@@ -264,6 +265,23 @@ def test_stereo_input_bus_meters_grow_outward_with_markers_and_clips():
         (palette["line"],) * 3,
         (palette["selected"],) * 3,
         (palette["selected"],) * 3,
+    ]
+
+
+@pytest.mark.parametrize("rotate_left,levels", [(False, (0, 63)), (True, (63, 0))])
+def test_meter_pipeline_keeps_input_and_output_channels_separate(rotate_left, levels):
+    palette = RezoTileDisplay.PALETTE
+    samples = _render_samples(
+        h_active=720 if rotate_left else 1280,
+        rotate_left=rotate_left,
+        page=7,
+        input_bus_meters=levels,
+        output_meters=(63, 63, 63, 63),
+        points=((250, 663), (470, 663), (42, 400)),
+    )
+    assert samples == [
+        (palette["control"] if level else palette["background"],) * 3
+        for level in (*levels, 63)
     ]
 
 
