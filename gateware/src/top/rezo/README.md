@@ -176,6 +176,11 @@ them to 32 columns and supplies both the ROM contents and the firmware scroll
 limit. Update the summary alongside the guide. This prototype does not yet
 add HELP to REZO or REZOMO and does not change saved records or DSP.
 
+Use brief complete sentences with letters, digits, spaces and periods inside
+the HELP markers. Unsupported punctuation is rejected rather than silently
+rendered as blanks. The formatter also checks the 3,072-character ROM budget
+so a wording change cannot quietly grow the memory allocation.
+
 First-use HELP is enabled by default. Build with
 `TILIQUA_REZO_HELP_FIRST_BOOT=0` to disable its automatic startup, without
 removing HELP from the page list. Cargo tracks this flag as a build input.

@@ -5,7 +5,7 @@ import pytest
 from top.rezo.help_content import (HELP_LINES, HELP_COLUMNS, HELP_ROM_LINES,
     HELP_VISIBLE_ROWS, HELP_SCROLL_MAX, HELP_X_CELL, HELP_Y_CELL,
     HELP_BODY_BASE_ROWS, HELP_HEADER_ROWS, HELP_STATUS_ROW, HELP_MODES,
-    help_header_lines)
+    HELP_ROM_BUDGET_CHARS, help_header_lines, wrap_help)
 from top.rezo.display_common import FONT_5X7
 from top.rezo.strezo_variant import RezoTileDisplay
 from test_strezo_native_display import _render_samples
@@ -26,13 +26,14 @@ def lit_points(line, x_cell, y_cell):
 
 
 def test_help_bounds_and_firmware_scroll_contract():
+    assert len(HELP_ROM_LINES) * HELP_COLUMNS <= HELP_ROM_BUDGET_CHARS
     assert all(len(line) == HELP_COLUMNS
                for line in HELP_ROM_LINES[:HELP_BODY_BASE_ROWS])
     assert HELP_ROM_LINES[HELP_BODY_BASE_ROWS:] == HELP_LINES
     assert HELP_ROM_LINES[HELP_HEADER_ROWS:HELP_BODY_BASE_ROWS] == tuple(
         help_header_lines(mode)[HELP_STATUS_ROW] for mode in HELP_MODES)
     assert all(len(line) <= HELP_COLUMNS for line in HELP_ROM_LINES)
-    assert all(not char.isalpha() or char in FONT_5X7
+    assert all(char in RezoTileDisplay.CHAR_CODES and char in FONT_5X7
                for line in HELP_ROM_LINES for char in line)
     assert HELP_SCROLL_MAX == len(HELP_LINES) - HELP_VISIBLE_ROWS
     firmware = (Path(__file__).parents[1] / 'src/top/rezo/strezo_cpu_fw/src/main.rs').read_text()
@@ -49,6 +50,17 @@ def test_help_bounds_and_firmware_scroll_contract():
         for row, line in enumerate(help_header_lines(mode)):
             for x, y in lit_points(line, HELP_X_CELL, row):
                 assert (x - 360) ** 2 + (y - 360) ** 2 < 360 ** 2
+
+
+@pytest.mark.parametrize('punctuation', [':', ',', ';', '/', '-', '—', '?'])
+def test_help_rejects_unsupported_punctuation(punctuation):
+    with pytest.raises(ValueError, match='unsupported display characters'):
+        wrap_help(f'INPUT{punctuation} assign audio.')
+
+
+def test_help_preserves_supported_sentence_punctuation_and_letters():
+    assert wrap_help('Adjust J. Gain is 1.0.\n\nNext page.') == (
+        'ADJUST J. GAIN IS 1.0.', '', 'NEXT PAGE.', '')
 
 
 @pytest.mark.parametrize('rotated', [False, True])

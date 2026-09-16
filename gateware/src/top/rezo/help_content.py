@@ -1,6 +1,10 @@
 """Compact help text for the circular beam-raced display."""
 import textwrap
 from pathlib import Path
+try:
+    from .display_common import STEREO_TILE_CHARS
+except ImportError:
+    from display_common import STEREO_TILE_CHARS
 
 HELP_COLUMNS = 32
 HELP_VISIBLE_ROWS = 21
@@ -10,11 +14,23 @@ HELP_HEADER_ROWS = 16
 HELP_STATUS_ROW = 8
 HELP_MODES = ('NAV', 'EDIT', 'SCROLL')
 HELP_BODY_BASE_ROWS = HELP_HEADER_ROWS + len(HELP_MODES)
+HELP_ROM_BUDGET_CHARS = 3072
+
+
+def wrap_help(body):
+    """Reject missing glyphs rather than silently displaying them as spaces."""
+    unsupported = set(body.upper()) - set(STEREO_TILE_CHARS) - {'\n'}
+    if unsupported:
+        raise ValueError(
+            f'Help text contains unsupported display characters: {sorted(unsupported)!r}')
+    return tuple(
+        line for paragraph in body.strip().split('\n\n')
+        for line in (*textwrap.wrap(paragraph.upper(), HELP_COLUMNS), ''))
+
+
 source = Path(__file__).with_name('STREZO_HELP.md').read_text()
 body = source.split('<!-- HELP START -->', 1)[1].split('<!-- HELP END -->', 1)[0]
-HELP_LINES = tuple(
-    line for paragraph in body.strip().split('\n\n')
-    for line in (*textwrap.wrap(paragraph.upper(), HELP_COLUMNS), ''))
+HELP_LINES = wrap_help(body)
 HELP_SCROLL_MAX = max(0, len(HELP_LINES) - HELP_VISIBLE_ROWS)
 
 
@@ -39,6 +55,10 @@ def help_header_lines(mode):
 HELP_ROM_LINES = (help_header_lines('NAV') +
                   tuple(help_header_lines(mode)[HELP_STATUS_ROW]
                         for mode in HELP_MODES) + HELP_LINES)
+
+# Keep copy edits within the qualified ROM allocation on the nearly-full FPGA.
+if len(HELP_ROM_LINES) * HELP_COLUMNS > HELP_ROM_BUDGET_CHARS:
+    raise ValueError('Help summary exceeds its allocated text ROM budget')
 
 if HELP_SCROLL_MAX > 127:
     raise ValueError('Help summary exceeds the seven-bit scroll range')
