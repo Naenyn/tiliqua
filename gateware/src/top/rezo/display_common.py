@@ -24,6 +24,7 @@ FONT_5X7 = {
     for index, char in ((index * 7, char)
                         for index, char in enumerate(_FONT_CHARS))
 }
+FONT_5X7['J'] = (0x07, 0x02, 0x02, 0x02, 0x12, 0x12, 0x0c)
 
 TILE_CHARS = " 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 STEREO_TILE_CHARS = " 0123456789.ABCDEFGHIJKLMNOPQRSTUVWXYZ"

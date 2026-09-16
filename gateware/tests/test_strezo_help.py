@@ -16,6 +16,8 @@ def rgb(role):
 
 def test_help_bounds_and_firmware_scroll_contract():
     assert all(len(line) <= HELP_COLUMNS for line in HELP_LINES)
+    assert all(not char.isalpha() or char in FONT_5X7
+               for line in HELP_LINES for char in line)
     assert HELP_SCROLL_MAX == len(HELP_LINES) - HELP_VISIBLE_ROWS
     firmware = (Path(__file__).parents[1] / 'src/top/rezo/strezo_cpu_fw/src/main.rs').read_text()
     assert 'include!(concat!(env!("OUT_DIR"), "/help_scroll.rs"))' in firmware
