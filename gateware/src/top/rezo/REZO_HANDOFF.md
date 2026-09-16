@@ -5,6 +5,27 @@ Historical work remains available in git and `BUILD_PERFORMANCE.md`.
 
 ## Current continuation checkpoint — 2026-09-14
 
+### STREZO HELP prototype — 2026-09-16
+
+The isolated worktree is on `codex/strezo-built-in-help`. Feature source
+`57cfef1c` adds a plain scrollable HELP page after OPTIONS, with fixed PAGE
+and SCROLL controls. `STREZO_HELP.md` is condensed from the user guide;
+`help_content.py` supplies both the ROM and Cargo-generated scroll limit.
+The shared font's previously missing J glyph is completed. DSP and saved
+records are unchanged. REZO and REZOMO do not yet have HELP.
+
+Both profiles are qualified: standard 720p/SS 0.0, seed 8, minimum margin
+5.44%, 23,865 logic cells; circular rotated/default SS 0.01, seed 4, minimum
+margin 4.15%, 23,735 logic cells. Both use 37 BRAMs and 20 DSPs. Archives,
+guides and timing reports are saved in
+`/Users/naenyn/git/tiliqua/build/strezo-help-57cfef1c`.
+The slot-4 flash attempt stopped before writing because the debugger was
+not detected. Flash the standard zero-spread HELP archive when connected,
+preserve saved options, and test navigation/scrolling before merging into
+`rezo`. Production remains `e89a32fe`; the main checkout remains SONORO.
+
+### Completed arithmetic release
+
 The older sections below are historical. Production is on `rezo`; the
 arithmetic fixes were developed on `codex/rezo-arithmetic-fixes` at
 `50384c31` and merged back with the current documentation at `e89a32fe`.
