@@ -3031,10 +3031,7 @@ class RezoTileDisplay(wiring.Component):
             # removes the curve comparator from the channel-mux setup path
             # without changing pixel latency or visible meter values.
             meter_outer_value.eq(Mux(
-                meter_bottom,
-                Mux(meter_bottom_left, self.input_bus_meters[0],
-                    self.input_bus_meters[1]),
-                Mux(x[9], self.output_meters[3], self.output_meters[0]))),
+                x[9], self.output_meters[3], self.output_meters[0])),
             meter_inner_value.eq(Mux(
                 x[9], self.output_meters[2], self.output_meters[1])),
             meter_outer_clip.eq(Mux(
@@ -3071,11 +3068,13 @@ class RezoTileDisplay(wiring.Component):
         meter_bound_lo_q = Signal.like(meter_bound_lo)
         meter_bound_hi_q = Signal.like(meter_bound_hi)
         meter_inner_lane_q = Signal()
-        meter_outer_value_q = Signal.like(meter_outer_value)
-        meter_inner_value_q = Signal.like(meter_inner_value)
+        meter_outer_top_q = Signal(unsigned(10))
+        meter_inner_top_q = Signal(unsigned(10))
+        input_left_offset_q = Signal(unsigned(8))
+        input_right_offset_q = Signal(unsigned(8))
+        meter_bottom_left_q = Signal()
         meter_outer_clip_q = Signal()
         meter_inner_clip_q = Signal()
-        meter_value_q = Signal(unsigned(6))
         meter_clip_q = Signal()
         meter_bottom_q = Signal()
         meter_lane_valid_q = Signal()
@@ -3086,8 +3085,16 @@ class RezoTileDisplay(wiring.Component):
             meter_bound_lo_q.eq(meter_bound_lo),
             meter_bound_hi_q.eq(meter_bound_hi),
             meter_inner_lane_q.eq(meter_inner_lane),
-            meter_outer_value_q.eq(meter_outer_value),
-            meter_inner_value_q.eq(meter_inner_value),
+            # Scale channel levels before the pixel-stage register. Selecting
+            # an already-scaled height/offset avoids serialising a lane mux,
+            # three shift-adds and a fill comparison in one video-clock cycle.
+            meter_outer_top_q.eq(460 - ((meter_outer_value << 1) + meter_outer_value)),
+            meter_inner_top_q.eq(460 - ((meter_inner_value << 1) + meter_inner_value)),
+            input_left_offset_q.eq(native_stereo_input_bus_meter_offset(
+                self.input_bus_meters[0])),
+            input_right_offset_q.eq(native_stereo_input_bus_meter_offset(
+                self.input_bus_meters[1])),
+            meter_bottom_left_q.eq(meter_bottom_left),
             meter_outer_clip_q.eq(meter_outer_clip),
             meter_inner_clip_q.eq(meter_inner_clip),
             meter_bottom_q.eq(meter_bottom),
@@ -3096,13 +3103,12 @@ class RezoTileDisplay(wiring.Component):
         meter_top = Signal(unsigned(10))
         input_meter_offset = Signal(unsigned(9))
         m.d.comb += [
-            meter_value_q.eq(Mux(
-                meter_inner_lane_q, meter_inner_value_q, meter_outer_value_q)),
             meter_clip_q.eq(Mux(
                 meter_inner_lane_q, meter_inner_clip_q, meter_outer_clip_q)),
-            meter_top.eq(460 - ((meter_value_q << 1) + meter_value_q)),
-            input_meter_offset.eq(
-                native_stereo_input_bus_meter_offset(meter_value_q)),
+            meter_top.eq(Mux(
+                meter_inner_lane_q, meter_inner_top_q, meter_outer_top_q)),
+            input_meter_offset.eq(Mux(
+                meter_bottom_left_q, input_left_offset_q, input_right_offset_q)),
         ]
         meter_shape = meter_lane_valid_q & Mux(
             meter_bottom_q, Const(1),
