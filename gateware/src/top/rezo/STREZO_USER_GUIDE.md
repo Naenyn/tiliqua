@@ -46,8 +46,16 @@ CROSS, OUTPUT, OPTIONS, HELP**.
 HELP is a plain, scrollable summary of this guide, contained inside the
 circular viewport. Select **SCROLL**, click, and turn to read; click again
 to finish. Select **PAGE** to leave HELP. The title and these two controls
-stay visible while the content scrolls. Help does not change the sound or
-the saved-state format.
+stay visible while the content scrolls. The usual header shows **NAV** while
+selecting, **EDIT** while changing PAGE, and **SCROLL** while scrolling.
+Help does not change the sound or the saved-state format.
+
+On first use of an uninitialized slot, HELP opens automatically instead of
+BANK. Leaving HELP records a small acknowledgement, not the current patch,
+so subsequent boots start on BANK even if you have not used SAVE DEFAULT.
+An existing valid saved default also counts as initialized. HELP remains
+selectable after OPTIONS on every boot. Clearing the slot's defaults clears
+the acknowledgement too.
 
 The summary source is [STREZO_HELP.md](STREZO_HELP.md). Builds wrap that
 Markdown into the text ROM and derive the firmware scroll limit from it.
@@ -78,8 +86,9 @@ At startup STREZO loads the newest valid saved record from the active bitstream
 slot, or uses its compiled factory state when no valid record exists. State is
 applied before normal operation so routing never starts from a partial record.
 
-**SAVE DEFAULT** is explicit and slot-local. Ordinary editing does not write
-flash automatically. Because CROSS can restore a high-feedback patch, audition
+**SAVE DEFAULT** is explicit and slot-local. Sound edits do not write flash
+automatically; the first-use HELP acknowledgement is separate from the sound.
+Because CROSS can restore a high-feedback patch, audition
 the complete saved setup at a safe monitoring level before committing it.
 
 ## Signal flow

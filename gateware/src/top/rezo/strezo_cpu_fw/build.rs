@@ -4,6 +4,15 @@ fn main() {
     println!("cargo:rerun-if-changed=memory.x");
     println!("cargo:rerun-if-changed=../help_content.py");
     println!("cargo:rerun-if-changed=../STREZO_HELP.md");
+    println!("cargo:rerun-if-env-changed=TILIQUA_REZO_HELP_FIRST_BOOT");
+    let first_boot = match std::env::var("TILIQUA_REZO_HELP_FIRST_BOOT")
+        .unwrap_or_else(|_| "1".into())
+        .as_str()
+    {
+        "1" | "true" => true,
+        "0" | "false" => false,
+        _ => panic!("TILIQUA_REZO_HELP_FIRST_BOOT must be 0 or 1"),
+    };
     let output = std::process::Command::new("python3")
         .arg("../help_content.py")
         .output()
@@ -22,7 +31,7 @@ fn main() {
         std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("help_scroll.rs");
     std::fs::write(
         destination,
-        format!("const HELP_SCROLL_MAX: u32 = {limit};\n"),
+        format!("const HELP_SCROLL_MAX: u32 = {limit};\nconst SHOW_HELP_ON_FIRST_BOOT: bool = {first_boot};\n"),
     )
     .unwrap();
 }

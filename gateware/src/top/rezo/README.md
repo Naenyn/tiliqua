@@ -166,7 +166,8 @@ rotation in the final display output.
 
 STREZO, the family's most space-constrained bitstream, has a simple HELP page
 after OPTIONS. Its fixed PAGE and SCROLL controls remain above a scrollable
-text summary contained inside the circular viewport. The existing font
+text summary contained inside the circular viewport, with the standard
+identity/PAGE header and NAV, EDIT or SCROLL status. The existing font
 renderer reads a narrow help ROM; no framebuffer or new font is required.
 
 [STREZO_HELP.md](STREZO_HELP.md) is condensed from the user guide. Only the
@@ -174,6 +175,17 @@ paragraphs between its HELP markers enter the build. `help_content.py` wraps
 them to 32 columns and supplies both the ROM contents and the firmware scroll
 limit. Update the summary alongside the guide. This prototype does not yet
 add HELP to REZO or REZOMO and does not change saved records or DSP.
+
+First-use HELP is enabled by default. Build with
+`TILIQUA_REZO_HELP_FIRST_BOOT=0` to disable its automatic startup, without
+removing HELP from the page list. Cargo tracks this flag as a build input.
+With no valid saved default and no acknowledgement, boot opens HELP; leaving
+it programs and verifies only the four-byte `HELP` marker at offsets
+4092..4095 of option sector zero. This is beyond the 96-byte STREZO journal
+record and requires no erase or implicit sound save. Valid saved defaults
+count as initialized for backward compatibility. Failed reads conservatively
+keep BANK startup, and a failed acknowledgement can show HELP again next boot.
+Erasing defaults clears both saved sounds and the first-use marker.
 
 ## Verification
 

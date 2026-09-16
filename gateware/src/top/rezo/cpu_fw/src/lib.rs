@@ -1,5 +1,7 @@
 #![no_std]
 
+pub mod first_boot;
+
 use core::ptr::{read_volatile, write_volatile};
 
 pub const ENCODER_STEP: usize = 0xF000_0600;

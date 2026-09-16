@@ -29,11 +29,11 @@ import math
 import os
 import sys
 try:
-    from .help_content import (HELP_LINES, HELP_COLUMNS, HELP_VISIBLE_ROWS,
-                               HELP_X_CELL, HELP_Y_CELL)
+    from .help_content import (HELP_ROM_LINES, HELP_BODY_BASE_ROWS,
+                               HELP_COLUMNS, HELP_VISIBLE_ROWS, HELP_X_CELL, HELP_Y_CELL)
 except ImportError:
-    from help_content import (HELP_LINES, HELP_COLUMNS, HELP_VISIBLE_ROWS,
-                              HELP_X_CELL, HELP_Y_CELL)
+    from help_content import (HELP_ROM_LINES, HELP_BODY_BASE_ROWS,
+                              HELP_COLUMNS, HELP_VISIBLE_ROWS, HELP_X_CELL, HELP_Y_CELL)
 
 from amaranth import *
 from amaranth.lib import data, stream, wiring
@@ -2374,24 +2374,29 @@ class RezoTileDisplay(wiring.Component):
 
         # Reuse the existing glyph pipeline. A dedicated narrow ROM avoids a
         # ninth 45x45 tile page and keeps scrolling off the dynamic tile writer.
-        help_init = [self.code(ch) for line in HELP_LINES
+        help_init = [self.code(ch) for line in HELP_ROM_LINES
                      for ch in line.ljust(HELP_COLUMNS)]
         m.submodules.help_mem = help_mem = Memory(
             shape=unsigned(6), depth=len(help_init), init=help_init,
             attrs={"ram_style": "block"})
         help_rport = help_mem.read_port(domain="dvi")
-        help_row_base_q = Signal(unsigned(13))
-        help_row = text_y_pre[self.CELL_SHIFT:] - HELP_Y_CELL
+        help_row_base_q = Signal(unsigned(12))
+        help_row = text_y_pre[self.CELL_SHIFT:]
+        help_scrolling = (self.page == 8) & self.editing & (self.selected == 1)
+        help_mode = Mux(help_scrolling, 2, Mux(self.editing, 1, 0))
         m.d.dvi += help_row_base_q.eq(
-            (help_row + Mux(help_row < 3, 0, self.help_scroll)) << 5)
-        m.d.comb += help_rport.addr.eq(help_row_base_q + cell_x - HELP_X_CELL)
+            Mux(help_row < HELP_Y_CELL,
+                (help_mode << 9) + (help_row << 5),
+                (HELP_BODY_BASE_ROWS + help_row - HELP_Y_CELL + self.help_scroll) << 5)
+            - HELP_X_CELL)
+        m.d.comb += help_rport.addr.eq(help_row_base_q + cell_x)
         help_visible_q = Signal()
         help_page_q = Signal()
         m.d.dvi += [
             help_page_q.eq(self.page == 8),
             help_visible_q.eq((self.page == 8) &
                 (cell_x >= HELP_X_CELL) & (cell_x < HELP_X_CELL + HELP_COLUMNS) &
-                (cell_y >= HELP_Y_CELL) &
+                (cell_y >= 2) &
                 (cell_y < HELP_Y_CELL + HELP_VISIBLE_ROWS)),
         ]
         rendered_char = Signal(unsigned(6))
@@ -3153,8 +3158,8 @@ class RezoTileDisplay(wiring.Component):
         side_page_chip = active & self.rect(
             text_x, text_y, 216, 124, 360, 146)
         cursor_chip = active & self.outline(
-            text_x, text_y, 520, 122,
-            Mux(self.editing, 600, 584), 148, t=2)
+            text_x, text_y, Mux(help_scrolling, 504, 520), 122,
+            Mux(help_scrolling, 616, Mux(self.editing, 600, 584)), 148, t=2)
         # One shared rectangle keeps the pixel path shallow. OPTIONS selects
         # a short lower field; all working pages use the taller field needed
         # by the matrix and fourth output row.
@@ -4517,6 +4522,23 @@ class RezoTileDisplay(wiring.Component):
                              page_selected_q)
 
         selected_q = Signal()
+        help_selected_q0 = Signal()
+        help_selected_q = Signal()
+        help_line_q0 = Signal()
+        help_line_q = Signal()
+        help_panel_q0 = Signal()
+        help_panel_q = Signal()
+        help_surface_q = Signal()
+        m.d.dvi += [
+            help_selected_q0.eq((self.selected == 1) &
+                self.outline(text_x, text_y, 122, 184, 228, 212, t=3)),
+            help_selected_q.eq(page_selected_q | help_selected_q0),
+            help_line_q0.eq(cursor_chip),
+            help_line_q.eq(help_line_q0),
+            help_panel_q0.eq(side_page_chip),
+            help_panel_q.eq(help_panel_q0),
+            help_surface_q.eq(active & self.rect(x, y, 108, 218, 628, 566)),
+        ]
         text_q = Signal()
         unity_marker_q = Signal()
         fill_q = Signal()
@@ -4598,18 +4620,26 @@ class RezoTileDisplay(wiring.Component):
         with m.Elif(surface_q):
             m.d.comb += palette_role.eq(7)
 
-        # HELP occupies the safe rectangle inside the circular canvas. Keep
-        # the existing circular background, with no audio controls behind text.
+        # HELP shares the normal identity/PAGE/status header. Its dedicated
+        # controls keep audio geometry out of the scrollable content panel.
         with m.If(self.page == 8):
-            m.d.comb += palette_role.eq(Mux(text_q, 1, 6))
-            with m.If(text_q & (((self.selected == 0) &
-                    (text_y >= 192) & (text_y < 208)) |
-                    ((self.selected == 1) & (text_y >= 208) & (text_y < 224)))):
-                m.d.comb += palette_role.eq(Mux(self.editing, 3, 0))
+            m.d.comb += palette_role.eq(6)
+            with m.If(help_selected_q):
+                m.d.comb += palette_role.eq(0)
+            with m.Elif(text_q):
+                m.d.comb += palette_role.eq(1)
+            with m.Elif(help_line_q):
+                m.d.comb += palette_role.eq(4)
+            with m.Elif(help_panel_q):
+                m.d.comb += palette_role.eq(5)
+            with m.Elif(help_surface_q):
+                m.d.comb += palette_role.eq(7)
 
         # Black is a renderer constant rather than a palette entry. The
         # eighth hardware color is now available for shaded content surfaces.
-        palette_visible = Mux(self.page == 8, active_q & (text_q | background_q | surface_q),
+        palette_visible = Mux(self.page == 8, active_q &
+            (text_q | background_q | help_surface_q | help_selected_q |
+             help_line_q | help_panel_q),
                           (selected_q | text_q | unity_marker_q | mod_q |
                            fill_q | line_q | panel_q | background_q |
                            surface_q))
