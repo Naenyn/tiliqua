@@ -19,9 +19,9 @@ Both profiles are qualified: standard 720p/SS 0.0, seed 8, minimum margin
 margin 4.15%, 23,735 logic cells. Both use 37 BRAMs and 20 DSPs. Archives,
 guides and timing reports are saved in
 `/Users/naenyn/git/tiliqua/build/strezo-help-57cfef1c`.
-The slot-4 flash attempt stopped before writing because the debugger was
-not detected. Flash the standard zero-spread HELP archive when connected,
-preserve saved options, and test navigation/scrolling before merging into
+The standard zero-spread HELP archive was flashed to slot 4 after the
+debugger reconnected; the command exited successfully with Refresh: DONE.
+Saved options were preserved. Test navigation/scrolling before merging into
 `rezo`. Production remains `e89a32fe`; the main checkout remains SONORO.
 
 ### Completed arithmetic release
