@@ -128,13 +128,11 @@ class DVIPHY(wiring.Component):
     i: In(DVIPixel)
 
     def __init__(self, *, split_load_strobes=False,
-                 local_phase_rings=False, serializer_lane_x=None,
-                 colocate_upper_load_strobes=False):
+                 local_phase_rings=False, serializer_lane_x=None):
         super().__init__()
         self.split_load_strobes = split_load_strobes
         self.local_phase_rings = local_phase_rings
         self.serializer_lane_x = serializer_lane_x
-        self.colocate_upper_load_strobes = colocate_upper_load_strobes
         if split_load_strobes and local_phase_rings:
             raise ValueError(
                 "split load strobes and local phase rings are exclusive")
@@ -144,10 +142,6 @@ class DVIPHY(wiring.Component):
             raise ValueError(
                 "serializer lane locations require four local phase rings "
                 "or split load strobes")
-        if colocate_upper_load_strobes and (
-                not split_load_strobes or serializer_lane_x is None):
-            raise ValueError(
-                "colocated upper strobes require floorplanned split load strobes")
 
     def elaborate(self, platform):
         m = Module()
@@ -267,9 +261,6 @@ class DVIPHY(wiring.Component):
                 # registered strobes back into one high-fanout load select.
                 # Two strobes live beside each lane's lower/upper shift bank.
                 lane = n // 2 if self.split_load_strobes else n
-                upper_local = self.colocate_upper_load_strobes and n & 1
-                strobe_y = 4 if upper_local else (5 if n & 1 else 2)
-                strobe_slice = "SLICEB" if upper_local else "SLICEA"
                 m.submodules += Instance(
                     "FD1S3AX",
                     p_GSR="DISABLED",
@@ -279,7 +270,7 @@ class DVIPHY(wiring.Component):
                     a_keep=True,
                     a_BEL=(
                         f"X{self.serializer_lane_x[lane]}/"
-                        f"Y{strobe_y}/{strobe_slice}.FF0"
+                        f"Y{5 if n & 1 else 2}/SLICEA.FF0"
                     ),
                 )
 
