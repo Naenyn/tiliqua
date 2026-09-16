@@ -82,3 +82,16 @@ def test_help_content_panel_fits_text_and_hides_audio_geometry():
     assert _render_samples(page=8, points=((110, 220), (626, 564),
         (300, 86), (300, 600), (0, 0))) == [
         rgb(7), rgb(7), rgb(6), (0, 0, 0), (0, 0, 0)]
+
+
+def test_help_address_width_follows_a_larger_summary(monkeypatch):
+    import top.rezo.strezo_variant as variant
+
+    # First body row beyond a 12-bit character address. Growing the summary
+    # must not silently wrap its base address back into the fixed header.
+    rows = list(HELP_ROM_LINES)
+    rows.extend([' ' * HELP_COLUMNS] * (48 + 80 + HELP_VISIBLE_ROWS - len(rows)))
+    rows[128] = 'Z'.ljust(HELP_COLUMNS)
+    monkeypatch.setattr(variant, 'HELP_ROM_LINES', tuple(rows))
+    points = list(lit_points('Z', HELP_X_CELL, HELP_Y_CELL))
+    assert _render_samples(page=8, help_scroll=80, points=points) == [rgb(1)] * len(points)

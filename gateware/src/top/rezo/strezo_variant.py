@@ -2380,7 +2380,7 @@ class RezoTileDisplay(wiring.Component):
             shape=unsigned(6), depth=len(help_init), init=help_init,
             attrs={"ram_style": "block"})
         help_rport = help_mem.read_port(domain="dvi")
-        help_row_base_q = Signal(unsigned(12))
+        help_row_base_q = Signal.like(help_rport.addr)
         help_row = text_y_pre[self.CELL_SHIFT:]
         help_scrolling = (self.page == 8) & self.editing & (self.selected == 1)
         help_mode = Mux(help_scrolling, 2, Mux(self.editing, 1, 0))
@@ -3044,13 +3044,17 @@ class RezoTileDisplay(wiring.Component):
                 Mux(x[9], self.output_clips[3], self.output_clips[0]))),
             meter_inner_clip.eq(Mux(
                 x[9], self.output_clips[2], self.output_clips[1])),
+            # Only the lane-valid tag controls visibility. Do not spend a
+            # second mux layer zeroing bounds for pixels that are masked out.
+            meter_bound_lo.eq(Mux(
+                meter_inner_lane, meter_curve_data[20:30], meter_curve_data[0:10])),
+            meter_bound_hi.eq(Mux(
+                meter_inner_lane, meter_curve_data[30:40], meter_curve_data[10:20])),
         ]
         with m.If((meter_curve_x >= meter_curve_data[0:10]) &
                   (meter_curve_x < meter_curve_data[10:20])):
             m.d.comb += [
                 meter_lane_valid.eq(1),
-                meter_bound_lo.eq(meter_curve_data[0:10]),
-                meter_bound_hi.eq(meter_curve_data[10:20]),
             ]
         with m.Elif(
                 ~meter_bottom &
@@ -3058,8 +3062,6 @@ class RezoTileDisplay(wiring.Component):
                 (meter_curve_x < meter_curve_data[30:40])):
             m.d.comb += [
                 meter_lane_valid.eq(1),
-                meter_bound_lo.eq(meter_curve_data[20:30]),
-                meter_bound_hi.eq(meter_curve_data[30:40]),
                 meter_inner_lane.eq(1),
             ]
 

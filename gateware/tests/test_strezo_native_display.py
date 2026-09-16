@@ -285,6 +285,18 @@ def test_meter_pipeline_keeps_input_and_output_channels_separate(rotate_left, le
     ]
 
 
+def test_meter_lane_mask_hides_full_levels_and_clips_outside_the_annulus():
+    background = RezoTileDisplay.PALETTE["background"]
+    assert _render_samples(
+        page=7,
+        input_bus_meters=(63, 63),
+        output_meters=(63, 63, 63, 63),
+        input_bus_clips=(1, 1),
+        output_clips=(1, 1, 1, 1),
+        points=((100, 400), (620, 400)),
+    ) == [(background,) * 3] * 2
+
+
 def test_standard_and_circular_targets_render_identical_native_pixels():
     points = (
         (106, 106), (120, 130), (140, 283),
