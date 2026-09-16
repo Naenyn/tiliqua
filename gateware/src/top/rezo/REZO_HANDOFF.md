@@ -1,13 +1,13 @@
 # REZO family continuation handoff
 
-Updated 2026-09-14. This is an operational handoff, not a project diary.
+Updated 2026-09-16. This is an operational handoff, not a project diary.
 Historical work remains available in git and `BUILD_PERFORMANCE.md`.
 
 ## Current continuation checkpoint — 2026-09-14
 
 The older sections below are historical. Production is on `rezo`; the
 arithmetic fixes were developed on `codex/rezo-arithmetic-fixes` at
-`50384c31` and are being merged back with the current documentation.
+`50384c31` and merged back with the current documentation at `e89a32fe`.
 Use the isolated checkout `/private/tmp/tiliqua-rezo-review-20260914`;
 the main checkout is occupied by SONORO work.
 
@@ -18,12 +18,18 @@ The four corrections cover wide accumulation, minimum INPUT mute, STREZO
 MID/SIDE headroom, and REZOMO random SHIFT range. All 230 gateware cases passed
 across the full/focused runs, and all 10 Rust host tests passed.
 
-The next release set contains nine archives: three rotated circular at default
+The completed release set contains nine archives: three rotated circular at default
 spread spectrum (0.01), three standard 720p at default (0.01), and three
-standard 720p at 0.0. Flash only the latter set to slots 2/3/4. Preserve saved
+standard 720p at 0.0. All nine passed qualification; the latter set was flashed
+to slots 2/3/4, with all three refreshes reporting DONE. Preserve saved
 options. Use distinct NOSS artifact names for zero-spread builds. The README
 and three user guides describe current behavior; do not restore the older
 SHIFT skipped-band claims, 1.25% timing gate, CPU maps, or seed assumptions.
+
+Release artifacts and qualification are in
+`/Users/naenyn/git/tiliqua/build/rezo-release-e89a32fe`.
+The isolated checkout is now on `codex/strezo-built-in-help` for a STREZO-only
+HELP prototype. Keep this separate from production until hardware-tested.
 
 At 50384c31, standard REZO qualified with seed 8 (seed 9 missed the video
 margin at 2.91%); REZOMO qualified with 3 and STREZO with 8. Requalify every

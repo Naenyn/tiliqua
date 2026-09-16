@@ -50,6 +50,8 @@ const OUTPUT_SIDE: u32 = 36;
 const CROSS_MATRIX: u32 = 37;
 const MID_GAIN_STATE: u32 = 38;
 const SIDE_GAIN_STATE: u32 = 39;
+const HELP_SCROLL_STATE: u32 = 40;
+include!(concat!(env!("OUT_DIR"), "/help_scroll.rs"));
 
 const BOOT_SLOT_TIMEOUT_POLLS: u32 = 1_000_000;
 const STATE_WORDS: usize = 40;
@@ -140,6 +142,7 @@ fn cross_factory(layout: u32, source: usize, destination: usize) -> u32 {
 
 struct State {
     page: u8,
+    help_scroll: u32,
     selected: u8,
     preset: u8,
     palette: u8,
@@ -183,6 +186,7 @@ impl State {
     const fn new() -> Self {
         Self {
             page: 0,
+            help_scroll: 0,
             selected: 0,
             preset: 0,
             palette: 0,
@@ -252,6 +256,7 @@ impl State {
 
     fn targets(&self) -> &'static [u8] {
         match self.page {
+            8 => &[PAGE, PRESET],
             0 => MAIN_PAGE,
             1 => FEEDBACK_PAGE,
             3 => GROUP_PAGE,
@@ -286,7 +291,7 @@ impl State {
     }
 
     fn change_page(&mut self, direction: i8) {
-        const ORDER: &[u8] = &[0, 2, 6, 3, 1, 7, 4, 5];
+        const ORDER: &[u8] = &[0, 2, 6, 3, 1, 7, 4, 5, 8];
         let p = ORDER.iter().position(|x| *x == self.page).unwrap_or(0);
         let p = if direction > 0 {
             (p + 1) % ORDER.len()
@@ -393,6 +398,9 @@ impl State {
     fn edit(&mut self, direction: i8) {
         let d = direction as i32;
         match self.selected {
+            PRESET if self.page == 8 => {
+                self.help_scroll = add(self.help_scroll, d, 0, HELP_SCROLL_MAX);
+            }
             PAGE => self.change_page(direction),
             PRESET if self.page == 0 => self.preset = (self.preset as i32 + d).rem_euclid(7) as u8,
             CROSS_CURVE if self.page == 5 => self.cross_curve ^= 1,
@@ -712,6 +720,7 @@ impl State {
             (MOTION_DEPTH_STATE, self.motion_depth),
             (MID_GAIN_STATE, self.mid_gain),
             (SIDE_GAIN_STATE, self.side_gain),
+            (HELP_SCROLL_STATE, self.help_scroll),
         ] {
             ui_write(kind, 0, value);
         }

@@ -556,11 +556,12 @@ class StrezoFirmwareUIState:
                              for n in range(4)]
         self.mid_gain = Signal(8, init=64)
         self.side_gain = Signal(8, init=64)
+        self.help_scroll = Signal(7)
         self.output_routes = [Signal(5, name=f"fw_output_route{n}")
                               for n in range(4)]
 
         self.selected = Signal(7)
-        self.page = Signal(3)
+        self.page = Signal(4)
         self.preset = Signal(3)
         self.palette = Signal(3)
         self.row_dry_include = Signal(init=1)
@@ -621,7 +622,8 @@ class StrezoUIControlPeripheral(Component):
                         m.d.sync += Array(signals)[index].eq(value[:width])
 
             scalar = {
-                10: (self.ui.page, 3),
+                10: (self.ui.page, 4),
+                40: (self.ui.help_scroll, 7),
                 11: (self.ui.selected, 7),
                 12: (self.ui.preset, 3),
                 13: (self.ui.palette, 3),

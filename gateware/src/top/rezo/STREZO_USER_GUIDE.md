@@ -39,7 +39,18 @@ Switches and **SAVE DEFAULT** act immediately when clicked. Select the
 page-name chip beside **PAGE** to change pages.
 
 Pages follow the sound-design path **BANK, INPUT, BANDS, GROUPS, FEEDBACK,
-CROSS, OUTPUT, OPTIONS**.
+CROSS, OUTPUT, OPTIONS, HELP**.
+
+### Built-in help
+
+HELP is a plain, scrollable summary of this guide, contained inside the
+circular viewport. Select **SCROLL**, click, and turn to read; click again
+to finish. Select **PAGE** to leave HELP. The title and these two controls
+stay visible while the content scrolls. Help does not change the sound or
+the saved-state format.
+
+The summary source is [STREZO_HELP.md](STREZO_HELP.md). Builds wrap that
+Markdown into the text ROM and derive the firmware scroll limit from it.
 
 ### Reading the meters
 

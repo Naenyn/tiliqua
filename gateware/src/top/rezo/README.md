@@ -117,9 +117,10 @@ Add `--spread-spectrum 0.0` to any build command to disable external video-PLL
 spread spectrum. The selected value is recorded in the archive manifest; when
 the option is omitted, the default remains `0.01`.
 
-The target matrix supplies the qualified default placement seed for each
-product and display. Set `TILIQUA_REZO_FAMILY_SEED` only when deliberately
-testing another route.
+The target matrix supplies starting placement seeds from prior qualified
+builds. Every new source revision must be qualified again; those seeds are
+not a timing guarantee. Set `TILIQUA_REZO_FAMILY_SEED` when testing another
+route.
 
 Successful builds create these artifact directories:
 
@@ -153,13 +154,26 @@ When retaining both spread-spectrum profiles, give the zero-spread build its
 own artifact name so the standard archive cannot be overwritten. For example:
 
 ```bash
-TILIQUA_REZO_FAMILY_ARTIFACT_NAME=REZO-NOSS \
-  pdm run rezo build --fs-192khz --spread-spectrum 0.0
+pdm run rezo build --fs-192khz --spread-spectrum 0.0 \
+  --artifact-name REZO-NOSS
 ```
 
 Use REZOMO-NOSS/rezomo and STREZO-NOSS/strezo for the other products. Circular
 targets already have distinct ROUND artifact names and apply the panel-mount
 rotation in the final display output.
+
+## Built-in help prototype
+
+STREZO, the family's most space-constrained bitstream, has a simple HELP page
+after OPTIONS. Its fixed PAGE and SCROLL controls remain above a scrollable
+text summary contained inside the circular viewport. The existing font
+renderer reads a narrow help ROM; no framebuffer or new font is required.
+
+[STREZO_HELP.md](STREZO_HELP.md) is condensed from the user guide. Only the
+paragraphs between its HELP markers enter the build. `help_content.py` wraps
+them to 32 columns and supplies both the ROM contents and the firmware scroll
+limit. Update the summary alongside the guide. This prototype does not yet
+add HELP to REZO or REZOMO and does not change saved records or DSP.
 
 ## Verification
 

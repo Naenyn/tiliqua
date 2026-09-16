@@ -116,7 +116,7 @@ def test_row_dry_precedes_save_in_options_navigation(firmware_dir, options):
         "const CLOCK: &[u8] = &[0, 2, 6, 7, 3, 1, 4, 5];",
     )),
     ("strezo_cpu_fw", (
-        "const ORDER: &[u8] = &[0, 2, 6, 3, 1, 7, 4, 5];",
+        "const ORDER: &[u8] = &[0, 2, 6, 3, 1, 7, 4, 5, 8];",
     )),
 ))
 def test_firmware_pages_follow_sound_design_order(firmware_dir, page_orders):

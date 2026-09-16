@@ -28,6 +28,12 @@ right resonator state, preserving the stereo image through the wet path.
 import math
 import os
 import sys
+try:
+    from .help_content import (HELP_LINES, HELP_COLUMNS, HELP_VISIBLE_ROWS,
+                               HELP_X_CELL, HELP_Y_CELL)
+except ImportError:
+    from help_content import (HELP_LINES, HELP_COLUMNS, HELP_VISIBLE_ROWS,
+                              HELP_X_CELL, HELP_Y_CELL)
 
 from amaranth import *
 from amaranth.lib import data, stream, wiring
@@ -2052,7 +2058,8 @@ class RezoTileDisplay(wiring.Component):
             "output_routes": In(data.ArrayLayout(unsigned(5), 4)),
             "output_sides": In(data.ArrayLayout(unsigned(1), 4)),
             "selected": In(unsigned(7)),
-            "page": In(unsigned(3)),
+            "page": In(unsigned(4)),
+            "help_scroll": In(unsigned(7)),
             "preset": In(unsigned(3)),
             "palette": In(unsigned(3)),
             "row_dry_include": In(1),
@@ -2354,16 +2361,42 @@ class RezoTileDisplay(wiring.Component):
                              for page in range(8))
         text_address = Signal(unsigned(15))
         text_page_q = Signal(unsigned(3))
-        m.d.dvi += text_page_q.eq(self.page)
+        m.d.dvi += text_page_q.eq(self.page[:3])
         # ``text_y_pre`` leads ``cell_y`` by exactly one pixel clock.
         # Register the page/row base, leaving only the small cell-x add on
         # the BRAM setup path.
         text_row_base_q = Signal(unsigned(15))
         m.d.dvi += text_row_base_q.eq(
-            page_offsets[self.page] +
+            page_offsets[self.page[:3]] +
             text_y_pre[self.CELL_SHIFT:] * text_row_stride)
         m.d.comb += text_address.eq(text_row_base_q + cell_x)
         m.d.comb += text_rport.addr.eq(text_address)
+
+        # Reuse the existing glyph pipeline. A dedicated narrow ROM avoids a
+        # ninth 45x45 tile page and keeps scrolling off the dynamic tile writer.
+        help_init = [self.code(ch) for line in HELP_LINES
+                     for ch in line.ljust(HELP_COLUMNS)]
+        m.submodules.help_mem = help_mem = Memory(
+            shape=unsigned(6), depth=len(help_init), init=help_init,
+            attrs={"ram_style": "block"})
+        help_rport = help_mem.read_port(domain="dvi")
+        help_row_base_q = Signal(unsigned(13))
+        help_row = text_y_pre[self.CELL_SHIFT:] - HELP_Y_CELL
+        m.d.dvi += help_row_base_q.eq(
+            (help_row + Mux(help_row < 3, 0, self.help_scroll)) << 5)
+        m.d.comb += help_rport.addr.eq(help_row_base_q + cell_x - HELP_X_CELL)
+        help_visible_q = Signal()
+        help_page_q = Signal()
+        m.d.dvi += [
+            help_page_q.eq(self.page == 8),
+            help_visible_q.eq((self.page == 8) &
+                (cell_x >= HELP_X_CELL) & (cell_x < HELP_X_CELL + HELP_COLUMNS) &
+                (cell_y >= HELP_Y_CELL) &
+                (cell_y < HELP_Y_CELL + HELP_VISIBLE_ROWS)),
+        ]
+        rendered_char = Signal(unsigned(6))
+        m.d.comb += rendered_char.eq(Mux(help_page_q,
+            Mux(help_visible_q, help_rport.data, 0), text_rport.data))
 
         # Dynamic labels are written into the tile RAM in short bursts at
         # 15 Hz. HDMI therefore sees only a BRAM read, never the control muxes.
@@ -2469,7 +2502,7 @@ class RezoTileDisplay(wiring.Component):
         ]
         m.d.sync += [
             writer_index_q.eq(update_index),
-            writer_page_q.eq(page_sync),
+            writer_page_q.eq(page_sync[:3]),
             writer_char_q.eq(writer_char),
             writer_valid_q.eq(update_active),
         ]
@@ -2842,7 +2875,7 @@ class RezoTileDisplay(wiring.Component):
         glyph_rport = glyph_mem.read_port(domain="dvi")
         glyph_address = Signal(range(len(glyph_init)))
         m.d.comb += [
-            glyph_address.eq((text_rport.data << 3) | glyph_row_pre_q),
+            glyph_address.eq((rendered_char << 3) | glyph_row_pre_q),
             glyph_rport.addr.eq(glyph_address),
         ]
 
@@ -2853,7 +2886,7 @@ class RezoTileDisplay(wiring.Component):
             glyph_col_q.eq(glyph_col_pre_q),
             text_active_q.eq(text_active_pre_q),
             unity_marker_char_q.eq(
-                text_rport.data == self.code(self.UNITY_MARKER_CHAR)),
+                rendered_char == self.code(self.UNITY_MARKER_CHAR)),
         ]
 
         glyph_bit = Signal(unsigned(3))
@@ -4565,11 +4598,21 @@ class RezoTileDisplay(wiring.Component):
         with m.Elif(surface_q):
             m.d.comb += palette_role.eq(7)
 
+        # HELP occupies the safe rectangle inside the circular canvas. Keep
+        # the existing circular background, with no audio controls behind text.
+        with m.If(self.page == 8):
+            m.d.comb += palette_role.eq(Mux(text_q, 1, 6))
+            with m.If(text_q & (((self.selected == 0) &
+                    (text_y >= 192) & (text_y < 208)) |
+                    ((self.selected == 1) & (text_y >= 208) & (text_y < 224)))):
+                m.d.comb += palette_role.eq(Mux(self.editing, 3, 0))
+
         # Black is a renderer constant rather than a palette entry. The
         # eighth hardware color is now available for shaded content surfaces.
-        palette_visible = (selected_q | text_q | unity_marker_q | mod_q |
+        palette_visible = Mux(self.page == 8, active_q & (text_q | background_q | surface_q),
+                          (selected_q | text_q | unity_marker_q | mod_q |
                            fill_q | line_q | panel_q | background_q |
-                           surface_q)
+                           surface_q))
         palette_visible_q = Signal()
         m.d.dvi += palette_visible_q.eq(palette_visible)
 
@@ -5006,6 +5049,7 @@ class RezoBeamTop(Elaboratable):
             FFSynchronizer(i=ui.damp_mode, o=display.damp_mode, o_domain="dvi"),
             FFSynchronizer(i=ui.selected, o=display.selected, o_domain="dvi"),
             FFSynchronizer(i=ui.page, o=display.page, o_domain="dvi"),
+            FFSynchronizer(i=ui.help_scroll, o=display.help_scroll, o_domain="dvi"),
             FFSynchronizer(i=ui.preset, o=display.preset, o_domain="dvi"),
             FFSynchronizer(i=ui.palette, o=display.palette, o_domain="dvi"),
             FFSynchronizer(i=ui.row_dry_include,

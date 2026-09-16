@@ -37,7 +37,7 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
                     motion_phase=28, motion_depth=0, motion_monitor=0,
                     input_meters=(), output_sides=(), output_meters=(),
                     output_clips=(), input_bus_meters=(),
-                    input_bus_clips=(), row_dry_include=1):
+                    input_bus_clips=(), row_dry_include=1, help_scroll=0):
     """Render settled pixels from STREZO's upright native canvas."""
     dut = RezoTileDisplay(
         h_active=h_active,
@@ -50,6 +50,7 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
 
     async def bench(ctx):
         ctx.set(dut.page, page)
+        ctx.set(dut.help_scroll, help_scroll)
         for index, value in enumerate(input_gains):
             ctx.set(dut.input_gains[index], value)
         for index, value in enumerate(input_modes):
