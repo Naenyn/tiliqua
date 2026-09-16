@@ -5,7 +5,51 @@ Historical work remains available in git and `BUILD_PERFORMANCE.md`.
 
 ## Current continuation checkpoint — 2026-09-14
 
-### STREZO HELP prototype — 2026-09-16
+### STREZO HELP header / first-use revision — 2026-09-16
+
+The isolated worktree remains on `codex/strezo-built-in-help`; qualified
+feature source is now `5c85873c`. HELP remains after OPTIONS. It has the usual
+STREZO identity, PAGE/HELP chip and NAV/EDIT/SCROLL status, a fixed SCROLL
+control, and 21 visible body rows inside the circular viewport. Fixed header
+rows are shared; only the status row has three variants. Content still comes
+from the condensed `STREZO_HELP.md`, with one formatter feeding ROM and Cargo.
+
+`TILIQUA_REZO_HELP_FIRST_BOOT` defaults to 1; 0 disables automatic startup
+without removing HELP navigation. An uninitialized slot with available flash,
+no valid defaults, and no acknowledged HELP starts on HELP. Existing valid
+defaults retain BANK startup. Leaving automatic HELP programs and verifies
+only the four-byte HELP acknowledgement at sector-zero offsets 4092..4095,
+without an erase or implicit patch save. Read failures conservatively start
+BANK; a failed acknowledgement may show HELP again. The saved format remains
+V7, 40 words, 96 bytes. Saved options were not erased to exercise first use.
+
+The 720p/SS 0.0 build qualified with seed 8: 23,979 / 24,288 logic cells,
+37 BRAMs, 20 DSPs; margins are serializer 17.04%, audio 54.12%, system 6.78%,
+pixel 8.57%. Routing took 150.74 seconds. The archive was flashed successfully
+to STREZO slot 4, exiting normally with Refresh: DONE. The archive's option
+region layout was checked against the previous prototype and excluded from
+programming; saved settings were preserved. Artifacts, tests and qualification:
+`/Users/naenyn/git/tiliqua/build/strezo-help-5c85873c`.
+
+25 focused gateware checks and 13 Rust host checks passed. Meter rendering was
+restructured to pre-scale geometry and shorten existing pixel paths, with no
+extra pixel latency or DSP/audio changes. A serializer placement experiment
+was physically rejected and withdrawn in `84d9b1b8`; the proven split-load
+layout and single shared phase ring are retained. Do not restore that option.
+
+The original prototype built quickly, but the expanded header exposed marginal
+placement/routing on the nearly-full device. Sharing header rows recovered one
+BRAM and the revised build passed the unchanged 3% timing gate. Never flash
+the rejected 649d1882/64d0b510/310087d0/84d9b1b8 standard attempts.
+
+Circular builds are deferred until the user approves the final view. A circular
+649d1882 build had already qualified before that instruction and was not
+flashed; do not rebuild circular profiles during iteration. REZO and REZOMO
+do not yet have HELP. Production remains `e89a32fe`, and the main checkout is
+occupied by SONORO. Keep this feature separate until the new view is tested.
+For this user's initialized slot, manually open HELP after OPTIONS to test it.
+
+### Earlier STREZO HELP prototype — 2026-09-16
 
 The isolated worktree is on `codex/strezo-built-in-help`. Feature source
 `57cfef1c` adds a plain scrollable HELP page after OPTIONS, with fixed PAGE
