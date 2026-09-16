@@ -30,9 +30,11 @@ import os
 import sys
 try:
     from .help_content import (HELP_ROM_LINES, HELP_BODY_BASE_ROWS,
+                               HELP_HEADER_ROWS, HELP_STATUS_ROW,
                                HELP_COLUMNS, HELP_VISIBLE_ROWS, HELP_X_CELL, HELP_Y_CELL)
 except ImportError:
     from help_content import (HELP_ROM_LINES, HELP_BODY_BASE_ROWS,
+                              HELP_HEADER_ROWS, HELP_STATUS_ROW,
                               HELP_COLUMNS, HELP_VISIBLE_ROWS, HELP_X_CELL, HELP_Y_CELL)
 
 from amaranth import *
@@ -2386,7 +2388,8 @@ class RezoTileDisplay(wiring.Component):
         help_mode = Mux(help_scrolling, 2, Mux(self.editing, 1, 0))
         m.d.dvi += help_row_base_q.eq(
             Mux(help_row < HELP_Y_CELL,
-                (help_mode << 9) + (help_row << 5),
+                Mux(help_row == HELP_STATUS_ROW,
+                    (HELP_HEADER_ROWS + help_mode) << 5, help_row << 5),
                 (HELP_BODY_BASE_ROWS + help_row - HELP_Y_CELL + self.help_scroll) << 5)
             - HELP_X_CELL)
         m.d.comb += help_rport.addr.eq(help_row_base_q + cell_x)

@@ -7,7 +7,9 @@ HELP_VISIBLE_ROWS = 21
 HELP_X_CELL = 7
 HELP_Y_CELL = 14
 HELP_HEADER_ROWS = 16
-HELP_BODY_BASE_ROWS = 3 * HELP_HEADER_ROWS
+HELP_STATUS_ROW = 8
+HELP_MODES = ('NAV', 'EDIT', 'SCROLL')
+HELP_BODY_BASE_ROWS = HELP_HEADER_ROWS + len(HELP_MODES)
 source = Path(__file__).with_name('STREZO_HELP.md').read_text()
 body = source.split('<!-- HELP START -->', 1)[1].split('<!-- HELP END -->', 1)[0]
 HELP_LINES = tuple(
@@ -17,7 +19,7 @@ HELP_SCROLL_MAX = max(0, len(HELP_LINES) - HELP_VISIBLE_ROWS)
 
 
 def help_header_lines(mode):
-    """Native family header; each mode gets a shift-addressable ROM bank."""
+    """Native family header with one mode-dependent status row."""
     rows = [' ' * HELP_COLUMNS for _ in range(HELP_HEADER_ROWS)]
 
     def put(text, x, y):
@@ -32,8 +34,11 @@ def help_header_lines(mode):
     return tuple(rows)
 
 
-HELP_ROM_LINES = tuple(line for mode in ('NAV', 'EDIT', 'SCROLL')
-                       for line in help_header_lines(mode)) + HELP_LINES
+# Share all fixed rows; only the PAGE/status row differs between modes.
+# Keeping three entire headers wastes ROM space and address decoding.
+HELP_ROM_LINES = (help_header_lines('NAV') +
+                  tuple(help_header_lines(mode)[HELP_STATUS_ROW]
+                        for mode in HELP_MODES) + HELP_LINES)
 
 if HELP_SCROLL_MAX > 127:
     raise ValueError('Help summary exceeds the seven-bit scroll range')

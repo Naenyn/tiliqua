@@ -3,7 +3,9 @@ import sys
 from pathlib import Path
 import pytest
 from top.rezo.help_content import (HELP_LINES, HELP_COLUMNS, HELP_ROM_LINES,
-    HELP_VISIBLE_ROWS, HELP_SCROLL_MAX, HELP_X_CELL, HELP_Y_CELL, help_header_lines)
+    HELP_VISIBLE_ROWS, HELP_SCROLL_MAX, HELP_X_CELL, HELP_Y_CELL,
+    HELP_BODY_BASE_ROWS, HELP_HEADER_ROWS, HELP_STATUS_ROW, HELP_MODES,
+    help_header_lines)
 from top.rezo.display_common import FONT_5X7
 from top.rezo.strezo_variant import RezoTileDisplay
 from test_strezo_native_display import _render_samples
@@ -24,7 +26,11 @@ def lit_points(line, x_cell, y_cell):
 
 
 def test_help_bounds_and_firmware_scroll_contract():
-    assert all(len(line) == HELP_COLUMNS for line in HELP_ROM_LINES[:48])
+    assert all(len(line) == HELP_COLUMNS
+               for line in HELP_ROM_LINES[:HELP_BODY_BASE_ROWS])
+    assert HELP_ROM_LINES[HELP_BODY_BASE_ROWS:] == HELP_LINES
+    assert HELP_ROM_LINES[HELP_HEADER_ROWS:HELP_BODY_BASE_ROWS] == tuple(
+        help_header_lines(mode)[HELP_STATUS_ROW] for mode in HELP_MODES)
     assert all(len(line) <= HELP_COLUMNS for line in HELP_ROM_LINES)
     assert all(not char.isalpha() or char in FONT_5X7
                for line in HELP_ROM_LINES for char in line)
@@ -90,8 +96,9 @@ def test_help_address_width_follows_a_larger_summary(monkeypatch):
     # First body row beyond a 12-bit character address. Growing the summary
     # must not silently wrap its base address back into the fixed header.
     rows = list(HELP_ROM_LINES)
-    rows.extend([' ' * HELP_COLUMNS] * (48 + 80 + HELP_VISIBLE_ROWS - len(rows)))
+    scroll = 128 - HELP_BODY_BASE_ROWS
+    rows.extend([' ' * HELP_COLUMNS] * (128 + HELP_VISIBLE_ROWS - len(rows)))
     rows[128] = 'Z'.ljust(HELP_COLUMNS)
     monkeypatch.setattr(variant, 'HELP_ROM_LINES', tuple(rows))
     points = list(lit_points('Z', HELP_X_CELL, HELP_Y_CELL))
-    assert _render_samples(page=8, help_scroll=80, points=points) == [rgb(1)] * len(points)
+    assert _render_samples(page=8, help_scroll=scroll, points=points) == [rgb(1)] * len(points)
