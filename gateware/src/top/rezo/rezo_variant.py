@@ -34,6 +34,15 @@ some listening time on real hardware.
 
 import os
 import sys
+
+try:
+    from .help_content import load_help, HELP_VIEW_BITS
+    from .help_display import HelpDisplayLayer
+except ImportError:
+    from help_content import load_help, HELP_VIEW_BITS
+    from help_display import HelpDisplayLayer
+
+HELP_CONTENT = load_help('REZO')
 from math import isqrt, log10
 
 from amaranth import *
@@ -56,7 +65,7 @@ from tiliqua.video import dvi
 try:
     from .display_common import (
         FONT_5X7, PALETTE_ROLES, RGB_PALETTES, SEMANTIC_PALETTE,
-        TILE_CHARS,
+        TILE_CHARS, HELP_EXTRA_CHARS,
     )
     from .core_common import RezoCoreConstants
     from .feedback import (
@@ -106,7 +115,7 @@ try:
 except ImportError:  # top_level_cli executes this file directly.
     from display_common import (
         FONT_5X7, PALETTE_ROLES, RGB_PALETTES, SEMANTIC_PALETTE,
-        TILE_CHARS,
+        TILE_CHARS, HELP_EXTRA_CHARS,
     )
     from core_common import RezoCoreConstants
     from feedback import (
@@ -1342,7 +1351,8 @@ class RezoTileDisplay(wiring.Component):
     PALETTE = SEMANTIC_PALETTE
     PALETTE_ROLES = PALETTE_ROLES
     RGB_PALETTES = RGB_PALETTES
-    CHARS = TILE_CHARS
+    NATIVE_CHARS = TILE_CHARS + "."
+    CHARS = NATIVE_CHARS + HELP_EXTRA_CHARS  # Preserve native menu codes.
     CHAR_CODES = {ch: i for i, ch in enumerate(CHARS)}
 
     def __init__(self, h_active=1280, rotate_left=False):
@@ -1396,7 +1406,8 @@ class RezoTileDisplay(wiring.Component):
             "frequency_layout_preview": In(unsigned(2)),
             "frequency_preview": In(unsigned(RezoCore.FREQ_INDEX_WIDTH)),
             "selected": In(unsigned(7)),
-            "page": In(unsigned(3)),
+            "page": In(unsigned(4)),
+            "help_scroll": In(unsigned(HELP_VIEW_BITS)),
             "preset": In(unsigned(3)),
             "palette": In(unsigned(3)),
             "row_dry_include": In(1),
@@ -1611,14 +1622,16 @@ class RezoTileDisplay(wiring.Component):
             for offset, ch in enumerate(text_value):
                 if 0 <= x0 + offset < 45 and 0 <= y0 < 45:
                     text_init[page * page_cells +
-                              y0 * text_row_stride + x0 + offset] = self.code(ch)
+                              y0 * text_row_stride + x0 + offset] = (
+                        self.code(ch) if ch in self.NATIVE_CHARS else 0)
 
         def put_native(page, text_value, x0, y0):
             """Place compact-layout text directly on the native 16px grid."""
             for offset, ch in enumerate(text_value):
                 if 0 <= x0 + offset < 45 and 0 <= y0 < 45:
                     text_init[page * page_cells +
-                              y0 * text_row_stride + x0 + offset] = self.code(ch)
+                              y0 * text_row_stride + x0 + offset] = (
+                        self.code(ch) if ch in self.NATIVE_CHARS else 0)
 
         def text_address_for(page, x0, y0, offset=0):
             return (page * page_cells +
@@ -1743,6 +1756,9 @@ class RezoTileDisplay(wiring.Component):
             text_y_pre[self.CELL_SHIFT:] * text_row_stride)
         m.d.comb += text_address.eq(text_row_base_q + cell_x)
         m.d.comb += text_rport.addr.eq(text_address)
+
+        help_layer = HelpDisplayLayer(m, self, HELP_CONTENT,
+            text_y_pre, cell_x, cell_y, text_rport.data)
 
         # Dynamic labels are written into the tile RAM in short bursts at
         # 15 Hz. HDMI therefore sees only a BRAM read, never the control muxes.
@@ -2136,7 +2152,7 @@ class RezoTileDisplay(wiring.Component):
         glyph_rport = glyph_mem.read_port(domain="dvi")
         glyph_address = Signal(range(len(glyph_init)))
         m.d.comb += [
-            glyph_address.eq((text_rport.data << 3) | glyph_row_pre_q),
+            glyph_address.eq((help_layer.char << 3) | glyph_row_pre_q),
             glyph_rport.addr.eq(glyph_address),
         ]
 
@@ -2467,9 +2483,7 @@ class RezoTileDisplay(wiring.Component):
             text_x, text_y, 216, 124, 360, 146)
         # NAV/EDIT is status rather than a navigable value. Both labels
         # share one left edge; the outline grows by one cell for EDIT.
-        cursor_chip = active & self.outline(
-            text_x, text_y, 520, 122,
-            Mux(self.editing, 600, 584), 148, t=2)
+        cursor_chip = help_layer.cursor(active, text_x, text_y)
         # One shared rectangle keeps the pixel path shallow. FILTER needs the
         # deepest field because its fifth fader ends at y=690; ending its
         # background at y=666 left RESONANCE floating in the black margin.
@@ -3937,6 +3951,10 @@ class RezoTileDisplay(wiring.Component):
 
         palette_visible = (selected_q | text_q | mod_q | fill_q | line_q |
                            panel_q | background_q | surface_q)
+        palette_role, palette_visible = help_layer.palette(
+            m, active, x, y, text_x, text_y, page_selected_q,
+            side_page_chip, cursor_chip, text_q, background_q,
+            palette_role, palette_visible)
         palette_visible_q = Signal()
         m.d.dvi += palette_visible_q.eq(palette_visible)
 
@@ -4376,6 +4394,7 @@ class RezoBeamTop(Elaboratable):
             FFSynchronizer(i=ui.damp_mode, o=display.damp_mode, o_domain="dvi"),
             FFSynchronizer(i=ui.selected, o=display.selected, o_domain="dvi"),
             FFSynchronizer(i=ui.page, o=display.page, o_domain="dvi"),
+            FFSynchronizer(i=ui.help_scroll, o=display.help_scroll, o_domain="dvi"),
             FFSynchronizer(i=ui.preset, o=display.preset, o_domain="dvi"),
             FFSynchronizer(i=ui.palette, o=display.palette, o_domain="dvi"),
             FFSynchronizer(i=ui.row_dry_include,

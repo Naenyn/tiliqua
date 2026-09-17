@@ -1,4 +1,5 @@
 from amaranth.sim import Simulator
+import pytest
 
 from rezo_display_support import sample_native_rgb
 from top.rezo.strezo_variant import (
@@ -37,7 +38,7 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
                     motion_phase=28, motion_depth=0, motion_monitor=0,
                     input_meters=(), output_sides=(), output_meters=(),
                     output_clips=(), input_bus_meters=(),
-                    input_bus_clips=(), row_dry_include=1):
+                    input_bus_clips=(), row_dry_include=1, help_scroll=0, editing=False):
     """Render settled pixels from STREZO's upright native canvas."""
     dut = RezoTileDisplay(
         h_active=h_active,
@@ -50,6 +51,8 @@ def _render_samples(*, h_active=1280, rotate_left=False, points=(), page=0,
 
     async def bench(ctx):
         ctx.set(dut.page, page)
+        ctx.set(dut.help_scroll, help_scroll)
+        ctx.set(dut.editing, editing)
         for index, value in enumerate(input_gains):
             ctx.set(dut.input_gains[index], value)
         for index, value in enumerate(input_modes):
@@ -263,6 +266,35 @@ def test_stereo_input_bus_meters_grow_outward_with_markers_and_clips():
         (palette["selected"],) * 3,
         (palette["selected"],) * 3,
     ]
+
+
+@pytest.mark.parametrize("rotate_left,levels", [(False, (0, 63)), (True, (63, 0))])
+def test_meter_pipeline_keeps_input_and_output_channels_separate(rotate_left, levels):
+    palette = RezoTileDisplay.PALETTE
+    samples = _render_samples(
+        h_active=720 if rotate_left else 1280,
+        rotate_left=rotate_left,
+        page=7,
+        input_bus_meters=levels,
+        output_meters=(63, 63, 63, 63),
+        points=((250, 663), (470, 663), (42, 400)),
+    )
+    assert samples == [
+        (palette["control"] if level else palette["background"],) * 3
+        for level in (*levels, 63)
+    ]
+
+
+def test_meter_lane_mask_hides_full_levels_and_clips_outside_the_annulus():
+    background = RezoTileDisplay.PALETTE["background"]
+    assert _render_samples(
+        page=7,
+        input_bus_meters=(63, 63),
+        output_meters=(63, 63, 63, 63),
+        input_bus_clips=(1, 1),
+        output_clips=(1, 1, 1, 1),
+        points=((100, 400), (620, 400)),
+    ) == [(background,) * 3] * 2
 
 
 def test_standard_and_circular_targets_render_identical_native_pixels():

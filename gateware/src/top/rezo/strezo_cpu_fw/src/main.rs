@@ -2,6 +2,10 @@
 #![no_main]
 
 use panic_halt as _;
+use rezo_cpu_fw::first_boot::{
+    mark_help_seen, read_help_seen, should_show_first_help, HELP_SEEN_OFFSET,
+};
+use rezo_cpu_fw::help::HelpView;
 use rezo_cpu_fw::{
     add, adds, clamp_control, edit_feedback_ceiling, edit_feedback_knee, flash_erase,
     flash_program, flash_read, gray_encode, normalize_feedback_limits, pack_bits,
@@ -50,6 +54,8 @@ const OUTPUT_SIDE: u32 = 36;
 const CROSS_MATRIX: u32 = 37;
 const MID_GAIN_STATE: u32 = 38;
 const SIDE_GAIN_STATE: u32 = 39;
+const HELP_SCROLL_STATE: u32 = 40;
+include!(concat!(env!("OUT_DIR"), "/help_scroll.rs"));
 
 const BOOT_SLOT_TIMEOUT_POLLS: u32 = 1_000_000;
 const STATE_WORDS: usize = 40;
@@ -58,6 +64,7 @@ const V5_STATE_WORDS: usize = 38;
 const LEGACY_STATE_WORDS: usize = 36;
 const HEADER_BYTES: usize = 16;
 const RECORD_BYTES: usize = HEADER_BYTES + STATE_WORDS * 2;
+const _: () = assert!(RECORD_BYTES <= HELP_SEEN_OFFSET as usize);
 const MAGIC: u32 = 0x5a525453;
 const VERSION: u16 = 7;
 
@@ -140,6 +147,7 @@ fn cross_factory(layout: u32, source: usize, destination: usize) -> u32 {
 
 struct State {
     page: u8,
+    help: HelpView,
     selected: u8,
     preset: u8,
     palette: u8,
@@ -183,6 +191,7 @@ impl State {
     const fn new() -> Self {
         Self {
             page: 0,
+            help: HelpView::new(),
             selected: 0,
             preset: 0,
             palette: 0,
@@ -252,6 +261,7 @@ impl State {
 
     fn targets(&self) -> &'static [u8] {
         match self.page {
+            8 => &[PAGE, PRESET, BAND], // PAGE, TOPIC, SCROLL on HELP.
             0 => MAIN_PAGE,
             1 => FEEDBACK_PAGE,
             3 => GROUP_PAGE,
@@ -286,7 +296,7 @@ impl State {
     }
 
     fn change_page(&mut self, direction: i8) {
-        const ORDER: &[u8] = &[0, 2, 6, 3, 1, 7, 4, 5];
+        const ORDER: &[u8] = &[0, 2, 6, 3, 1, 7, 4, 5, 8];
         let p = ORDER.iter().position(|x| *x == self.page).unwrap_or(0);
         let p = if direction > 0 {
             (p + 1) % ORDER.len()
@@ -305,6 +315,11 @@ impl State {
     }
 
     fn click(&mut self) -> bool {
+        // HELP reuses target numbers but never acts on band enable/edits.
+        if self.page == 8 {
+            self.editing = !self.editing;
+            return false;
+        }
         if (FEEDBACK_ENABLE..FEEDBACK_ENABLE + 10).contains(&self.selected) {
             let n = (self.selected - FEEDBACK_ENABLE) as usize;
             if self.enables[n] != 0 {
@@ -392,6 +407,15 @@ impl State {
 
     fn edit(&mut self, direction: i8) {
         let d = direction as i32;
+        if self.page == 8 {
+            match self.selected {
+                PAGE => self.change_page(direction),
+                PRESET => self.help.change_topic(d, HELP_TOPIC_COUNT),
+                BAND => self.help.scroll(d, HELP_TOPIC_SCROLL_MAX[self.help.topic]),
+                _ => {}
+            }
+            return;
+        }
         match self.selected {
             PAGE => self.change_page(direction),
             PRESET if self.page == 0 => self.preset = (self.preset as i32 + d).rem_euclid(7) as u8,
@@ -476,6 +500,9 @@ impl State {
     }
 
     fn continuous_accel_target(&self) -> bool {
+        if self.page == 8 {
+            return self.selected == BAND;
+        }
         matches!(
             self.selected,
             DRIVE | RESONANCE | FEEDBACK | KNEE | CEILING | MOTION_RATE | MOTION_PHASE
@@ -712,6 +739,10 @@ impl State {
             (MOTION_DEPTH_STATE, self.motion_depth),
             (MID_GAIN_STATE, self.mid_gain),
             (SIDE_GAIN_STATE, self.side_gain),
+            (
+                HELP_SCROLL_STATE,
+                self.help.packed(&HELP_TOPIC_OFFSETS, HELP_ROW_BITS),
+            ),
         ] {
             ui_write(kind, 0, value);
         }
@@ -801,6 +832,7 @@ fn main() -> ! {
     let mut candidate = [0u16; STATE_WORDS];
     let flash_available;
     let mut have_active = false;
+    let mut first_help_pending = false;
     let mut active_sector = 0u8;
     let mut active_generation = 0u32;
     let mut previous_button = false;
@@ -835,6 +867,13 @@ fn main() -> ! {
                     active_sector = 1;
                     active_generation = generation;
                 }
+            }
+        }
+        if flash_available && SHOW_HELP_ON_FIRST_BOOT && !have_active {
+            first_help_pending =
+                should_show_first_help(true, false, read_help_seen(|offset| flash_read(0, offset)));
+            if first_help_pending {
+                state.page = 8;
             }
         }
         state.publish(flash_available, false, save_status, true);
@@ -920,6 +959,14 @@ fn main() -> ! {
         }
         if changed {
             unsafe {
+                if first_help_pending && state.page != 8 {
+                    // Only acknowledge HELP. Never implicitly save the sound.
+                    let _ = mark_help_seen(
+                        |offset, byte| flash_program(0, offset, byte),
+                        |offset| flash_read(0, offset),
+                    );
+                    first_help_pending = false;
+                }
                 state.publish(flash_available, false, save_status, true);
             }
         }

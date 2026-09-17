@@ -108,15 +108,15 @@ def test_row_dry_precedes_save_in_options_navigation(firmware_dir, options):
 
 @pytest.mark.parametrize(("firmware_dir", "page_orders"), (
     ("cpu_fw", (
-        "const BANK: &[u8] = &[0, 2, 6, 3, 1, 4, 5];",
-        "const FILTER: &[u8] = &[0, 2, 6, 7, 3, 1, 4, 5];",
+        "const BANK: &[u8] = &[0, 2, 6, 3, 1, 4, 5, 8];",
+        "const FILTER: &[u8] = &[0, 2, 6, 7, 3, 1, 4, 5, 8];",
     )),
     ("rezomo_cpu_fw", (
-        "const BANK: &[u8] = &[0, 2, 6, 3, 1, 4, 5];",
-        "const CLOCK: &[u8] = &[0, 2, 6, 7, 3, 1, 4, 5];",
+        "const BANK: &[u8] = &[0, 2, 6, 3, 1, 4, 5, 8];",
+        "const CLOCK: &[u8] = &[0, 2, 6, 7, 3, 1, 4, 5, 8];",
     )),
     ("strezo_cpu_fw", (
-        "const ORDER: &[u8] = &[0, 2, 6, 3, 1, 7, 4, 5];",
+        "const ORDER: &[u8] = &[0, 2, 6, 3, 1, 7, 4, 5, 8];",
     )),
 ))
 def test_firmware_pages_follow_sound_design_order(firmware_dir, page_orders):
@@ -239,18 +239,18 @@ def test_family_cpu_planes_share_generated_core_and_address_map():
         )
     ]
 
-    # Product UI peripherals and physical firmware ROM capacity may differ,
-    # but the CPU-visible regions must not silently generate different cores.
+    # Product UI contracts differ, but ROM capacity and CPU-visible regions
+    # must not silently generate different cores.
     assert len({plane.cpu._source_file for plane in planes}) == 1
     assert {plane.MAINRAM_SIZE for plane in planes} == {0x10000}
     assert {plane.DATA_BASE for plane in planes} == {0x8000}
     assert {plane.DATA_SIZE for plane in planes} == {0x0800}
-    assert [plane.CODE_SIZE for plane in planes] == [0x4000, 0x5000, 0x5000]
+    assert [plane.CODE_SIZE for plane in planes] == [0x5000, 0x5000, 0x5000]
 
 
 @pytest.mark.parametrize(
     ("firmware_dir", "code_size"),
-    (("cpu_fw", 0x4000), ("rezomo_cpu_fw", 0x5000),
+    (("cpu_fw", 0x5000), ("rezomo_cpu_fw", 0x5000),
      ("strezo_cpu_fw", 0x5000)),
 )
 def test_family_linker_maps_match_cpu_fabric(firmware_dir, code_size):

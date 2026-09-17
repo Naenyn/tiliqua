@@ -46,8 +46,25 @@ navigation proceeds PAGE, then PRESET, then MODE. Select MODE to switch between
 BANK and CLOCK.
 
 BANK pages follow the sound-design path **BANK, INPUT, BANDS, GROUPS,
-FEEDBACK, OUTPUT, OPTIONS**. CLOCK mode inserts **CLOCK** between BANDS and
+FEEDBACK, OUTPUT, OPTIONS, HELP**. CLOCK mode inserts **CLOCK** between BANDS and
 GROUPS.
+
+### Built-in help
+
+HELP contains a START guide and a topic for each page, including CLOCK.
+Select TOPIC, click, turn to choose a guide, and click again to finish.
+Select SCROLL, click, and turn to read; click again to finish. Each topic has
+its own end stop. Changing topics returns to the top. PAGE leaves HELP.
+The normal header and all three controls remain fixed above 21 text rows
+inside the circular viewport. Status is NAV while selecting, EDIT while
+changing PAGE or TOPIC, and SCROLL while reading.
+
+The CLOCK guide is readable in BANK too. HELP does not edit audio settings
+or generated patterns. On first use of a slot with no saved default or prior
+HELP acknowledgement, boot opens HELP. Leaving it records only an
+acknowledgement, not a sound save. Initialized slots keep their normal startup
+view. HELP remains navigable after OPTIONS on every boot. Clearing defaults
+also clears the acknowledgement. Source: [REZOMO_HELP.md](REZOMO_HELP.md).
 
 ### Reading the meters
 
@@ -236,14 +253,14 @@ The ten band switches select which enabled resonators feed the shared feedback
 loop. The BANK page's FEEDBACK control sets the overall return amount.
 
 - **KNEE** sets where soft limiting begins. Below it, the return is unchanged;
-  above it, progressively stronger compression bends the signal toward CEIL.
-- **CEIL** sets the hard maximum feedback-loop level. Its fader colors the
-  span from KNEE to CEIL to show the active soft-limiting region.
+  above it, progressively stronger compression bends the signal toward CEILING.
+- **CEILING** sets the hard maximum feedback-loop level. Its fader colors the
+  span from KNEE to CEILING to show the active soft-limiting region.
 - **DAMPING** makes increasing feedback restrain resonance. Higher values are
   more conservative.
 
-KNEE and CEIL may meet for hard limiting with no soft region. Raising KNEE
-past CEIL raises CEIL too; lowering CEIL past KNEE lowers KNEE too. This keeps
+KNEE and CEILING may meet for hard limiting with no soft region. Raising KNEE
+past CEILING raises CEILING too; lowering CEILING past KNEE lowers KNEE too. This keeps
 the pair valid while allowing either control to lead an edit.
 
 These controls reduce runaway behavior but do not make every extreme

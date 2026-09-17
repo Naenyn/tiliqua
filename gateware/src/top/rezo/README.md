@@ -117,9 +117,10 @@ Add `--spread-spectrum 0.0` to any build command to disable external video-PLL
 spread spectrum. The selected value is recorded in the archive manifest; when
 the option is omitted, the default remains `0.01`.
 
-The target matrix supplies the qualified default placement seed for each
-product and display. Set `TILIQUA_REZO_FAMILY_SEED` only when deliberately
-testing another route.
+The target matrix supplies starting placement seeds from prior qualified
+builds. Every new source revision must be qualified again; those seeds are
+not a timing guarantee. Set `TILIQUA_REZO_FAMILY_SEED` when testing another
+route.
 
 Successful builds create these artifact directories:
 
@@ -153,13 +154,60 @@ When retaining both spread-spectrum profiles, give the zero-spread build its
 own artifact name so the standard archive cannot be overwritten. For example:
 
 ```bash
-TILIQUA_REZO_FAMILY_ARTIFACT_NAME=REZO-NOSS \
-  pdm run rezo build --fs-192khz --spread-spectrum 0.0
+pdm run rezo build --fs-192khz --spread-spectrum 0.0 \
+  --artifact-name REZO-NOSS
 ```
 
 Use REZOMO-NOSS/rezomo and STREZO-NOSS/strezo for the other products. Circular
 targets already have distinct ROUND artifact names and apply the panel-mount
 rotation in the final display output.
+
+## Built-in help
+
+All three products have a HELP page after OPTIONS. Fixed PAGE, TOPIC and
+SCROLL controls remain above a
+scrollable page guide contained inside the circular viewport, with the standard
+identity/PAGE header and NAV, EDIT or SCROLL status. The existing font
+renderer reads a narrow help ROM; no framebuffer or new font is required.
+
+[REZO_HELP.md](REZO_HELP.md), [REZOMO_HELP.md](REZOMO_HELP.md) and
+[STREZO_HELP.md](STREZO_HELP.md) are condensed from their user guides. Only the
+paragraphs between its HELP markers enter the build. Topic headings are
+metadata. `help_content.py` wraps text to 32 columns and supplies the ROM,
+topic offsets and individual scroll limits. Each topic describes its page
+controls and includes a usage suggestion. Update it alongside the guide.
+Changing TOPIC resets SCROLL and scrolling stops at that topic's end.
+REZO includes FILTER/MATRIX topics; REZOMO includes CLOCK; STREZO includes
+CROSS and stereo output controls. Topics are readable regardless of mode.
+The formatter and runtime navigation are shared. REZO/REZOMO also share the
+HELP renderer and Cargo generator; STREZO retains its qualified renderer.
+HELP does not change saved records or DSP.
+
+All three firmware ROMs are 20 KiB. HELP takes REZO just beyond its former
+16 KiB allocation; the shared 20 KiB size adds two BRAMs to REZO without
+changing working RAM (2 KiB), CPU configuration or CPU-visible addresses.
+
+Use brief complete sentences with mixed-case ASCII letters, digits, spaces,
+periods and basic punctuation inside the HELP markers. Commas, colons,
+semicolons, straight apostrophes, hyphens, parentheses, slashes, plus and
+percent signs, exclamation and question marks are supported. Unsupported
+punctuation, including curly quotes and long dashes, is rejected rather than
+silently rendered as blanks. The formatter checks a 16,384-character upper
+budget and nine-bit row range. HELP uses seven bits per character; ordinary
+tile storage remains six-bit and existing menu glyph codes are unchanged.
+A longer guide can add BRAMs and requires fresh resource and timing
+qualification.
+
+First-use HELP is enabled by default. Build with
+`TILIQUA_REZO_HELP_FIRST_BOOT=0` to disable its automatic startup, without
+removing HELP from the page list. Cargo tracks this flag as a build input.
+With no valid saved default and no acknowledgement, boot opens HELP; leaving
+it programs and verifies only the four-byte `HELP` marker at offsets
+4092..4095 of option sector zero. This is outside complete sound journal
+records for all three products and requires no erase or implicit sound save. Valid saved defaults
+count as initialized for backward compatibility. Failed reads conservatively
+keep BANK startup, and a failed acknowledgement can show HELP again next boot.
+Erasing defaults clears both saved sounds and the first-use marker.
 
 ## Verification
 

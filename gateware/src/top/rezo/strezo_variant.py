@@ -28,6 +28,16 @@ right resonator state, preserving the stereo image through the wet path.
 import math
 import os
 import sys
+try:
+    from .help_content import (HELP_ROM_LINES, HELP_BODY_BASE_ROWS,
+                               HELP_HEADER_ROWS, HELP_STATUS_ROW,
+                               HELP_COLUMNS, HELP_VISIBLE_ROWS, HELP_X_CELL, HELP_Y_CELL,
+                               HELP_TOPIC_ROW, HELP_TOPIC_BASE_ROWS, HELP_ROW_BITS, HELP_VIEW_BITS)
+except ImportError:
+    from help_content import (HELP_ROM_LINES, HELP_BODY_BASE_ROWS,
+                              HELP_HEADER_ROWS, HELP_STATUS_ROW,
+                              HELP_COLUMNS, HELP_VISIBLE_ROWS, HELP_X_CELL, HELP_Y_CELL,
+                              HELP_TOPIC_ROW, HELP_TOPIC_BASE_ROWS, HELP_ROW_BITS, HELP_VIEW_BITS)
 
 from amaranth import *
 from amaranth.lib import data, stream, wiring
@@ -49,7 +59,7 @@ from tiliqua.video import dvi
 try:
     from .display_common import (
         FONT_5X7, PALETTE_ROLES, RGB_PALETTES, SEMANTIC_PALETTE,
-        STEREO_TILE_CHARS,
+        STEREO_TILE_CHARS, HELP_EXTRA_CHARS,
     )
     from .core_common import RezoCoreConstants
     from .feedback import (
@@ -97,7 +107,7 @@ try:
 except ImportError:  # top_level_cli executes this file directly.
     from display_common import (
         FONT_5X7, PALETTE_ROLES, RGB_PALETTES, SEMANTIC_PALETTE,
-        STEREO_TILE_CHARS,
+        STEREO_TILE_CHARS, HELP_EXTRA_CHARS,
     )
     from core_common import RezoCoreConstants
     from feedback import (
@@ -1996,7 +2006,8 @@ class RezoTileDisplay(wiring.Component):
     PALETTE_ROLES = PALETTE_ROLES
     RGB_PALETTES = RGB_PALETTES
     UNITY_MARKER_CHAR = "|"
-    CHARS = STEREO_TILE_CHARS + UNITY_MARKER_CHAR
+    NATIVE_CHARS = STEREO_TILE_CHARS + UNITY_MARKER_CHAR
+    CHARS = NATIVE_CHARS + HELP_EXTRA_CHARS
     CHAR_CODES = {ch: i for i, ch in enumerate(CHARS)}
 
     def __init__(self, h_active=1280, rotate_left=False):
@@ -2052,7 +2063,8 @@ class RezoTileDisplay(wiring.Component):
             "output_routes": In(data.ArrayLayout(unsigned(5), 4)),
             "output_sides": In(data.ArrayLayout(unsigned(1), 4)),
             "selected": In(unsigned(7)),
-            "page": In(unsigned(3)),
+            "page": In(unsigned(4)),
+            "help_scroll": In(unsigned(HELP_VIEW_BITS)),
             "preset": In(unsigned(3)),
             "palette": In(unsigned(3)),
             "row_dry_include": In(1),
@@ -2267,7 +2279,8 @@ class RezoTileDisplay(wiring.Component):
             for offset, ch in enumerate(text_value):
                 if 0 <= x0 + offset < 45 and 0 <= y0 < 45:
                     text_init[page * page_cells +
-                              y0 * text_row_stride + x0 + offset] = self.code(ch)
+                              y0 * text_row_stride + x0 + offset] = (
+                        self.code(ch) if ch in self.NATIVE_CHARS else 0)
 
         def put_native(page, text_value, x0, y0):
             """Place text directly on the native 16px character grid."""
@@ -2354,16 +2367,52 @@ class RezoTileDisplay(wiring.Component):
                              for page in range(8))
         text_address = Signal(unsigned(15))
         text_page_q = Signal(unsigned(3))
-        m.d.dvi += text_page_q.eq(self.page)
+        m.d.dvi += text_page_q.eq(self.page[:3])
         # ``text_y_pre`` leads ``cell_y`` by exactly one pixel clock.
         # Register the page/row base, leaving only the small cell-x add on
         # the BRAM setup path.
         text_row_base_q = Signal(unsigned(15))
         m.d.dvi += text_row_base_q.eq(
-            page_offsets[self.page] +
+            page_offsets[self.page[:3]] +
             text_y_pre[self.CELL_SHIFT:] * text_row_stride)
         m.d.comb += text_address.eq(text_row_base_q + cell_x)
         m.d.comb += text_rport.addr.eq(text_address)
+
+        # Reuse the existing glyph pipeline. A dedicated narrow ROM avoids a
+        # ninth 45x45 tile page and keeps scrolling off the dynamic tile writer.
+        help_init = [self.code(ch) for line in HELP_ROM_LINES
+                     for ch in line.ljust(HELP_COLUMNS)]
+        m.submodules.help_mem = help_mem = Memory(
+            shape=unsigned(7), depth=len(help_init), init=help_init,
+            attrs={"ram_style": "block"})
+        help_rport = help_mem.read_port(domain="dvi")
+        help_row_base_q = Signal.like(help_rport.addr)
+        help_row = text_y_pre[self.CELL_SHIFT:]
+        help_scrolling = (self.page == 8) & self.editing & (self.selected == 2)
+        help_mode = Mux(help_scrolling, 2, Mux(self.editing, 1, 0))
+        m.d.dvi += help_row_base_q.eq(
+            Mux(help_row < HELP_Y_CELL,
+                Mux(help_row == HELP_STATUS_ROW,
+                    (HELP_HEADER_ROWS + help_mode) << 5,
+                    Mux(help_row == HELP_TOPIC_ROW,
+                        (HELP_TOPIC_BASE_ROWS + self.help_scroll[HELP_ROW_BITS:]) << 5,
+                        help_row << 5)),
+                (HELP_BODY_BASE_ROWS + help_row - HELP_Y_CELL +
+                 self.help_scroll[:HELP_ROW_BITS]) << 5)
+            - HELP_X_CELL)
+        m.d.comb += help_rport.addr.eq(help_row_base_q + cell_x)
+        help_visible_q = Signal()
+        help_page_q = Signal()
+        m.d.dvi += [
+            help_page_q.eq(self.page == 8),
+            help_visible_q.eq((self.page == 8) &
+                (cell_x >= HELP_X_CELL) & (cell_x < HELP_X_CELL + HELP_COLUMNS) &
+                (cell_y >= 2) &
+                (cell_y < HELP_Y_CELL + HELP_VISIBLE_ROWS)),
+        ]
+        rendered_char = Signal(unsigned(7))
+        m.d.comb += rendered_char.eq(Mux(help_page_q,
+            Mux(help_visible_q, help_rport.data, 0), text_rport.data))
 
         # Dynamic labels are written into the tile RAM in short bursts at
         # 15 Hz. HDMI therefore sees only a BRAM read, never the control muxes.
@@ -2469,7 +2518,7 @@ class RezoTileDisplay(wiring.Component):
         ]
         m.d.sync += [
             writer_index_q.eq(update_index),
-            writer_page_q.eq(page_sync),
+            writer_page_q.eq(page_sync[:3]),
             writer_char_q.eq(writer_char),
             writer_valid_q.eq(update_active),
         ]
@@ -2842,7 +2891,7 @@ class RezoTileDisplay(wiring.Component):
         glyph_rport = glyph_mem.read_port(domain="dvi")
         glyph_address = Signal(range(len(glyph_init)))
         m.d.comb += [
-            glyph_address.eq((text_rport.data << 3) | glyph_row_pre_q),
+            glyph_address.eq((rendered_char << 3) | glyph_row_pre_q),
             glyph_rport.addr.eq(glyph_address),
         ]
 
@@ -2853,7 +2902,7 @@ class RezoTileDisplay(wiring.Component):
             glyph_col_q.eq(glyph_col_pre_q),
             text_active_q.eq(text_active_pre_q),
             unity_marker_char_q.eq(
-                text_rport.data == self.code(self.UNITY_MARKER_CHAR)),
+                rendered_char == self.code(self.UNITY_MARKER_CHAR)),
         ]
 
         glyph_bit = Signal(unsigned(3))
@@ -2966,8 +3015,11 @@ class RezoTileDisplay(wiring.Component):
         meter_curve_x = Signal(unsigned(10))
         meter_bound_lo = Signal(unsigned(10))
         meter_bound_hi = Signal(unsigned(10))
-        meter_value = Signal(unsigned(6))
-        meter_clip = Signal()
+        meter_inner_lane = Signal()
+        meter_outer_value = Signal(unsigned(6))
+        meter_inner_value = Signal(unsigned(6))
+        meter_outer_clip = Signal()
+        meter_inner_clip = Signal()
         m.d.comb += [
             meter_bottom_left.eq(
                 (x >= NATIVE_STEREO_INPUT_TRACK_LEFT_X0) &
@@ -2984,25 +3036,33 @@ class RezoTileDisplay(wiring.Component):
                 x - NATIVE_STEREO_INPUT_TRACK_RIGHT_X0)),
             meter_curve_x.eq(Mux(
                 meter_bottom, 719 - y, Mux(x[9], 719 - x, x))),
+            # Select the channel in parallel with the annulus comparison.
+            # The registered lane tag chooses outer/inner in the next stage;
+            # invalid lanes are masked by meter_lane_valid_q below. This
+            # removes the curve comparator from the channel-mux setup path
+            # without changing pixel latency or visible meter values.
+            meter_outer_value.eq(Mux(
+                x[9], self.output_meters[3], self.output_meters[0])),
+            meter_inner_value.eq(Mux(
+                x[9], self.output_meters[2], self.output_meters[1])),
+            meter_outer_clip.eq(Mux(
+                meter_bottom,
+                Mux(meter_bottom_left, self.input_bus_clips[0],
+                    self.input_bus_clips[1]),
+                Mux(x[9], self.output_clips[3], self.output_clips[0]))),
+            meter_inner_clip.eq(Mux(
+                x[9], self.output_clips[2], self.output_clips[1])),
+            # Only the lane-valid tag controls visibility. Do not spend a
+            # second mux layer zeroing bounds for pixels that are masked out.
+            meter_bound_lo.eq(Mux(
+                meter_inner_lane, meter_curve_data[20:30], meter_curve_data[0:10])),
+            meter_bound_hi.eq(Mux(
+                meter_inner_lane, meter_curve_data[30:40], meter_curve_data[10:20])),
         ]
         with m.If((meter_curve_x >= meter_curve_data[0:10]) &
                   (meter_curve_x < meter_curve_data[10:20])):
             m.d.comb += [
                 meter_lane_valid.eq(1),
-                meter_bound_lo.eq(meter_curve_data[0:10]),
-                meter_bound_hi.eq(meter_curve_data[10:20]),
-                meter_value.eq(Mux(
-                    meter_bottom,
-                    Mux(meter_bottom_left, self.input_bus_meters[0],
-                        self.input_bus_meters[1]),
-                    Mux(x[9], self.output_meters[3],
-                        self.output_meters[0]))),
-                meter_clip.eq(Mux(
-                    meter_bottom,
-                    Mux(meter_bottom_left, self.input_bus_clips[0],
-                        self.input_bus_clips[1]),
-                    Mux(x[9], self.output_clips[3],
-                        self.output_clips[0]))),
             ]
         with m.Elif(
                 ~meter_bottom &
@@ -3010,14 +3070,7 @@ class RezoTileDisplay(wiring.Component):
                 (meter_curve_x < meter_curve_data[30:40])):
             m.d.comb += [
                 meter_lane_valid.eq(1),
-                meter_bound_lo.eq(meter_curve_data[20:30]),
-                meter_bound_hi.eq(meter_curve_data[30:40]),
-                meter_value.eq(Mux(
-                    x[9], self.output_meters[2],
-                    self.output_meters[1])),
-                meter_clip.eq(Mux(
-                    x[9], self.output_clips[2],
-                    self.output_clips[1])),
+                meter_inner_lane.eq(1),
             ]
 
         meter_x_q = Signal.like(x)
@@ -3025,7 +3078,14 @@ class RezoTileDisplay(wiring.Component):
         meter_axis_q = Signal.like(meter_axis)
         meter_bound_lo_q = Signal.like(meter_bound_lo)
         meter_bound_hi_q = Signal.like(meter_bound_hi)
-        meter_value_q = Signal.like(meter_value)
+        meter_inner_lane_q = Signal()
+        meter_outer_top_q = Signal(unsigned(10))
+        meter_inner_top_q = Signal(unsigned(10))
+        input_left_offset_q = Signal(unsigned(8))
+        input_right_offset_q = Signal(unsigned(8))
+        meter_bottom_left_q = Signal()
+        meter_outer_clip_q = Signal()
+        meter_inner_clip_q = Signal()
         meter_clip_q = Signal()
         meter_bottom_q = Signal()
         meter_lane_valid_q = Signal()
@@ -3035,17 +3095,31 @@ class RezoTileDisplay(wiring.Component):
             meter_axis_q.eq(meter_axis),
             meter_bound_lo_q.eq(meter_bound_lo),
             meter_bound_hi_q.eq(meter_bound_hi),
-            meter_value_q.eq(meter_value),
-            meter_clip_q.eq(meter_clip),
+            meter_inner_lane_q.eq(meter_inner_lane),
+            # Scale channel levels before the pixel-stage register. Selecting
+            # an already-scaled height/offset avoids serialising a lane mux,
+            # three shift-adds and a fill comparison in one video-clock cycle.
+            meter_outer_top_q.eq(460 - ((meter_outer_value << 1) + meter_outer_value)),
+            meter_inner_top_q.eq(460 - ((meter_inner_value << 1) + meter_inner_value)),
+            input_left_offset_q.eq(native_stereo_input_bus_meter_offset(
+                self.input_bus_meters[0])),
+            input_right_offset_q.eq(native_stereo_input_bus_meter_offset(
+                self.input_bus_meters[1])),
+            meter_bottom_left_q.eq(meter_bottom_left),
+            meter_outer_clip_q.eq(meter_outer_clip),
+            meter_inner_clip_q.eq(meter_inner_clip),
             meter_bottom_q.eq(meter_bottom),
             meter_lane_valid_q.eq(meter_lane_valid),
         ]
         meter_top = Signal(unsigned(10))
         input_meter_offset = Signal(unsigned(9))
         m.d.comb += [
-            meter_top.eq(460 - ((meter_value_q << 1) + meter_value_q)),
-            input_meter_offset.eq(
-                native_stereo_input_bus_meter_offset(meter_value_q)),
+            meter_clip_q.eq(Mux(
+                meter_inner_lane_q, meter_inner_clip_q, meter_outer_clip_q)),
+            meter_top.eq(Mux(
+                meter_inner_lane_q, meter_inner_top_q, meter_outer_top_q)),
+            input_meter_offset.eq(Mux(
+                meter_bottom_left_q, input_left_offset_q, input_right_offset_q)),
         ]
         meter_shape = meter_lane_valid_q & Mux(
             meter_bottom_q, Const(1),
@@ -3120,8 +3194,8 @@ class RezoTileDisplay(wiring.Component):
         side_page_chip = active & self.rect(
             text_x, text_y, 216, 124, 360, 146)
         cursor_chip = active & self.outline(
-            text_x, text_y, 520, 122,
-            Mux(self.editing, 600, 584), 148, t=2)
+            text_x, text_y, Mux(help_scrolling, 504, 520), 122,
+            Mux(help_scrolling, 616, Mux(self.editing, 600, 584)), 148, t=2)
         # One shared rectangle keeps the pixel path shallow. OPTIONS selects
         # a short lower field; all working pages use the taller field needed
         # by the matrix and fourth output row.
@@ -4484,6 +4558,26 @@ class RezoTileDisplay(wiring.Component):
                              page_selected_q)
 
         selected_q = Signal()
+        help_selected_q0 = Signal()
+        help_selected_q = Signal()
+        help_line_q0 = Signal()
+        help_line_q = Signal()
+        help_panel_q0 = Signal()
+        help_panel_q = Signal()
+        help_surface_q = Signal()
+        m.d.dvi += [
+            help_selected_q0.eq((self.selected == 1) &
+                self.outline(text_x, text_y, 248, 184, 400, 212, t=3) |
+                (self.selected == 2) &
+                self.outline(text_x, text_y, 504, 184, 616, 212, t=3)),
+            help_selected_q.eq(page_selected_q | help_selected_q0),
+            help_line_q0.eq(cursor_chip),
+            help_line_q.eq(help_line_q0),
+            help_panel_q0.eq(side_page_chip |
+                self.rect(text_x, text_y, 248, 184, 400, 212)),
+            help_panel_q.eq(help_panel_q0),
+            help_surface_q.eq(active & self.rect(x, y, 108, 218, 628, 566)),
+        ]
         text_q = Signal()
         unity_marker_q = Signal()
         fill_q = Signal()
@@ -4565,11 +4659,29 @@ class RezoTileDisplay(wiring.Component):
         with m.Elif(surface_q):
             m.d.comb += palette_role.eq(7)
 
+        # HELP shares the normal identity/PAGE/status header. Its dedicated
+        # controls keep audio geometry out of the scrollable content panel.
+        with m.If(self.page == 8):
+            m.d.comb += palette_role.eq(6)
+            with m.If(help_selected_q):
+                m.d.comb += palette_role.eq(0)
+            with m.Elif(text_q):
+                m.d.comb += palette_role.eq(1)
+            with m.Elif(help_line_q):
+                m.d.comb += palette_role.eq(4)
+            with m.Elif(help_panel_q):
+                m.d.comb += palette_role.eq(5)
+            with m.Elif(help_surface_q):
+                m.d.comb += palette_role.eq(7)
+
         # Black is a renderer constant rather than a palette entry. The
         # eighth hardware color is now available for shaded content surfaces.
-        palette_visible = (selected_q | text_q | unity_marker_q | mod_q |
+        palette_visible = Mux(self.page == 8, active_q &
+            (text_q | background_q | help_surface_q | help_selected_q |
+             help_line_q | help_panel_q),
+                          (selected_q | text_q | unity_marker_q | mod_q |
                            fill_q | line_q | panel_q | background_q |
-                           surface_q)
+                           surface_q))
         palette_visible_q = Signal()
         m.d.dvi += palette_visible_q.eq(palette_visible)
 
@@ -5006,6 +5118,7 @@ class RezoBeamTop(Elaboratable):
             FFSynchronizer(i=ui.damp_mode, o=display.damp_mode, o_domain="dvi"),
             FFSynchronizer(i=ui.selected, o=display.selected, o_domain="dvi"),
             FFSynchronizer(i=ui.page, o=display.page, o_domain="dvi"),
+            FFSynchronizer(i=ui.help_scroll, o=display.help_scroll, o_domain="dvi"),
             FFSynchronizer(i=ui.preset, o=display.preset, o_domain="dvi"),
             FFSynchronizer(i=ui.palette, o=display.palette, o_domain="dvi"),
             FFSynchronizer(i=ui.row_dry_include,

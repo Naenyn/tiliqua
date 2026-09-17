@@ -1,9 +1,9 @@
-fn main() {
-    // Cargo does not discover linker-script dependencies passed through
-    // rustflags. Force a relink whenever the generated memory map changes.
-    println!("cargo:rerun-if-changed=memory.x");
+// Shared Cargo-side help generator. ROM and firmware use the same formatter.
+fn configure_help(product: &str) {
+    println!("cargo:rerun-if-changed=../help_build.rs");
     println!("cargo:rerun-if-changed=../help_content.py");
-    println!("cargo:rerun-if-changed=../STREZO_HELP.md");
+    println!("cargo:rerun-if-changed=../display_common.py");
+    println!("cargo:rerun-if-changed=../{product}_HELP.md");
     println!("cargo:rerun-if-env-changed=TILIQUA_REZO_HELP_FIRST_BOOT");
     let first_boot = match std::env::var("TILIQUA_REZO_HELP_FIRST_BOOT")
         .unwrap_or_else(|_| "1".into())
@@ -14,9 +14,9 @@ fn main() {
         _ => panic!("TILIQUA_REZO_HELP_FIRST_BOOT must be 0 or 1"),
     };
     let output = std::process::Command::new("python3")
-        .arg("../help_content.py")
+        .args(["../help_content.py", product])
         .output()
-        .expect("Python is required to format the built-in help");
+        .expect("Python is required to format built-in help");
     assert!(
         output.status.success(),
         "Help formatting failed: {}",

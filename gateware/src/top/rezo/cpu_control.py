@@ -154,7 +154,8 @@ class RezoFirmwareUIState:
                              for n in range(20)]
 
         self.selected = Signal(7)
-        self.page = Signal(3)
+        self.page = Signal(4)
+        self.help_scroll = Signal(13)
         self.preset = Signal(3)
         self.palette = Signal(3)
         self.row_dry_include = Signal(init=1)
@@ -235,7 +236,7 @@ class RezoUIControlPeripheral(Component):
                     m.d.sync += Array(self.ui.output_sends)[index].eq(value[:5])
             with m.Case(10):
                 with m.If(command.element.w_stb):
-                    m.d.sync += self.ui.page.eq(value[:3])
+                    m.d.sync += self.ui.page.eq(value[:4])
             with m.Case(11):
                 with m.If(command.element.w_stb):
                     m.d.sync += self.ui.selected.eq(value[:7])
@@ -303,6 +304,8 @@ class RezoUIControlPeripheral(Component):
                     ]
                 with m.Elif(command.element.w_stb & (index == 1)):
                     m.d.sync += self.ui.row_dry_include.eq(value[0])
+                with m.Elif(command.element.w_stb & (index == 2)):
+                    m.d.sync += self.ui.help_scroll.eq(value[:13])
             with m.Case(31):
                 with m.If(command.element.w_stb):
                     m.d.sync += self.ui.startup_done.eq(value[0])
@@ -371,7 +374,8 @@ class RezomoFirmwareUIState:
                               for n in range(4)]
 
         self.selected = Signal(7)
-        self.page = Signal(3)
+        self.page = Signal(4)
+        self.help_scroll = Signal(13)
         self.preset = Signal(3)
         self.palette = Signal(3)
         self.row_dry_include = Signal(init=1)
@@ -430,7 +434,7 @@ class RezomoUIControlPeripheral(Component):
                         m.d.sync += Array(signals)[index].eq(value[:width])
 
             scalar = {
-                10: (self.ui.page, 3),
+                10: (self.ui.page, 4),
                 11: (self.ui.selected, 7),
                 12: (self.ui.preset, 3),
                 13: (self.ui.palette, 3),
@@ -481,6 +485,8 @@ class RezomoUIControlPeripheral(Component):
                     ]
                 with m.Elif(strobe & (index == 1)):
                     m.d.sync += self.ui.row_dry_include.eq(value[0])
+                with m.Elif(strobe & (index == 2)):
+                    m.d.sync += self.ui.help_scroll.eq(value[:13])
 
         for output in range(4):
             base = output * 5
@@ -556,11 +562,12 @@ class StrezoFirmwareUIState:
                              for n in range(4)]
         self.mid_gain = Signal(8, init=64)
         self.side_gain = Signal(8, init=64)
+        self.help_scroll = Signal(13)
         self.output_routes = [Signal(5, name=f"fw_output_route{n}")
                               for n in range(4)]
 
         self.selected = Signal(7)
-        self.page = Signal(3)
+        self.page = Signal(4)
         self.preset = Signal(3)
         self.palette = Signal(3)
         self.row_dry_include = Signal(init=1)
@@ -621,7 +628,8 @@ class StrezoUIControlPeripheral(Component):
                         m.d.sync += Array(signals)[index].eq(value[:width])
 
             scalar = {
-                10: (self.ui.page, 3),
+                10: (self.ui.page, 4),
+                40: (self.ui.help_scroll, 13),
                 11: (self.ui.selected, 7),
                 12: (self.ui.preset, 3),
                 13: (self.ui.palette, 3),
@@ -673,8 +681,8 @@ class StrezoUIControlPeripheral(Component):
 class RezoFamilyCpuControlPlane(Component):
     """Shared REZO-family CPU fabric.
 
-    Product subclasses select only the firmware ROM size and UI command
-    contract.  The VexiiRiscv configuration, CPU-visible memory regions,
+    Product subclasses select only their UI command contract.
+    The VexiiRiscv configuration, firmware ROM, CPU-visible memory regions,
     Wishbone/CSR fabric, encoder, and bounded flash window are intentionally
     identical across REZO, REZOMO, and STREZO.
     """
@@ -686,9 +694,9 @@ class RezoFamilyCpuControlPlane(Component):
     # Keep the CPU-visible executable region identical for every product.
     # CODE_SIZE below controls physical ROM usage independently.
     MAINRAM_SIZE = 0x10000
-    CODE_SIZE = 0x4000
-    # All products reserve the same decoder window for program memory.  REZO's
-    # smaller ROM still consumes only CODE_SIZE bytes of physical block RAM.
+    # Shared 20 KiB ROM accommodates all HELP firmware without a jump to 32 KiB.
+    CODE_SIZE = 0x5000
+    # Working RAM and the decoder window remain unchanged.
     DATA_BASE = 0x8000
     DATA_SIZE = 0x0800
     CSR_BASE = 0xF0000000
@@ -781,15 +789,8 @@ class RezomoCpuControlPlane(RezoFamilyCpuControlPlane):
     UI_STATE = RezomoFirmwareUIState
     UI_PERIPHERAL = RezomoUIControlPeripheral
 
-    # CLOCK algorithms and their V3 migration need slightly more than REZO's
-    # 16 KiB image. A 20 KiB ROM consumes two additional DP16KD blocks while
-    # avoiding a wasteful jump to 32 KiB.
-    CODE_SIZE = 0x5000
-
-
 class StrezoCpuControlPlane(RezoFamilyCpuControlPlane):
     """REZO-family CPU fabric with STREZO's stereo command contract."""
 
     UI_STATE = StrezoFirmwareUIState
     UI_PERIPHERAL = StrezoUIControlPeripheral
-    CODE_SIZE = 0x5000

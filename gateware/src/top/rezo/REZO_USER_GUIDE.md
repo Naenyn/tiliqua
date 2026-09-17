@@ -47,7 +47,24 @@ the main page, navigation proceeds PAGE, then PRESET, then MODE. Select MODE to
 switch between BANK and FILTER.
 
 BANK pages follow the sound-design path **BANK, INPUT, BANDS, GROUPS,
-FEEDBACK, OUTPUT, OPTIONS**. FILTER inserts **MATRIX** between BANDS and GROUPS.
+FEEDBACK, OUTPUT, OPTIONS, HELP**. FILTER inserts **MATRIX** between BANDS and GROUPS.
+
+### Built-in help
+
+HELP contains a START guide and a topic for each page, including FILTER and
+MATRIX. Select TOPIC, click, turn to choose a guide, and click again to finish.
+Select SCROLL, click, and turn to read; click again to finish. Each topic has
+its own end stop. Changing topics returns to the top. PAGE leaves HELP.
+The normal header and all three controls remain fixed above 21 text rows
+inside the circular viewport. Status is NAV while selecting, EDIT while
+changing PAGE or TOPIC, and SCROLL while reading.
+
+The FILTER and MATRIX guides are readable in either mode. HELP does not edit
+audio settings. On first use of a slot with no saved default or prior HELP
+acknowledgement, boot opens HELP. Leaving it records only an acknowledgement,
+not a sound save. Initialized slots keep their normal startup view. HELP
+remains navigable after OPTIONS on every boot. Clearing defaults also clears
+the acknowledgement. Source: [REZO_HELP.md](REZO_HELP.md).
 
 ### Reading the meters
 
@@ -243,7 +260,7 @@ The BANK and FILTER output-send settings are stored separately.
 
 The ten band switches choose which resonators feed the shared feedback loop.
 Click a band to include or exclude it. These switches shape the feedback signal;
-the **AMOUNT** control sets its overall level. BANK and FILTER retain
+the **FEEDBACK** control sets its overall level. BANK and FILTER retain
 independent amounts, so FILTER begins at zero feedback even when BANK feedback
 is already raised.
 
@@ -251,21 +268,21 @@ The three safety controls shape and constrain the returning signal:
 
 - **KNEE** sets the level where soft limiting begins. Below it, the return is
   unchanged; above it, progressively stronger compression bends the signal
-  toward CEIL.
-- **CEIL** sets the hard maximum allowed feedback-loop level. Its fader colors
-  the span from KNEE to CEIL to show the active soft-limiting region.
+  toward CEILING.
+- **CEILING** sets the hard maximum allowed feedback-loop level. Its fader colors
+  the span from KNEE to CEILING to show the active soft-limiting region.
 - **DAMPING** controls how strongly increasing feedback restrains resonance.
   Higher settings are more conservative.
 
-KNEE and CEIL may meet, which removes the colored soft region and behaves as a
-hard limit. Raising KNEE past CEIL raises CEIL with it; lowering CEIL past KNEE
+KNEE and CEILING may meet, which removes the colored soft region and behaves as a
+hard limit. Raising KNEE past CEILING raises CEILING with it; lowering CEILING past KNEE
 lowers KNEE. This keeps the controls valid without creating a blocked encoder
 range.
 
 Start with modest FEEDBACK and RESONANCE settings, especially when several
-bands feed the loop. KNEE and CEIL reduce runaway behavior, but they do not
+bands feed the loop. KNEE and CEILING reduce runaway behavior, but they do not
 make every extreme setting quiet. With DRIVE, RESONANCE, and FEEDBACK all near
-maximum—especially with a low KNEE, high CEIL, and light DAMPING—the output can
+maximum—especially with a low KNEE, high CEILING, and light DAMPING—the output can
 become harsh, digitally clipped, and noisy. This is an intentional overload
 region rather than an additional sound-safety range. Reduce DRIVE, RESONANCE,
 or FEEDBACK to return to normal operation.
