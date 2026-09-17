@@ -5,6 +5,42 @@ Historical work remains available in git and `BUILD_PERFORMANCE.md`.
 
 ## Current continuation checkpoint — 2026-09-14
 
+### STREZO page/topic HELP qualified and flashed — 2026-09-16
+
+Qualified source/tag `145d1945` adds START plus eight operating-page guides
+from `STREZO_HELP.md`. Fixed PAGE, TOPIC and SCROLL controls retain the family
+header. Changing TOPIC resets SCROLL; each topic has a separate end stop and
+21 visible rows. Firmware owns topic-offset lookup and packs topic/absolute
+row into the existing command 40, widened to 13 bits. HELP input guards keep
+the reused target numbers from editing or being blocked by disabled bands.
+
+The text uses 328 rows / 10,496 six-bit characters / 7,872 raw bytes and four
+BRAMs. Final usage is 24,124 / 24,288 logic cells (164 free), 40 / 56 BRAMs,
+20 / 28 DSPs; firmware is 15,008 bytes in the unchanged 20 KiB allocation.
+DSP, audio math, clock frequencies, V7 sound records and first-use
+acknowledgement behavior are unchanged. 55 focused gateware and all 16 shared
+Rust host library tests passed, including every topic's start/end rendering
+in standard and rotated simulation, 13-bit CSR transfer and navigation bounds.
+
+The fresh 720p/SS 0.0 netlist qualified on the first routing attempt using
+seed 4, timing weight 30 and the three revalidated CPU clear-path LUT anchors.
+Routing took 267.22 seconds. All clocks pass the unchanged 3% gate:
+serializer 7.55%, audio 52.80%, system 7.95%, pixel 10.40%. Both routed PLL
+divider/feedback configurations match the synthesized input. Do not assume
+this brittle synthesized-cell floorplan qualifies changed sources/profiles.
+
+Archive `strezo-help-topics-145d1945-r5.tar.gz` was flashed to STREZO slot 4
+successfully, exit 0 with `Refresh: DONE`. Option storage address/layout was
+checked and excluded from programming; saved options were not erased.
+REZO/REZOMO were not flashed. Artifacts, guides, tests, exact hook, timing,
+hashes and flash log are in `/Users/naenyn/git/tiliqua/build/strezo-help-145d1945`.
+See its `QUALIFICATION.md`. User visual/listening approval is pending.
+
+Open HELP after OPTIONS on this initialized slot. Circular builds remain
+deferred until the final view is approved. REZO/REZOMO HELP ports and merge
+remain pending. Keep the feature isolated on `codex/strezo-built-in-help`;
+production `rezo` and the main SONORO checkout were not changed.
+
 ### STREZO HELP English qualified and flashed — 2026-09-16
 
 Qualified source/tag is now `f848a6de` (a424ad46's English/glyph fixes plus a
