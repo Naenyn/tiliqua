@@ -52,9 +52,9 @@ class HelpContent:
         sections = body.strip().split('## ')[1:]
         if tuple(section.split('\n', 1)[0] for section in sections) != self.topic_names:
             raise ValueError('Help topics must match the ordered page guides')
-        # Trial mixed-case HELP in REZOMO first; retain qualified sibling ROMs.
+        # Preserve reviewed prose and control-name capitalization in all products.
         self.topics = tuple(wrap_help(section.split('\n', 1)[1],
-                           mixed_case=(product == 'REZOMO')) for section in sections)
+                           mixed_case=True) for section in sections)
         self.scroll_max = tuple(max(0, len(lines) - HELP_VISIBLE_ROWS) for lines in self.topics)
         offsets, lines = [], []
         for topic in self.topics:

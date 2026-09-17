@@ -59,7 +59,7 @@ from tiliqua.video import dvi
 try:
     from .display_common import (
         FONT_5X7, PALETTE_ROLES, RGB_PALETTES, SEMANTIC_PALETTE,
-        STEREO_TILE_CHARS,
+        STEREO_TILE_CHARS, HELP_EXTRA_CHARS,
     )
     from .core_common import RezoCoreConstants
     from .feedback import (
@@ -107,7 +107,7 @@ try:
 except ImportError:  # top_level_cli executes this file directly.
     from display_common import (
         FONT_5X7, PALETTE_ROLES, RGB_PALETTES, SEMANTIC_PALETTE,
-        STEREO_TILE_CHARS,
+        STEREO_TILE_CHARS, HELP_EXTRA_CHARS,
     )
     from core_common import RezoCoreConstants
     from feedback import (
@@ -2006,7 +2006,7 @@ class RezoTileDisplay(wiring.Component):
     PALETTE_ROLES = PALETTE_ROLES
     RGB_PALETTES = RGB_PALETTES
     UNITY_MARKER_CHAR = "|"
-    CHARS = STEREO_TILE_CHARS + UNITY_MARKER_CHAR
+    CHARS = STEREO_TILE_CHARS + UNITY_MARKER_CHAR + HELP_EXTRA_CHARS
     CHAR_CODES = {ch: i for i, ch in enumerate(CHARS)}
 
     def __init__(self, h_active=1280, rotate_left=False):
@@ -2381,7 +2381,7 @@ class RezoTileDisplay(wiring.Component):
         help_init = [self.code(ch) for line in HELP_ROM_LINES
                      for ch in line.ljust(HELP_COLUMNS)]
         m.submodules.help_mem = help_mem = Memory(
-            shape=unsigned(6), depth=len(help_init), init=help_init,
+            shape=unsigned(7), depth=len(help_init), init=help_init,
             attrs={"ram_style": "block"})
         help_rport = help_mem.read_port(domain="dvi")
         help_row_base_q = Signal.like(help_rport.addr)
@@ -2408,7 +2408,7 @@ class RezoTileDisplay(wiring.Component):
                 (cell_y >= 2) &
                 (cell_y < HELP_Y_CELL + HELP_VISIBLE_ROWS)),
         ]
-        rendered_char = Signal(unsigned(6))
+        rendered_char = Signal(unsigned(7))
         m.d.comb += rendered_char.eq(Mux(help_page_q,
             Mux(help_visible_q, help_rport.data, 0), text_rport.data))
 

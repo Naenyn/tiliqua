@@ -1,6 +1,7 @@
 """Topic isolation, native pixels and ABI coverage for the two HELP ports."""
 import subprocess
 import sys
+import importlib
 from pathlib import Path
 import pytest
 from amaranth import Module
@@ -13,10 +14,11 @@ from test_strezo_help import lit_points
 from top.rezo.help_content import (
     load_help, HELP_COLUMNS, HELP_VISIBLE_ROWS, HELP_Y_CELL, HELP_X_CELL,
     HELP_ROW_BITS, HELP_ROM_BUDGET_CHARS)
-from top.rezo.display_common import FONT_5X7, TILE_CHARS, HELP_EXTRA_CHARS
+from top.rezo.display_common import FONT_5X7, TILE_CHARS, STEREO_TILE_CHARS, HELP_EXTRA_CHARS
 from top.rezo.help_content import wrap_help
 from top.rezo.rezo_variant import RezoTileDisplay as RezoDisplay
 from top.rezo.top import RezoTileDisplay as RezomoDisplay
+from top.rezo.strezo_variant import RezoTileDisplay as StrezoDisplay
 from top.rezo.cpu_control import (
     RezoFirmwareUIState, RezoUIControlPeripheral,
     RezomoFirmwareUIState, RezomoUIControlPeripheral)
@@ -25,36 +27,49 @@ from top.rezo.cpu_control import RezoProgramMemory
 PRODUCTS = [('REZO', RezoDisplay), ('REZOMO', RezomoDisplay)]
 
 
-def test_rezomo_mixed_case_font_and_unchanged_sibling_alphabets():
+def test_family_mixed_case_font_preserves_native_glyph_codes():
     assert RezomoDisplay.CHARS == TILE_CHARS + '.' + HELP_EXTRA_CHARS
-    assert RezoDisplay.CHARS == TILE_CHARS + '.'
-    assert len(set(RezomoDisplay.CHARS)) == len(RezomoDisplay.CHARS)
-    assert 64 < len(RezomoDisplay.CHARS) <= 128
-    for char in HELP_EXTRA_CHARS:
-        assert RezomoDisplay.code(char) != 0
-        assert len(FONT_5X7[char]) == 7
-        assert all(0 <= row < 32 for row in FONT_5X7[char])
-        assert any(FONT_5X7[char])
+    assert RezoDisplay.CHARS == TILE_CHARS + '.' + HELP_EXTRA_CHARS
+    assert StrezoDisplay.CHARS == STEREO_TILE_CHARS + '|' + HELP_EXTRA_CHARS
+    for display, native in ((RezoDisplay, TILE_CHARS + '.'),
+                            (RezomoDisplay, TILE_CHARS + '.'),
+                            (StrezoDisplay, STEREO_TILE_CHARS + '|')):
+        assert len(set(display.CHARS)) == len(display.CHARS)
+        assert 64 < len(display.CHARS) <= 128
+        for code, char in enumerate(native):
+            assert display.code(char) == code
+        for char in HELP_EXTRA_CHARS:
+            assert display.code(char) != 0
+            assert len(FONT_5X7[char]) == 7
+            assert all(0 <= row < 32 for row in FONT_5X7[char])
+            assert any(FONT_5X7[char])
     assert wrap_help("On INPUT, adjust gain (1.0x).", mixed_case=True) == (
         'On INPUT, adjust gain (1.0x).', '')
     for char in ('—', '’', '“', '=', '_'):
         with pytest.raises(ValueError, match='unsupported display characters'):
             wrap_help('Invalid' + char, mixed_case=True)
-    for product in ('REZO', 'STREZO'):
-        assert all(line == line.upper() for line in load_help(product).lines)
-    assert any(any(char.islower() for char in line)
-               for line in load_help('REZOMO').lines)
+    for product in ('REZO', 'REZOMO', 'STREZO'):
+        assert any(any(char.islower() for char in line)
+                   for line in load_help(product).lines)
 
 
 @pytest.mark.parametrize('rotated', [False, True])
-def test_rezomo_all_new_glyph_pixels_include_seven_bit_codes(monkeypatch, rotated):
-    from top.rezo import top
-    content = load_help('REZOMO')
+@pytest.mark.parametrize('product,display,module_name', [
+    ('REZO', RezoDisplay, 'rezo_variant'),
+    ('REZOMO', RezomoDisplay, 'top'),
+    ('STREZO', StrezoDisplay, 'strezo_variant')])
+def test_family_all_new_glyph_pixels_include_seven_bit_codes(
+        monkeypatch, rotated, product, display, module_name):
+    module = importlib.import_module('top.rezo.' + module_name)
+    content = load_help(product)
     lines = [HELP_EXTRA_CHARS[start:start + HELP_COLUMNS]
              for start in range(0, len(HELP_EXTRA_CHARS), HELP_COLUMNS)]
     content.rom_lines = (content.rom_lines[:content.body_base] + tuple(lines) +
                          content.rom_lines[content.body_base + len(lines):])
-    monkeypatch.setattr(top, 'HELP_CONTENT', content)
+    if product == 'STREZO':
+        monkeypatch.setattr(module, 'HELP_ROM_LINES', content.rom_lines)
+    else:
+        monkeypatch.setattr(module, 'HELP_CONTENT', content)
     points, expected = [], []
     for line_index, line in enumerate(lines):
         for col, char in enumerate(line):
@@ -62,8 +77,8 @@ def test_rezomo_all_new_glyph_pixels_include_seven_bit_codes(monkeypatch, rotate
                 for bit in range(5):
                     points.append(((HELP_X_CELL + col) * 16 + bit * 2,
                                    (HELP_Y_CELL + line_index) * 16 + row * 2))
-                    expected.append(rgb(RezomoDisplay, 1 if bits & (1 << (4 - bit)) else 7))
-    assert render(RezomoDisplay, points=points, rotated=rotated) == expected
+                    expected.append(rgb(display, 1 if bits & (1 << (4 - bit)) else 7))
+    assert render(display, points=points, rotated=rotated) == expected
 
 
 @pytest.mark.parametrize('product', ['REZO', 'REZOMO', 'STREZO'])

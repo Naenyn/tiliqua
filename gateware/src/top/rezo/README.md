@@ -187,11 +187,16 @@ All three firmware ROMs are 20 KiB. HELP takes REZO just beyond its former
 16 KiB allocation; the shared 20 KiB size adds two BRAMs to REZO without
 changing working RAM (2 KiB), CPU configuration or CPU-visible addresses.
 
-Use brief complete sentences with letters, digits, spaces and periods inside
-the HELP markers. Unsupported punctuation is rejected rather than silently
-rendered as blanks. The formatter checks a 16,384-character upper budget
-and nine-bit row range. Text uses six bits per character; a longer guide
-can add BRAMs and requires fresh resource and timing qualification.
+Use brief complete sentences with mixed-case ASCII letters, digits, spaces,
+periods and basic punctuation inside the HELP markers. Commas, colons,
+semicolons, straight apostrophes, hyphens, parentheses, slashes, plus and
+percent signs, exclamation and question marks are supported. Unsupported
+punctuation, including curly quotes and long dashes, is rejected rather than
+silently rendered as blanks. The formatter checks a 16,384-character upper
+budget and nine-bit row range. HELP uses seven bits per character; ordinary
+tile storage remains six-bit and existing menu glyph codes are unchanged.
+A longer guide can add BRAMs and requires fresh resource and timing
+qualification.
 
 First-use HELP is enabled by default. Build with
 `TILIQUA_REZO_HELP_FIRST_BOOT=0` to disable its automatic startup, without
