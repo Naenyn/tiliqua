@@ -5,6 +5,62 @@ Historical work remains available in git and `BUILD_PERFORMANCE.md`.
 
 ## Current continuation checkpoint — 2026-09-14
 
+### Family topic HELP qualified and flashed — 2026-09-16
+
+Current qualified source/tag is `f56e772e`. REZO and REZOMO now have the
+same fixed PAGE, TOPIC and SCROLL menu as STREZO, with product-specific
+per-page guides. All topics have separate scroll limits and 21 visible rows.
+Shared formatter, renderer (for the two new ports), Cargo generator and Rust
+navigation keep content/navigation consistent. STREZO retains its tested
+renderer; its BANDS prose now correctly names the native PRESET control.
+REZO/REZOMO FEEDBACK prose and guides use the actual FEEDBACK/CEILING labels.
+
+All three 720p / SS 0.0 builds passed the unchanged 3% headroom gate and were
+flashed successfully: REZO slot 2, REZOMO slot 3, STREZO slot 4. Each programmer
+completed exit 0 with Refresh: DONE. Option addresses/layouts, exclusion from
+programming and conservative erase-block nonoverlap were verified. Saved
+settings were not erased. Final visual/listening approval is pending.
+
+REZO's program ROM needed 332 bytes beyond its old 16 KiB allocation. The
+family now consistently uses 20 KiB, adding two BRAMs only to REZO. CPU
+configuration, working RAM, data/CSR addresses and DSP are unchanged.
+Both program ports were tested above 16 KiB. Record schemas remain V3/V4/V7.
+First-use HELP remains enabled by default; initialized saved slots start
+normally and HELP remains navigable after OPTIONS. The acknowledgement writes
+only the reserved four-byte footer, with no implicit patch save or erase.
+
+Resources (logic/BRAM/DSP, firmware bytes) are REZO 23210/42/7, 16716;
+REZOMO 22871/43/7, 18436; STREZO 24146/40/20, 15008. HELP ROM rows/raw bytes
+are 347/8328, 358/8592 and 328/7872. Every product remains within its budgets;
+STREZO has only 142 logic cells free.
+
+REZO qualified on default seed 9 with 11.93% minimum margin; REZOMO also
+qualified on default seed 9 with 3.46% minimum. STREZO qualified on seed 4,
+heap weight 30 and checked CPU-clear, complete motion-bank and CPU-commit
+placement anchors, with 6.65% minimum. Both physical PLL configurations match
+their synthesized inputs. No timing normalization, clock change, CPU/DSP
+change or gate relaxation was used. Revalidate hooks for changed netlists.
+
+Rejected timing and congestion attempts were not flashed. REZOMO's fixed
+serializer-cell attempts became congested or missed serializer timing; one
+deliberate seed-9 alternate based on REZO's successful mono serializer
+qualified without hooks. STREZO required localizing all motion bits, then
+balancing the remaining CPU response-to-register-file detour. A merely
+frequency-passing 0.72% system-margin intermediate was rejected.
+
+HELP/control/font/render tests, native family/HDMI checks, ROM/linker/ABI
+checks and all 16 Rust host-library tests passed. The final corrected HELP
+suite passed 54 tests. Standard and rotated rendering were simulated, but
+circular hardware builds remain deferred until the final view/text is approved.
+
+Archives, complete per-topic review text, final timing/synthesis reports,
+test logs, exact hooks, hashes and flash logs are in
+`/Users/naenyn/git/tiliqua/build/rezo-family-help-f56e772e`; see its
+`QUALIFICATION.md` and `HELP_REVIEW.md`. The feature stays isolated on
+`codex/strezo-built-in-help` in `/private/tmp/tiliqua-rezo-review-20260914`.
+Production `rezo` and main SONORO/CASCADO sources were not changed.
+Next: user review/edit requests, then final profile builds and merge when asked.
+
 ### STREZO page/topic HELP qualified and flashed — 2026-09-16
 
 Qualified source/tag `145d1945` adds START plus eight operating-page guides
