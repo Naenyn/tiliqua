@@ -5,6 +5,34 @@ Historical work remains available in git and `BUILD_PERFORMANCE.md`.
 
 ## Current continuation checkpoint — 2026-09-14
 
+### STREZO HELP English / glyph review — 2026-09-16
+
+Source `a424ad46` rewrites all HELP sections as brief complete sentences. The
+old colon/comma/semicolon/slash/hyphen punctuation was unsupported and silently
+rendered as spaces, compounding the label-plus-instruction shorthand. The
+formatter now rejects unsupported characters; tests also verify the ROM
+alphabet against the actual font. A 3072-character budget guard prevents
+accidental growth. The body remains 77 rows, scroll maximum 56, 21 visible
+rows, with no font, header, renderer, DSP, clock or saved-format changes.
+
+33 focused gateware checks and all 13 Rust host library checks passed.
+Synthesis uses 23,999 / 24,288 logic cells, 37 BRAMs and 20 DSPs. This source
+has NOT yet qualified or been flashed. Seed 4 with timing weights 20 and 30
+completed but system headroom was only 0.45% and 1.35%, below the unchanged
+3% requirement. A 63 MHz system placement-training constraint with weight 30
+produced the same 60.81 MHz result and was rejected, with no PLL changes or
+normalized timing report. Seed 8/weight 20 and seed 9/weight 30 were stopped
+for prolonged routing congestion. No placement jobs remain running and no
+new archive was packaged. Reports, tests and copy are in
+`/Users/naenyn/git/tiliqua/build/strezo-help-a424ad46/QUALIFICATION.md`.
+
+The rack still has qualified `5c85873c` in slot 4 and saved options were not
+changed. Keep the improved text and guards; the remaining task is a qualified
+720p/SS 0.0 build before flashing. Do not lower the timing gate, reuse the old
+bitstream under a new tag, or change DSP/clocks just to land copy edits.
+Circular builds remain deferred until the final view is approved. HELP remains
+STREZO-only on the isolated feature branch, not merged into production `rezo`.
+
 ### STREZO HELP header / first-use revision — 2026-09-16
 
 The isolated worktree remains on `codex/strezo-built-in-help`; qualified
