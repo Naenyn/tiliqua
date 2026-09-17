@@ -40,9 +40,9 @@ def test_strezo_command_port_updates_stereo_and_cross_state():
         await command(9, 7, 16)
         await command(30, 1, 0)
         await command(10, 0, 8)
-        await command(40, 0, 56)
+        await command(40, 0, (8 << 9) | 279)
         assert ctx.get(ui.page) == 8
-        assert ctx.get(ui.help_scroll) == 56
+        assert ctx.get(ui.help_scroll) == (8 << 9) | 279
         assert ctx.get(ui.same_feedback) == 99
         assert ctx.get(ui.cross_feedback) == 71
         assert ctx.get(ui.cross_curve) == 1

@@ -43,11 +43,13 @@ CROSS, OUTPUT, OPTIONS, HELP**.
 
 ### Built-in help
 
-HELP is a plain, scrollable summary of this guide, contained inside the
-circular viewport. Select **SCROLL**, click, and turn to read; click again
-to finish. Select **PAGE** to leave HELP. The title and these two controls
-stay visible while the content scrolls. The usual header shows **NAV** while
-selecting, **EDIT** while changing PAGE, and **SCROLL** while scrolling.
+HELP contains a START guide and a topic for each operating page, all inside
+the circular viewport. Select **TOPIC**, click, and turn to choose a guide;
+click again to finish. Select **SCROLL**, click, and turn to read that topic;
+click again to finish. Changing topics resets its scroll position. Select
+**PAGE** to leave HELP. The title and all three controls stay visible while
+the 21-row body scrolls. The usual header shows **NAV** while selecting,
+**EDIT** while changing PAGE or TOPIC, and **SCROLL** while scrolling.
 Help does not change the sound or the saved-state format.
 
 On first use of an uninitialized slot, HELP opens automatically instead of
@@ -58,7 +60,7 @@ selectable after OPTIONS on every boot. Clearing the slot's defaults clears
 the acknowledgement too.
 
 The summary source is [STREZO_HELP.md](STREZO_HELP.md). Builds wrap that
-Markdown into the text ROM and derive the firmware scroll limit from it.
+Markdown into the text ROM and derive topic offsets and scroll limits from it.
 
 ### Reading the meters
 

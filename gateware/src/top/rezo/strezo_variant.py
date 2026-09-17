@@ -31,11 +31,13 @@ import sys
 try:
     from .help_content import (HELP_ROM_LINES, HELP_BODY_BASE_ROWS,
                                HELP_HEADER_ROWS, HELP_STATUS_ROW,
-                               HELP_COLUMNS, HELP_VISIBLE_ROWS, HELP_X_CELL, HELP_Y_CELL)
+                               HELP_COLUMNS, HELP_VISIBLE_ROWS, HELP_X_CELL, HELP_Y_CELL,
+                               HELP_TOPIC_ROW, HELP_TOPIC_BASE_ROWS, HELP_ROW_BITS, HELP_VIEW_BITS)
 except ImportError:
     from help_content import (HELP_ROM_LINES, HELP_BODY_BASE_ROWS,
                               HELP_HEADER_ROWS, HELP_STATUS_ROW,
-                              HELP_COLUMNS, HELP_VISIBLE_ROWS, HELP_X_CELL, HELP_Y_CELL)
+                              HELP_COLUMNS, HELP_VISIBLE_ROWS, HELP_X_CELL, HELP_Y_CELL,
+                              HELP_TOPIC_ROW, HELP_TOPIC_BASE_ROWS, HELP_ROW_BITS, HELP_VIEW_BITS)
 
 from amaranth import *
 from amaranth.lib import data, stream, wiring
@@ -2061,7 +2063,7 @@ class RezoTileDisplay(wiring.Component):
             "output_sides": In(data.ArrayLayout(unsigned(1), 4)),
             "selected": In(unsigned(7)),
             "page": In(unsigned(4)),
-            "help_scroll": In(unsigned(7)),
+            "help_scroll": In(unsigned(HELP_VIEW_BITS)),
             "preset": In(unsigned(3)),
             "palette": In(unsigned(3)),
             "row_dry_include": In(1),
@@ -2384,13 +2386,17 @@ class RezoTileDisplay(wiring.Component):
         help_rport = help_mem.read_port(domain="dvi")
         help_row_base_q = Signal.like(help_rport.addr)
         help_row = text_y_pre[self.CELL_SHIFT:]
-        help_scrolling = (self.page == 8) & self.editing & (self.selected == 1)
+        help_scrolling = (self.page == 8) & self.editing & (self.selected == 2)
         help_mode = Mux(help_scrolling, 2, Mux(self.editing, 1, 0))
         m.d.dvi += help_row_base_q.eq(
             Mux(help_row < HELP_Y_CELL,
                 Mux(help_row == HELP_STATUS_ROW,
-                    (HELP_HEADER_ROWS + help_mode) << 5, help_row << 5),
-                (HELP_BODY_BASE_ROWS + help_row - HELP_Y_CELL + self.help_scroll) << 5)
+                    (HELP_HEADER_ROWS + help_mode) << 5,
+                    Mux(help_row == HELP_TOPIC_ROW,
+                        (HELP_TOPIC_BASE_ROWS + self.help_scroll[HELP_ROW_BITS:]) << 5,
+                        help_row << 5)),
+                (HELP_BODY_BASE_ROWS + help_row - HELP_Y_CELL +
+                 self.help_scroll[:HELP_ROW_BITS]) << 5)
             - HELP_X_CELL)
         m.d.comb += help_rport.addr.eq(help_row_base_q + cell_x)
         help_visible_q = Signal()
@@ -4559,11 +4565,14 @@ class RezoTileDisplay(wiring.Component):
         help_surface_q = Signal()
         m.d.dvi += [
             help_selected_q0.eq((self.selected == 1) &
-                self.outline(text_x, text_y, 122, 184, 228, 212, t=3)),
+                self.outline(text_x, text_y, 248, 184, 400, 212, t=3) |
+                (self.selected == 2) &
+                self.outline(text_x, text_y, 504, 184, 616, 212, t=3)),
             help_selected_q.eq(page_selected_q | help_selected_q0),
             help_line_q0.eq(cursor_chip),
             help_line_q.eq(help_line_q0),
-            help_panel_q0.eq(side_page_chip),
+            help_panel_q0.eq(side_page_chip |
+                self.rect(text_x, text_y, 248, 184, 400, 212)),
             help_panel_q.eq(help_panel_q0),
             help_surface_q.eq(active & self.rect(x, y, 108, 218, 628, 566)),
         ]

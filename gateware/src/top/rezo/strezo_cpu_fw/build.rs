@@ -22,16 +22,12 @@ fn main() {
         "Help formatting failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let limit: u32 = String::from_utf8(output.stdout)
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
+    let tables = String::from_utf8(output.stdout).unwrap();
     let destination =
         std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("help_scroll.rs");
     std::fs::write(
         destination,
-        format!("const HELP_SCROLL_MAX: u32 = {limit};\nconst SHOW_HELP_ON_FIRST_BOOT: bool = {first_boot};\n"),
+        format!("{tables}\nconst SHOW_HELP_ON_FIRST_BOOT: bool = {first_boot};\n"),
     )
     .unwrap();
 }

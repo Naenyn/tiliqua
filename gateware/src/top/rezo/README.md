@@ -165,21 +165,25 @@ rotation in the final display output.
 ## Built-in help prototype
 
 STREZO, the family's most space-constrained bitstream, has a simple HELP page
-after OPTIONS. Its fixed PAGE and SCROLL controls remain above a scrollable
-text summary contained inside the circular viewport, with the standard
+after OPTIONS. Its fixed PAGE, TOPIC and SCROLL controls remain above a
+scrollable page guide contained inside the circular viewport, with the standard
 identity/PAGE header and NAV, EDIT or SCROLL status. The existing font
 renderer reads a narrow help ROM; no framebuffer or new font is required.
 
 [STREZO_HELP.md](STREZO_HELP.md) is condensed from the user guide. Only the
-paragraphs between its HELP markers enter the build. `help_content.py` wraps
-them to 32 columns and supplies both the ROM contents and the firmware scroll
-limit. Update the summary alongside the guide. This prototype does not yet
+paragraphs between its HELP markers enter the build. Topic headings are
+metadata. `help_content.py` wraps text to 32 columns and supplies the ROM,
+topic offsets and individual scroll limits. Each topic describes its page
+controls and includes a usage suggestion. Update it alongside the guide.
+Changing TOPIC resets SCROLL and scrolling stops at that topic's end.
+This prototype does not yet
 add HELP to REZO or REZOMO and does not change saved records or DSP.
 
 Use brief complete sentences with letters, digits, spaces and periods inside
 the HELP markers. Unsupported punctuation is rejected rather than silently
-rendered as blanks. The formatter also checks the 3,072-character ROM budget
-so a wording change cannot quietly grow the memory allocation.
+rendered as blanks. The formatter checks a 16,384-character upper budget
+and nine-bit row range. Text uses six bits per character; a longer guide
+can add BRAMs and requires fresh resource and timing qualification.
 
 First-use HELP is enabled by default. Build with
 `TILIQUA_REZO_HELP_FIRST_BOOT=0` to disable its automatic startup, without

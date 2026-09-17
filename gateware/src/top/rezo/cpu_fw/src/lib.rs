@@ -1,6 +1,7 @@
 #![no_std]
 
 pub mod first_boot;
+pub mod help;
 
 use core::ptr::{read_volatile, write_volatile};
 

@@ -5,6 +5,7 @@ use panic_halt as _;
 use rezo_cpu_fw::first_boot::{
     mark_help_seen, read_help_seen, should_show_first_help, HELP_SEEN_OFFSET,
 };
+use rezo_cpu_fw::help::HelpView;
 use rezo_cpu_fw::{
     add, adds, clamp_control, edit_feedback_ceiling, edit_feedback_knee, flash_erase,
     flash_program, flash_read, gray_encode, normalize_feedback_limits, pack_bits,
@@ -146,7 +147,7 @@ fn cross_factory(layout: u32, source: usize, destination: usize) -> u32 {
 
 struct State {
     page: u8,
-    help_scroll: u32,
+    help: HelpView,
     selected: u8,
     preset: u8,
     palette: u8,
@@ -190,7 +191,7 @@ impl State {
     const fn new() -> Self {
         Self {
             page: 0,
-            help_scroll: 0,
+            help: HelpView::new(),
             selected: 0,
             preset: 0,
             palette: 0,
@@ -260,7 +261,7 @@ impl State {
 
     fn targets(&self) -> &'static [u8] {
         match self.page {
-            8 => &[PAGE, PRESET],
+            8 => &[PAGE, PRESET, BAND], // PAGE, TOPIC, SCROLL on HELP.
             0 => MAIN_PAGE,
             1 => FEEDBACK_PAGE,
             3 => GROUP_PAGE,
@@ -314,6 +315,11 @@ impl State {
     }
 
     fn click(&mut self) -> bool {
+        // HELP reuses target numbers but never acts on band enable/edits.
+        if self.page == 8 {
+            self.editing = !self.editing;
+            return false;
+        }
         if (FEEDBACK_ENABLE..FEEDBACK_ENABLE + 10).contains(&self.selected) {
             let n = (self.selected - FEEDBACK_ENABLE) as usize;
             if self.enables[n] != 0 {
@@ -401,10 +407,16 @@ impl State {
 
     fn edit(&mut self, direction: i8) {
         let d = direction as i32;
-        match self.selected {
-            PRESET if self.page == 8 => {
-                self.help_scroll = add(self.help_scroll, d, 0, HELP_SCROLL_MAX);
+        if self.page == 8 {
+            match self.selected {
+                PAGE => self.change_page(direction),
+                PRESET => self.help.change_topic(d, HELP_TOPIC_COUNT),
+                BAND => self.help.scroll(d, HELP_TOPIC_SCROLL_MAX[self.help.topic]),
+                _ => {}
             }
+            return;
+        }
+        match self.selected {
             PAGE => self.change_page(direction),
             PRESET if self.page == 0 => self.preset = (self.preset as i32 + d).rem_euclid(7) as u8,
             CROSS_CURVE if self.page == 5 => self.cross_curve ^= 1,
@@ -488,6 +500,9 @@ impl State {
     }
 
     fn continuous_accel_target(&self) -> bool {
+        if self.page == 8 {
+            return self.selected == BAND;
+        }
         matches!(
             self.selected,
             DRIVE | RESONANCE | FEEDBACK | KNEE | CEILING | MOTION_RATE | MOTION_PHASE
@@ -724,7 +739,10 @@ impl State {
             (MOTION_DEPTH_STATE, self.motion_depth),
             (MID_GAIN_STATE, self.mid_gain),
             (SIDE_GAIN_STATE, self.side_gain),
-            (HELP_SCROLL_STATE, self.help_scroll),
+            (
+                HELP_SCROLL_STATE,
+                self.help.packed(&HELP_TOPIC_OFFSETS, HELP_ROW_BITS),
+            ),
         ] {
             ui_write(kind, 0, value);
         }
