@@ -2,6 +2,7 @@
 import subprocess
 import sys
 import importlib
+import warnings
 from pathlib import Path
 import pytest
 from amaranth import Module
@@ -51,6 +52,20 @@ def test_family_mixed_case_font_preserves_native_glyph_codes():
     for product in ('REZO', 'REZOMO', 'STREZO'):
         assert any(any(char.islower() for char in line)
                    for line in load_help(product).lines)
+
+
+@pytest.mark.parametrize('display', [RezoDisplay, RezomoDisplay, StrezoDisplay])
+def test_help_punctuation_does_not_overflow_native_menu_rom(display):
+    # FREQ's historically unsupported colon must remain blank on ordinary
+    # pages, not truncate its newly valid HELP code to a digit in six-bit RAM.
+    from amaranth.hdl import Fragment
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter('always', SyntaxWarning)
+        fragment = Fragment.get(display(), None)
+    native = next(sub for sub, name, *rest in fragment.subfragments if name == 'text_mem')
+    assert all(code < 64 for code in native._data.init)
+    assert display.code(':') >= 64
+    assert not any('truncated to the memory shape' in str(w.message) for w in seen)
 
 
 @pytest.mark.parametrize('rotated', [False, True])

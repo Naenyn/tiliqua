@@ -2080,7 +2080,8 @@ class RezoTileDisplay(wiring.Component):
     PALETTE = SEMANTIC_PALETTE
     PALETTE_ROLES = PALETTE_ROLES
     RGB_PALETTES = RGB_PALETTES
-    CHARS = TILE_CHARS + "." + HELP_EXTRA_CHARS  # Preserve native menu codes.
+    NATIVE_CHARS = TILE_CHARS + "."
+    CHARS = NATIVE_CHARS + HELP_EXTRA_CHARS  # Preserve native menu codes.
     CHAR_CODES = {ch: i for i, ch in enumerate(CHARS)}
 
     def __init__(self, h_active=1280, rotate_left=False):
@@ -2310,7 +2311,8 @@ class RezoTileDisplay(wiring.Component):
             for offset, ch in enumerate(text_value):
                 if 0 <= x0 + offset < 45 and 0 <= y0 < 45:
                     text_init[page * page_cells +
-                              y0 * text_row_stride + x0 + offset] = self.code(ch)
+                              y0 * text_row_stride + x0 + offset] = (
+                        self.code(ch) if ch in self.NATIVE_CHARS else 0)
 
         compact_input_text_rows = NATIVE_INPUT_TEXT_ROWS
         compact_group_text_rows = tuple(

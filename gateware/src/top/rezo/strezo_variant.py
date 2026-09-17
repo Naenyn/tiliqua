@@ -2006,7 +2006,8 @@ class RezoTileDisplay(wiring.Component):
     PALETTE_ROLES = PALETTE_ROLES
     RGB_PALETTES = RGB_PALETTES
     UNITY_MARKER_CHAR = "|"
-    CHARS = STEREO_TILE_CHARS + UNITY_MARKER_CHAR + HELP_EXTRA_CHARS
+    NATIVE_CHARS = STEREO_TILE_CHARS + UNITY_MARKER_CHAR
+    CHARS = NATIVE_CHARS + HELP_EXTRA_CHARS
     CHAR_CODES = {ch: i for i, ch in enumerate(CHARS)}
 
     def __init__(self, h_active=1280, rotate_left=False):
@@ -2278,7 +2279,8 @@ class RezoTileDisplay(wiring.Component):
             for offset, ch in enumerate(text_value):
                 if 0 <= x0 + offset < 45 and 0 <= y0 < 45:
                     text_init[page * page_cells +
-                              y0 * text_row_stride + x0 + offset] = self.code(ch)
+                              y0 * text_row_stride + x0 + offset] = (
+                        self.code(ch) if ch in self.NATIVE_CHARS else 0)
 
         def put_native(page, text_value, x0, y0):
             """Place text directly on the native 16px character grid."""
