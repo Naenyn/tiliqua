@@ -19,8 +19,34 @@ from top.rezo.top import RezoTileDisplay as RezomoDisplay
 from top.rezo.cpu_control import (
     RezoFirmwareUIState, RezoUIControlPeripheral,
     RezomoFirmwareUIState, RezomoUIControlPeripheral)
+from top.rezo.cpu_control import RezoProgramMemory
 
 PRODUCTS = [('REZO', RezoDisplay), ('REZOMO', RezomoDisplay)]
+
+
+def test_shared_program_rom_reads_above_sixteen_kib_on_both_ports():
+    init = [0x12345678] + [0] * 4095 + [0xCAFEBABE]
+    dut = RezoProgramMemory(size=0x5000, init=init)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+    async def bench(ctx):
+        for bus in (dut.ibus, dut.dbus):
+            ctx.set(bus.cyc, 1)
+            ctx.set(bus.stb, 1)
+        ctx.set(dut.ibus.adr, 4096)
+        ctx.set(dut.dbus.adr, 0)
+        for _ in range(2):
+            await ctx.tick()
+        assert ctx.get(dut.ibus.dat_r) == 0xCAFEBABE
+        assert ctx.get(dut.dbus.dat_r) == 0x12345678
+        ctx.set(dut.ibus.adr, 0)
+        ctx.set(dut.dbus.adr, 4096)
+        for _ in range(2):
+            await ctx.tick()
+        assert ctx.get(dut.ibus.dat_r) == 0x12345678
+        assert ctx.get(dut.dbus.dat_r) == 0xCAFEBABE
+    sim.add_testbench(bench)
+    sim.run()
 
 
 def render(display, *, points, view=0, rotated=False, editing=False, selected=0):

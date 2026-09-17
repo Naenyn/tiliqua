@@ -681,8 +681,8 @@ class StrezoUIControlPeripheral(Component):
 class RezoFamilyCpuControlPlane(Component):
     """Shared REZO-family CPU fabric.
 
-    Product subclasses select only the firmware ROM size and UI command
-    contract.  The VexiiRiscv configuration, CPU-visible memory regions,
+    Product subclasses select only their UI command contract.
+    The VexiiRiscv configuration, firmware ROM, CPU-visible memory regions,
     Wishbone/CSR fabric, encoder, and bounded flash window are intentionally
     identical across REZO, REZOMO, and STREZO.
     """
@@ -694,9 +694,9 @@ class RezoFamilyCpuControlPlane(Component):
     # Keep the CPU-visible executable region identical for every product.
     # CODE_SIZE below controls physical ROM usage independently.
     MAINRAM_SIZE = 0x10000
-    CODE_SIZE = 0x4000
-    # All products reserve the same decoder window for program memory.  REZO's
-    # smaller ROM still consumes only CODE_SIZE bytes of physical block RAM.
+    # Shared 20 KiB ROM accommodates all HELP firmware without a jump to 32 KiB.
+    CODE_SIZE = 0x5000
+    # Working RAM and the decoder window remain unchanged.
     DATA_BASE = 0x8000
     DATA_SIZE = 0x0800
     CSR_BASE = 0xF0000000
@@ -789,15 +789,8 @@ class RezomoCpuControlPlane(RezoFamilyCpuControlPlane):
     UI_STATE = RezomoFirmwareUIState
     UI_PERIPHERAL = RezomoUIControlPeripheral
 
-    # CLOCK algorithms and their V3 migration need slightly more than REZO's
-    # 16 KiB image. A 20 KiB ROM consumes two additional DP16KD blocks while
-    # avoiding a wasteful jump to 32 KiB.
-    CODE_SIZE = 0x5000
-
-
 class StrezoCpuControlPlane(RezoFamilyCpuControlPlane):
     """REZO-family CPU fabric with STREZO's stereo command contract."""
 
     UI_STATE = StrezoFirmwareUIState
     UI_PERIPHERAL = StrezoUIControlPeripheral
-    CODE_SIZE = 0x5000

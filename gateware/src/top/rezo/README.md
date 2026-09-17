@@ -183,6 +183,10 @@ The formatter and runtime navigation are shared. REZO/REZOMO also share the
 HELP renderer and Cargo generator; STREZO retains its qualified renderer.
 HELP does not change saved records or DSP.
 
+All three firmware ROMs are 20 KiB. HELP takes REZO just beyond its former
+16 KiB allocation; the shared 20 KiB size adds two BRAMs to REZO without
+changing working RAM (2 KiB), CPU configuration or CPU-visible addresses.
+
 Use brief complete sentences with letters, digits, spaces and periods inside
 the HELP markers. Unsupported punctuation is rejected rather than silently
 rendered as blanks. The formatter checks a 16,384-character upper budget
