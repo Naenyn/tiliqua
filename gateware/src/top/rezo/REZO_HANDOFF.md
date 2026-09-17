@@ -1,9 +1,52 @@
 # REZO family continuation handoff
 
-Updated 2026-09-16. This is an operational handoff, not a project diary.
+Updated 2026-09-17. This is an operational handoff, not a project diary.
 Historical work remains available in git and `BUILD_PERFORMANCE.md`.
 
 ## Current continuation checkpoint — 2026-09-14
+
+### REZOMO mixed-case HELP trial qualified, NOT flashed — 2026-09-17
+
+Qualified source/tag `0def97b1` imports the user's edited REZOMO review prose
+verbatim and preserves mixed-case body text, with existing menu/control codes
+unchanged. Twenty-six lowercase glyphs and twelve basic punctuation glyphs are
+appended for REZOMO only. HELP uses seven-bit indices, ordinary native tiles
+remain six-bit, and the existing synchronous font pipeline/cell geometry is
+unchanged. REZO and STREZO retain their qualified uppercase alphabets/content;
+their ports and circular hardware builds wait for user approval of this trial.
+
+Standard R5 720p / 192 kHz / SS 0.0 qualifies with seed 3, heap weight 30,
+no hooks, all clocks above the unchanged 3% gate: serializer 394.48 MHz,
+audio 76.40, system 68.83, pixel 76.76 (3.38% minimum). Both physical PLL
+parameter sets match the synthesized input. No clock, CPU, working-RAM, DSP,
+audio/control, V4 record or first-use acknowledgement changes were made.
+Usage is 23383/24288 logic cells (905 free), 44/56 BRAMs, 7/28 DSPs, 8626 FF;
+firmware remains 18436/20480 bytes. Font ROM is still one BRAM; updated HELP
+is 375 rows / 12000 seven-bit characters / 10500 raw bytes in five BRAMs,
+one additional BRAM overall. Whole-design synthesis remapping contributes to
+the logic delta; it is not the isolated font cost.
+
+HELP/control/render/font tests: 60 passed, including every new glyph's ink
+and background pixels and indices above 63 in both standard and rotated
+simulation. Native/HDMI selection: 32 passed; shared Rust library: 16 passed.
+Fresh packing, archive tag/profile/CRC/byte checks and protected-option-layout
+checks passed. Option storage is still at 5111808, size 8192, excluded from
+programming and nonoverlapping conservative erase blocks.
+
+Five completed routes used two distinct seeds. Four seed-9 attempts were
+rejected for serializer or existing output-meter pixel timing; none was
+packaged/flashed. The carry-member BEL attempt did not constrain the actual
+macro and was rejected, not adopted. The single alternate to the product's
+default seed 3 qualified without anchors. Do not reuse rejected hooks.
+
+The archive and complete qualification/hashes/logs are in
+`/Users/naenyn/git/tiliqua/build/rezomo-mixed-help-0def97b1`.
+Archive `rezomo-help-mixed-0def97b1-r5.tar.gz` SHA-256 is
+`034734662fb855de3243b0143aae93b9f14487722687e703fd597c8c39b88bde`.
+No programmer/debugger calls or slot changes were made: the user will flash
+REZOMO slot 3 tomorrow. Production `rezo` and main SONORO/CASCADO sources
+remain untouched; feature stays isolated on `codex/strezo-built-in-help`.
+Next: physical font/help review, then the sibling font ports when requested.
 
 ### Family topic HELP qualified and flashed — 2026-09-16
 
