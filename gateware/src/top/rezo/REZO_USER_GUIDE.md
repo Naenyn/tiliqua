@@ -47,7 +47,24 @@ the main page, navigation proceeds PAGE, then PRESET, then MODE. Select MODE to
 switch between BANK and FILTER.
 
 BANK pages follow the sound-design path **BANK, INPUT, BANDS, GROUPS,
-FEEDBACK, OUTPUT, OPTIONS**. FILTER inserts **MATRIX** between BANDS and GROUPS.
+FEEDBACK, OUTPUT, OPTIONS, HELP**. FILTER inserts **MATRIX** between BANDS and GROUPS.
+
+### Built-in help
+
+HELP contains a START guide and a topic for each page, including FILTER and
+MATRIX. Select TOPIC, click, turn to choose a guide, and click again to finish.
+Select SCROLL, click, and turn to read; click again to finish. Each topic has
+its own end stop. Changing topics returns to the top. PAGE leaves HELP.
+The normal header and all three controls remain fixed above 21 text rows
+inside the circular viewport. Status is NAV while selecting, EDIT while
+changing PAGE or TOPIC, and SCROLL while reading.
+
+The FILTER and MATRIX guides are readable in either mode. HELP does not edit
+audio settings. On first use of a slot with no saved default or prior HELP
+acknowledgement, boot opens HELP. Leaving it records only an acknowledgement,
+not a sound save. Initialized slots keep their normal startup view. HELP
+remains navigable after OPTIONS on every boot. Clearing defaults also clears
+the acknowledgement. Source: [REZO_HELP.md](REZO_HELP.md).
 
 ### Reading the meters
 

@@ -162,22 +162,26 @@ Use REZOMO-NOSS/rezomo and STREZO-NOSS/strezo for the other products. Circular
 targets already have distinct ROUND artifact names and apply the panel-mount
 rotation in the final display output.
 
-## Built-in help prototype
+## Built-in help
 
-STREZO, the family's most space-constrained bitstream, has a simple HELP page
-after OPTIONS. Its fixed PAGE, TOPIC and SCROLL controls remain above a
+All three products have a HELP page after OPTIONS. Fixed PAGE, TOPIC and
+SCROLL controls remain above a
 scrollable page guide contained inside the circular viewport, with the standard
 identity/PAGE header and NAV, EDIT or SCROLL status. The existing font
 renderer reads a narrow help ROM; no framebuffer or new font is required.
 
-[STREZO_HELP.md](STREZO_HELP.md) is condensed from the user guide. Only the
+[REZO_HELP.md](REZO_HELP.md), [REZOMO_HELP.md](REZOMO_HELP.md) and
+[STREZO_HELP.md](STREZO_HELP.md) are condensed from their user guides. Only the
 paragraphs between its HELP markers enter the build. Topic headings are
 metadata. `help_content.py` wraps text to 32 columns and supplies the ROM,
 topic offsets and individual scroll limits. Each topic describes its page
 controls and includes a usage suggestion. Update it alongside the guide.
 Changing TOPIC resets SCROLL and scrolling stops at that topic's end.
-This prototype does not yet
-add HELP to REZO or REZOMO and does not change saved records or DSP.
+REZO includes FILTER/MATRIX topics; REZOMO includes CLOCK; STREZO includes
+CROSS and stereo output controls. Topics are readable regardless of mode.
+The formatter and runtime navigation are shared. REZO/REZOMO also share the
+HELP renderer and Cargo generator; STREZO retains its qualified renderer.
+HELP does not change saved records or DSP.
 
 Use brief complete sentences with letters, digits, spaces and periods inside
 the HELP markers. Unsupported punctuation is rejected rather than silently
@@ -190,8 +194,8 @@ First-use HELP is enabled by default. Build with
 removing HELP from the page list. Cargo tracks this flag as a build input.
 With no valid saved default and no acknowledgement, boot opens HELP; leaving
 it programs and verifies only the four-byte `HELP` marker at offsets
-4092..4095 of option sector zero. This is beyond the 96-byte STREZO journal
-record and requires no erase or implicit sound save. Valid saved defaults
+4092..4095 of option sector zero. This is outside complete sound journal
+records for all three products and requires no erase or implicit sound save. Valid saved defaults
 count as initialized for backward compatibility. Failed reads conservatively
 keep BANK startup, and a failed acknowledgement can show HELP again next boot.
 Erasing defaults clears both saved sounds and the first-use marker.

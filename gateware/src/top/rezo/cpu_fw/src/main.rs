@@ -2,6 +2,8 @@
 #![no_main]
 
 use panic_halt as _;
+use rezo_cpu_fw::first_boot::{mark_help_seen, read_help_seen, should_show_first_help};
+use rezo_cpu_fw::help::HelpView;
 use rezo_cpu_fw::{
     add, adds, clamp_control, edit_feedback_ceiling, edit_feedback_knee, flash_erase,
     flash_program, flash_read, gray_encode, normalize_feedback_limits, pack_bits,
@@ -44,6 +46,9 @@ const LEVEL_STATE: u32 = 29;
 const SAVE_STATE: u32 = 30;
 const ROW_DRY_STATE: u32 = SAVE_STATE;
 const STARTUP_STATE: u32 = 31;
+// Subindex keeps the five-bit REZO command ABI unchanged.
+const HELP_VIEW_INDEX: usize = 2;
+include!(concat!(env!("OUT_DIR"), "/help_scroll.rs"));
 
 // Persistence is optional at runtime: a missing slot identity or a wedged SPI
 // transaction must never hold the UI and codec mute in their reset state.
@@ -198,6 +203,7 @@ unsafe fn save_sector(
 }
 struct State {
     page: u8,
+    help: HelpView,
     selected: u8,
     preset: u8,
     palette: u8,
@@ -237,6 +243,7 @@ impl State {
     const fn new() -> Self {
         Self {
             page: 0,
+            help: HelpView::new(),
             selected: 0,
             preset: 0,
             palette: 0,
@@ -347,6 +354,7 @@ impl State {
 
     fn targets(&self) -> &'static [u8] {
         match self.page {
+            8 => &[PAGE, PRESET, BAND], // PAGE, TOPIC, SCROLL on HELP.
             0 if self.filter_mode && self.filter_type >= 2 => MAIN_FILTER_WIDE,
             0 if self.filter_mode => MAIN_FILTER_NARROW,
             0 => MAIN_BANK,
@@ -385,8 +393,8 @@ impl State {
     }
 
     fn change_page(&mut self, direction: i8) {
-        const BANK: &[u8] = &[0, 2, 6, 3, 1, 4, 5];
-        const FILTER: &[u8] = &[0, 2, 6, 7, 3, 1, 4, 5];
+        const BANK: &[u8] = &[0, 2, 6, 3, 1, 4, 5, 8];
+        const FILTER: &[u8] = &[0, 2, 6, 7, 3, 1, 4, 5, 8];
         let order = if self.filter_mode { FILTER } else { BANK };
         let p = order.iter().position(|x| *x == self.page).unwrap_or(0);
         let p = if direction > 0 {
@@ -400,6 +408,10 @@ impl State {
     }
 
     fn click(&mut self) -> bool {
+        if self.page == 8 {
+            self.editing = !self.editing;
+            return false;
+        }
         if (FEEDBACK_ENABLE..FEEDBACK_ENABLE + 10).contains(&self.selected) {
             let n = (self.selected - FEEDBACK_ENABLE) as usize;
             if self.enables[n] != 0 {
@@ -446,6 +458,15 @@ impl State {
 
     fn edit(&mut self, direction: i8) {
         let d = direction as i32;
+        if self.page == 8 {
+            match self.selected {
+                PAGE => self.change_page(direction),
+                PRESET => self.help.change_topic(d, HELP_TOPIC_COUNT),
+                BAND => self.help.scroll(d, HELP_TOPIC_SCROLL_MAX[self.help.topic]),
+                _ => {}
+            }
+            return;
+        }
         match self.selected {
             PAGE => self.change_page(direction),
             PRESET => self.preset = (self.preset as i32 + d).rem_euclid(7) as u8,
@@ -730,6 +751,9 @@ impl State {
     }
 
     fn continuous_accel_target(&self) -> bool {
+        if self.page == 8 {
+            return self.selected == BAND;
+        }
         let input_field = self.selected.wrapping_sub(INPUT);
         (BAND..BAND + 10).contains(&self.selected)
             || matches!(
@@ -754,6 +778,15 @@ impl State {
     }
 
     unsafe fn write_edit_target(&self, target: u8) {
+        if self.page == 8 {
+            ui_write(PAGE_STATE, 0, self.page as u32);
+            ui_write(
+                SAVE_STATE,
+                HELP_VIEW_INDEX,
+                self.help.packed(&HELP_TOPIC_OFFSETS, HELP_ROW_BITS),
+            );
+            return;
+        }
         match target {
             PAGE => ui_write(PAGE_STATE, 0, self.page as u32),
             PRESET => ui_write(PRESET_STATE, 0, self.preset as u32),
@@ -835,6 +868,9 @@ impl State {
 
     unsafe fn write_click_result(&self, target: u8, was_editing: bool) {
         ui_write(EDITING_STATE, 0, self.editing as u32);
+        if self.page == 8 {
+            return;
+        }
         if (FEEDBACK_ENABLE..FEEDBACK_ENABLE + 10).contains(&target) {
             let n = (target - FEEDBACK_ENABLE) as usize;
             ui_write(FEEDBACK_SEND, n, self.feedback_sends[n]);
@@ -865,6 +901,11 @@ impl State {
     }
 
     unsafe fn write_scalars(&self) {
+        ui_write(
+            SAVE_STATE,
+            HELP_VIEW_INDEX,
+            self.help.packed(&HELP_TOPIC_OFFSETS, HELP_ROW_BITS),
+        );
         ui_write(PAGE_STATE, 0, self.page as u32);
         ui_write(SELECTED_STATE, 0, self.selected as u32);
         ui_write(PRESET_STATE, 0, self.preset as u32);
@@ -929,6 +970,7 @@ fn main() -> ! {
     let mut candidate = [0u16; STATE_WORDS];
     let flash_available;
     let mut have_active = false;
+    let mut first_help_pending = false;
     let mut active_sector = 0u8;
     let mut active_generation = 0u32;
     let mut previous_button = false;
@@ -965,6 +1007,13 @@ fn main() -> ! {
                     active_sector = 1;
                     active_generation = generation;
                 }
+            }
+        }
+        if flash_available && SHOW_HELP_ON_FIRST_BOOT && !have_active {
+            first_help_pending =
+                should_show_first_help(true, false, read_help_seen(|offset| flash_read(0, offset)));
+            if first_help_pending {
+                state.page = 8;
             }
         }
         state.write_scalars();
@@ -1070,6 +1119,13 @@ fn main() -> ! {
             encoder_remainder += 2;
         }
         unsafe {
+            if first_help_pending && state.page != 8 {
+                let _ = mark_help_seen(
+                    |offset, byte| flash_program(0, offset, byte),
+                    |offset| flash_read(0, offset),
+                );
+                first_help_pending = false;
+            }
             if let Some(target) = edited_target {
                 state.write_edit_target(target);
             } else if navigated {

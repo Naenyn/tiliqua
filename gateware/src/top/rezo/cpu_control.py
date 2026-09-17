@@ -154,7 +154,8 @@ class RezoFirmwareUIState:
                              for n in range(20)]
 
         self.selected = Signal(7)
-        self.page = Signal(3)
+        self.page = Signal(4)
+        self.help_scroll = Signal(13)
         self.preset = Signal(3)
         self.palette = Signal(3)
         self.row_dry_include = Signal(init=1)
@@ -235,7 +236,7 @@ class RezoUIControlPeripheral(Component):
                     m.d.sync += Array(self.ui.output_sends)[index].eq(value[:5])
             with m.Case(10):
                 with m.If(command.element.w_stb):
-                    m.d.sync += self.ui.page.eq(value[:3])
+                    m.d.sync += self.ui.page.eq(value[:4])
             with m.Case(11):
                 with m.If(command.element.w_stb):
                     m.d.sync += self.ui.selected.eq(value[:7])
@@ -303,6 +304,8 @@ class RezoUIControlPeripheral(Component):
                     ]
                 with m.Elif(command.element.w_stb & (index == 1)):
                     m.d.sync += self.ui.row_dry_include.eq(value[0])
+                with m.Elif(command.element.w_stb & (index == 2)):
+                    m.d.sync += self.ui.help_scroll.eq(value[:13])
             with m.Case(31):
                 with m.If(command.element.w_stb):
                     m.d.sync += self.ui.startup_done.eq(value[0])
@@ -371,7 +374,8 @@ class RezomoFirmwareUIState:
                               for n in range(4)]
 
         self.selected = Signal(7)
-        self.page = Signal(3)
+        self.page = Signal(4)
+        self.help_scroll = Signal(13)
         self.preset = Signal(3)
         self.palette = Signal(3)
         self.row_dry_include = Signal(init=1)
@@ -430,7 +434,7 @@ class RezomoUIControlPeripheral(Component):
                         m.d.sync += Array(signals)[index].eq(value[:width])
 
             scalar = {
-                10: (self.ui.page, 3),
+                10: (self.ui.page, 4),
                 11: (self.ui.selected, 7),
                 12: (self.ui.preset, 3),
                 13: (self.ui.palette, 3),
@@ -481,6 +485,8 @@ class RezomoUIControlPeripheral(Component):
                     ]
                 with m.Elif(strobe & (index == 1)):
                     m.d.sync += self.ui.row_dry_include.eq(value[0])
+                with m.Elif(strobe & (index == 2)):
+                    m.d.sync += self.ui.help_scroll.eq(value[:13])
 
         for output in range(4):
             base = output * 5
