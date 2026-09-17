@@ -253,14 +253,14 @@ The ten band switches select which enabled resonators feed the shared feedback
 loop. The BANK page's FEEDBACK control sets the overall return amount.
 
 - **KNEE** sets where soft limiting begins. Below it, the return is unchanged;
-  above it, progressively stronger compression bends the signal toward CEIL.
-- **CEIL** sets the hard maximum feedback-loop level. Its fader colors the
-  span from KNEE to CEIL to show the active soft-limiting region.
+  above it, progressively stronger compression bends the signal toward CEILING.
+- **CEILING** sets the hard maximum feedback-loop level. Its fader colors the
+  span from KNEE to CEILING to show the active soft-limiting region.
 - **DAMPING** makes increasing feedback restrain resonance. Higher values are
   more conservative.
 
-KNEE and CEIL may meet for hard limiting with no soft region. Raising KNEE
-past CEIL raises CEIL too; lowering CEIL past KNEE lowers KNEE too. This keeps
+KNEE and CEILING may meet for hard limiting with no soft region. Raising KNEE
+past CEILING raises CEILING too; lowering CEILING past KNEE lowers KNEE too. This keeps
 the pair valid while allowing either control to lead an edit.
 
 These controls reduce runaway behavior but do not make every extreme

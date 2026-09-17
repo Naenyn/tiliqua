@@ -24,6 +24,22 @@ from top.rezo.cpu_control import RezoProgramMemory
 PRODUCTS = [('REZO', RezoDisplay), ('REZOMO', RezomoDisplay)]
 
 
+@pytest.mark.parametrize('product', ['REZO', 'REZOMO', 'STREZO'])
+def test_help_control_names_match_native_page_labels(product):
+    source = Path(__file__).parents[1] / 'src/top/rezo'
+    text = source.joinpath(product + '_HELP.md').read_text()
+    bands = text.split('## BANDS\n')[1].split('\n## ')[0]
+    feedback = text.split('## FEEDBACK\n')[1].split('\n## ')[0]
+    native = source.joinpath('ui_common.py').read_text()
+    assert 'put_native_page_heading(put, 6, "PRESET")' in native
+    assert 'PRESET chooses LEGACY' in bands
+    assert 'LAYOUT' not in bands
+    assert '"CEILING"' in native
+    assert 'CEILING sets' in feedback
+    assert ' CEIL.' not in feedback and ' CEIL ' not in feedback
+    assert 'AMOUNT' not in feedback
+
+
 def test_shared_program_rom_reads_above_sixteen_kib_on_both_ports():
     init = [0x12345678] + [0] * 4095 + [0xCAFEBABE]
     dut = RezoProgramMemory(size=0x5000, init=init)

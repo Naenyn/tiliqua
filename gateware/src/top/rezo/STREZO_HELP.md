@@ -49,11 +49,11 @@ Assign IN0 to LEFT and IN1 to RIGHT for stereo audio. Reduce VALUE if their mixe
 ## BANDS
 BANDS PAGE
 
-LAYOUT chooses LEGACY or OCTAVE or PERCEPT factory frequencies. Click again to load the chosen layout. This replaces all ten frequencies.
+PRESET chooses LEGACY or OCTAVE or PERCEPT factory frequencies. Click again to load the chosen layout. This replaces all ten frequencies.
 
 ENABLE turns each resonator on or off. Disabled bands can still be tuned before you enable them.
 
-SET FREQ tunes one band on a fine logarithmic grid. Click again to apply it. A manual frequency edit changes LAYOUT to USER.
+SET FREQ tunes one band on a fine logarithmic grid. Click again to apply it. A manual frequency edit changes PRESET to USER.
 
 LFO SHAPE chooses OFF or TRIANGLE or RANDOM frequency motion shared by both sides.
 

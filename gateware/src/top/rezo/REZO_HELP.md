@@ -100,15 +100,15 @@ FEEDBACK PAGE
 
 The ten band switches choose resonators for the feedback tap. Click a switch to include or exclude that band. Disabled BANK bands remain silent. FILTER uses all ten resonators.
 
-AMOUNT sets the overall return. BANK and FILTER retain independent amounts. BANK also exposes its amount on the main page.
+FEEDBACK sets the overall return. BANK and FILTER retain independent amounts. BANK also exposes its amount on the main page.
 
-KNEE sets where soft limiting starts. Signal below it is unchanged. Above it the limiter bends the return toward CEIL.
+KNEE sets where soft limiting starts. Signal below it is unchanged. Above it the limiter bends the return toward CEILING.
 
-CEIL sets the final loop limit. Its highlighted span shows the soft region between KNEE and CEIL. Lowering CEIL past KNEE lowers both. Raising KNEE past CEIL raises both. Equal values give hard limiting.
+CEILING sets the final loop limit. Its highlighted span shows the soft region between KNEE and CEILING. Lowering CEILING past KNEE lowers both. Raising KNEE past CEILING raises both. Equal values give hard limiting.
 
 DAMPING restrains resonance as feedback rises. Higher settings are more conservative.
 
-Select a few bands before raising AMOUNT. If the sound overloads reduce feedback or DRIVE or RESONANCE. Limiting does not make extreme settings quiet.
+Select a few bands before raising FEEDBACK. If the sound overloads reduce feedback or DRIVE or RESONANCE. Limiting does not make extreme settings quiet.
 
 ## OUTPUT
 OUTPUT PAGE
