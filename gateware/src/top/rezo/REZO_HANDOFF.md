@@ -5,6 +5,64 @@ Historical work remains available in git and `BUILD_PERFORMANCE.md`.
 
 ## Current continuation checkpoint — 2026-09-17
 
+### Reviewed HELP merged; nine release archives qualified and zero-spread family flashed
+
+The user approved the mixed-case, per-topic HELP on all three products.
+`codex/strezo-built-in-help` was merged into `rezo` with merge commit
+`86fbdff3`. That exact clean merge is the source/tag for all nine release
+archives. This subsequent handoff update is documentation only; do not
+relabel those payloads with its newer commit hash. The main SONORO/CASCADO
+checkout was not switched or edited by this task. No remote push performed.
+
+All products target R5 / 192 kHz. Profiles are `1280x720p60` with
+spread_spectrum=0.0, `1280x720p60` with default 0.01, and rotated
+`720x720p60r2` with default 0.01. All nine fresh plans and firmware outputs
+come from the merge source. Each product's two standard plans have identical
+RTL, LPF, firmware and synthesis scripts: spread spectrum is external SI5351
+manifest metadata, not FPGA logic. Those two profiles independently package
+one freshly synthesized/routed standard payload with their respective PLL
+metadata. Each circular product has a separate fresh synthesis/route.
+No older-source payload was reused or relabeled.
+
+All six accepted routes completed normally, pass all four clocks with the
+unchanged 3% minimum headroom gate, and preserve both exact synthesized PLL
+parameter sets. No placement hooks, normalization, DSP/CPU/clock changes or
+gate relaxation. Accepted routes and minimum margins:
+
+| Product | Standard route / minimum margin | Circular route / minimum margin |
+|---|---|---|
+| REZO | seed 9, default heap weight / 3.76% | seed 2, default heap weight / 14.48% |
+| REZOMO | seed 12, heap weight 30 / 7.23% | seed 12, default heap weight / 7.42% |
+| STREZO | seed 8, heap weight 30 / 9.03% | seed 8, heap weight 30 / 8.12% |
+
+Standard logic/BRAM/DSP usage is REZO 23165/43/7, REZOMO 23121/44/7,
+STREZO 24134/41/20; circular usage is 23153/43/7, 23034/44/7 and
+24164/41/20. Available budgets remain 24288/56/28. STREZO circular has only
+124 logic cells free. Firmware remains 16716, 18436 and 15008 bytes of 20 KiB.
+HELP/display tests: 86 passed; shared Rust host library: 16 passed.
+
+Two congested first routes timed out at ten minutes and were discarded.
+Completed standard REZOMO seed 9/weight 30 had only 0.6% system margin;
+the extra seed 3/weight 20 standby had 0.35%. Both were rejected, not
+packaged or flashed. Accepted subsequent routes are listed above.
+
+An independent collection check validates all nine source/product/profile
+tags, hardware/video/PLL metadata, archive payload bytes/size/CRC, SHA-256,
+timing, physical PLL equality and protected-option layout. REZO slot 2,
+REZOMO slot 3 and STREZO slot 4 were then flashed with their new standard
+SS0 archives using R5 debugger E46534A193222B21. All three exited 0 with
+Refresh: DONE. Only bitstream and manifest were programmed; saved options
+were not erased or written. Default-spread and circular profiles not flashed.
+
+Artifacts and complete qualification, placement attempts, hashes, plans,
+native build reports, tests, flash logs and helper scripts are under
+`/Users/naenyn/git/tiliqua/build/rezo-release-86fbdff3`.
+`rezo-family-86fbdff3-r5-release.zip` contains all nine flashable archives,
+checksums, architecture README, user guides, reviewed HELP prose, aggregate
+qualification and flash evidence. See RELEASE.md, SHA256SUMS and
+DISTRIBUTION_SHA256SUMS. These are release candidates; physical review of
+the new images, especially circular, remains the next step.
+
 ### Reviewed REZO / STREZO mixed-case HELP qualified and flashed — 2026-09-17
 
 Qualified source/tag `23b82022` imports the user's edited REZO/STREZO review
