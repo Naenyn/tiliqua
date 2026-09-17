@@ -5,6 +5,38 @@ Historical work remains available in git and `BUILD_PERFORMANCE.md`.
 
 ## Current continuation checkpoint — 2026-09-14
 
+### STREZO HELP English qualified and flashed — 2026-09-16
+
+Qualified source/tag is now `f848a6de` (a424ad46's English/glyph fixes plus a
+handoff-only commit). The corrected HELP build was flashed successfully to
+STREZO slot 4 on R5 serial E46534A193222B21, exit 0 with `Refresh: DONE`.
+Saved options were checked against the prototype and excluded from programming.
+REZO/REZOMO slots were not touched. User visual/listening approval is pending.
+
+The unchanged synthesized netlist qualified with seed 4, heap timing weight 30
+and three explicit CPU clear-path LUT anchors balanced between response and
+program-counter inputs. No RTL, DSP, bus handshake, memory or clock-speed
+changes were necessary. The initial anchors reached only 2.12% system margin;
+the balanced anchors pass every final clock at the unchanged 3% requirement:
+serializer 6.65%, audio 48.52%, system 5.63%, pixel 9.70%. Routing took 48.32
+seconds. Resources remain 23,999 / 24,288 logic cells, 37 BRAMs, 20 DSPs.
+Both physical PLL divider/feedback configurations match the synthesized input.
+
+33 focused gateware checks and all 13 shared Rust host library tests passed
+again. The archive, raw timing report, exact anchor script, tests and flash log
+are in `/Users/naenyn/git/tiliqua/build/strezo-help-f848a6de`; see its
+`QUALIFICATION.md` for the reproducible command and netlist/archive hashes.
+The ordinary seed-8 source default is NOT the qualified floorplan for this
+revision. Requalify changed netlists and other display profiles; do not blindly
+reuse the current synthesized-cell anchors. Router2 congestion and broader
+region-placement experiments were abandoned; none was packaged or flashed.
+
+HELP still uses 77 body rows, scroll maximum 56 and the same 3072-character
+ROM allocation. Open HELP after OPTIONS on this initialized slot. Circular
+builds remain deferred until the final view is approved. REZO/REZOMO HELP ports
+and production merge remain pending; keep this STREZO-only feature isolated
+on `codex/strezo-built-in-help` while main is occupied by SONORO work.
+
 ### STREZO HELP English / glyph review — 2026-09-16
 
 Source `a424ad46` rewrites all HELP sections as brief complete sentences. The
