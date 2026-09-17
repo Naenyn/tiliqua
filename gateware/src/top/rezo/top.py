@@ -65,7 +65,7 @@ from tiliqua.video import dvi
 try:
     from .display_common import (
         FONT_5X7, PALETTE_ROLES, RGB_PALETTES, SEMANTIC_PALETTE,
-        TILE_CHARS,
+        TILE_CHARS, HELP_EXTRA_CHARS,
     )
     from .feedback import (
         FeedbackShaper, feedback_damping, feedback_gain_from_control,
@@ -115,7 +115,7 @@ try:
 except ImportError:  # top_level_cli executes this file directly.
     from display_common import (
         FONT_5X7, PALETTE_ROLES, RGB_PALETTES, SEMANTIC_PALETTE,
-        TILE_CHARS,
+        TILE_CHARS, HELP_EXTRA_CHARS,
     )
     from feedback import (
         FeedbackShaper, feedback_damping, feedback_gain_from_control,
@@ -2080,7 +2080,7 @@ class RezoTileDisplay(wiring.Component):
     PALETTE = SEMANTIC_PALETTE
     PALETTE_ROLES = PALETTE_ROLES
     RGB_PALETTES = RGB_PALETTES
-    CHARS = TILE_CHARS + "."  # Append; retain existing native glyph codes.
+    CHARS = TILE_CHARS + "." + HELP_EXTRA_CHARS  # Preserve native menu codes.
     CHAR_CODES = {ch: i for i, ch in enumerate(CHARS)}
 
     def __init__(self, h_active=1280, rotate_left=False):

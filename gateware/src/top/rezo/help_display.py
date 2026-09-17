@@ -14,10 +14,11 @@ except ImportError:
 class HelpDisplayLayer:
     def __init__(self, m, display, content, text_y_pre, cell_x, cell_y, normal_char):
         self.display = display
+        char_bits = max(6, (len(display.CHARS) - 1).bit_length())
         help_init = [display.code(ch) for line in content.rom_lines
                      for ch in line.ljust(HELP_COLUMNS)]
         m.submodules.help_mem = help_mem = Memory(
-            shape=unsigned(6), depth=len(help_init), init=help_init,
+            shape=unsigned(char_bits), depth=len(help_init), init=help_init,
             attrs={"ram_style": "block"})
         help_rport = help_mem.read_port(domain="dvi")
         help_row_base_q = Signal.like(help_rport.addr)
@@ -42,7 +43,7 @@ class HelpDisplayLayer:
                 (cell_x >= HELP_X_CELL) & (cell_x < HELP_X_CELL + HELP_COLUMNS) &
                 (cell_y >= 2) & (cell_y < HELP_Y_CELL + HELP_VISIBLE_ROWS)),
         ]
-        self.char = Signal(unsigned(6), name="rendered_char")
+        self.char = Signal(unsigned(char_bits), name="rendered_char")
         m.d.comb += self.char.eq(Mux(help_page_q,
             Mux(help_visible_q, help_rport.data, 0), normal_char))
 

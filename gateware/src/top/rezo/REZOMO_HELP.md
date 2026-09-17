@@ -1,7 +1,9 @@
 # REZOMO built-in help
 
-Condensed from REZOMO_USER_GUIDE.md. Topic headings are metadata. Displayed
-text supports letters, digits, spaces and periods only.
+Reviewed prose for the REZOMO mixed-case HELP trial. Topic headings are
+metadata. Displayed text supports ASCII letters, digits, spaces, periods and
+basic punctuation: commas, colons, semicolons, apostrophes, hyphens,
+parentheses, slashes, plus and percent signs, exclamation and question marks.
 
 <!-- HELP START -->
 ## START
@@ -9,11 +11,11 @@ GETTING STARTED
 
 Turn to select a control. Click to edit it. Turn to adjust it. Click again to finish. Switches act on one click.
 
-PAGE changes the operating page. On HELP use TOPIC to choose a page guide. Use SCROLL to read that topic. Changing topics returns to the start of the text.
+PAGE changes the operating page. On HELP, use TOPIC to choose a page guide. Use SCROLL to read that topic. Changing topics returns to the start of the text.
 
 Begin on INPUT and assign audio. Shape the sound on BANK. Tune resonators on BANDS. Use CLOCK for rhythmic movement. Assign bands on GROUPS. Set the loop on FEEDBACK. Route the sound on OUTPUT.
 
-Help does not change the sound. Use SAVE DEFAULT to store sound edits.
+On OPTIONS, use SAVE DEFAULT to store edits.
 
 ## BANK
 BANK PAGE
@@ -35,18 +37,20 @@ MODE assigns each jack to AUDIO or CV. Audio jacks sum into one mono input mix.
 
 Audio VALUE sets gain. Fully down is mute. The tick marks unity gain. The activity line shows that jack after its gain.
 
-CV VALUE chooses FB or RES or DRV or a group from G1 through G4. DEPTH sets amount and polarity. The center gives no modulation. Group CV changes enabled bands assigned to that group.
+CV VALUE chooses FB or RES or DRV or a group from G1 through G4. DEPTH sets amount and polarity. The center gives no modulation. Group CV modulates enabled bands assigned to that group.
 
-CV VALUE also assigns CLOCK roles. CLK accepts the clock. DAT supplies SHIFT samples. RST clears SHIFT and ROTATE and WALK. LCK locks a filled TURING loop. Use separate jacks for simultaneous roles.
+CV VALUE also allows you to assign CV to CLOCK roles. CLK is the external clock source for all clocked modes. DAT assigns the source that the SHIFT register mode samples. RST clearsSHIFT, ROTATE, and WALK. LCK locks a filled TURING loop. Use separate jacks for simultaneous roles.
 
-On first entering CLOCK the default roles are IN1 RST and IN2 DAT and IN3 CLK unless clock roles already exist. IN0 remains available for audio.
+On first entering CLOCK, the default roles are IN1 RST and IN2 DAT and IN3 CLK unless clock roles already exist. IN0 remains available for audio.
 
 The bottom IN meter shows the audio mix after VALUE but before DRIVE and feedback. 0 DB means a 5 V peak. The section beyond it is headroom. The accent cap shows input mix clipping.
 
 ## BANDS
 BANDS PAGE
 
-PRESET chooses LEGACY or OCTAVE or PERCEPT factory frequencies. Click again to load the chosen layout. This replaces all ten frequencies.
+The BANDS page allows you to enable or disable bands as well as define each band's frequency.
+
+PRESET chooses LEGACY, OCTAVE, or PERCEPT factory frequencies. Click again to load the chosen layout. This replaces all ten frequencies.
 
 ENABLE turns a resonator on or off in both BANK and CLOCK. Disabled bands can still be tuned here.
 
@@ -61,34 +65,34 @@ CLOCK SETTINGS
 
 Choose CLOCK on the main MODE control to expose this page. These settings add modulation without rewriting natural BANK levels.
 
-MODE chooses SHIFT or ROTATE or TURING or WALK. Changing it clears incompatible temporary modulation.
+Available MODEs are SHIFT, ROTATE, TURING, or WALK. Changing it clears incompatible temporary modulation.
 
-DIRECTION sets movement. SHIFT offers FORWARD or REVERSE or RANDOM. ROTATE offers FORWARD or REVERSE. TURING also offers PING PONG. WALK uses RANDOM and skips this control.
-
-SOURCE selects AUTO or INTERNAL or EXTERNAL clock. AUTO uses the assigned CLK jack while patched and otherwise the internal clock. A patched but stopped clock stays external.
-
-BPM sets internal tempo from 15 to 300. It stays editable with an external clock. DEPTH scales modulation without erasing its pattern. Set it low to begin.
-
-SHIFT captures DATA on each rising edge and moves older values through all ten positions. Disabled bands act as silent gaps. DATA chooses CV or RANDOM or AUTO. AUTO uses patched DAT and otherwise random values.
+SHIFT captures DATA on each rising edge and moves older values through all ten positions. Disabled bands act as silent gaps. DATA assigns the source to sample from, which can be CV, RANDOM or AUTO. AUTO uses patched DAT and otherwise random values.
 
 ROTATE circulates a copy of the natural level shape through enabled bands. It adds this moving copy without changing the original levels.
 
-WALK reflects random motion at its limits. STYLE ALL walks every enabled band. STYLE BAND moves one cursor through enabled bands. DRUNK chooses one to four landings. CHANCE sets how often a stumble starts. Extra landings occur at quarter clock intervals.
+WALK randomly modulates visited bands. STYLE ALL walks every enabled band. STYLE BAND steps through one enabled band per clock tick. DRUNK defines how far to stumble through bands. CHANCE sets how often a drunken stumble occurs. When a stumble occurs, BANDS are stumbled through at quarter clock intervals.
 
-TURING evolves a repeating random loop. LENGTH sets two to ten steps. CHANGE sets mutation probability. BANDS ALL repeats it across enabled bands. RANGE places one copy beginning at START. Other bands get no TURING modulation.
+TURING is a Music Thing Modular Turing Machine inspired mode that evolves a repeating random loop. LENGTH sets two to ten steps. CHANGE sets mutation probability. BANDS ALL repeats it across enabled bands. RANGE places one copy beginning at START. Other bands get no TURING modulation.
 
-TURING fills its loop before LCK can lock it. After filling LCK high repeats the loop unchanged. LCK low permits CHANGE mutations. PING PONG reverses after a full traversal. TURING ignores RST. Changing MODE or LENGTH starts a fresh fill.
+TURING fills its loop before LCK can lock it. After filling, a high LCK locks the loop, repeating it unchanged. A low LCK permits CHANGE mutations. TURING ignores RST. Changing MODE or LENGTH starts a fresh fill.
 
-For a self running patch choose SHIFT and SOURCE AUTO with CLK unplugged. Choose DATA RANDOM. Set BPM and raise DEPTH gradually.
+DIRECTION sets movement. SHIFT offers FORWARD, REVERSE, or RANDOM. ROTATE offers FORWARD or REVERSE. TURING also offers PING PONG. WALK uses RANDOM and skips this control.
+
+SOURCE selects AUTO, INTERNAL, or EXTERNAL clock. AUTO uses the assigned CLK jack while patched and otherwise the internal clock. A patched but stopped clock stays external.
+
+BPM sets internal tempo from 15 to 300. It stays editable with an external clock. DEPTH scales modulation without erasing its pattern. Set it low to begin.
+
+For a self running patch, choose SHIFT and SOURCE AUTO with CLK unplugged. Choose DATA RANDOM. Set BPM and raise DEPTH gradually.
 
 ## GROUPS
 GROUPS PAGE
 
-Each band column selects its membership in G1 through G4. Click the column and turn through the combinations. Lit cells show groups receiving that band. A band can feed several groups or none.
+This page allows you to assign bands to groups. BANK and CLOCK share group membership and output routing.
+
+To edit groups, first choose a band column. Then, click the column and turn through the combinations. Lit cells indicate the selected band has been assigned to that row's group. A band can be assigned to zero or up to all four groups.
 
 Groups feed OUTPUT routing. They also choose the enabled bands affected by group CV on INPUT. They are band buses and not input jack assignments.
-
-Disabled bands cannot be edited here. BANK and CLOCK share group membership and output routing.
 
 Try low bands in G1 and high bands in G2. Route these groups to different outputs to hear related CLOCK patterns.
 
@@ -108,11 +112,11 @@ Select a few bands before raising FEEDBACK. If the sound overloads reduce feedba
 ## OUTPUT
 OUTPUT PAGE
 
-Each OUT row mixes G1 through G4 and DRY. A zero send adds nothing. A full send gives unity gain. DRY adds the unfiltered mono input mix.
+This page allows you to control how much signal of each group is sent to each of Tiliqua's outputs. Each OUT row mixes G1 through G4 along with the DRY signal. A full send gives unity gain. DRY adds the unfiltered mono input mix.
 
-An OUT row header adjusts wet sends together. ROW DRY on OPTIONS decides if DRY follows. A column header adjusts that source across all outputs. Column edits ignore ROW DRY.
+An OUT row header adjusts levels for that output together. ROW DRY on OPTIONS decides if DRY is included when editing a row or is ignored. A column header adjusts that source across all outputs.
 
-BANK and CLOCK share these sends. The OUT meters show final output level. Accent caps show clipping. Lower sends if the output mix clips.
+BANK and CLOCK share these sends. The OUT meters show final output level. Accent caps show clipping. Lower the sends if the output mix clips.
 
 Route groups to separate outputs for related patterns. Add DRY only when you want some original input too.
 
@@ -125,5 +129,5 @@ ROW DRY sets output row editing. INCLUDE adjusts DRY with wet groups. EXCLUDE le
 
 SAVE DEFAULT stores the static setup and CLOCK settings in the current bitstream slot. It does not store the temporary generated pattern. SAVING shows a write in progress. SAVED confirms success. ERROR means the write failed. NO SLOT means saving is unavailable.
 
-Edits are not saved automatically. Audition the patch at a safe level before saving it. Startup restores saved feedback too.
+Edits are not saved automatically. Audition the patch at a safe level before saving it. Saved settings are restored at bitstream startup.
 <!-- HELP END -->

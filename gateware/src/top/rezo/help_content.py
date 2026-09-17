@@ -3,9 +3,9 @@ import sys
 import textwrap
 from pathlib import Path
 try:
-    from .display_common import STEREO_TILE_CHARS
+    from .display_common import STEREO_TILE_CHARS, HELP_EXTRA_CHARS
 except ImportError:
-    from display_common import STEREO_TILE_CHARS
+    from display_common import STEREO_TILE_CHARS, HELP_EXTRA_CHARS
 
 HELP_COLUMNS = 32
 HELP_VISIBLE_ROWS = 21
@@ -29,15 +29,17 @@ TOPIC_NAMES = {
 }
 
 
-def wrap_help(body):
+def wrap_help(body, *, mixed_case=False):
     """Reject missing glyphs rather than silently displaying them as spaces."""
-    unsupported = set(body.upper()) - set(STEREO_TILE_CHARS) - {'\n'}
+    text = body if mixed_case else body.upper()
+    alphabet = STEREO_TILE_CHARS + (HELP_EXTRA_CHARS if mixed_case else '')
+    unsupported = set(text) - set(alphabet) - {'\n'}
     if unsupported:
         raise ValueError(
             f'Help text contains unsupported display characters: {sorted(unsupported)!r}')
     return tuple(
-        line for paragraph in body.strip().split('\n\n')
-        for line in (*textwrap.wrap(paragraph.upper(), HELP_COLUMNS), ''))
+        line for paragraph in text.strip().split('\n\n')
+        for line in (*textwrap.wrap(paragraph, HELP_COLUMNS), ''))
 
 
 class HelpContent:
@@ -50,7 +52,9 @@ class HelpContent:
         sections = body.strip().split('## ')[1:]
         if tuple(section.split('\n', 1)[0] for section in sections) != self.topic_names:
             raise ValueError('Help topics must match the ordered page guides')
-        self.topics = tuple(wrap_help(section.split('\n', 1)[1]) for section in sections)
+        # Trial mixed-case HELP in REZOMO first; retain qualified sibling ROMs.
+        self.topics = tuple(wrap_help(section.split('\n', 1)[1],
+                           mixed_case=(product == 'REZOMO')) for section in sections)
         self.scroll_max = tuple(max(0, len(lines) - HELP_VISIBLE_ROWS) for lines in self.topics)
         offsets, lines = [], []
         for topic in self.topics:
