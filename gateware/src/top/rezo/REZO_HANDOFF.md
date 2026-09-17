@@ -5,7 +5,7 @@ Historical work remains available in git and `BUILD_PERFORMANCE.md`.
 
 ## Current continuation checkpoint — 2026-09-14
 
-### REZOMO mixed-case HELP trial qualified, NOT flashed — 2026-09-17
+### REZOMO mixed-case HELP trial qualified and flashed — 2026-09-17
 
 Qualified source/tag `0def97b1` imports the user's edited REZOMO review prose
 verbatim and preserves mixed-case body text, with existing menu/control codes
@@ -43,8 +43,11 @@ The archive and complete qualification/hashes/logs are in
 `/Users/naenyn/git/tiliqua/build/rezomo-mixed-help-0def97b1`.
 Archive `rezomo-help-mixed-0def97b1-r5.tar.gz` SHA-256 is
 `034734662fb855de3243b0143aae93b9f14487722687e703fd597c8c39b88bde`.
-No programmer/debugger calls or slot changes were made: the user will flash
-REZOMO slot 3 tomorrow. Production `rezo` and main SONORO/CASCADO sources
+At the user's subsequent request, REZOMO slot 3 was flashed successfully on
+2026-09-17 using R5 debugger E46534A193222B21: exit 0, Refresh: DONE.
+Only bitstream and manifest were programmed; saved option storage was not
+erased or written. Flash log is `rezomo-flash.log` in that artifact folder.
+Physical display/audio approval remains pending. Production `rezo` and main SONORO/CASCADO sources
 remain untouched; feature stays isolated on `codex/strezo-built-in-help`.
 Next: physical font/help review, then the sibling font ports when requested.
 
