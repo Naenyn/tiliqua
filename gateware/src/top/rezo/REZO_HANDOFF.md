@@ -3,7 +3,57 @@
 Updated 2026-09-17. This is an operational handoff, not a project diary.
 Historical work remains available in git and `BUILD_PERFORMANCE.md`.
 
-## Current continuation checkpoint — 2026-09-14
+## Current continuation checkpoint — 2026-09-17
+
+### Reviewed REZO / STREZO mixed-case HELP qualified and flashed — 2026-09-17
+
+Qualified source/tag `23b82022` imports the user's edited REZO/STREZO review
+prose verbatim from `build/rezo-family-help-f56e772e`. Both products now use
+the accepted REZOMO mixed-case font and basic punctuation for HELP. Header
+and menu glyph codes, six-bit native tile storage, STREZO unity ticks and
+the synchronous glyph pipeline remain unchanged. Only HELP needs seven-bit
+indices. Native unsupported punctuation is explicitly excluded from ordinary
+tile initialization so appended HELP codes cannot truncate into menu digits;
+this guard also fixes REZOMO source for its next build. No DSP, CPU, working
+RAM, program-allocation, saved-schema, option-layout or first-use policy change.
+
+REZO slot 2 and STREZO slot 4 were flashed successfully with debugger
+E46534A193222B21: both exited 0 with Refresh: DONE. Profiles are standard
+R5 720p / 192 kHz / spread_spectrum=0.0. Both designs pass all four clocks
+with the unchanged 3% gate and exactly matching synthesized/routed PLL
+parameters. Archive bytes, CRC, size, tag/profile, option exclusion and
+conservative erase-block nonoverlap passed checks. Saved settings not erased.
+
+REZO unanchored seed 9: serializer 401.77 MHz, audio 72.06, system 66.54,
+pixel 79.08, minimum margin 6.51%. Resources: 23238/24288 logic (1050 free),
+43/56 BRAM, 7/28 DSP, firmware 16716/20480 bytes.
+STREZO unanchored seed 8, heap weight 30: serializer 398.41 MHz, audio 73.14,
+system 64.13, pixel 87.28, minimum margin 6.88%. Resources: 24124/24288
+logic (164 free), 41/56 BRAM, 20/28 DSP, firmware 15008/20480 bytes.
+Both products add one BRAM overall; the font itself still fits in one BRAM.
+HELP ROMs are REZO 372 rows/11904 seven-bit characters and STREZO
+354 rows/11328 characters. Firmware sizes are unchanged.
+
+Final HELP/font/control/render tests: 64 passed (all glyph pixels and both
+rotations), native/interface/target selection: 87 passed, 5 deselected,
+HDMI serializer: 2 passed, shared Rust host library: 16 passed. STREZO's
+first completed seed-4 route had only 0.82% serializer margin and was rejected.
+Placement probes were guarded or stopped once the unanchored route qualified;
+no hooks, rejected images or incomplete routes were adopted/programmed.
+
+Archives, source prose snapshots, complete qualification/hashes/reports/test
+and flash logs are in
+`/Users/naenyn/git/tiliqua/build/rezo-family-mixed-help-23b82022`.
+REZO archive SHA-256:
+`23bd06b95183e87ded044c619f95801a7b3660ef264735684407fbbfc4dbafa3`.
+STREZO archive SHA-256:
+`1b735a573bdd19dd693a0bc4f128bde3fd287a7f25ebfcbc0e97ed69701a2b97`.
+
+REZOMO's mixed-case HELP was visually accepted by the user before these ports;
+its accepted `0def97b1` slot-3 image was left untouched. REZO/STREZO physical
+review is pending. No circular build or production merge yet. Main SONORO/
+CASCADO sources stay untouched; work remains on codex/strezo-built-in-help.
+Next: user review, then merge back and generate the requested release builds.
 
 ### REZOMO mixed-case HELP trial qualified and flashed — 2026-09-17
 
