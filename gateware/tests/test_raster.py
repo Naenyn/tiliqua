@@ -66,6 +66,12 @@ class RasterTests(unittest.TestCase):
                                   (11, 1200), (12, 1200)])
 
     def test_persist(self):
+        self._check_persist(decay=1)
+
+    def test_persist_frozen(self):
+        self._check_persist(decay=0)
+
+    def _check_persist(self, decay):
 
         m = Module()
         fb = framebuffer.DMAFramebuffer(
@@ -79,6 +85,7 @@ class RasterTests(unittest.TestCase):
 
         async def testbench(ctx):
             ctx.set(fb.fbp.enable, 1)
+            ctx.set(dut.decay, decay)
             # Simulate N burst accesses
             for _ in range(4):
                 ix = 0
@@ -94,7 +101,7 @@ class RasterTests(unittest.TestCase):
                         # for all burst reads, verify intensity of every
                         # pixel is reduced as expected
                         self.assertEqual(ctx.get(dut.bus.dat_w),
-                                         0xefefef00 | (ix&0xf))
+                                         ((0xff - (decay << 4)) * 0x01010100) | (ix&0xf))
                     await ctx.tick()
                     ix = ix + 1
                 ctx.set(dut.bus.ack, 0)
@@ -102,7 +109,7 @@ class RasterTests(unittest.TestCase):
         sim = Simulator(m)
         sim.add_clock(1e-6)
         sim.add_testbench(testbench)
-        with sim.write_vcd(vcd_file=open("test_persist.vcd", "w")):
+        with sim.write_vcd(vcd_file=open(f"test_persist_decay{decay}.vcd", "w")):
             sim.run()
 
     def test_stroke(self):

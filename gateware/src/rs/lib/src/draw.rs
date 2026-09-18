@@ -387,6 +387,33 @@ pub fn draw_help<D>(d: &mut D, x: u32, y: u32, scroll: u8, help_text: &str, hue:
 where
     D: DrawTarget<Color = HI8>,
 {
+    draw_help_styled(d, x, y, scroll, help_text, hue, 10, 15)
+}
+
+/// Erase one previously rendered help viewport without clearing its full
+/// rectangular bounds. The help background is black, so replaying only the
+/// glyphs and scroll indicators at zero intensity removes the old view while
+/// avoiding hundreds of thousands of otherwise redundant framebuffer writes.
+pub fn erase_help<D>(d: &mut D, x: u32, y: u32, scroll: u8, help_text: &str) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = HI8>,
+{
+    draw_help_styled(d, x, y, scroll, help_text, 0, 0, 0)
+}
+
+fn draw_help_styled<D>(
+    d: &mut D,
+    x: u32,
+    y: u32,
+    scroll: u8,
+    help_text: &str,
+    hue: u8,
+    text_intensity: u8,
+    accent_intensity: u8,
+) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = HI8>,
+{
     // Draw a sliding window of a long multiline docstring.
     //
     // 2 fonts are used here. A larger one for text, and a smaller one with
@@ -402,9 +429,12 @@ where
     use crate::mono_6x12_optimized::MONO_6X12_OPTIMIZED;
     use tiliqua_hal::embedded_graphics::mono_font::ascii::FONT_7X13;
 
-    let font_normal = MonoTextStyle::new(&FONT_7X13, HI8::new(hue, 10));
-    let font_small = MonoTextStyle::new(&MONO_6X12_OPTIMIZED, HI8::new(hue, 10));
-    let font_small_white = MonoTextStyle::new(&MONO_6X12_OPTIMIZED, HI8::new(hue, 15));
+    let font_normal = MonoTextStyle::new(&FONT_7X13, HI8::new(hue, text_intensity));
+    let font_small = MonoTextStyle::new(&MONO_6X12_OPTIMIZED, HI8::new(hue, text_intensity));
+    let font_small_white = MonoTextStyle::new(
+        &MONO_6X12_OPTIMIZED,
+        HI8::new(hue, accent_intensity),
+    );
 
     let skip_lines = scroll as usize;
     let line_spacing_normal = 13;  // Spacing for FONT_8X13
@@ -454,7 +484,7 @@ where
     let arrow_x = x + (text_width / 2);
 
     let stroke = PrimitiveStyleBuilder::new()
-        .stroke_color(HI8::new(hue, 10))
+        .stroke_color(HI8::new(hue, text_intensity))
         .stroke_width(1)
         .build();
 
@@ -1292,6 +1322,45 @@ mod tests {
             menu_items,
         ).ok();
         disp.img.save("draw_help.png").unwrap();
+    }
+
+    #[test]
+    fn test_erase_help_removes_only_rendered_help_pixels() {
+        let mut disp = setup_display();
+        let help_text = "\
+line 00\nline 01\nline 02\nline 03\nline 04\nline 05\nline 06\nline 07\n\
+line 08\nline 09\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\n\
+line 16\nline 17\nline 18\nline 19\nline 20\nline 21\nline 22\nline 23\n\
+line 24\nline 25\nline 26\nline 27\nline 28\nline 29";
+
+        draw_help(&mut disp, 40, 40, 1, help_text, 3).unwrap();
+        assert!(disp.img.pixels().any(|pixel| pixel.0 != [0, 0, 0]));
+
+        erase_help(&mut disp, 40, 40, 1, help_text).unwrap();
+        assert!(disp.img.pixels().all(|pixel| pixel.0 == [0, 0, 0]));
+    }
+
+    #[test]
+    fn test_help_scroll_matches_fresh_view() {
+        let help_text = (0..40)
+            .map(|i| if i % 3 == 0 {
+                format!("        ┌─ diagram {i} ─┐\n")
+            } else {
+                format!("Normal help line {i}\n")
+            })
+            .collect::<std::string::String>();
+        let mut actual = setup_display();
+        draw_help(&mut actual, 40, 40, 0, &help_text, 3).unwrap();
+        let mut previous_scroll = 0;
+        // Both directions, changing arrow visibility and mixed font spacing.
+        for scroll in [1, 12, 25, 39, 0] {
+            erase_help(&mut actual, 40, 40, previous_scroll, &help_text).unwrap();
+            draw_help(&mut actual, 40, 40, scroll, &help_text, 3).unwrap();
+            let mut expected = setup_display();
+            draw_help(&mut expected, 40, 40, scroll, &help_text, 3).unwrap();
+            assert_eq!(actual.img, expected.img);
+            previous_scroll = scroll;
+        }
     }
 
     #[test]

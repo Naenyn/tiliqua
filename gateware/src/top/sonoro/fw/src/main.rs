@@ -48,17 +48,6 @@ fn clear_framebuffer_region(base: usize) {
     riscv::asm::fence();
 }
 
-fn clear_help_text_window<D>(display: &mut D, h_active: u32, v_active: u32) -> Result<(), D::Error>
-where
-    D: DrawTarget<Color = HI8>,
-{
-    let x = h_active / 2 - 292;
-    let y = v_active / 2 - 172;
-    Rectangle::new(Point::new(x as i32, y as i32), Size::new(584, 390))
-        .into_styled(PrimitiveStyle::with_fill(HI8::BLACK))
-        .draw(display)
-}
-
 fn menu_panel_rect(pos_x: u32, pos_y: u32) -> Rectangle {
     Rectangle::new(
         Point::new(
@@ -609,6 +598,7 @@ fn main() -> ! {
                 menu_cache = None;
             }
             last_on_help_page = on_help_page;
+            let previous_help_scroll = last_help_scroll;
             last_help_scroll = help_scroll;
 
             let frequency_ramp_palette = spectrum_mode
@@ -668,13 +658,13 @@ fn main() -> ! {
                     draw_menu(&mut display, &opts, menu_x, menu_y, ui_hue).ok();
                     menu_cache = Some((opts.clone(), menu_x, menu_y, menu_hash));
                 }
-            } else if menu_visible {
+            } else if menu_visible && !on_help_page {
                 // Framebuffer persistence also decays UI pixels in the direct
                 // display modes, so refresh an unchanged visible menu without an
                 // unnecessary erase pass.
                 draw_menu(&mut display, &opts, menu_x, menu_y, ui_hue).ok();
             }
-            if draw_options || on_help_page || first {
+            if first || help_page_entered || (!on_help_page && draw_options) {
                 draw::draw_name(
                     &mut display,
                     h_active / 2,
@@ -689,7 +679,17 @@ fn main() -> ! {
 
             if on_help_page {
                 if help_page_entered || help_scroll_changed || first {
-                    clear_help_text_window(&mut display, h_active, v_active).ok();
+                    // Remove only the old glyphs; the rest of Help is static.
+                    if !help_page_entered && !first {
+                        draw::erase_help(
+                            &mut display,
+                            h_active / 2 - 280,
+                            v_active / 2 - 150,
+                            previous_help_scroll,
+                            MODULE_DOCSTRING,
+                        )
+                        .ok();
+                    }
                     draw::draw_help(
                         &mut display,
                         h_active / 2 - 280,
@@ -785,10 +785,12 @@ fn main() -> ! {
                 w.grid_pixel().bits(0)
             });
 
-            // Help is a static framebuffer page. Keep decay as slow as the
-            // persistence controller allows so it remains readable until
-            // software clears/redraws it on scroll.
-            persist.set_persistence(if on_help_page { 80 } else { 24 });
+            // Static Help must not fade now that unchanged UI is not refreshed.
+            if on_help_page {
+                persist.set_frozen();
+            } else {
+                persist.set_persistence(24);
+            }
             first = false;
         }
     })

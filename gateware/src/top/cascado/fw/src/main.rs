@@ -56,17 +56,6 @@ fn clear_3d_framebuffers() {
     clear_framebuffer_region(PSRAM_FB_BASE + FRAMEBUFFER_REGION_BYTES);
 }
 
-fn clear_help_text_window<D>(display: &mut D, h_active: u32, v_active: u32) -> Result<(), D::Error>
-where
-    D: DrawTarget<Color = HI8>,
-{
-    let x = h_active / 2 - 292;
-    let y = v_active / 2 - 172;
-    Rectangle::new(Point::new(x as i32, y as i32), Size::new(584, 390))
-        .into_styled(PrimitiveStyle::with_fill(HI8::BLACK))
-        .draw(display)
-}
-
 fn menu_panel_rect(pos_x: u32, pos_y: u32) -> Rectangle {
     Rectangle::new(
         Point::new(
@@ -758,6 +747,7 @@ fn main() -> ! {
                 }
             }
             last_on_help_page = on_help_page;
+            let previous_help_scroll = last_help_scroll;
             last_help_scroll = help_scroll;
 
             if opts.display.palette.value != last_palette
@@ -870,7 +860,10 @@ fn main() -> ! {
                         *menu_slot = Some((opts.clone(), menu_x, menu_y, menu_hash));
                     }
                 }
-                if draw_options || on_help_page || first || framebuffer_swapped {
+                if first
+                    || help_page_became_ready
+                    || (!on_help_page && (draw_options || framebuffer_swapped))
+                {
                     draw::draw_name(
                         &mut display,
                         h_active / 2,
@@ -896,7 +889,17 @@ fn main() -> ! {
 
                 if on_help_page {
                     if help_page_entered || help_page_became_ready || help_scroll_changed || first {
-                        clear_help_text_window(&mut display, h_active, v_active).ok();
+                        // Remove only the old glyphs; the rest of Help is static.
+                        if !fullscreen_layer_changed {
+                            draw::erase_help(
+                                &mut display,
+                                h_active / 2 - 280,
+                                v_active / 2 - 150,
+                                previous_help_scroll,
+                                MODULE_DOCSTRING,
+                            )
+                            .ok();
+                        }
                         draw::draw_help(
                             &mut display,
                             h_active / 2 - 280,
