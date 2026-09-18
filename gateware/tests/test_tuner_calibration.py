@@ -54,11 +54,11 @@ def test_standalone_quantizer_menu_and_mode_have_independent_controls():
     assert '(Page::Quantizer, 2) => "0v note"' in main
     assert 'page==Page::Quantizer && index==2' in main
     assert 'Page::Quantizer => "QUANT"' in main
-    assert 'nominal==play.standalone' in main
-    assert 'output==play.output && zero==play.zero_note' in main
+    assert 'let allowed=OWNERS.borrow_ref(cs).held(Owner::Play)' in main
     assert 'lane.arm_nominal(c.input,n as u8,c.zero' in main
-    assert 'c==quant.configs[app.quant_selected as usize]' in main
-    assert 'scale_id==play.scale_id && root==play.root && transpose==play.transpose' in main
+    assert 'if q.lanes[old].active' in main
+    assert 'show_quant_settings(&mut app.ui.opts.quantizer,q.configs[old])' in main
+    assert 'RUN / STOP SELECTED; SETTINGS LOCKED' in main
     presets=options.split('pub enum ScalePreset {')[1].split('}')[0]
     assert re.findall(r'\] (\w+),',presets)==[
         'Chromatic','Major','Minor','MajorPentatonic','MinorPentatonic','Edo24','Custom2']

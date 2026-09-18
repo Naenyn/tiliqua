@@ -54,17 +54,21 @@ def test_four_cv_outputs_fault_isolation_and_cal_priority():
         assert ctx.get(dut._quant_status[1].f.value.r_data) & 512
         for n in [0, 2, 3]:
             assert ctx.get(dut.quant_value[n]) == values[n] & 65535
-        # Legacy calibration/playback owns the DACs until explicitly disabled.
+        # Calibration owns only OUT0; other quantizer outputs keep running.
         await write(0x5c, 8000 | (1 << 18) | (1 << 21))
         assert ctx.get(dut.cal_active)
-        for n in range(4):
-            assert ctx.get(dut.quant_value[n]) == 0
+        assert ctx.get(dut.quant_value[0]) == 0
+        for n in [2,3]:
+            assert ctx.get(dut.quant_value[n]) == values[n]
             await write(0x90 + 4*n, 4000 | (1 << 18))
-            assert ctx.get(dut.quant_value[n]) == 0
+        await write(0x90, 4000 | (1 << 18))
+        await write(0xb0, 1)
+        assert ctx.get(dut.quant_value[0]) == 0
+        for n in [2,3]:assert ctx.get(dut.quant_value[n]) == 4000
         await write(0x5c, 0)
         assert not ctx.get(dut.cal_active)
-        for n in range(4):
-            assert ctx.get(dut.quant_value[n]) == 0  # no surprise rearming
+        assert ctx.get(dut.quant_value[0]) == 0  # no surprise rearming
+        for n in [2,3]:assert ctx.get(dut.quant_value[n]) == 4000
         await write(0x90, 4000 | (1 << 18))
         assert ctx.get(dut.quant_value[0]) == 0
         await write(0xb0, 1)

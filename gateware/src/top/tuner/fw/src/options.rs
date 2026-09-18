@@ -118,6 +118,8 @@ pub struct TunerOpts {
     pub input: IntOption<InputParams>,
     #[option]
     pub display: EnumOption<DisplayMode>,
+    #[option(false)]
+    pub run: ButtonOption<OneShotButtonParams>,
 }
 
 #[derive(OptionPage, Clone)]

@@ -8,6 +8,13 @@ use crate::pitch_math;
 use crate::oscillator_calibration::deviation::{Deviation,Summary};
 use crate::oscillator_calibration::verification_scan::Scan;
 
+/// Keep operation controls independent of the visible page. Manual VERIFY
+/// may adjust its target while visible; navigation cannot retarget a run.
+pub fn background_controls(mut captured:RuntimeControls,current:RuntimeControls,verifying:bool)->RuntimeControls {
+    if verifying && current.mode==OperatingMode::Verify {captured.target_millicents=current.target_millicents;}
+    captured
+}
+
 pub struct Live {
     sweep: Option<Sweep>,
     pub profile: Option<Profile>,

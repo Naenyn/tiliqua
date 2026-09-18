@@ -23,6 +23,8 @@ mod pitch_math;
 #[path = "calibration.rs"]
 mod oscillator_calibration;
 mod calibration_live;
+mod ownership;
+use ownership::{Owner,Reservations};
 #[path="calibration/bipolar.rs"] mod bipolar;
 #[path="calibration/bipolar_sweep.rs"] mod bipolar_sweep;
 use ui_markers::{Marker, Markers};
@@ -89,6 +91,8 @@ fn show_quant_settings(opts:&mut options::QuantizerOpts,c:quantizer_setup::Chann
 // becoming part of `main()`'s stack frame, which previously corrupted an
 // already constrained main RAM after the first interrupt.
 static APP: Mutex<RefCell<Option<App>>> = Mutex::new(RefCell::new(None));
+static OWNERS:Mutex<RefCell<Reservations>>=Mutex::new(RefCell::new(Reservations::new()));
+static TUNER_STATUS:Mutex<RefCell<&'static str>>=Mutex::new(RefCell::new("RUN RESERVES SELECTED INPUT"));
 // Conventional two-octave editor, RAM only; never part of oscillator profiles.
 static QUANT_NOTES:Mutex<RefCell<[u16;2]>>=Mutex::new(RefCell::new([0xfff,0]));
 static NOTE_STATUS:Mutex<RefCell<(u8,&'static str)>>=Mutex::new(RefCell::new((1,"DEFAULT NOTES - LOAD OR EDIT")));
@@ -126,17 +130,25 @@ impl MultiQuant {
         self.running=false;self.phase=0;
         for (n,lane) in self.lanes.iter_mut().enumerate() {quant_command(t,n,lane.stop(reason));}
     }
-    fn start(&mut self,t:&pac::TUNER_PERIPH,configs:[quantizer_setup::Channel;4],now:u32,counts:i32) {
-        self.stop(t,"STOPPED");self.configs=configs;self.max_cycles=0;self.last_cycle=0;self.max_gap=0;
-        for (n,c) in configs.iter().enumerate() {
+    fn toggle(&mut self,t:&pac::TUNER_PERIPH,n:usize,c:quantizer_setup::Channel,now:u32,counts:i32,r:&mut Reservations) {
+        if self.lanes[n].active {
+            quant_command(t,n,self.lanes[n].stop("STOPPED BY USER"));r.release(Owner::Quant(n as u8));
+        } else if !r.claim(Owner::Quant(n as u8),1<<c.input,1<<n) {
+            self.lanes[n].status="CHANNEL BUSY - STOP ITS OWNER";
+        } else {
+            if !self.running {self.phase=0;self.last_cycle=0;self.max_cycles=0;self.max_gap=0;}
+            self.configs[n]=c;
             let lane=&mut self.lanes[n];
             // Disable has cleared faults, but wait until a later RUN if a prior
             // enabled output has not yet acknowledged shutdown.
-            if !lane.arm_nominal(c.input,n as u8,c.zero,counts,now,quant_status(t,n)) {continue;}
-            lane.scale_id=c.scale;lane.root=c.root;lane.transpose=c.transpose;lane.equal=c.equal;
-            if c.scale==6 {match scale::Pattern::compile(c.masks) {
-                Ok(pattern)=>lane.pattern=pattern,Err(_)=>{lane.stop("EMPTY PATTERN - ADD NOTES");},
-            }}
+            quant_command(t,n,lane.stop("STOPPED"));
+            if lane.arm_nominal(c.input,n as u8,c.zero,counts,now,quant_status(t,n)) {
+                lane.scale_id=c.scale;lane.root=c.root;lane.transpose=c.transpose;lane.equal=c.equal;
+                if c.scale==6 {match scale::Pattern::compile(c.masks) {
+                    Ok(pattern)=>lane.pattern=pattern,Err(_)=>{lane.stop("EMPTY PATTERN - ADD NOTES");},
+                }}
+            }
+            if !lane.active {r.release(Owner::Quant(n as u8));}
         }
         self.running=self.lanes.iter().any(|lane|lane.active);
     }
@@ -185,38 +197,28 @@ fn playback_cycles()->usize {
     // to retain wrapping cycle arithmetic, including its 32-bit rollover.
     (!unsafe{pac::Peripherals::steal()}.PLAYBACK_TIMER.counter().read().value().bits()) as usize
 }
+fn outputs_running()->bool {
+    critical_section::with(|cs|PLAYBACK.borrow_ref(cs).active || MULTI_QUANT.borrow_ref(cs).running)
+}
 
 fn timer0_handler() {
-    let (now,allowed,input,chromatic,nominal,output,zero,scale_id,root,transpose,equal)=with_app(|app| {
+    let now=with_app(|app| {
         // Never perform an unbounded motherboard-I2C transaction in this ISR.
         // Encoder/options and PMOD LEDs are all CSR-backed and deterministic.
         app.now_ms += PLAYBACK_PERIOD_MS as u64;
         if app.now_ms%TIMER0_ISR_PERIOD_MS as u64==0 {app.ui.update_realtime();}
         // Measurement bank selection is owned by the foreground reader, not
         // the encoder ISR. All four acquisition lanes run independently.
-        let nominal=app.ui.opts.tracker.page.value==Page::Quantizer;
-        (app.now_ms as u32,nominal || app.ui.opts.tracker.page.value==Page::Play,
-            if nominal {app.ui.opts.quantizer.input.value} else {app.ui.opts.play.input.value},
-            nominal || app.ui.opts.play.quantize.value==options::QuantizeMode::Chromatic,
-            nominal,app.ui.opts.quantizer.output.value,app.ui.opts.quantizer.zero_note.value,
-            app.ui.opts.quantizer.scale.value as u8,app.ui.opts.quantizer.root.value as u8,
-            app.ui.opts.quantizer.transpose.value,
-            app.ui.opts.quantizer.mapping.value==options::Distribution::Equal)
+        app.now_ms as u32
     });
     // Two outputs per interrupt: every channel runs at 500 Hz without putting
     // four worst-case note transitions in the same 1 ms interrupt budget.
+    let output_started=playback_cycles();
     critical_section::with(|cs| {
         let mut quant=MULTI_QUANT.borrow_ref_mut(cs);
         if !quant.running {return;}
         let tuner=unsafe{pac::Peripherals::steal()}.TUNER_PERIPH;
-        let allowed=with_app(|app| {
-            let c=quant_settings(&app.ui.opts.quantizer,*QUANT_NOTES.borrow_ref(cs));
-            nominal && app.ui.opts.quantizer.output.value==app.quant_selected
-                && c==quant.configs[app.quant_selected as usize]
-        });
-        if !allowed || PLAYBACK.borrow_ref(cs).active || tuner.cal_status().read().value().bits()&768!=0 {
-            quant.stop(&tuner,"STOPPED - CONTROLS OR OWNER CHANGED");return;
-        }
+        // Running routes/settings are immutable. Navigation is not a stop.
         let start=playback_cycles();
         if quant.last_cycle!=0 {
             let gap=start.wrapping_sub(quant.last_cycle);quant.max_gap=quant.max_gap.max(gap);
@@ -255,9 +257,7 @@ fn timer0_handler() {
             }
         }
         play.last_irq_cycle=start;
-        let allowed=allowed && input==play.input && chromatic==play.chromatic
-            && nominal==play.standalone && (!nominal || (output==play.output && zero==play.zero_note
-                && scale_id==play.scale_id && root==play.root && transpose==play.transpose && equal==play.equal));
+        let allowed=OWNERS.borrow_ref(cs).held(Owner::Play);
         if let Some(command)=play.tick(now,tuner.cv_sample().read().value().bits(),
             tuner.cal_status().read().value().bits(),allowed) {
             tuner.cal_command().write(|w|unsafe{w.value().bits(command)});
@@ -270,6 +270,14 @@ fn timer0_handler() {
             tuner.cal_command().write(|w|unsafe{w.value().bits(play.stop("STOPPED - CPU BUDGET"))});
         }
     });
+    if playback_cycles().wrapping_sub(output_started)>pac::clock::sysclk() as usize/2000 {
+        critical_section::with(|cs| {
+            let tuner=unsafe{pac::Peripherals::steal()}.TUNER_PERIPH;
+            MULTI_QUANT.borrow_ref_mut(cs).stop(&tuner,"STOPPED - COMBINED CPU BUDGET");
+            let mut play=PLAYBACK.borrow_ref_mut(cs);
+            if play.active {tuner.cal_command().write(|w|unsafe{w.value().bits(play.stop("STOPPED - COMBINED CPU BUDGET"))});}
+        });
+    }
 }
 
 #[inline(never)]
@@ -848,6 +856,12 @@ fn publish_tuner(
     smoothed_channels: &mut [Option<f32>;4],
     menu_active: bool,
 ) {
+    let (reservations,tuner_status)=critical_section::with(|cs|(*OWNERS.borrow_ref(cs),*TUNER_STATUS.borrow_ref(cs)));
+    let mut visible=*measurements;
+    for n in 0..4 {if !reservations.tuner_available(n) {
+        let mut value=visible.channel(n);value.valid=false;value.qualified=false;visible.update(n,value);
+    }}
+    let measurements=&visible;
     let measurement = measurements.channel(input);
     let smoothed_midi = &mut smoothed_channels[input as usize];
     let cx = 360;
@@ -954,7 +968,7 @@ fn publish_tuner(
                 write!(label,"{} {}{} {:+04}c {:8.2}Hz",channel,
                        NOTE_NAMES[note.rem_euclid(12) as usize],note.div_euclid(12)-1,
                        (100.0*(midi-note as f32)).round() as i32,value.frequency_hz).ok();
-            } else { write!(label,"{} -- NO SIGNAL",channel).ok(); }
+            } else { write!(label,"{} -- {}",channel,if reservations.tuner_available(channel as u8) {"NO SIGNAL"} else {"RESERVED BY OTHER MODE"}).ok(); }
             ui_text::field(6,row,33,&label,style,ui_text::Align::Center,|address,cell|text.cell(address,cell));
             let mut volts: String<48> = String::new();
             write!(volts,"{:5.3} Vrms  {:5.3} Vpp",value.vrms,value.vpp).ok();
@@ -970,6 +984,8 @@ fn publish_tuner(
             slot += 1;
         }
     }
+    write_centered(text,42,if !reservations.tuner_available(input) {"INPUT BUSY - STOP ITS OWNER"}
+        else if reservations.held(Owner::Tuner(input)) {"TUNING - RUN TO RELEASE INPUT"} else {tuner_status},42);
     publish_markers(display, Markers(markers),
                     display_mode == DisplayMode::Visualizer, menu_active);
 }
@@ -1105,7 +1121,7 @@ fn publish_verification(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,
             write_centered(text,42,if controls.verify_points {"POINTS: STORED CV / PITCH"}
                 else {"SCAN: RANGE IN 50-CENT STEPS"},30);
         }
-    } else {write_centered(text,42,"EXIT VERIFY STOPS OUTPUT",28);}
+    } else {write_centered(text,42,"RUN STOPS; NAVIGATION KEEPS RUNNING",40);}
     publish_markers(display,Markers([None;4]),false,menu_active);
 }
 
@@ -1126,7 +1142,7 @@ fn publish_playback(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,
     }
     write!(line,"OSC AUDIO -> IN {} (PITCH CHECK)",cal.input).ok();
     write_centered(text,16,&line,34);line.clear();
-    write_centered(text,19,"RUN STARTS / STOPS; EXIT STOPS",34);
+    write_centered(text,19,"RUN STARTS / STOPS; KEEPS RUNNING",38);
     write!(line,"0 V = {}{}; 1 V/OCT",NOTE_NAMES[(controls.zero_note%12) as usize],
         controls.zero_note as i32/12-1).ok();
     write_centered(text,23,&line,32);line.clear();
@@ -1161,7 +1177,7 @@ fn publish_quantizer(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,menu:b
         }
         write_centered(text,29,"SAVE INCLUDES ALL FOUR NOTE PATTERNS",42);
         write_centered(text,32,"LOAD DOES NOT START OUTPUT",38);
-        write_centered(text,35,"QUANT RUN STARTS ALL FOUR OUTPUTS",42);
+        write_centered(text,35,"QUANT RUN STARTS SELECTED OUTPUT",42);
         let (status_slot,status)=critical_section::with(|cs|*SETUP_STATUS.borrow_ref(cs));
         write!(line,"SLOT {}: {}",slot,if slot==status_slot {status} else {"SAVE OR LOAD A SETUP"}).ok();
         write_centered(text,39,&line,42);
@@ -1218,7 +1234,7 @@ fn publish_quantizer(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,menu:b
     write_centered(text,21,&line,32);line.clear();
     let equal=with_app(|app|app.ui.opts.quantizer.mapping.value==options::Distribution::Equal);
     write_centered(text,24,if equal {"EQUAL BINS; OUT -5 TO +5 V"} else {"NEAREST; OUT -5 TO +5 V"},38);
-    write_centered(text,27,"RUN ALL / STOP ALL; EXIT STOPS",38);
+    write_centered(text,27,"RUN / STOP SELECTED; SETTINGS LOCKED",42);
     write_centered(text,30,status,42);
     write!(line,"IN {:+.4} V -> OUT {:+.4} V",uv as f32/1e6,out as f32/1e6).ok();
     write_centered(text,34,&line,42);line.clear();
@@ -1230,9 +1246,10 @@ fn publish_quantizer(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,menu:b
     publish_markers(display,Markers([None;4]),false,menu);
 }
 
-pub fn playback_visible()->bool {with_app(|app|matches!(app.ui.opts.tracker.page.value,Page::Play|Page::Quantizer))}
+pub fn playback_visible()->bool {outputs_running() || with_app(|app|matches!(app.ui.opts.tracker.page.value,Page::Play|Page::Quantizer))}
 pub fn write_playback_status(out:&mut impl core::fmt::Write,value:ChannelMeasurement)->core::fmt::Result {
-    if with_app(|app|app.ui.opts.tracker.page.value==Page::Quantizer) {
+    if critical_section::with(|cs|MULTI_QUANT.borrow_ref(cs).running)
+        || with_app(|app|app.ui.opts.tracker.page.value==Page::Quantizer) {
         let (running,cycles,gap,lanes)=critical_section::with(|cs| {
             let q=MULTI_QUANT.borrow_ref(cs);
             let lanes:[_;4]=core::array::from_fn(|n| {let p=&q.lanes[n];
@@ -1293,7 +1310,7 @@ fn publish_calibration(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,
     write_centered(text,12,"USE SINE; VCO MID RANGE",30);
     write_centered(text,14,"UPWARD -5 TO +5V; 121 PTS",30);
     write_centered(text,16,"RUN AGAIN TO CANCEL",30);
-    write_centered(text,18,"EXIT CAL ALSO CANCELS",30);
+    write_centered(text,18,"NAVIGATION KEEPS SCAN RUNNING",38);
     if let Some(profile)=cal.pending_profile.as_ref() {
         let points=profile.points();let low=points[0];let high=points[points.len()-1];
         write_centered(text,12,"SCAN COMPLETE - OUTPUT ZERO",30);
@@ -1421,6 +1438,7 @@ fn publish_markers(display: &pac::TUNER_DISPLAY, markers: Markers,
 
 #[derive(Clone, Copy)]
 struct UiFrame {
+    run_tuner:bool,
     save_setup:bool,
     load_setup:bool,
     save_notes:bool,
@@ -1449,8 +1467,13 @@ struct UiFrame {
 fn poll_ui_frame() -> UiFrame {
     // The output selector also selects its independent configuration. Capture
     // the old editor before loading the new channel. Never automatically arm.
-    let changed=with_app(|app|critical_section::with(|cs| {
+    with_app(|app|critical_section::with(|cs| {
         let old=app.quant_selected as usize;
+        let q=MULTI_QUANT.borrow_ref(cs);
+        if q.lanes[old].active {
+            show_quant_settings(&mut app.ui.opts.quantizer,q.configs[old]);
+            *QUANT_NOTES.borrow_ref_mut(cs)=q.configs[old].masks;
+        }
         let edited=quant_settings(&app.ui.opts.quantizer,*QUANT_NOTES.borrow_ref(cs));
         if app.quant_channels[old]!=edited {
             *SETUP_STATUS.borrow_ref_mut(cs)=(app.ui.opts.quant_setups.slot.value,"EDITED - SAVE SETUP");
@@ -1463,11 +1486,6 @@ fn poll_ui_frame() -> UiFrame {
         *NOTE_STATUS.borrow_ref_mut(cs)=(app.ui.opts.quant_notes.slot.value,"CHANNEL NOTES - SAVE TO KEEP");
         true
     }));
-    if changed {critical_section::with(|cs| {
-        MULTI_QUANT.borrow_ref_mut(cs).stop(&unsafe{pac::Peripherals::steal()}.TUNER_PERIPH,"STOPPED - OUTPUT CHANGED");
-        let command=PLAYBACK.borrow_ref_mut(cs).stop("STOPPED - OUTPUT CHANGED");
-        unsafe{pac::Peripherals::steal()}.TUNER_PERIPH.cal_command().write(|w|unsafe{w.value().bits(command)});
-    });}
     with_app(|app| {
         let toggle=app.ui.opts.quant_notes.toggle.poll();
         let clear=app.ui.opts.quant_notes.clear.poll();
@@ -1476,6 +1494,9 @@ fn poll_ui_frame() -> UiFrame {
             let octave=app.ui.opts.quant_notes.octave.value as usize;
             let note=app.ui.opts.quant_notes.note.value as u8;
             critical_section::with(|cs| {
+                if MULTI_QUANT.borrow_ref(cs).lanes[app.quant_selected as usize].active {
+                    *NOTE_STATUS.borrow_ref_mut(cs)=(app.ui.opts.quant_notes.slot.value,"STOP CHANNEL BEFORE EDITING");return;
+                }
                 let mut masks=QUANT_NOTES.borrow_ref_mut(cs);
                 if clear {masks[octave]=0;} else if fill {masks[octave]=0xfff;}
                 else if toggle {masks[octave]^=1<<note;}
@@ -1487,6 +1508,7 @@ fn poll_ui_frame() -> UiFrame {
         let menu_active = app.ui.draw();
         app.ui.set_menu_visible(menu_active);
         UiFrame {
+            run_tuner:app.ui.opts.tuner.run.poll(),
             save_setup:app.ui.opts.quant_setups.save.poll(),
             load_setup:app.ui.opts.quant_setups.load.poll(),
             save_notes:app.ui.opts.quant_notes.save.poll(),
@@ -1604,7 +1626,7 @@ fn profile_key(slot:u8)->Option<u32> {
 fn save_profile(storage:&mut Option<TunerPersistence>,cal:&mut calibration_live::Live,
                 slot:u8,zero_note:u8,name:&str)->&'static str {
     use oscillator_calibration::storage as record;
-    if cal.active() {return "BUSY - STOP OUTPUT FIRST";}
+    if cal.active() || outputs_running() {return "BUSY - STOP OUTPUT FIRST";}
     if cal.pending_profile.is_some() {return "ACCEPT OR DISCARD CAL FIRST";}
     if cal.refinement.as_ref().is_some_and(|r|r.stage==oscillator_calibration::refinement::Stage::Ready) {
         return "ACCEPT OR DISCARD FIRST";
@@ -1627,7 +1649,7 @@ fn save_profile(storage:&mut Option<TunerPersistence>,cal:&mut calibration_live:
 fn load_profile(storage:&mut Option<TunerPersistence>,cal:&mut calibration_live::Live,
                 slot:u8,editor:&mut oscillator_calibration::name::Editor)->(&'static str,Option<u8>) {
     use oscillator_calibration::storage as record;
-    if cal.active() {return ("BUSY - STOP OUTPUT FIRST",None);}
+    if cal.active() || outputs_running() {return ("BUSY - STOP OUTPUT FIRST",None);}
     let Some(key)=profile_key(slot) else {return ("INVALID PROFILE SLOT",None);};
     let Some(storage)=storage.as_mut() else {return ("NO PROFILE STORAGE",None);};
     let mut bytes=[0;record::MAX_BYTES+1];
@@ -1792,6 +1814,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
         let mut verification: [pitch_verification::Verification;4] = core::array::from_fn(|_| Default::default());
         let mut verification_frames = 0u8;
         let mut calibration = calibration_live::Live::new();
+        let mut calibration_controls:Option<RuntimeControls>=None;
         let mut capture_trace=capture_trace::Trace::with_calibration(*hardware_calibration,*hardware_calibration_bits);
         #[cfg(tuner_nsdf)]
         let mut nsdf_trace=nsdf_trace::Trace::new();
@@ -1842,17 +1865,46 @@ fn run(resources: &mut RuntimeResources) -> ! {
             let ui_elapsed_ms=now.wrapping_sub(last_ui_ms);
             if ui_elapsed_ms<ui_period_ms {continue;}
             last_ui_ms=now;
+            critical_section::with(|cs| {
+                let mut r=OWNERS.borrow_ref_mut(cs);
+                let q=MULTI_QUANT.borrow_ref(cs);
+                for n in 0..4 {if !q.lanes[n].active {r.release(Owner::Quant(n as u8));}}
+                if !PLAYBACK.borrow_ref(cs).active {r.release(Owner::Play);}
+                if !calibration.active() {r.release(Owner::Calibration);}
+            });
+            // The menu may be browsed freely, but an active operation keeps
+            // the route/settings captured when it started.
+            if calibration.active() {
+                if let Some(c)=calibration_controls {with_app(|app| {
+                    app.ui.opts.calibrate.input.value=c.calibration_input;
+                    app.ui.opts.calibrate.output.value=c.calibration_output;
+                    app.ui.opts.calibrate.zero_note.value=c.zero_note;
+                    if calibration.verifying {
+                        app.ui.opts.verify.mode.value=if c.verify_points {options::VerifyMode::Points}
+                            else if c.verify_scan {options::VerifyMode::Scan} else {options::VerifyMode::Manual};
+                    }
+                });}
+            }
+            critical_section::with(|cs| {
+                let play=PLAYBACK.borrow_ref(cs);
+                if play.active {with_app(|app| {
+                    app.ui.opts.play.input.value=play.input;
+                    app.ui.opts.play.quantize.value=if play.chromatic {options::QuantizeMode::Chromatic} else {options::QuantizeMode::Off};
+                });}
+            });
             let ui_frame = poll_ui_frame();
+            if ui_frame.run_tuner {critical_section::with(|cs| {
+                let owner=Owner::Tuner(ui_frame.controls.tuner_input);
+                let mut r=OWNERS.borrow_ref_mut(cs);
+                *TUNER_STATUS.borrow_ref_mut(cs)=if r.held(owner) {r.release(owner);"INPUT RELEASED"}
+                    else if r.claim(owner,1<<ui_frame.controls.tuner_input,0) {"TUNING - INPUT RESERVED"}
+                    else {"INPUT BUSY - STOP ITS OWNER"};
+            });}
             if ui_frame.run_play && ui_frame.controls.mode==runtime::OperatingMode::Quantizer {
                 critical_section::with(|cs| {
                     let mut q=MULTI_QUANT.borrow_ref_mut(cs);
-                    if q.running {q.stop(&tuner,"STOPPED BY USER");}
-                    else if calibration.active() || calibration.pending_profile.is_some() || PLAYBACK.borrow_ref(cs).active {
-                        q.stop(&tuner,"STOP CAL / PLAY FIRST");
-                    } else {
-                        let channels=with_app(|app|app.quant_channels);
-                        q.start(&tuner,channels,ui_frame.now_ms as u32,counts_per_v as i32);
-                    }
+                    let (n,c)=with_app(|app|(app.quant_selected as usize,app.quant_channels[app.quant_selected as usize]));
+                    q.toggle(&tuner,n,c,ui_frame.now_ms as u32,counts_per_v as i32,&mut OWNERS.borrow_ref_mut(cs));
                 });
             }
             if ui_frame.run_play && matches!(ui_frame.controls.mode,
@@ -1866,6 +1918,9 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     } else if !calibration.active() {
                         if let (Some(profile),Some(route))=(calibration.profile.as_ref(),calibration.profile_route) {
                             let input=with_app(|app|app.ui.opts.play.input.value);
+                            if !OWNERS.borrow_ref_mut(cs).claim(Owner::Play,(1<<input)|(1<<route.input()),1<<route.output()) {
+                                play.status="CHANNEL BUSY - STOP ITS OWNER";return;
+                            }
                             if play.arm(profile,input,route.output(),ui_frame.controls.zero_note,
                                 counts_per_v as i32,ui_frame.now_ms as u32,tuner.cal_status().read().value().bits()) {
                                 play.chromatic=with_app(|app|app.ui.opts.play.quantize.value==options::QuantizeMode::Chromatic);
@@ -1936,7 +1991,10 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 let slot=with_app(|app|app.ui.opts.quant_setups.slot.value);
                 critical_section::with(|cs|*SETUP_STATUS.borrow_ref_mut(cs)=(slot,status));
             }
-            if ui_frame.save && !calibration.active() {
+            if (ui_frame.save || ui_frame.wipe) && (calibration.active() || outputs_running()) {
+                save_feedback.show("stop outputs first");menu_dirty_banks=0b11;
+            }
+            if ui_frame.save && !calibration.active() && !outputs_running() {
                 let result = if let Some(storage) = persistence.as_mut() {
                     let opts = snapshot_options_for_save();
                     if storage.save_options(&opts).is_ok() { "saved" } else { "failed" }
@@ -1944,7 +2002,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 save_feedback.show(result);
                 menu_dirty_banks = 0b11;
             }
-            if ui_frame.wipe && !calibration.active() {
+            if ui_frame.wipe && !calibration.active() && !outputs_running() {
                 save_feedback = feedback::Feedback::default();
                 menu_dirty_banks = 0b11;
                 if let Some(storage) = persistence.as_mut() {
@@ -2002,20 +2060,33 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 }
                 if refine {
                     capture_trace.cancel(&tuner);
-                    calibration.start_refinement(&tuner,controls,ui_frame.now_ms);
+                    let can_start=!calibration.active() && !critical_section::with(|cs|PLAYBACK.borrow_ref(cs).active)
+                        && calibration.profile_route.is_some_and(|route|critical_section::with(|cs|
+                            OWNERS.borrow_ref_mut(cs).claim(Owner::Calibration,1<<route.input(),1<<route.output())));
+                    if can_start {calibration_controls=Some(controls);calibration.start_refinement(&tuner,controls,ui_frame.now_ms);}
+                    else {calibration.status="BUSY - STOP OWNER BEFORE REFINE";}
                     verification[calibration.input as usize].clear();refine=false;
                 }
                 if run_verify {
                     capture_trace.cancel(&tuner);
                     run_verify=false;
-                    calibration.toggle_verify(&tuner,controls,ui_frame.now_ms);
+                    let can_start=calibration.verifying || (!calibration.active()
+                        && !critical_section::with(|cs|PLAYBACK.borrow_ref(cs).active)
+                        && calibration.profile_route.is_some_and(|route|critical_section::with(|cs|
+                            OWNERS.borrow_ref_mut(cs).claim(Owner::Calibration,1<<route.input(),1<<route.output()))));
+                    if can_start {calibration_controls=Some(controls);calibration.toggle_verify(&tuner,controls,ui_frame.now_ms);}
+                    else {calibration.status="NO PROFILE OR CHANNEL BUSY";}
                     verification[calibration.input as usize].clear();
                 }
                 if run_calibration {
                     capture_trace.cancel(&tuner);
                     run_calibration = false;
                     if controls.mode == runtime::OperatingMode::Calibrator {
-                        calibration.toggle(&tuner, controls, ui_frame.now_ms);
+                        let can_start=!calibration.verifying && !critical_section::with(|cs|PLAYBACK.borrow_ref(cs).active)
+                            && (calibration.active() || critical_section::with(|cs|OWNERS.borrow_ref_mut(cs).claim(
+                                Owner::Calibration,1<<controls.calibration_input,1<<controls.calibration_output)));
+                        if can_start {calibration_controls=Some(controls);calibration.toggle(&tuner, controls, ui_frame.now_ms);}
+                        else {calibration.status="CHANNEL BUSY - STOP ITS OWNER";}
                         verification[calibration.input as usize].clear();
                     }
                 }
@@ -2062,7 +2133,10 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 }
                 #[cfg(not(tuner_nsdf_continuous))]
                 let previous_rejection=calibration.tracking_failure.map(|f|f.rejected.millicents);
-                calibration.tick(&tuner, measurements.channel(calibration.input), controls, ui_frame.now_ms);
+                let active_controls=calibration_live::background_controls(
+                    calibration_controls.unwrap_or(controls),controls,calibration.verifying);
+                if calibration.active() {calibration_controls=Some(active_controls);}
+                calibration.tick(&tuner, measurements.channel(calibration.input), active_controls, ui_frame.now_ms);
                 // Legacy lag/factor diagnostics describe the old verifier,
                 // not the NSDF measurements now used by the calibration run.
                 #[cfg(not(tuner_nsdf_continuous))]

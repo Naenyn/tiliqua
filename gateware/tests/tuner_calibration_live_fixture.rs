@@ -418,6 +418,24 @@ mod pac {
             assert!(!live.verifying);assert_eq!(p.command.get(),0);
         }
     }
+    #[test] fn background_scan_ignores_navigation_but_explicit_stop_still_works() {
+        let mut live=ready();let p=pac::TUNER_PERIPH::default();let mut started=controls();
+        started.mode=OperatingMode::Verify;started.verify_scan=true;
+        live.toggle_verify(&p,started,0);p.ack();
+        let mut viewed=started;viewed.mode=OperatingMode::Tuner;viewed.verify_scan=false;
+        viewed.calibration_input=3;viewed.calibration_output=3;
+        let active=calibration_live::background_controls(started,viewed,true);
+        live.tick(&p,ChannelMeasurement::default(),active,120);
+        assert!(live.active());assert_ne!(p.command.get()&(1<<18),0);
+        live.toggle_verify(&p,started,140);assert!(!live.active());assert_eq!(p.command.get(),0);
+        let mut sweep=calibration_live::Live::new();started=controls();
+        sweep.toggle(&p,started,0);p.ack();
+        let active=calibration_live::background_controls(started,viewed,false);
+        sweep.tick(&p,ChannelMeasurement::default(),active,20);p.ack();
+        sweep.tick(&p,ChannelMeasurement::default(),active,40);
+        assert!(sweep.active());assert_eq!(sweep.input,started.calibration_input);
+        assert_eq!(sweep.output,started.calibration_output);
+    }
     #[test] fn verification_scan_cancels_on_exit_mode_change_output_fault_or_second_run() {
         for scenario in 0..6 {
             let mut live=ready();let p=pac::TUNER_PERIPH::default();let mut c=controls();

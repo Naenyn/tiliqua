@@ -32,7 +32,7 @@ started -5..+5 V oscillator tracking sweep with up to 121 points; see
 [calibration status and hardware test](CALIBRATION.md). VERIFY can apply the
 RAM profile to a requested note name/octave and cents offset, showing measured error
 against that target (fixed A4=440 Hz). It uses the successful calibration's
-route, requires Run to start, and stops on leaving VERIFY or a range/output
+route, requires Run to start, and stops on explicit stop or a range/output
 error. PLAY provides single-channel external-CV playback through that same curve.
 Otherwise outputs remain at zero, including
 while sitting on CAL before a run.
@@ -82,8 +82,8 @@ It then shows the tested/total count, worst signed mean
 error and its target, and maximum within-target pitch span. These are measured
 results, not an automatic pass/fail threshold. A two-octave profile typically
 has 48–49 targets and takes about a minute, depending on detector windows.
-Completion restores zero; Run again, exiting VERIFY, or changing verification
-mode also stops output. Missing/unstable input times out after five seconds per
+Completion restores zero; Run again also stops output. Navigation keeps the run
+active; verification mode is locked until it stops. Missing/unstable input times out after five seconds per
 target. Partial results remain visible but are not a complete scan. No scan
 result changes or saves the calibration curve. Results are not retained on boot.
 
@@ -121,15 +121,15 @@ Choose CHROMATIC, MAJOR, natural MINOR, MAJ PENTA, MIN PENTA, or 24 EDO
 quantized result by -12..+12 semitones, including in chromatic mode. The scale
 root is anchored in the octave containing the selected 0 V note. The 0 V note
 still determines CV-to-pitch conversion, not the oscillator's actual tuning.
-Changing input/output/zero-note/scale/root/transpose or leaving the page stops output; RUN is
-required again. It never arms automatically at startup, recall, or page entry.
+Running channel settings are locked; stop that channel before changing them.
+Navigation does not stop output. It never arms automatically at startup, recall, or page entry.
 
 MAPPING selects NEAREST or EQUAL. EQUAL divides the full repeating input span
 into equal-width bins, one per selected degree, beginning at the root. Output
 intervals remain the selected pitches; this does not mean equal temperament.
 For a five-note one-octave pattern each bin spans 0.2 V of input. A two-octave
 pattern with four total notes uses four 0.5 V bins, even if the halves contain
-different numbers of notes. Changing mapping also stops output and requires RUN.
+different numbers of notes. Stop the selected channel before changing mapping.
 
 CUSTOM 2 uses the NOTES menu: choose octave A/B, choose a note, then TOGGLE.
 CLEAR and FILL affect only the selected octave. Both active halves repeat as
@@ -145,26 +145,28 @@ RAM. Existing single-pattern saves remain in slot 1 without migration. These slo
 store note masks, not channel setups or imported microtonal scales.
 Saving oscillator profiles or settings does not save these masks. The status
 line distinguishes edited, saved, loaded, missing, and failed records. Loading
-invalid data leaves the current edits intact. Opening NOTES stops output. Return to QUANT, select
+invalid data leaves the current edits intact. Opening NOTES does not stop output;
+edits to an active channel are rejected. Return to QUANT, select
 CUSTOM 2, and RUN to audition. No new renderer or microtonal-format restriction
 is introduced by this conventional 24-note editor.
 
 QUANT's **output** selector now selects independent settings for OUT 0–3:
 input, 0 V note, scale, root, transpose, mapping, and the two note masks.
-Switching output stops playback and recalls that output's settings in RAM.
+Switching output recalls that output's settings in RAM without stopping playback.
 NOTES edits/loads only the selected output's pattern. Pattern slots are reusable
 copies: editing a channel does not modify a saved pattern or another channel.
-QUANT **RUN starts/stops all four outputs**, each using its own configuration.
+QUANT **RUN starts/stops only the selected output**, using its own configuration.
 Two outputs are calculated per 1 ms interrupt, giving each output a 500 Hz update
 rate. Both batches use the same captured input readings, and all four staged
 voltages are committed together at one DAC update boundary. Safety disables
 remain immediate rather than waiting for a group commit.
-Editing controls, switching the channel selector, or leaving QUANT stops
-all outputs and requires RUN again. An empty custom pattern cannot arm its lane.
+Running settings are locked; channel selection and page navigation do not stop
+outputs. An empty custom pattern cannot arm its lane.
 Per-lane stale CV, missing ACK, rail, and output faults stop that lane; scheduling
 or shared CPU-budget faults stop the whole group. Calibration/corrected PLAY has
-hardware priority and disables the quantizer outputs without automatic rearming.
-The 500 Hz implementation has passed live operation and routed FPGA timing.
+hardware priority only on its reserved output; unrelated quantizer lanes continue.
+The earlier four-quantizer implementation passed live operation; mixed-mode
+operation passes simulation and routed FPGA timing but awaits hardware validation.
 Direct physical CV edge alignment remains unmeasured; see the checkpoint.
 Four lightweight lanes share the scale/mapping implementation;
 they do not retain four copies of the oscillator calibration profile.
@@ -199,7 +201,7 @@ applying the same measured calibration curve. Midpoint ties round upward; once
 a note is selected, it is retained until pitch moves more than 55 cents from it
 (five cents beyond the usual boundary). Large changes jump directly to the
 nearest note. Stop/restart clears that history. Changing quantization mode during
-playback stops output and requires RUN again. Unreachable selected notes hold
+playback is blocked until explicit stop. Unreachable selected notes hold
 the last valid output and resume automatically on reentry; before the first valid
 note output remains disabled. Notes are never clamped to the profile edge.
 Fresh out-of-range samples renew the held command, while stale measurements,
@@ -222,7 +224,7 @@ HELP in the page list). PLAY/input selects the pitch-CV source; the output comes
 from the loaded profile and cannot be silently rerouted. Oscillator audio can
 remain patched to its tuner input. Supply 1 V/oct pitch CV, where 0 V means the
 profile's saved zero-note setting (normally C4). RUN explicitly starts/stops.
-Leaving PLAY or changing its input stops output. Loading a profile never starts
+Leaving PLAY does not stop output; its input is locked while running. Loading a profile never starts
 playback. The original calibration and all saved profiles remain unchanged.
 
 PLAY uses a separate DC-preserving 64-sample snapshot and a 1-kHz interrupt

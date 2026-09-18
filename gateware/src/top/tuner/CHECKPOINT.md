@@ -1,5 +1,10 @@
 # TUNER pause checkpoint — September 13, 2026
 
+**September 18 update:** development resumed for operation-owned channel
+reservations and concurrent modes. See [CONCURRENCY.md](CONCURRENCY.md) for the
+new behavior, build evidence and pending hardware test. The pause snapshot below
+is historical; its page-change/setting-change stop behavior is superseded.
+
 Work is paused at the user's request. This file supersedes earlier "next step"
 and pending-trial statements in the dated investigation documents. Active branch
 is `codex/tuner`; latest implementation commit is `26d3891e`. No remote push is
