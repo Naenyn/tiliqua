@@ -191,13 +191,8 @@ fn redraw_ui_menu(
     hue: u8,
 ) {
     menu.clear();
-    Rectangle::new(
-        Point::new(0, 0),
-        Size::new(OVERLAY_UI_MENU_W as u32, OVERLAY_UI_MENU_H as u32),
-    )
-    .into_styled(PrimitiveStyle::with_fill(HI8::new(0, 0)))
-    .draw(menu)
-    .ok();
+    // clear() already zeros the packed bitmap. Repainting it black pixel by
+    // pixel adds a PSRAM read/modify/write for every menu pixel.
     draw_scope_menu(
         menu,
         opts,
