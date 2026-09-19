@@ -681,3 +681,21 @@ decoders preserve the 2% rule for archival policies 0–3 and test that the same
 3%-RMS frame passes the old gate and fails the new one. A full routed build,
 broader tests and a fresh physical scan are required before declaring this
 remaining upper-range issue fixed.
+
+Candidate `e3b1e805` subsequently passed 276 regression tests (19 optional long
+tests skipped), including hardware acquisition/score simulations. Full routing
+passes: system 65.85/60 MHz, pixel 89.84/74.25 MHz, serializer 432.90/371.33 MHz,
+audio 70.31/49.152 MHz. RAM/DSP remain 45/56 EBR and 14/28 DSP; CPU working RAM
+remains 32 KiB. Logic mapped to 19442/24288 LUT4 (20668 TRELLIS_COMB), versus
+18894 LUT4 (20116 TRELLIS_COMB) in the preceding full build. The 548-LUT change
+is 2.26 percentage points of the FPGA, not a zero-cost claim despite unchanged
+buffer/tap/arithmetic architecture. Firmware is 237944 bytes in PSRAM.
+Bitstream SHA256:
+`ed4bee5082fee1d0a070c8f6bcd956958b37aec62d4645679a9e96d7df1ddcfb`.
+The build remains R5, 192 kHz, unrotated 1280x720p60, spread spectrum 0.0.
+
+Flashed to slot 1 successfully (`Refresh: DONE`, exit zero), preserving the
+24576-byte options/profile region. Flash log: `/tmp/tuner-filter-flash.log`.
+Fresh serial log: `/tmp/tuner-filter-e3b1e805.serial.log`. Next physical test is
+CAL input 2 / output 1 on the unchanged Generate3 FUNDAMENTAL patch and tuning;
+confirm range discovery passes +4.25 V and automatic checking still completes.
