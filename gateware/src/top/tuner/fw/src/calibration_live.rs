@@ -387,7 +387,7 @@ impl Live {
             // observations may not fit the manual readout's 500 ms window.
             self.deviation=if self.scan.is_some() && self.target_millicents<=LOW_PITCH {
                 averaged.map(|v|Summary{mean:v.mean as f32/1000.0,spread:v.spread as f32/1000.0,
-                    count:8,averaged:true})
+                    count:crate::oscillator_calibration::averaging::WINDOWS,averaged:true})
             } else if self.scan.is_some() {
                 self.statistics.summary_with_max_age(now,4000)
             } else {self.statistics.summary(now)};

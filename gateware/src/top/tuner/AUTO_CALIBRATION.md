@@ -86,7 +86,8 @@ reading itself matched the preflight within 0.06 cents. This does not establish
 whether the variation originates in the oscillator, detection or both.
 
 Below C3 (about 131 Hz), a failed tight-window acquisition now falls back to
-eight non-overlapping measurement windows. Raw span must stay within 8 cents;
+sixteen non-overlapping measurement windows (initially eight; see retry below).
+Raw span must stay within 8 cents;
 quarter-block means must agree within 2 cents and half-block means within 1
 cent. Fresh overlapping observations still participate in the raw-span guard,
 so decimation cannot conceal alternating outliers. The initial 350 ms settling
@@ -139,7 +140,7 @@ mostly close readings but cannot establish what happened between logged frames.
 Do not widen acceptance thresholds from this decimated trace. A diagnostic-only
 follow-up retains the failed point's eligible qualified/unqualified counts,
 tight-window count, averaging-window count, overlap skips, span/gap reset counts,
-raw span, quarter/half mean differences, and up to eight actual retained pitches.
+raw span, quarter/half mean differences, and actual retained pitches.
 These are emitted as `CAL ACQUIRE` and `CAL AVG` after failure, before the sweep
 object is discarded. Pitches/differences are in integer millicents; counts refer
 to frames that passed the sweep's timestamp/route/sequence eligibility checks.
@@ -147,10 +148,24 @@ Counters reset for each voltage; averaging counters also reset after invalid
 measurements. Logging does not change acquisition policy or extend a deadline.
 The snapshot costs bounded firmware RAM only; no detector or FPGA change.
 
+The diagnostic retry failed at -2.33325 V: 49 qualified frames, zero unqualified,
+24 overlap skips, and no span/gap resets. Raw span was 6.840 cents. The final
+eight readings' half means differed by only 0.437 cents, but quarter means
+(only two readings each) differed by 4.365 cents. This identifies the failing
+guard, not whether the variation originates in detection or the oscillator.
+The low-note fallback now retains sixteen non-overlapping windows: four per
+quarter and eight per half. The 8-cent raw, 2-cent quarter, 1-cent half and
+5-second deadline limits are unchanged. Tight-window acquisition is unchanged.
+Tests replay a clearly synthetic repetition of that snapshot at every phase,
+reject drift/outliers/overlap aliasing, and check full serial packet capacity.
+This adds 32 bytes per averaging buffer/snapshot, with no new FPGA resources.
+Physical confirmation of the longer-window policy remains pending.
+
 Host coverage includes complete automatic operation, navigation during work,
 successful refinement, rejection of full-range regressions, cancellation,
 deadline and output-fault rollback, profile serialization, journal recovery and
-actual menu labels/navigation. The broader 176-test regression suite passes.
+actual menu labels/navigation. The broader 178-test regression suite passes,
+including the live adapter's 139 Rust subtests.
 
 On hardware, run CAL once with the existing calibration patch and stable sine.
 Confirm that measuring, checking and any justified improvement proceed without

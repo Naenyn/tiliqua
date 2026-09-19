@@ -6,6 +6,7 @@ impl Summary {
     /// Keep raw spread in reports, not the much smaller spread of block means.
     pub fn settled(&self,pitch:i32)->bool {
         self.count>=8 && self.mean.is_finite() && self.spread.is_finite()
+            && (!self.averaged || self.count>=super::averaging::WINDOWS)
             && self.spread>=0.0 && (self.spread<=3.0 || (self.averaged
                 && pitch<=super::averaging::LOW_PITCH && self.spread<=8.0))
     }
@@ -38,11 +39,12 @@ impl Deviation {
 #[cfg(test)] mod tests {
     use super::*;
     #[test] fn wider_span_requires_bounded_average_and_low_pitch() {
-        let s=Summary{mean:0.3,spread:4.8,count:8,averaged:true};
+        let s=Summary{mean:0.3,spread:4.8,count:super::super::averaging::WINDOWS,averaged:true};
         assert!(s.settled(super::super::averaging::LOW_PITCH));
         assert!(!s.settled(super::super::averaging::LOW_PITCH+1));
         assert!(!Summary{averaged:false,..s}.settled(3_000_000));
         assert!(!Summary{count:7,..s}.settled(3_000_000));
+        assert!(!Summary{count:8,spread:0.0,..s}.settled(3_000_000));
         assert!(!Summary{spread:8.1,..s}.settled(3_000_000));
         assert!(!Summary{mean:f32::NAN,..s}.settled(3_000_000));
     }

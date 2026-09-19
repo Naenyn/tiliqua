@@ -90,6 +90,15 @@ mod pac {
         assert!(report.contains("CAL AVG PITCH_MC="));assert!(report.len()<1000);
         let mut repeated=String::new();serial_report::verification(&mut repeated,&live).unwrap();
         assert_eq!(report,repeated); // no acquisition state is consumed by logging
+        // A full sixteen-window failure must also fit the serial packet with
+        // room for its capture/status prefix, even with maximal integer widths.
+        let a=&mut live.failure_acquisition.as_mut().unwrap().average;
+        a.count=oscillator_calibration::averaging::WINDOWS;
+        a.values.fill(i32::MIN);a.seen=u16::MAX;a.overlap=u16::MAX;
+        a.span_resets=u16::MAX;a.gap_resets=u16::MAX;
+        a.raw_span=u32::MAX;a.quarter_delta=u32::MAX;a.half_delta=u32::MAX;
+        let mut full=String::new();serial_report::verification(&mut full,&live).unwrap();
+        assert!(full.len()+400<1536,"{}",full.len());
         live.toggle_automatic(&p,c,1_000_000);
         assert!(live.failure_acquisition.is_none());
     }
