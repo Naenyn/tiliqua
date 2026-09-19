@@ -200,6 +200,20 @@ oscillator, without Tiliqua driving its V/oct, and log the tuner without a
 calibration sweep. Compare that with Generate3 before altering thresholds
 or enlarging the detector. Saved profiles remain unchanged.
 
+The user supplied a steady Twin Waves sine near 25 Hz on IN1, while OUT1
+remained connected to Generate3 with its controls unchanged. A fresh serial
+capture on September 19 (`/tmp/tuner-twinwaves-25hz-0919.serial.log`) produced
+125 qualified logged low-bank observations over 51.124 seconds: min 24.987 Hz,
+mean 24.993448 Hz, max 25.000 Hz; 0.9005 cents peak-to-peak and 0.1766 cents
+population standard deviation. The scheduler fault count remained zero.
+These are periodically logged observations, not every detector frame and not
+an absolute-frequency accuracy measurement. This establishes repeatable
+low-frequency measurement for this independent source, but does not rule out
+waveform-dependent error or distinguish Generate3 variation from output-CV
+variation. Next isolation step: retain Twin Waves' tuning, connect OUT1 to
+its V/oct instead, and run automatic calibration on IN1/OUT1. No detector or
+stability-threshold change is justified by this comparison alone.
+
 Host coverage includes complete automatic operation, navigation during work,
 successful refinement, rejection of full-range regressions, cancellation,
 deadline and output-fault rollback, profile serialization, journal recovery and
