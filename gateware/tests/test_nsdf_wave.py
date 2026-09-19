@@ -106,3 +106,51 @@ def test_blindly_extending_lags_can_regress_alternating_cycle_signal():
     assert max(errors[1])>.5
     # The longest accepted multiple may be odd and retain alternating-cycle
     # bias. Do not deploy a larger lag range alone as a universal correction.
+
+
+def run_selector(tmp_path, cases):
+    import subprocess
+    exe=tmp_path/'selector'
+    subprocess.run([str(Path.home()/'.cargo/bin/rustc'),'--edition=2021','-O',
+                    '-C','overflow-checks=yes',str(Path(__file__).parent/'nsdf_selector_fixture.rs'),
+                    '-o',str(exe)],check=True)
+    payload=''.join('low '+' '.join(map(str,s))+'\n' for s in cases)
+    return [line.split() for line in subprocess.check_output([exe],input=payload,text=True).splitlines()]
+
+
+@pytest.mark.parametrize('frequency,last,count,old_min,old_max,new_max',[
+    (25,501,6,4.4,4.6,.5),(21,601,7,7.2,7.4,.6),
+])
+def test_firmware_strongest_repeat_on_physical_waveforms(tmp_path,frequency,last,count,old_min,old_max,new_max):
+    fixture=json.loads((Path(__file__).parent/f'fixtures/nsdf-gen3-fundamental-{frequency}-wave.json').read_text())
+    text=''
+    for source,cpu,io,frame,wave in zip(fixture['source_reports'],fixture['cpu_reports'],
+                                      fixture['io_reports'],fixture['frames'],fixture['waveforms']):
+        text+=''.join('NSDF '+name+' '+' '.join(f'{k}={v}' for k,v in data.items())+'\n'
+                     for name,data in [('SOURCE',source),('CPU',cpu),('IO',io)])+frame+wave
+    reports=list(analyze_wave(text))
+    assert len(reports)==count
+    # Recalculate only lags supported by these exact captured samples. Never
+    # extend/tile a waveform or present historical captures as new hardware.
+    lines=run_selector(tmp_path,[replay(r['samples'],last) for r in reports])
+    assert all(line[2]=='true' for line in lines)
+    span=lambda values:1200*math.log2(max(values)/min(values))
+    assert old_min<span([r['hz'] for r in reports])<old_max
+    assert span([float(line[0]) for line in lines])<new_max
+
+
+def test_current_firmware_alternating_cycle_accuracy_grid(tmp_path):
+    import numpy as np
+    from nsdf_refinement_probe import scores_for
+    cases=[];truth=[]
+    for hz in (20.2,21,25,40,50,70,100):
+        for amplitude in (72,14000):
+            for phase in np.linspace(0,2,32,endpoint=False):
+                p=np.arange(674)*hz/6000+phase
+                x=np.rint(amplitude*(np.sin(2*np.pi*p)+.0076*np.sin(np.pi*p+.7)+.0091*np.sin(3*np.pi*p+.4)))
+                cases.append(scores_for(x,621));truth.append((hz,amplitude))
+    lines=run_selector(tmp_path,cases)
+    assert len(lines)==len(truth)
+    for line,(hz,amplitude) in zip(lines,truth):
+        assert line[2]=='true'
+        assert abs(1200*math.log2(float(line[0])/hz))<(.5 if amplitude==72 else .05)

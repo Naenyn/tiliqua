@@ -45,12 +45,12 @@ impl Trace {
         match self.state {
             0 => {
                 if now < self.due { return; }
-                if nsdf.identity().read().value().bits() != 0x4e534404 {
+                if nsdf.identity().read().value().bits() != 0x4e534405 {
                     self.pending.push_str("NSDF ERROR incompatible gateware\n").ok();
                     self.due = now.saturating_add(5000); return;
                 }
                 let fill = nsdf.fill().read().value().bits();
-                if (if self.low { (fill >> 16) & 2047 } else { fill & 2047 }) < (if self.low { 604 } else { 674 }) {
+                if (if self.low { (fill >> 16) & 2047 } else { fill & 2047 }) < 674 {
                     self.due = now.saturating_add(100); return;
                 }
                 nsdf.control().write(|w| unsafe { w.value().bits(1 | ((self.low as u32) << 2) | ((self.channel as u32) << 3)) });
@@ -59,7 +59,7 @@ impl Trace {
             1 => {
                 let status = nsdf.status().read().value().bits();
                 if status & 2 == 0 && now.saturating_sub(self.started) < 1000 { return; }
-                let last = if self.low { 301 } else { 321 };
+                let last = if self.low { 621 } else { 321 };
                 if status & 0x1c != 0 || status & 2 == 0 || status >> 16 != last + 1 {
                     nsdf.control().write(|w| unsafe { w.value().bits(2) });
                     write!(self.pending,"NSDF ERROR ch={} low={} status={:08x}\n",self.channel,self.low,status).ok();
@@ -103,7 +103,7 @@ impl Trace {
                 let (hz,raw,clarity,qualified)=result.map_or((0,0,0,false),|r|
                     ((r.hz*1000.0) as u32,(r.unrefined_hz*1000.0) as u32,
                      (r.clarity*1000000.0) as u32,r.qualified));
-                write!(self.pending,"NSDF CPU ch={} low={} seq={} mhz={} raw={} ppm={} ok={} cycles={} reads={} guard={} gc={} policy=1\n",
+                write!(self.pending,"NSDF CPU ch={} low={} seq={} mhz={} raw={} ppm={} ok={} cycles={} reads={} guard={} gc={} policy=2\n",
                     self.channel,self.low,nsdf.sequence().read().value().bits(),hz,raw,clarity,qualified,cycles,reads,guard,guard_cycles).ok();
                 self.state=if FAST {7} else {5};
             }
@@ -123,7 +123,7 @@ impl Trace {
                 // Separate diagnostic baseline for one full score-register
                 // sweep. Not part of selector timing or production work.
                 // Interrupts stay enabled; elapsed times include ISR work.
-                let count=if self.low {302} else {322};
+                let count=if self.low {622} else {322};
                 let started=crate::playback_cycles();
                 let mut checksum=0_u32;
                 for index in 0..count {
@@ -138,16 +138,16 @@ impl Trace {
             }
             4 => {
                 let status=nsdf.status().read().value().bits();
-                let last=if self.low {301} else {321};
+                let last=if self.low {621} else {321};
                 let energy = (nsdf.energy_low().read().value().bits() as u64)
                     | ((nsdf.energy_high().read().value().bits() as u64) << 32);
                 write!(self.pending,"NSDF BEGIN ch={} low={} fs={} n={} last={} seq={} energy={} scaled={} clipped={}\n",
-                    self.channel,self.low,if self.low {6000} else {192000},if self.low {604} else {674},last,
+                    self.channel,self.low,if self.low {6000} else {192000},674,last,
                     nsdf.sequence().read().value().bits(),energy,(status>>8)&1,(status>>9)&1).ok();
                 self.index=0;self.state=2;
             }
             2 => {
-                let count = if self.low { 302 } else { 322 };
+                let count = if self.low { 622 } else { 322 };
                 if self.index == count {
                     self.pending.push_str("NSDF END\n").ok(); self.state=8;
                 } else {
@@ -160,11 +160,11 @@ impl Trace {
             8 => {
                 write!(self.pending,"NSDF WAVE ch={} low={} seq={} n={}\n",
                     self.channel,self.low,nsdf.sequence().read().value().bits(),
-                    if self.low {604} else {674}).ok();
+                    674).ok();
                 self.index=0;self.state=9;
             }
             9 => {
-                let count=if self.low {604} else {674};
+                let count=674;
                 if self.index==count {
                     self.pending.push_str("NSDF WAVE END\n").ok();self.state=3;
                 } else {

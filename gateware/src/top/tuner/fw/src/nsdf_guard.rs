@@ -19,7 +19,7 @@ pub fn passes(source:Source, channel:u8, low:bool, sequence:u32, frame_end:u32,
     let qn=source.squares*N;
     let ss=sum*sum;
     if ss>qn {return false;}
-    let samples=if low {604_u64} else {674};
+    let samples=674_u64;
     if clipped || energy>samples*(1_u64<<30) {return false;}
     let energy=energy*if scaled {4} else {1};
     if energy<=4*samples {return false;}

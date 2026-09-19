@@ -36,8 +36,8 @@ def test_explicit_native_endpoint_and_serial_line_bound():
           'frame_end=4294967295\n')
     assert len(line)<192
     line=('NSDF CPU ch=3 low=false seq=4294967295 mhz=20000000 '
-          'raw=20000000 ppm=1100000 ok=false cycles=4294967295 reads=707 '
-          'guard=false gc=4294967295 policy=1\n')
+          'raw=20000000 ppm=1100000 ok=false cycles=4294967295 reads=1307 '
+          'guard=false gc=4294967295 policy=2\n')
     assert len(line)<192
 
 
@@ -56,7 +56,7 @@ def test_export_identifies_selector_policy_without_reinterpreting_archives():
     current=re.sub(r'^NSDF CPU ([^\n]+)',update,original,flags=re.M)
     assert not next(analyze_source(current))['qualified']
     with pytest.raises(ValueError,match='unknown selector policy'):
-        list(analyze_source(current.replace('policy=1','policy=2')))
+        list(analyze_source(current.replace('policy=1','policy=3')))
 
 
 @pytest.mark.parametrize('offset',[-512,-40,0,128,512])

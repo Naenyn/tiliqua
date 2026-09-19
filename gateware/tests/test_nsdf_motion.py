@@ -51,13 +51,13 @@ def test_low_window_chirp_confidence_is_not_stationary_accuracy(tmp_path):
     exe=compile_fixture(tmp_path,'nsdf_selector_fixture')
     cases=[]
     for center,slope in [(50,0),(50,100),(50,300),(100,0),(100,300),(100,600)]:
-        t=(np.arange(604)-301.5)/6000
+        t=(np.arange(674)-336.5)/6000
         assert min(center+slope*t)>20
         samples=np.rint(10000*np.sin(2*np.pi*(center*t+.5*slope*t*t)+.4))
-        cases.append(scores_for(samples,301))
+        cases.append(scores_for(samples,621))
     payload=''.join('low '+' '.join(map(str,s))+'\n' for s in cases)
     lines=subprocess.check_output([exe],input=payload,text=True).splitlines()
     assert [l.split()[2] for l in lines]==['true','true','false','true','true','false']
-    # Synthetic counterexample: a clean sine that varies within the ~100-ms
+    # Synthetic counterexample: a clean sine that varies within the ~112-ms
     # window can lose periodicity qualification. This does not identify the
     # user's exact low-end waveform or justify lowering the confidence gate.

@@ -22,7 +22,7 @@ def test_cpu_selector_matches_model_without_frame_buffer(tmp_path):
             words=[int(x,16) for x in lines[1:-1]]
             cases.append((low,[x-(1<<32) if x&(1<<31) else x for x in words]))
     for low in (False,True):
-        fs,n,last,minimum,maximum=(6000,604,301,20,1500) if low else (192000,674,321,600,20000)
+        fs,n,last,minimum,maximum=(6000,674,621,20,1500) if low else (192000,674,321,600,20000)
         frequencies=list(np.geomspace(minimum*1.001,maximum*.999,24))
         frequencies.extend([minimum,maximum,minimum*(1-2e-6),maximum*(1+2e-6)])
         if not low:frequencies.extend([9900,10000,10100,18000,18500,19000,19900])
@@ -42,7 +42,7 @@ def test_cpu_selector_matches_model_without_frame_buffer(tmp_path):
     output=subprocess.run([str(exe)],input='\n'.join(lines)+'\n',capture_output=True,text=True,check=True).stdout.splitlines()
     assert len(output)==len(cases)
     for (low,scores),line in zip(cases,output):
-        expected=select(scores,6000 if low else 192000,20 if low else 600,1500 if low else 20000,fallback=True)
+        expected=select(scores,6000 if low else 192000,20 if low else 600,1500 if low else 20000,fallback=True,refine_quality=low)
         if expected is None:assert line.startswith('none ');continue
         hz,clarity,qualified,original,reads=line.split()
         assert (qualified=='true')==expected['qualified']
@@ -76,7 +76,7 @@ def test_bank_boundary_does_not_fold_upper_tone_into_low_bank(tmp_path,waveform)
         for phase in np.linspace(0,1,8,endpoint=False):
             cases.append(frequency)
             for low in (False,True):
-                fs,n,last=(6000,604,301) if low else (192000,674,321)
+                fs,n,last=(6000,674,621) if low else (192000,674,321)
                 p=(np.arange(n)*frequency/fs+phase)%1
                 x=np.rint(14000*(np.sin(2*np.pi*p) if waveform=='sine' else 4*np.abs(p-.5)-1))
                 lines.append(('low' if low else 'high')+' '+' '.join(map(str,scores_for(x,last))))

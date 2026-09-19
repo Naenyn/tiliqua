@@ -59,7 +59,7 @@ def test_physical_device_guard_vetoes_lfo_without_losing_quiet_sine(name):
 def reference(v):
     low,ch,seq,frame,end,n,total,q,status,energy,scaled,clipped=v
     offset=((frame-end+(1<<31))&0xffffffff)-(1<<31)
-    samples=604 if low else 674
+    samples=674
     if ch>3 or n!=20480 or status!=(1|(ch<<2)):return False
     if not (-512<=offset<=512 if low else frame==seq and 0<=offset<=512):return False
     if abs(total)>n*32768 or q>n*(1<<30) or total*total>q*n:return False
@@ -94,7 +94,7 @@ def test_actual_rust_guard_physical_and_arithmetic_boundaries(tmp_path):
     assert len(cases)>40
     rng=random.Random(104)
     for low in (0,1):
-        samples=604 if low else 674
+        samples=674
         for _ in range(2000):
             total=rng.randint(-20480*32768,20480*32768)
             q=rng.randint((total*total+20479)//20480,20480*(1<<30))

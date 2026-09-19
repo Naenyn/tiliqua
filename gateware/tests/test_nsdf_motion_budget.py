@@ -13,7 +13,7 @@ def test_actual_selector_exponential_motion_grid(tmp_path):
                     '-C','overflow-checks=yes',str(here/'nsdf_selector_fixture.rs'),'-o',str(exe)],check=True)
     cases=[]
     for low,frequencies in ((True,(25,55,110,220,440)),(False,(880,2000,10000))):
-        fs,n,last,minimum,maximum=(6000,604,301,20,1500) if low else (192000,674,321,600,20000)
+        fs,n,last,minimum,maximum=(6000,674,621,20,1500) if low else (192000,674,321,600,20000)
         for hz in frequencies:
             for speed in (0,.5,2,8):
                 for direction in ((1,) if speed==0 else (-1,1)):
@@ -23,7 +23,7 @@ def test_actual_selector_exponential_motion_grid(tmp_path):
                     for phase in (.03,.29,.61,.87):
                         for amplitude in (72,14000):
                             scores=scores_for(chirp(fs,n,hz,rate,phase,amplitude),last)
-                            model=select(scores,fs,minimum,maximum,fallback=True)
+                            model=select(scores,fs,minimum,maximum,fallback=True,refine_quality=low)
                             cases.append((low,speed,hz*2**(-rate*(n-1)/(2*fs)),scores,model))
     assert len(cases)==440
     payload=''.join(('low' if low else 'native')+' '+' '.join(map(str,scores))+'\n'

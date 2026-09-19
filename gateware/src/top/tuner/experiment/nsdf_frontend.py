@@ -22,7 +22,7 @@ class NsdfFrontend(wiring.Component):
             'start':In(1),'cancel':In(1),'channel':In(2),'low_bank':In(1),
             'ready':Out(1),'busy':Out(1),'done':Out(1),'fault':Out(1),
             'native_filled':Out(range(1025)),'low_filled':Out(range(1025)),
-            'score_valid':Out(1),'score_ready':In(1),'lag':Out(range(322)),
+            'score_valid':Out(1),'score_ready':In(1),'lag':Out(range(622)),
             'score':Out(signed(22)),'frame_energy':Out(42),
             'inspect':In(1),'inspect_address':In(10),'inspect_sample':Out(signed(16)),
             'frame_sequence':Out(32),'frame_native_end':Out(32),'frame_channel':Out(2),'frame_low_bank':Out(1),
@@ -30,7 +30,7 @@ class NsdfFrontend(wiring.Component):
 
     def elaborate(self,platform):
         m=Module();m.submodules.acquisition=a=NsdfAcquisition(self.coefficients)
-        m.submodules.snapshot=s=NsdfSnapshot();m.submodules.score=d=NsdfDirect()
+        m.submodules.snapshot=s=NsdfSnapshot();m.submodules.score=d=NsdfDirect(max_lag=621)
         m.submodules.low_history=history=Memory(shape=17,depth=4096,init=[])
         write=history.write_port();read=history.read_port()
         write_head=Signal(10);low_head=Signal(10);low_sequence=Signal(32);low_valid=Signal()
@@ -42,7 +42,7 @@ class NsdfFrontend(wiring.Component):
             self.native_filled.eq(a.filled),self.overrun.eq(a.overrun),
             self.ready.eq(~self.busy & ~a.overrun),accepting.eq(self.start & self.ready & ~self.cancel),
             s.start.eq(launch),s.cancel.eq(self.cancel),s.channel.eq(self.frame_channel),
-            s.length.eq(Mux(self.frame_low_bank,604,674)),
+            s.length.eq(674),
             s.head.eq(Mux(self.frame_low_bank,low_head,a.head)),
             s.sequence.eq(Mux(self.frame_low_bank,low_sequence,a.sequence)),
             s.filled.eq(Mux(self.frame_low_bank,self.low_filled,a.filled)),
@@ -53,7 +53,7 @@ class NsdfFrontend(wiring.Component):
             s.read_sample.eq(Mux(self.frame_low_bank,read.data[:16].as_signed(),a.raw_sample)),
             s.read_clipped.eq(Mux(self.frame_low_bank,read.data[16],
                 (a.raw_sample==32767)|(a.raw_sample==-32768))),
-            d.length.eq(s.length),d.limit.eq(Mux(self.frame_low_bank,301,321)),
+            d.length.eq(s.length),d.limit.eq(Mux(self.frame_low_bank,621,321)),
             d.clear.eq(accepting|self.cancel|s.fault|a.overrun),
             d.load_valid.eq(s.sample_valid),d.sample.eq(s.sample),s.sample_ready.eq(d.load_ready),
             d.start.eq(s.done & ~s.fault),d.ready.eq(self.score_ready),

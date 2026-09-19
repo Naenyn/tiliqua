@@ -39,6 +39,9 @@ fn publish_with(native:Frame,low:Frame,now:u64,live:bool)->Pitch {
     let support_age=if both {n.age.max(l.age)}else{age};
     // Source energy spans 20480/192000 s (107 ms rounded up), and its
     // published endpoint may precede the frame by 512 samples (another 3 ms).
+    // The low bank itself spans 674/6000 s (113 ms rounded up). Include
+    // that longer support whenever it participated, plus two ms rounding.
+    let window_ms=if r.source==1 || both {115} else {112};
     Pitch {mhz:r.mhz,source:r.source,generation:f.count,
-        end_age_ms,window_age_ms:support_age.saturating_add(112)}
+        end_age_ms,window_age_ms:support_age.saturating_add(window_ms)}
 }

@@ -53,7 +53,7 @@ def analyze_wave(text):
         seen.add(key)
         if key not in reports or key not in scores:raise ValueError('waveform lacks validated scores')
         samples=words(body)
-        n=604 if key[1] else 674
+        n=reports[key]['frame_samples']
         if int(meta['n'])!=n or len(samples)!=n:raise ValueError('wrong waveform length')
         if any(not -32768<=x<=32767 for x in samples):raise ValueError('sample is not signed 16 bit')
         if sum(x*x for x in samples)!=reports[key]['energy']:raise ValueError('waveform energy mismatch')

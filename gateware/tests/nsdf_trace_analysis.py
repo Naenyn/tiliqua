@@ -11,10 +11,12 @@ import math
 from pathlib import Path
 
 
-def select(scores,fs,minimum,maximum,refine=True,fallback=False,legacy_range_first=False):
+def select(scores,fs,minimum,maximum,refine=True,fallback=False,legacy_range_first=False,
+           refine_quality=False):
     values=[v/(1<<20) for v in scores];last=len(values)-1
     peaks=[];skipped=False;best=None
-    for k in range(1,last):
+    primary_last=min(last,301) if refine_quality else last
+    for k in range(1,primary_last):
         if values[k]<=0:
             skipped=True
             if best is not None:peaks.append(best);best=None
@@ -25,6 +27,10 @@ def select(scores,fs,minimum,maximum,refine=True,fallback=False,legacy_range_fir
         a,b,c=values[k-1:k+2];curvature=a-2*b+c
         shift=max(-.5,min(.5,.5*(a-c)/curvature)) if curvature<0 else 0
         return k+shift,b+.5*(c-a)*shift+.5*curvature*shift*shift
+    def quality(k):
+        a,b,c=scores[k-1:k+2];curvature=a-2*b+c
+        shift=((abs(a-c)<<19)//(-curvature))*(-1 if a>c else 1) if curvature<0 else 0
+        return b+(((c-a)*shift)>>22)
     candidates=[]
     for k in peaks:
         lag,height=interpolate(k);hz=fs/lag
@@ -36,6 +42,7 @@ def select(scores,fs,minimum,maximum,refine=True,fallback=False,legacy_range_fir
     hz=fs/lag;original_hz=hz;qualified=height>=.8
     if not minimum*(1-1e-6)<=hz<=maximum*(1+1e-6):return None
     if refine and qualified:
+        best_refinement=None
         largest=min(8,int((last-2)/lag))
         multiples=range(largest,1,-1) if fallback else [largest]
         for multiple in multiples:
@@ -44,12 +51,17 @@ def select(scores,fs,minimum,maximum,refine=True,fallback=False,legacy_range_fir
             choices=[k for k in range(max(1,center-1),min(last,center+2))
                 if values[k]>=values[k-1] and values[k]>values[k+1]]
             if choices:
-                refined_lag,refined_height=interpolate(max(choices,key=lambda k:values[k]))
+                k=max(choices,key=lambda k:values[k])
+                refined_lag,refined_height=interpolate(k)
                 refined_lag/=multiple;refined_hz=fs/refined_lag
                 if (refined_height>=max(.8,.9*height) and minimum<=refined_hz<=maximum
                         and abs(1200*math.log2(refined_hz/hz))<=10):
-                    hz=refined_hz;lag=refined_lag;height=min(height,refined_height)
-                    break
+                    if best_refinement is None or quality(k)>best_refinement[3]:
+                        best_refinement=(refined_hz,refined_lag,refined_height,quality(k))
+                    if not refine_quality:break
+        if best_refinement is not None:
+            hz,lag,refined_height,_=best_refinement
+            height=min(height,refined_height)
     return dict(hz=hz,lag=lag,clarity=height,qualified=qualified,unrefined_hz=original_hz)
 
 
@@ -65,8 +77,9 @@ def decode(lines):
             for key in ('ch','fs','n','last','seq','energy','scaled','clipped'):header[key]=int(header[key])
             if header['low'] not in ('true','false'):raise ValueError('invalid bank')
             low=header['low']=='true'
-            shape=(6000,604,301) if low else (192000,674,321)
-            if tuple(header[k] for k in ('fs','n','last'))!=shape or len(scores)!=shape[2]+1:
+            shape=tuple(header[k] for k in ('fs','n','last'))
+            valid_shapes=((6000,604,301),(6000,674,621)) if low else ((192000,674,321),)
+            if shape not in valid_shapes or len(scores)!=shape[2]+1:
                 raise ValueError('wrong frame size or sample rate')
             if not 0<=header['ch']<=3 or any(abs(v)>(1<<20) for v in scores):
                 raise ValueError('invalid channel or score')

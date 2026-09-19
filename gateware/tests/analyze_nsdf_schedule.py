@@ -33,7 +33,7 @@ def analyze_comparisons(text):
             raise ValueError('invalid comparison bounds')
         if r['src'] in (1,2):
             if not (r['gen']>0 and 20000<=r['mhz']<=20000000 and r['age']<=252
-                    and r['age']+110<=r['win']<=362):raise ValueError('invalid pitch window descriptor')
+                    and r['age']+110<=r['win']<=365):raise ValueError('invalid pitch window descriptor')
         elif (r['mhz'],r['gen'],r['age'],r['win'])!=(0,0,0xffffffff,0xffffffff):
             raise ValueError('invalid absent descriptor')
         if r['bq'] and r['bage']>250:raise ValueError('stale qualified baseline')

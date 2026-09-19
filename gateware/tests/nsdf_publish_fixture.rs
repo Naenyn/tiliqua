@@ -6,7 +6,9 @@ fn main() {
     assert_eq!(publish(empty,empty,100),Pitch::NONE);
     let n=f(880000,100,1);let l=f(880000,110,1);
     let p=publish(n,l,120);
-    assert_eq!((p.mhz,p.source,p.generation,p.end_age_ms,p.window_age_ms),(880000,1,1,16,136));
+    assert_eq!((p.mhz,p.source,p.generation,p.end_age_ms,p.window_age_ms),(880000,1,1,16,139));
+    assert_eq!(publish::display(n,l,120).window_age_ms,136);
+    assert_eq!(publish::display(empty,l,120).window_age_ms,129);
     assert_eq!(publish(n,l,357).source,0); // request age makes both stale
     assert_eq!(publish(n,l,109).source,2); // future low timestamp is rejected
     assert_eq!(publish(n,f(440000,120,2),121).source,3); // real step conflicts with old bank

@@ -27,14 +27,17 @@ def analyze_fast(text,round_robin=False):
             if fields[k]!=source[k] or fields[k]!=cpu[k]:raise ValueError('mixed summary identity')
         if fields['low'] not in ('true','false') or cpu['ok'] not in ('true','false'):
             raise ValueError('invalid boolean')
-        low=fields['low']=='true';n=604 if low else 674
+        policy=cpu.get('policy','0')
+        if policy not in ('0','1','2'):raise ValueError('unknown selector policy')
+        low=fields['low']=='true';n=604 if low and policy!='2' else 674
+        count=(622 if policy=='2' else 302) if low else 322
         channel=int(fields['ch']);sequence=int(fields['seq'])
         if not 0<=channel<(4 if round_robin else 1) or not 0<=sequence<1<<32:raise ValueError('invalid fast channel/sequence')
         energy=int(fields['energy']);scaled=int(fields['scaled']);clipped=int(fields['clipped'])
         if not 0<=energy<=n*(1<<30) or scaled not in (0,1) or clipped not in (0,1):
             raise ValueError('invalid frame energy/flags')
         reads=int(cpu['reads']);cycles=int(cpu['cycles']);hz=int(cpu['mhz'])/1000
-        if not 0<=reads<=2*(302 if low else 322)+63 or cycles<=0:
+        if not 0<=reads<=2*count+63 or cycles<=0:
             raise ValueError('invalid selector work')
         if not 0<=int(cpu['ppm'])<=1000000 or not 0<=hz<=20000:
             raise ValueError('invalid pitch summary')
@@ -48,7 +51,7 @@ def analyze_fast(text,round_robin=False):
         report=dict(channel=channel,bank='low' if low else 'native',sequence=sequence,
                     rms_counts=rms,qualified=qualified,gated=gated,hz=hz,
                     reads=reads,select_ms=cycles/60000,energy=energy,scaled=scaled,
-                    clipped=clipped,**guard_fields(cpu))
+                    clipped=clipped,frame_samples=n,**guard_fields(cpu))
         if 'frame_end' not in source:raise ValueError('fast summary lacks native endpoint')
         report=source_details(report,source)
         interval=None

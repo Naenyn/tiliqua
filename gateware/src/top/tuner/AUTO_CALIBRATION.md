@@ -440,6 +440,45 @@ Production `2ea8160c` was restored successfully after capture, and live serial
 measurements resumed with zero scheduler faults. Next physical control is
 FUNDAMENTAL near 21–22 Hz with the same unmodulated, V/oct-unpatched setup.
 
+### Bounded low-bank repeating-interval correction (September 19)
+
+The user set FUNDAMENTAL near 20.94 Hz, at approximately the lowest available
+AUDIO-mode tuning. No lower tuning or mode change is required. Seven additional
+matched physical waveform/score frames are retained in
+`tests/fixtures/nsdf-gen3-fundamental-21-wave.json`. Every score and energy
+replays exactly. Original estimates span 7.2724 cents. Recomputing lags through
+601 from those same 604 captured samples and selecting the strongest qualified
+repeating interval reduces the span to 0.5372 cents. This is repeatability,
+not an independently measured absolute-accuracy claim.
+
+The production correction uses 674 samples in the existing sample RAM and
+extends only low-bank scores through lag 621. At 20 Hz the double-period
+comparison now retains 74 overlapping samples. Initial pitch selection still
+uses the original first 301 lags: the additional short-overlap peaks cannot
+compete for the initial pitch or fabricate a lower fundamental. Refinement
+checks the existing maximum of seven nearby multiple-period candidates,
+selecting the greatest interpolated score (longer interval wins ties) rather
+than blindly accepting the longest. Native-bank policy is unchanged. Confidence,
+bank limits, 10-cent refinement agreement and calibration stability thresholds
+are unchanged. Exact frequency-floor edge behavior remains a limitation: a raw
+estimate just below 20 Hz is rejected rather than coerced into range.
+
+Low-window support increases from 100.67 to 112.33 ms. Publication explicitly
+accounts for that window when checking fresh/settled calibration evidence.
+Score RAM grows from 512 to 1024 words: one additional EBR is expected, with
+no additional multiplier or CPU frame buffer. Gateware identity `0x4e534405`
+and serial selection policy 2 distinguish this geometry from old captures.
+Final whole-device resource, timing and physical repeatability qualification
+must be recorded after building/testing; host evidence alone is insufficient.
+
+Regression coverage includes both exact physical captures through the actual
+Rust selector, 448 synthetic alternating-cycle cases (seven frequencies,
+two amplitudes and 32 phases), the 440-case moving-tone grid, bank-boundary
+folding, UART export integrity, settled-window ages and full-size RTL scores.
+The low hardware computation is explicitly bounded below 6 ms in simulation
+at 60 MHz, within its 10 ms scheduling slot. This excludes CPU selection time,
+which must also be measured on the installed production scheduler.
+
 Host coverage includes complete automatic operation, navigation during work,
 successful refinement, rejection of full-range regressions, cancellation,
 deadline and output-fault rollback, profile serialization, journal recovery and

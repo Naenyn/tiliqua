@@ -14,18 +14,19 @@ def test_low_bank_signed_history_and_scores(tap_count):
     samples=rng.integers(-15000,15000,(23000,4));observed=[];frames=[]
     async def bench(ctx):
         ctx.set(dut.channel,1);ctx.set(dut.low_bank,1);ctx.set(dut.score_ready,1)
-        batch=0;next_sample=0;started=False
-        for cycle in range(450000):
+        batch=0;next_sample=0;started=False;start_cycle=0
+        for cycle in range(550000):
             ctx.set(dut.start,0);ctx.set(dut.input_valid,0)
             if cycle>=next_sample:
                 assert ctx.get(dut.input_ready)
                 for ch in range(4):ctx.set(getattr(dut,f'sample{ch}'),int(samples[batch,ch]))
                 ctx.set(dut.input_valid,1);batch+=1;next_sample=cycle+(313 if started else 10)
-            if not started and ctx.get(dut.low_filled)>=610:
-                ctx.set(dut.start,1);started=True
+            if not started and ctx.get(dut.low_filled)>=680:
+                ctx.set(dut.start,1);started=True;start_cycle=cycle
             assert not ctx.get(dut.overrun)
             if ctx.get(dut.score_valid):observed.append((ctx.get(dut.lag),ctx.get(dut.score)))
             if ctx.get(dut.done):
+                assert cycle-start_cycle<360000 # <6 ms at 60 MHz; slot budget 10 ms.
                 assert not ctx.get(dut.fault)
                 assert ctx.get(dut.frame_channel)==1 and ctx.get(dut.frame_low_bank)
                 assert not ctx.get(dut.frame_clipped)
@@ -37,13 +38,13 @@ def test_low_bank_signed_history_and_scores(tap_count):
     sim=Simulator(dut);sim.add_clock(1/60e6);sim.add_testbench(bench);sim.run()
     sequence,energy=frames[0]
     low=[]
-    for seq in range((sequence-604)*32+32+warmup_offset,sequence*32+1+warmup_offset,32):
+    for seq in range((sequence-674)*32+32+warmup_offset,sequence*32+1+warmup_offset,32):
         total=sum(int(samples[seq-1-k,1])*c for k,c in enumerate(taps))
         low.append((total+65536)>>17)
     x=np.asarray(low,dtype=np.int64);x-=int(np.rint(x.mean()))
     assert energy==int(x@x)
     expected=[]
-    for lag in range(302):
+    for lag in range(622):
         first=x[:len(x)-lag];second=x[lag:]
         corr=int(first@second);denom=int(first@first+second@second)
         score=(abs(corr)<<21)//denom

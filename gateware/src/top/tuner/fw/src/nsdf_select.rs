@@ -16,7 +16,7 @@ struct Peak { lag: i32, height: i32 } // Q20 samples, Q20 NSDF
 pub fn select_frame(read:impl FnMut(usize)->i32,low:bool,energy:u64,scaled:bool,clipped:bool)->Option<Estimate> {
     // Exactly the existing >2-count RMS gate, before expensive score access.
     // Scaling halves samples, so unscale energy by four without multiplying it.
-    let samples=if low {604} else {674};
+    let samples=674;
     if clipped || energy<=samples*(if scaled {1} else {4}) {return None;}
     select(read,low)
 }
@@ -70,22 +70,32 @@ fn peaks(read: &mut impl FnMut(usize)->i32,last:usize,mut visit:impl FnMut(Peak)
     if let Some((k,a,b,c))=best { visit(peak(k,a,b,c)); }
 }
 
-pub fn select(mut read:impl FnMut(usize)->i32,low:bool)->Option<Estimate> {
-    let (fs,last,min,max)=if low {(6000_i64,301,20_i64,1500_i64)} else {(192000_i64,321,600_i64,20000_i64)};
+pub fn select(read:impl FnMut(usize)->i32,low:bool)->Option<Estimate> {
+    select_with_limit(read,low,if low {621} else {321})
+}
+
+// Explicit limit also lets host tests replay historical short captures through
+// the CURRENT policy, without retaining another detector in the bitstream.
+pub fn select_with_limit(mut read:impl FnMut(usize)->i32,low:bool,last:usize)->Option<Estimate> {
+    let (fs,min,max)=if low {(6000_i64,20_i64,1500_i64)} else {(192000_i64,600_i64,20000_i64)};
     // Same one-ppm endpoint allowance, evaluated once using exact integers.
     let numerator=fs*1048576*1000000;
     let min_lag=((numerator+max*1000001-1)/(max*1000001)) as i32;
     let max_lag=(numerator/(min*999999)) as i32;
     let in_range=|p:Peak| p.lag>=min_lag && p.lag<=max_lag;
     let mut highest=0;
+    // Extra low-bank lags only refine an already established period. Letting
+    // their short-overlap peaks compete for initial selection can reject
+    // otherwise trackable moving tones or choose a spurious subharmonic.
+    let primary_last=if low {last.min(301)} else {last};
     // Choose the first strong key maximum BEFORE checking the bank's range.
     // Filtering peaks first can turn a 1520-Hz tone into a qualified 760-Hz
     // low-bank result: its real period is excluded, but its double survives.
     // Reject an out-of-band selection instead of inventing a subharmonic.
-    peaks(&mut read,last,|p| {highest=highest.max(p.height);false});
+    peaks(&mut read,primary_last,|p| {highest=highest.max(p.height);false});
     if highest<=0 {return None;}
     let mut chosen=None;
-    peaks(&mut read,last,|p| {
+    peaks(&mut read,primary_last,|p| {
         if p.height*10>=9*highest {chosen=Some(p);true} else {false}
     });
     let mut p=chosen?;
@@ -93,6 +103,7 @@ pub fn select(mut read:impl FnMut(usize)->i32,low:bool)->Option<Estimate> {
     let original_lag=p.lag;
     let qualified=p.height>=838861; // ceil(0.8 * 2^20)
     if qualified {
+        let mut refined:Option<(i32,i32)>=None;
         let largest=8.min(((last-2)<<20)/p.lag as usize);
         for multiple in (2..=largest).rev() {
             let center=((p.lag*multiple as i32+524288)>>20) as usize;
@@ -112,11 +123,17 @@ pub fn select(mut read:impl FnMut(usize)->i32,low:bool)->Option<Estimate> {
                     && new*max>=fs*1048576 && new*min<=fs*1048576
                     && old*1005792941>=new*1000000000
                     && old*1000000000<=new*1005792941 {
-                    p=Peak {lag,height:p.height.min(candidate.height)};
-                    break;
+                    // At low frequencies small alternating-cycle components
+                    // can bias odd multiples. Prefer the strongest repeating
+                    // interval; equal heights retain the longer interval.
+                    if refined.map_or(true,|(_,height)|candidate.height>height) {
+                        refined=Some((lag,candidate.height));
+                    }
+                    if !low {break;}
                 }
             }
         }
+        if let Some((lag,height))=refined {p=Peak {lag,height:p.height.min(height)};}
     }
     // Convert only the final result for existing diagnostic formatting.
     Some(Estimate {hz:(fs*1048576) as f32/p.lag as f32,
@@ -129,7 +146,7 @@ mod tests {
     #[test]
     fn strong_out_of_band_peak_is_not_replaced_by_its_multiple() {
         for (low,first) in [(true,3),(false,8)] {
-            let mut scores=[0_i32;322];
+            let mut scores=[0_i32;622];
             scores[first]=1048576;
             scores[2*first]=1048576;
             assert!(super::select(|k|scores[k],low).is_none());

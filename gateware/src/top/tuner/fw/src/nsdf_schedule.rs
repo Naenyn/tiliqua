@@ -98,7 +98,7 @@ impl Scheduler {
             let status=nsdf.status().read().value().bits();
             let complete=status&2!=0;
             if status&0x1c!=0 || (!complete && now.saturating_sub(self.started)>=250)
-                || (complete && status>>16!=if low {302}else{322}) {
+                || (complete && status>>16!=if low {622}else{322}) {
                 nsdf.control().write(|w|unsafe {w.value().bits(2)});
                 self.latest[self.slot as usize].valid=false;
                 self.faults=self.faults.saturating_add(1);self.finish(now);
@@ -131,12 +131,12 @@ impl Scheduler {
                 self.finish(now);
             }
         } else if now>=self.due {
-            if nsdf.identity().read().value().bits()!=0x4e534404 {
+            if nsdf.identity().read().value().bits()!=0x4e534405 {
                 self.faults=self.faults.saturating_add(1);
                 self.latest=[Latest::EMPTY;8];self.due=now.saturating_add(5000);
             } else {
                 let fill=nsdf.fill().read().value().bits();
-                let ready=(if low {(fill>>16)&2047}else{fill&2047})>=if low {604}else{674};
+                let ready=(if low {(fill>>16)&2047}else{fill&2047})>=674;
                 if ready {
                     nsdf.control().write(|w|unsafe {w.value().bits(1|((low as u32)<<2)|((channel as u32)<<3))});
                     self.started=now;self.active=true;

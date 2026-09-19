@@ -28,6 +28,11 @@ def test_comparison_descriptor_validation():
                 line.replace('gen=1','gen=0'),line.replace('bage=10','bage=251'),
                 line.replace('src=1','src=0')):
         with pytest.raises(ValueError):list(analyze_comparisons(bad))
+    # Current low bank: 113 ms rounded-up support plus 2 ms observation
+    # margin, even at the last inclusive 250-ms source freshness boundary.
+    edge=line.replace('age=20','age=252').replace('win=130','win=365')
+    assert list(analyze_comparisons(edge))[0]['win']==365
+    with pytest.raises(ValueError):list(analyze_comparisons(edge.replace('win=365','win=366')))
 
 
 def test_physical_publication_and_baseline_agreement():
