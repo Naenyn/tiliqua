@@ -35,6 +35,9 @@ def analyze_source(text):
 
 
 def source_details(report,source):
+    # Archived policies retain their original energy gate; never reinterpret
+    # captured hardware decisions using a later firmware threshold.
+    low_ratio=.05 if report.get('policy',0)>=4 else .02
     n=int(source['n']);total=int(source['sum']);squares=int(source['squares'])
     status=int(source['status']);end=int(source['end'])
     if status&~15 or status>>2!=report['channel']:raise ValueError('source channel/status mismatch')
@@ -58,7 +61,7 @@ def source_details(report,source):
         if status&1 and not -512<=endpoint_offset<=512:
             raise ValueError('source/frame endpoint separation too large')
         if report['bank']=='low' and status&1:
-            low_relative_pass=report['rms_counts']>max(2,.02*rms)
+            low_relative_pass=report['rms_counts']>max(2,low_ratio*rms)
     if report['bank']=='native':
         age=(report['sequence']-end)&0xffffffff
         if status&1:
@@ -72,7 +75,8 @@ def source_details(report,source):
         source_power=(squares*n-total*total+n*n-1)//(n*n) if n else 0
         expected=(bool(status&1) and endpoint_offset is not None and not report['clipped']
                   and energy>4*frame_n
-                  and energy*(2500 if report['bank']=='low' else 100)>source_power*frame_n)
+                  and energy*((400 if report.get('policy',0)>=4 else 2500)
+                              if report['bank']=='low' else 100)>source_power*frame_n)
         if report['device_guard']!=expected:
             raise ValueError('device source guard disagrees with integer reference')
     return dict(**report,source_end=end,source_samples=n,source_rms=rms,

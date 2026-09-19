@@ -66,9 +66,9 @@ def reference(v):
     if clipped or energy>samples*(1<<30):return False
     power=(q*n-total*total+n*n-1)//(n*n)
     unscaled=energy*(4 if scaled else 1)
-    result=unscaled>4*samples and unscaled*(2500 if low else 100)>power*samples
+    result=unscaled>4*samples and unscaled*(400 if low else 100)>power*samples
     # Conservative rounding must NEVER accept what the exact rational gate rejects.
-    if result:assert unscaled*n*n*(2500 if low else 100)>(q*n-total*total)*samples
+    if result:assert unscaled*n*n*(400 if low else 100)>(q*n-total*total)*samples
     return result
 
 
@@ -116,7 +116,7 @@ def test_actual_rust_guard_physical_and_arithmetic_boundaries(tmp_path):
         for source_power in [4,100,10000,1<<30]:
             for delta in [-1,0,1]:
                 v=base.copy();v[7]=source_power*20480
-                v[9]=max(0,source_power*samples//(2500 if low else 100)+delta)
+                v[9]=max(0,source_power*samples//(400 if low else 100)+delta)
                 cases.append(v)
     exe=tmp_path/'guard';rustc=shutil.which('rustc') or str(Path.home()/'.cargo/bin/rustc')
     subprocess.run([rustc,'--edition=2021','-O','-C','overflow-checks=on',str(here/'nsdf_guard_fixture.rs'),'-o',str(exe)],check=True)

@@ -27,6 +27,19 @@ def test_aligned_native_relative_energy_diagnostic():
     assert r['source_rms']==0 and r['native_relative_energy_pass']
 
 
+def test_policy_four_stronger_low_guard_does_not_reinterpret_old_captures():
+    from analyze_nsdf_source import source_details
+    source=dict(n=20480,sum=0,squares=204800000,status=1,end=1000,frame_end=1000)
+    base=dict(channel=0,bank='low',sequence=1000,rms_counts=3.,
+              energy=674*9,scaled=False,clipped=False,frame_samples=674)
+    for policy in (0,1,2,3,4):
+        old=policy<4
+        report=source_details(dict(base,policy=policy,device_guard=old),source)
+        assert report['low_relative_energy_pass']==old
+        with pytest.raises(ValueError,match='guard disagrees'):
+            source_details(dict(base,policy=policy,device_guard=not old),source)
+
+
 def test_explicit_native_endpoint_and_serial_line_bound():
     assert next(analyze_source(example(frame_end=6951261)))['source_frame_offset_native']==128
     with pytest.raises(ValueError):list(analyze_source(example(frame_end=6951262)))
@@ -56,7 +69,7 @@ def test_export_identifies_selector_policy_without_reinterpreting_archives():
     current=re.sub(r'^NSDF CPU ([^\n]+)',update,original,flags=re.M)
     assert not next(analyze_source(current))['qualified']
     with pytest.raises(ValueError,match='unknown selector policy'):
-        list(analyze_source(current.replace('policy=1','policy=4')))
+        list(analyze_source(current.replace('policy=1','policy=5')))
 
 
 @pytest.mark.parametrize('offset',[-512,-40,0,128,512])

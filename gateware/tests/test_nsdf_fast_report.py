@@ -54,14 +54,15 @@ def test_worst_case_fast_line_fits_existing_buffer():
     assert len(text)<192
 
 
-def test_current_native_summary_uses_extended_geometry():
+@pytest.mark.parametrize('policy',['3','4'])
+def test_current_native_summary_uses_extended_geometry(policy):
     import re
     text=example(low=False)
     def update(match):
         f=dict(p.split('=') for p in match.group(1).split())
-        f.update(policy='3',reads='1000')
+        f.update(policy=policy,reads='1000')
         return 'NSDF CPU '+' '.join(f'{k}={v}' for k,v in f.items())
     current=re.sub(r'^NSDF CPU ([^\n]+)',update,text,flags=re.M)
     assert next(analyze_fast(current))['frame_samples']==674
     with pytest.raises(ValueError,match='invalid selector work'):
-        list(analyze_fast(current.replace('policy=3','policy=2')))
+        list(analyze_fast(current.replace(f'policy={policy}','policy=2')))

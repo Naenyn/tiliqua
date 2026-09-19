@@ -45,7 +45,7 @@ impl Trace {
         match self.state {
             0 => {
                 if now < self.due { return; }
-                if nsdf.identity().read().value().bits() != 0x4e534406 {
+                if nsdf.identity().read().value().bits() != 0x4e534407 {
                     self.pending.push_str("NSDF ERROR incompatible gateware\n").ok();
                     self.due = now.saturating_add(5000); return;
                 }
@@ -103,7 +103,7 @@ impl Trace {
                 let (hz,raw,clarity,qualified)=result.map_or((0,0,0,false),|r|
                     ((r.hz*1000.0) as u32,(r.unrefined_hz*1000.0) as u32,
                      (r.clarity*1000000.0) as u32,r.qualified));
-                write!(self.pending,"NSDF CPU ch={} low={} seq={} mhz={} raw={} ppm={} ok={} cycles={} reads={} guard={} gc={} policy=3\n",
+                write!(self.pending,"NSDF CPU ch={} low={} seq={} mhz={} raw={} ppm={} ok={} cycles={} reads={} guard={} gc={} policy=4\n",
                     self.channel,self.low,nsdf.sequence().read().value().bits(),hz,raw,clarity,qualified,cycles,reads,guard,guard_cycles).ok();
                 self.state=if FAST {7} else {5};
             }

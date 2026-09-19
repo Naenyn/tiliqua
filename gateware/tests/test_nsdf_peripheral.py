@@ -20,7 +20,7 @@ def test_diagnostic_csr_frame_handoff():
         return result
     observed=[]
     async def bench(ctx):
-        assert await read32(ctx,32)==0x4e534406
+        assert await read32(ctx,32)==0x4e534407
         await write32(ctx,0,1);await ctx.tick().repeat(12)
         assert (await read32(ctx,4))&7==6 # Finished, faulted, not busy.
         for sample in x:

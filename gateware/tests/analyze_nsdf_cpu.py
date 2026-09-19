@@ -37,13 +37,13 @@ def validate(cpu,io,block):
     # New exports explicitly identify range-after-peak selection; never silently
     # reinterpret historical CPU results or guess an unknown algorithm version.
     policy=cpu.get('policy','0')
-    if policy not in ('0','1','2','3'):raise ValueError('unknown selector policy')
-    if policy in ('2','3') and (report['n'],report['last'])!=(674,621 if low or policy=='3' else 321):
+    if policy not in ('0','1','2','3','4'):raise ValueError('unknown selector policy')
+    if policy in ('2','3','4') and (report['n'],report['last'])!=(674,621 if low or policy in ('3','4') else 321):
         raise ValueError('selector policy/frame shape mismatch')
     expected=None if gated else select(scores,report['fs'],20 if low else 600,
                                       1500 if low else 20000,fallback=True,
-                                      legacy_range_first=policy=='0',refine_quality=policy=='3' or (policy=='2' and low),
-                                      reject_early_outside=policy=='3' and low)
+                                      legacy_range_first=policy=='0',refine_quality=policy in ('3','4') or (policy=='2' and low),
+                                      reject_early_outside=policy in ('3','4') and low)
     if gated and int(cpu['reads'])!=0:raise ValueError('early gate read scores')
     if cpu['ok'] not in ('true','false'):raise ValueError('invalid qualification flag')
     if expected is None:
@@ -63,7 +63,8 @@ def validate(cpu,io,block):
                 qualified=cpu['ok']=='true',gated=gated,rms_counts=report['rms_counts'],
                 select_ms=int(cpu['cycles'])/60000,io_ms=int(io['cycles'])/60000,
                 reads=int(cpu['reads']),energy=report['energy'],scaled=report['scaled'],
-                clipped=report['clipped'],frame_samples=report['n'],last=report['last'],**guard_fields(cpu))
+                clipped=report['clipped'],frame_samples=report['n'],last=report['last'],
+                policy=int(policy),**guard_fields(cpu))
 
 
 def analyze(text):

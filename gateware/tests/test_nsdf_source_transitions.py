@@ -27,7 +27,7 @@ def test_settled_quiet_low_bank_survives_guard(frequency,dc):
         end=ends[index];source_end=end-end%512
         source=rms(x[source_end-20480:source_end])
         frame=rms(low[index-603:index+1])
-        assert frame>max(2,.02*source)
+        assert frame>max(2,.05*source)
 
 
 def test_large_attenuation_transient_is_bounded_not_instantaneous():
@@ -55,4 +55,4 @@ def test_low_guard_rejects_filter_stopband_leakage(frequency,amplitude):
     end=n-n%32;source_end=end-end%512
     frame=filtered[np.arange(end-603*32,end+1,32)-1]
     source=x[source_end-20480:source_end]
-    assert rms(frame)<=max(2,.02*rms(source))
+    assert rms(frame)<=max(2,.05*rms(source))

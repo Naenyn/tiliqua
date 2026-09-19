@@ -28,9 +28,9 @@ def analyze_fast(text,round_robin=False):
         if fields['low'] not in ('true','false') or cpu['ok'] not in ('true','false'):
             raise ValueError('invalid boolean')
         policy=cpu.get('policy','0')
-        if policy not in ('0','1','2','3'):raise ValueError('unknown selector policy')
-        low=fields['low']=='true';n=604 if low and policy not in ('2','3') else 674
-        count=(622 if policy in ('2','3') else 302) if low else (622 if policy=='3' else 322)
+        if policy not in ('0','1','2','3','4'):raise ValueError('unknown selector policy')
+        low=fields['low']=='true';n=604 if low and policy not in ('2','3','4') else 674
+        count=(622 if policy in ('2','3','4') else 302) if low else (622 if policy in ('3','4') else 322)
         channel=int(fields['ch']);sequence=int(fields['seq'])
         if not 0<=channel<(4 if round_robin else 1) or not 0<=sequence<1<<32:raise ValueError('invalid fast channel/sequence')
         energy=int(fields['energy']);scaled=int(fields['scaled']);clipped=int(fields['clipped'])
@@ -51,7 +51,7 @@ def analyze_fast(text,round_robin=False):
         report=dict(channel=channel,bank='low' if low else 'native',sequence=sequence,
                     rms_counts=rms,qualified=qualified,gated=gated,hz=hz,
                     reads=reads,select_ms=cycles/60000,energy=energy,scaled=scaled,
-                    clipped=clipped,frame_samples=n,**guard_fields(cpu))
+                    clipped=clipped,frame_samples=n,policy=int(policy),**guard_fields(cpu))
         if 'frame_end' not in source:raise ValueError('fast summary lacks native endpoint')
         report=source_details(report,source)
         interval=None

@@ -631,3 +631,53 @@ without erasing the 24576-byte options/profile region. Flash transcript:
 `/tmp/tuner-native-repeat-537c4a29.serial.log`. Select TUNER, retain FUNDAMENTAL
 on IN2 / CORE on IN1 / OUT1 to V/oct and the current approximately 120-Hz zero
 tuning, then rerun CAL input 2 / output 1 without adjusting the oscillator.
+
+### Automatic FUNDAMENTAL verification passed; remaining filter boundary
+
+The rerun on `537c4a29` completed with FUNDAMENTAL on IN2, CORE on IN1 and OUT1
+driving V/oct, unchanged approximately 120-Hz zero tuning. Serial confirms:
+
+```
+CAL STATUS READY - WITHIN 2C TARGET ACTIVE=false IN=2 OUT=1 MV=0 POINT=82 COUNT=82
+AUTO PHASE=REVIEW RESULT PASSES=0/8 STATUS=READY - WITHIN 2C TARGET
+AUTO BEST_WORST_C=+1.39 TARGET_C=2.0 VERIFIED=161/161
+```
+
+It passed the previous +3.833-V range cutoff and the approximately 1017-Hz
+verification timeout. This is successful automatic internal verification,
+not independently measured absolute accuracy. No improvement pass was needed.
+The result remains a test candidate; acceptance and flash saving are separate.
+
+Range discovery still stopped at +4.250 V: native measured roughly 2274 Hz
+while the low bank qualified roughly 754 Hz. Strict settled arbitration
+correctly rejected the conflict. The old FIR's 2250-Hz cutoff retains about
+46% amplitude at that frequency, despite the low selector ending at 1500 Hz.
+Subsequent discrete correlation maxima can then masquerade as a low pitch.
+The source is not known to have reached its upper limit.
+
+The next correction retains 769 taps, the same 2-ms filter delay, existing
+histories and arithmetic, but moves the FIR cutoff to 1750 Hz. Response stays
+within 0.01 dB through 1 kHz, retains >85% amplitude through the 1500-Hz overlap,
+and is below 2.2% amplitude above 2200 Hz. The low relative RMS gate tightens
+from 2% to 5% of aligned, DC-removed source RMS, to reject transition-band
+remnants mixed with weak subharmonics. The absolute >2-count floor is unchanged;
+this is not an absolute input-level increase. Native's 10% relative gate,
+both banks' confidence limits, disagreement rejection, calibration stability
+limits and acceptance rules are unchanged. Very weak fundamentals amid strong
+out-of-band energy may now be rejected; no universal complex-waveform claim.
+
+A 1650-Hz cutoff was rejected after regressing a 1490-Hz 1%-duty pulse case.
+The selected 1750-Hz candidate passes the new complete quantized-FIR/production
+Rust selector/guard/resolver tests: dense upper-band pure and alternating-cycle
+tones, quiet/full-level in-range sines, triangles, saws and selected 50%, 5%, 1%
+pulses. A denser 1%-pulse handoff comparison preserves all previously accurate
+cases and improves others, while explicitly retaining existing failures on
+severely undersampled ideal pulses. The first 88-test host suite passes.
+These are synthetic regression results, not a physical range qualification.
+
+Hardware identity becomes `0x4e534407`; diagnostic policy 4 retains policy 3's
+selector and score geometry but identifies the stricter energy gate. Host
+decoders preserve the 2% rule for archival policies 0–3 and test that the same
+3%-RMS frame passes the old gate and fails the new one. A full routed build,
+broader tests and a fresh physical scan are required before declaring this
+remaining upper-range issue fixed.
