@@ -106,6 +106,16 @@ low-note variation, full simulated automatic operation, overlapping outlier
 rejection, drift, missing/stale frames and failure-voltage reporting. Physical
 Generate3 confirmation remains pending after flashing.
 
+The first physical retry exposed an additional discovery boundary: at
+-2.58325 V, pitch straddled the 20-Hz qualification floor before any usable
+anchors were retained. The new instability error incorrectly stopped this
+leading-range search. Discovery now retains its original skip behavior until
+two responsive anchors exist, discarding a lone provisional anchor rather
+than bridging a gap. Instability inside an established range still fails;
+preflight and final zero checks are unchanged. The integration regression now
+includes intermittent qualification at the floor instead of suppressing jitter
+there. A fresh physical retry is required for this correction.
+
 Host coverage includes complete automatic operation, navigation during work,
 successful refinement, rejection of full-range regressions, cancellation,
 deadline and output-fault rollback, profile serialization, journal recovery and

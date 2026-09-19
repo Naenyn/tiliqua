@@ -51,7 +51,7 @@ mod pac {
             // 4.8c peak-to-peak jitter, including the reported 26.68Hz region.
             // Two frames share each sign, avoiding phase-lock with the 120ms
             // non-overlap requirement at this simulated 80ms publication rate.
-            let jitter=if (20.1..130.0).contains(&ideal) {if (n/2)%2==0 {2.4}else{-2.4}}else{0.0};
+            let jitter=if ideal<130.0 {if (n/2)%2==0 {2.4}else{-2.4}}else{0.0};
             let hz=(ideal*2.0f64.powf(jitter/1200.0)) as f32;
             let valid=(20.0..=20000.0).contains(&hz);
             live.tick(&p,ChannelMeasurement{frequency_hz:hz,valid,qualified:valid,sequence:n,
@@ -61,6 +61,9 @@ mod pac {
         }
         assert!(checked,"{} {:?}",live.status,live.failure_voltage);assert!(!live.active(),"{}",live.status);
         assert!(live.pending_profile.is_some(),"{}",live.status);
+        // The first marginal point straddles 20Hz. Discovery must omit it,
+        // not abort or retain an anchor measured only on qualified peaks.
+        assert!(live.pending_profile.as_ref().unwrap().points()[0].microvolts > -2_583_250);
         assert!(live.automatic.as_ref().unwrap().best.as_ref().unwrap().complete);
         assert!(live.failure_voltage.is_none());assert_eq!(p.command.get(),0);
     }

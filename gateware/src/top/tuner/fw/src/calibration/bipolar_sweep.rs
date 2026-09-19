@@ -133,9 +133,11 @@ impl Sweep {
                     if self.tracking_failure.is_some() || self.upper_flat_points>0 {
                         self.restore(Outcome::Failed(Failure::NotTracking));return true;
                     }
-                    // Qualified but nonrepeatable pitch is not silence or an
-                    // upper range boundary. Keep the real failing voltage.
-                    if self.saw_qualified {
+                    // Once a responsive range exists, qualified but
+                    // nonrepeatable pitch is not an upper range boundary.
+                    // Before that, intermittent qualification near the 20Hz
+                    // floor remains leading-range discovery, not a fatal gap.
+                    if self.saw_qualified && self.point_count()>=2 {
                         self.restore(Outcome::Failed(Failure::UnstablePitch));return true;
                     }
                     if self.point_count()>=2 && !self.measured_zero {
