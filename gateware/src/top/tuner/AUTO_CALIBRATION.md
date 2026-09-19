@@ -178,6 +178,28 @@ cover transient recovery, sustained drift, invalid/stale/cached/unqualified
 readings, unchanged retry voltage and the ordinary subsequent-target deadline.
 Physical confirmation of this verification retry remains pending.
 
+The physical `d66264e3` retry completed its initial sweep with 72 anchors, but
+failed both first-target verification attempts at -2.330750 V. Target was
+1,850,000 millicents (~23.8023 Hz). The final attempt retained 16 windows from
+52 observations (26 overlap skips), with no span/gap resets. Raw span was
+7.121 cents, quarter-mean difference 3.285 cents, half-mean difference 0.172
+cents. Retained errors in millicents were:
+`854,1144,999,1726,4195,4339,4412,4195,4339,4992,4992,3541,2380,2162,1653,-818`.
+Periodic telemetry shows a rise/fall pattern across both attempts, rather
+than evidence that another fixed settling delay will solve it. Keep the
+existing stability guards; the repeated small-block disagreement is real.
+
+The existing 41 selector/model/captured-score tests passed. An additional
+128-phase synthetic study at this exact target found -0.0196..+0.0183 cents
+error at amplitude 14,000 counts and -0.1363..+0.2180 cents at amplitude 72.
+The exact target is now included in the low-sine regression matrix. These
+results do not prove the physical input path or oscillator is stable: no
+independent waveform/frequency reference was captured for this failure.
+Next hardware isolation: feed IN1 a steady ~24–25 Hz sine from a second
+oscillator, without Tiliqua driving its V/oct, and log the tuner without a
+calibration sweep. Compare that with Generate3 before altering thresholds
+or enlarging the detector. Saved profiles remain unchanged.
+
 Host coverage includes complete automatic operation, navigation during work,
 successful refinement, rejection of full-range regressions, cancellation,
 deadline and output-fault rollback, profile serialization, journal recovery and

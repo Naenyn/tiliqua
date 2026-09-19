@@ -72,10 +72,15 @@ def test_synthetic_high_sine_phase_coverage(frequency,tolerance,amplitude):
         assert abs(1200*math.log2(result['hz']/frequency))<tolerance
 
 
-@pytest.mark.parametrize('frequency,tolerance',[(22,.25),(23.5,.25),(25,.25),(55,.12)])
+@pytest.mark.parametrize('frequency,tolerance',[(22,.25),(23.5,.25),
+                                              (440*2**((18.5-69)/12),.25),
+                                              (25,.25),(55,.12)])
 @pytest.mark.parametrize('amplitude',[72,14000])
 def test_synthetic_low_sine_phase_coverage(frequency,tolerance,amplitude):
     # Known synthetic truth, not an accuracy claim for the analog capture.
+    # Include the 18.5-semitone target (~23.802Hz) that failed automatic
+    # verification on Generate3, September 19. Hardware jitter is not a
+    # license to increase this clean-signal detector error tolerance.
     for phase in np.linspace(0,1,32,endpoint=False):
         x=np.rint(amplitude*np.sin(2*np.pi*(np.arange(604)*frequency/6000+phase)))
         result=select(scores_for(x,301),6000,20,1500,fallback=True)
