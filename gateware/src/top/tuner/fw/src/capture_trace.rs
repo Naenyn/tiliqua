@@ -9,7 +9,8 @@ pub struct Trace {
     pending:String<128>, offset:usize, index:u16, started:Option<u64>,
     ready_offset:usize, ready_at:u64,
     ready_line:String<128>,
-    status_line:String<1024>,
+    // Four route configurations plus concurrent calibration diagnostics.
+    status_line:String<1536>,
     capture_status:&'static str,
 }
 

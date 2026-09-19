@@ -118,8 +118,6 @@ pub struct TunerOpts {
     pub input: IntOption<InputParams>,
     #[option]
     pub display: EnumOption<DisplayMode>,
-    #[option(false)]
-    pub run: ButtonOption<OneShotButtonParams>,
 }
 
 #[derive(OptionPage, Clone)]
@@ -157,12 +155,30 @@ pub struct HelpOpts {
 #[derive(OptionPage, Clone)]
 pub struct PlayOpts {
     #[option(1)]
+    pub output: IntOption<InputParams>,
+    #[option(1)]
     pub input: IntOption<InputParams>,
+    #[option(60)]
+    pub zero_note: IntOption<NoteParams>,
+    #[option]
+    pub correction: EnumOption<Correction>,
+    #[option(false)]
+    pub bind: ButtonOption<OneShotButtonParams>,
+    #[option]
+    pub quantize: EnumOption<RouteQuantize>,
     #[option(false)]
     pub run: ButtonOption<OneShotButtonParams>,
-    #[option]
-    pub quantize: EnumOption<QuantizeMode>,
 }
+
+#[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]
+pub enum Correction {
+    #[default] #[strum(serialize="NONE")] None,
+    #[strum(serialize="RAM")] Ram,
+    #[strum(serialize="SLOT 1")] Slot1, #[strum(serialize="SLOT 2")] Slot2,
+    #[strum(serialize="SLOT 3")] Slot3, #[strum(serialize="SLOT 4")] Slot4,
+}
+#[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]
+pub enum RouteQuantize { #[strum(serialize="OFF")] Off, #[default] #[strum(serialize="SCALE")] Scale }
 
 #[derive(OptionPage, Clone)]
 pub struct QuantizerOpts {

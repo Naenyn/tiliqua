@@ -71,12 +71,13 @@ struct App {
     now_ms: u64,
     quant_channels:[quantizer_setup::Channel;4],
     quant_selected:u8,
+    tuner_focus:u8,
 }
 
-fn quant_settings(opts:&options::QuantizerOpts,masks:[u16;2])->quantizer_setup::Channel {
+fn quant_settings(opts:&options::QuantizerOpts,masks:[u16;2],quantize:bool,correction:u8)->quantizer_setup::Channel {
     quantizer_setup::Channel{input:opts.input.value,zero:opts.zero_note.value,
         scale:opts.scale.value as u8,root:opts.root.value as u8,transpose:opts.transpose.value,
-        equal:opts.mapping.value==options::Distribution::Equal,masks}
+        equal:opts.mapping.value==options::Distribution::Equal,masks,quantize,correction}
 }
 fn show_quant_settings(opts:&mut options::QuantizerOpts,c:quantizer_setup::Channel) {
     use strum::IntoEnumIterator;
@@ -92,22 +93,20 @@ fn show_quant_settings(opts:&mut options::QuantizerOpts,c:quantizer_setup::Chann
 // already constrained main RAM after the first interrupt.
 static APP: Mutex<RefCell<Option<App>>> = Mutex::new(RefCell::new(None));
 static OWNERS:Mutex<RefCell<Reservations>>=Mutex::new(RefCell::new(Reservations::new()));
-static TUNER_STATUS:Mutex<RefCell<&'static str>>=Mutex::new(RefCell::new("RUN RESERVES SELECTED INPUT"));
+
 // Conventional two-octave editor, RAM only; never part of oscillator profiles.
 static QUANT_NOTES:Mutex<RefCell<[u16;2]>>=Mutex::new(RefCell::new([0xfff,0]));
 static NOTE_STATUS:Mutex<RefCell<(u8,&'static str)>>=Mutex::new(RefCell::new((1,"DEFAULT NOTES - LOAD OR EDIT")));
 static SETUP_STATUS:Mutex<RefCell<(u8,&'static str)>>=Mutex::new(RefCell::new((1,"SAVE OR LOAD A SETUP")));
-static PLAYBACK:Mutex<RefCell<oscillator_calibration::playback::Engine>>=
-    Mutex::new(RefCell::new(oscillator_calibration::playback::Engine::new()));
-type QuantEngine=oscillator_calibration::playback::QuantEngine;
+type QuantEngine=oscillator_calibration::playback::Engine;
 struct MultiQuant {
-    lanes:[QuantEngine;4],configs:[quantizer_setup::Channel;4],
+    lanes:[QuantEngine;4],configs:[quantizer_setup::Channel;4],bound:[u8;4],
     running:bool,max_cycles:usize,last_cycle:usize,max_gap:usize,
     phase:usize,samples:[u32;4],
 }
 static MULTI_QUANT:Mutex<RefCell<MultiQuant>>=Mutex::new(RefCell::new(MultiQuant {
     lanes:[QuantEngine::new(),QuantEngine::new(),QuantEngine::new(),QuantEngine::new()],
-    configs:quantizer_setup::DEFAULT,running:false,max_cycles:0,last_cycle:0,max_gap:0,phase:0,samples:[0;4],
+    configs:quantizer_setup::DEFAULT,bound:[0;4],running:false,max_cycles:0,last_cycle:0,max_gap:0,phase:0,samples:[0;4],
 }));
 fn quant_command(t:&pac::TUNER_PERIPH,n:usize,value:u32) {
     match n {
@@ -133,6 +132,8 @@ impl MultiQuant {
     fn toggle(&mut self,t:&pac::TUNER_PERIPH,n:usize,c:quantizer_setup::Channel,now:u32,counts:i32,r:&mut Reservations) {
         if self.lanes[n].active {
             quant_command(t,n,self.lanes[n].stop("STOPPED BY USER"));r.release(Owner::Quant(n as u8));
+        } else if c.correction!=0 && self.bound[n]!=c.correction {
+            self.lanes[n].status="BIND CORRECTION ON ROUTE FIRST";
         } else if !r.claim(Owner::Quant(n as u8),1<<c.input,1<<n) {
             self.lanes[n].status="CHANNEL BUSY - STOP ITS OWNER";
         } else {
@@ -142,9 +143,9 @@ impl MultiQuant {
             // Disable has cleared faults, but wait until a later RUN if a prior
             // enabled output has not yet acknowledged shutdown.
             quant_command(t,n,lane.stop("STOPPED"));
-            if lane.arm_nominal(c.input,n as u8,c.zero,counts,now,quant_status(t,n)) {
+            if lane.arm_route(c.input,n as u8,c.zero,counts,now,quant_status(t,n),c.correction!=0,c.quantize) {
                 lane.scale_id=c.scale;lane.root=c.root;lane.transpose=c.transpose;lane.equal=c.equal;
-                if c.scale==6 {match scale::Pattern::compile(c.masks) {
+                if c.quantize && c.scale==6 {match scale::Pattern::compile(c.masks) {
                     Ok(pattern)=>lane.pattern=pattern,Err(_)=>{lane.stop("EMPTY PATTERN - ADD NOTES");},
                 }}
             }
@@ -159,13 +160,13 @@ impl App {
     fn new(opts: Opts) -> Self {
         let quant_selected=opts.quantizer.output.value.min(3);
         let mut quant_channels=quantizer_setup::DEFAULT;
-        quant_channels[quant_selected as usize]=quant_settings(&opts.quantizer,[0xfff,0]);
+        quant_channels[quant_selected as usize]=quant_settings(&opts.quantizer,[0xfff,0],true,0);
         let peripherals = unsafe { pac::Peripherals::steal() };
         let encoder = Encoder0::new(peripherals.ENCODER0);
         let pca9635 = Pca9635Driver::new(I2c0::new(peripherals.I2C0));
         let pmod = EurorackPmod0::new(peripherals.PMOD0_PERIPH);
         Self {
-            quant_channels,quant_selected,
+            quant_channels,quant_selected,tuner_focus:0,
             now_ms: 0,
             ui: ui::UI::new_with_fade(
                 opts,
@@ -198,7 +199,7 @@ fn playback_cycles()->usize {
     (!unsafe{pac::Peripherals::steal()}.PLAYBACK_TIMER.counter().read().value().bits()) as usize
 }
 fn outputs_running()->bool {
-    critical_section::with(|cs|PLAYBACK.borrow_ref(cs).active || MULTI_QUANT.borrow_ref(cs).running)
+    critical_section::with(|cs|MULTI_QUANT.borrow_ref(cs).running)
 }
 
 fn timer0_handler() {
@@ -243,39 +244,11 @@ fn timer0_handler() {
             quant.running=quant.lanes.iter().any(|lane|lane.active);
         }
     });
-    critical_section::with(|cs| {
-        let mut play=PLAYBACK.borrow_ref_mut(cs);
-        if !play.active {return;}
-        let start=playback_cycles();
-        let tuner=unsafe{pac::Peripherals::steal()}.TUNER_PERIPH;
-        if play.last_irq_cycle!=0 {
-            let gap=start.wrapping_sub(play.last_irq_cycle);
-            play.max_gap_cycles=play.max_gap_cycles.max(gap);
-            if gap>pac::clock::sysclk() as usize/200 {
-                tuner.cal_command().write(|w|unsafe{w.value().bits(play.stop("STOPPED - SCHEDULING GAP"))});
-                return;
-            }
-        }
-        play.last_irq_cycle=start;
-        let allowed=OWNERS.borrow_ref(cs).held(Owner::Play);
-        if let Some(command)=play.tick(now,tuner.cv_sample().read().value().bits(),
-            tuner.cal_status().read().value().bits(),allowed) {
-            tuner.cal_command().write(|w|unsafe{w.value().bits(command)});
-        }
-        let elapsed=playback_cycles().wrapping_sub(start);
-        play.max_cycles=play.max_cycles.max(elapsed);
-        // Leave at least half the 1-ms period for interrupt/UI overhead and
-        // foreground work. A missed compute budget is a fault, not silent jitter.
-        if elapsed>pac::clock::sysclk() as usize/2000 {
-            tuner.cal_command().write(|w|unsafe{w.value().bits(play.stop("STOPPED - CPU BUDGET"))});
-        }
-    });
     if playback_cycles().wrapping_sub(output_started)>pac::clock::sysclk() as usize/2000 {
         critical_section::with(|cs| {
             let tuner=unsafe{pac::Peripherals::steal()}.TUNER_PERIPH;
             MULTI_QUANT.borrow_ref_mut(cs).stop(&tuner,"STOPPED - COMBINED CPU BUDGET");
-            let mut play=PLAYBACK.borrow_ref_mut(cs);
-            if play.active {tuner.cal_command().write(|w|unsafe{w.value().bits(play.stop("STOPPED - COMBINED CPU BUDGET"))});}
+
         });
     }
 }
@@ -732,7 +705,7 @@ impl MenuSnapshot {
             Page::Profiles => "PROFILES",
             Page::Settings => "SETTINGS",
             Page::Help => "HELP",
-            Page::Play => "PLAY",
+            Page::Play => "ROUTE",
             Page::Quantizer => "QUANT",
             Page::QuantNotes => "NOTES",
             Page::QuantSetups => "SETUPS",
@@ -748,7 +721,7 @@ impl MenuSnapshot {
                     // acquired continuously, this selects only tuner focus.
                     (Page::Tuner, 0) => "focus",
                     (Page::Calibrate, 2) => "0v note",
-                    (Page::Quantizer, 2) => "0v note",
+                    (Page::Quantizer, 2) | (Page::Play, 2) => "0v note",
                     (Page::Verify, 0) => "note",
                     (Page::Profiles, 1) => "name pos",
                     (Page::Profiles, 2) => "letter",
@@ -757,13 +730,17 @@ impl MenuSnapshot {
                     (Page::Settings, 2) => "reset",
                     _ => option.name(),
                 };
-                let value=if page==Page::QuantNotes && index==0 {
+                let value=if page==Page::Tuner && index==0
+                    && critical_section::with(|cs|OWNERS.borrow_ref(cs).cv_inputs()==15) {
+                    let mut value=OptionString::new();value.push_str("NONE").ok();value
+                } else if page==Page::QuantNotes && index==0 {
                     let mut value=OptionString::new();
                     value.push_str(if opts.quant_notes.octave.value==0 {"A"} else {"B"}).ok();value
                 } else if (page==Page::Verify && index==0) || (page==Page::Calibrate && index==2)
-                    || (page==Page::Quantizer && index==2) {
+                    || (matches!(page,Page::Quantizer|Page::Play) && index==2) {
                     let mut value=OptionString::new();
                     let note=if page==Page::Verify {opts.verify.note.value}
+                        else if page==Page::Play {opts.play.zero_note.value}
                         else if page==Page::Quantizer {opts.quantizer.zero_note.value}
                         else {opts.calibrate.zero_note.value};
                     pitch_units::write_note(&mut value,note as i32).ok();value
@@ -856,7 +833,7 @@ fn publish_tuner(
     smoothed_channels: &mut [Option<f32>;4],
     menu_active: bool,
 ) {
-    let (reservations,tuner_status)=critical_section::with(|cs|(*OWNERS.borrow_ref(cs),*TUNER_STATUS.borrow_ref(cs)));
+    let reservations=critical_section::with(|cs|*OWNERS.borrow_ref(cs));
     let mut visible=*measurements;
     for n in 0..4 {if !reservations.tuner_available(n) {
         let mut value=visible.channel(n);value.valid=false;value.qualified=false;visible.update(n,value);
@@ -948,6 +925,9 @@ fn publish_tuner(
     // The compact menu overlays only the established right-side panel, so the
     // underlying tuner remains complete and live while it is open.
     let linear = display_mode == DisplayMode::Linear;
+    if !reservations.tuner_available(input) {
+        note_line.clear();cents_line.clear();frequency_line.clear();voltage_line.clear();
+    }
     if !linear {
         write_centered(text, 20, &note_line, 8);
         write_centered(text, 22, &cents_line, 20);
@@ -957,6 +937,17 @@ fn publish_tuner(
     let mut markers = [marker, None, None, None];
     let mut slot = 1;
     for channel in 0..4usize {
+        if !reservations.tuner_available(channel as u8) {
+            if linear {
+                for row in [[12,18,25,31][channel],[16,22,29,35][channel]] {
+                    ui_text::field(6,row,33,"",ui_text::DEFAULT,ui_text::Align::Center,|address,cell|text.cell(address,cell));
+                }
+            } else {
+                ui_text::field(15+channel*4,3,2,"",ui_text::DEFAULT,ui_text::Align::Left,|address,cell|text.cell(address,cell));
+            }
+            smoothed_channels[channel]=None;
+            continue;
+        }
         let value = measurements.channel(channel as u8);
         let style = ui_text::Style { color: 0xC0 | CHANNEL_HUES[channel], bold: input as usize == channel };
         if linear {
@@ -984,8 +975,8 @@ fn publish_tuner(
             slot += 1;
         }
     }
-    write_centered(text,42,if !reservations.tuner_available(input) {"INPUT BUSY - STOP ITS OWNER"}
-        else if reservations.held(Owner::Tuner(input)) {"TUNING - RUN TO RELEASE INPUT"} else {tuner_status},42);
+    write_centered(text,42,if !reservations.tuner_available(input) {"ALL INPUTS ASSIGNED TO CV"}
+        else {"AUDIO INPUTS ONLY; ENCODER: MENU"},42);
     publish_markers(display, Markers(markers),
                     display_mode == DisplayMode::Visualizer, menu_active);
 }
@@ -1125,45 +1116,6 @@ fn publish_verification(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,
     publish_markers(display,Markers([None;4]),false,menu_active);
 }
 
-fn publish_playback(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,
-                    cal:&calibration_live::Live,controls:RuntimeControls,value:ChannelMeasurement,menu:bool) {
-    let now=with_app(|app|app.now_ms as u32);
-    let (active,status,input,output,uv,out,pitch,updates,cycles,settled)=critical_section::with(|cs| {
-        let p=PLAYBACK.borrow_ref(cs);
-        (p.active,p.status,p.input,p.output,p.input_uv,p.output_uv,p.pitch,p.updates,p.max_cycles,
-            p.feedback_ready(now,value.window_age_ms,value.end_age_ms))
-    });
-    let mut line=String::<96>::new();
-    write_centered(text,4,"CALIBRATED CV PLAYBACK",28);
-    write_centered(text,10,"PITCH CV -> SELECTED INPUT",30);
-    if let Some(route)=cal.profile_route {
-        write!(line,"OUT {} -> OSCILLATOR V/OCT",route.output()).ok();
-        write_centered(text,13,&line,32);line.clear();
-    }
-    write!(line,"OSC AUDIO -> IN {} (PITCH CHECK)",cal.input).ok();
-    write_centered(text,16,&line,34);line.clear();
-    write_centered(text,19,"RUN STARTS / STOPS; KEEPS RUNNING",38);
-    write!(line,"0 V = {}{}; 1 V/OCT",NOTE_NAMES[(controls.zero_note%12) as usize],
-        controls.zero_note as i32/12-1).ok();
-    write_centered(text,23,&line,32);line.clear();
-    let chromatic=with_app(|app|app.ui.opts.play.quantize.value==options::QuantizeMode::Chromatic);
-    write_centered(text,26,if chromatic {"CHROMATIC - 5c HYSTERESIS"} else {"CONTINUOUS - NO QUANTIZATION"},34);
-    write_centered(text,29,status,38);
-    write!(line,"IN {} {:+.4} V -> OUT {} {:+.4} V",input,uv as f32/1e6,output,out as f32/1e6).ok();
-    write_centered(text,33,&line,42);line.clear();
-    if active && updates>0 {pitch_units::write_pitch(&mut line,pitch).ok();write_centered(text,36,&line,30);line.clear();}
-    if active && value.valid && value.qualified {
-        if settled {
-            write!(line,"AUDIO {:.2} Hz ERROR {:+.2}c",value.frequency_hz,
-                (pitch_math::millicents(value.frequency_hz,440.0) as i64-pitch as i64) as f32/1000.0).ok();
-        } else {write!(line,"AUDIO {:.2} Hz - SETTLING",value.frequency_hz).ok();}
-        write_centered(text,38,&line,42);line.clear();
-    } else {write_centered(text,38,"AUDIO CHECK: NO QUALIFIED PITCH",42);}
-    write!(line,"UPDATES {} MAX {} CPU CYCLES",updates,cycles).ok();
-    write_centered(text,40,&line,42);
-    publish_markers(display,Markers([None;4]),false,menu);
-}
-
 fn publish_quantizer(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,menu:bool) {
     if with_app(|app|app.ui.opts.tracker.page.value==Page::QuantSetups) {
         let (channels,slot)=with_app(|app|(app.quant_channels,app.ui.opts.quant_setups.slot.value));
@@ -1219,7 +1171,12 @@ fn publish_quantizer(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,menu:b
         (p.active,p.status,p.input_uv,p.output_uv,p.pitch,p.updates,q.max_cycles)
     });
     let mut line=String::<96>::new();
-    write_centered(text,4,"QUANTIZER",28);
+    write_centered(text,4,"OUTPUT ROUTING AND PITCH",38);
+    critical_section::with(|cs| {
+        let q=MULTI_QUANT.borrow_ref(cs);
+        for n in 0..4 {write!(line," {}:{}",n,if q.lanes[n].active {"RUN"} else {"OFF"}).ok();}
+    });
+    write_centered(text,7,&line,42);line.clear();
     write!(line,"PITCH CV IN {} -> V/OCT OUT {}",input,output).ok();
     write_centered(text,10,&line,38);line.clear();
     let (scale_name,root_name,transpose)=with_app(|app| {
@@ -1227,9 +1184,17 @@ fn publish_quantizer(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,menu:b
         let root:&'static str=app.ui.opts.quantizer.root.value.into();
         (name,root,app.ui.opts.quantizer.transpose.value)
     });
-    write!(line,"{} {}; TRANSPOSE {:+}",root_name,scale_name,transpose).ok();
+    let c=with_app(|app|app.quant_channels[output as usize]);
+    if c.quantize {write!(line,"{} {}; TRANSPOSE {:+}",root_name,scale_name,transpose).ok();}
+    else {write!(line,"CONTINUOUS CV - QUANTIZATION OFF").ok();}
     write_centered(text,14,&line,38);line.clear();
-    write_centered(text,17,"FOUR OUTPUTS; 500 HZ PER CHANNEL",38);
+    critical_section::with(|cs| {
+        let q=MULTI_QUANT.borrow_ref(cs);
+        if c.correction==0 {write!(line,"CORRECTION: NONE (NOMINAL CV)").ok();}
+        else if q.bound[output as usize]!=c.correction {write!(line,"CORRECTION: SELECTED, NEEDS BIND").ok();}
+        else {write!(line,"CURVE: {}",q.lanes[output as usize].profile_name().unwrap_or("MISSING")).ok();}
+    });
+    write_centered(text,17,&line,42);line.clear();
     write!(line,"0 V = ").ok();pitch_units::write_note(&mut line,zero as i32).ok();
     write_centered(text,21,&line,32);line.clear();
     let equal=with_app(|app|app.ui.opts.quantizer.mapping.value==options::Distribution::Equal);
@@ -1239,7 +1204,7 @@ fn publish_quantizer(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,menu:b
     write!(line,"IN {:+.4} V -> OUT {:+.4} V",uv as f32/1e6,out as f32/1e6).ok();
     write_centered(text,34,&line,42);line.clear();
     if active && updates>0 {pitch_units::write_pitch(&mut line,pitch).ok();}
-    else {write!(line,"RUN TO QUANTIZE").ok();}
+    else {write!(line,"ROUTE: CONFIGURE / BIND / RUN").ok();}
     write_centered(text,37,&line,32);line.clear();
     write!(line,"UPDATES {} MAX {} CPU CYCLES",updates,cycles).ok();
     write_centered(text,40,&line,42);
@@ -1247,9 +1212,9 @@ fn publish_quantizer(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,menu:b
 }
 
 pub fn playback_visible()->bool {outputs_running() || with_app(|app|matches!(app.ui.opts.tracker.page.value,Page::Play|Page::Quantizer))}
-pub fn write_playback_status(out:&mut impl core::fmt::Write,value:ChannelMeasurement)->core::fmt::Result {
+pub fn write_playback_status(out:&mut impl core::fmt::Write,_value:ChannelMeasurement)->core::fmt::Result {
     if critical_section::with(|cs|MULTI_QUANT.borrow_ref(cs).running)
-        || with_app(|app|app.ui.opts.tracker.page.value==Page::Quantizer) {
+        || with_app(|app|matches!(app.ui.opts.tracker.page.value,Page::Quantizer|Page::Play)) {
         let (running,cycles,gap,lanes)=critical_section::with(|cs| {
             let q=MULTI_QUANT.borrow_ref(cs);
             let lanes:[_;4]=core::array::from_fn(|n| {let p=&q.lanes[n];
@@ -1259,41 +1224,8 @@ pub fn write_playback_status(out:&mut impl core::fmt::Write,value:ChannelMeasure
         writeln!(out,"QUANT4 ACTIVE={} RATE_HZ=500 MAX_BATCH_CYCLES={} MAX_GAP_CYCLES={}",running,cycles,gap)?;
         for (n,(active,input,uv,voltage,updates,status,c)) in lanes.iter().enumerate() {
             writeln!(out,"Q{} ACTIVE={} IN={} UV={} OUT_UV={} UPDATES={} STATUS={}",n,active,input,uv,voltage,updates,status)?;
-            writeln!(out,"Q{} SCALE={} ROOT={} TRANSPOSE={} EQUAL={} A={:03X} B={:03X}",n,c.scale,c.root,c.transpose,c.equal as u8,c.masks[0],c.masks[1])?;
+            writeln!(out,"Q{} SCALE={} ROOT={} TRANSPOSE={} EQUAL={} A={:03X} B={:03X} QUANT={} CORR={}",n,c.scale,c.root,c.transpose,c.equal as u8,c.masks[0],c.masks[1],c.quantize,c.correction)?;
         }
-        return Ok(());
-    }
-    let now=with_app(|app|app.now_ms as u32);
-    let (active,status,input,output,uv,voltage,updates,cycles,gap,pitch,chromatic,settled)=critical_section::with(|cs| {
-        let p=PLAYBACK.borrow_ref(cs);
-        (p.active,p.status,p.input,p.output,p.input_uv,p.output_uv,p.updates,p.max_cycles,p.max_gap_cycles,p.pitch,p.chromatic,
-            p.feedback_ready(now,value.window_age_ms,value.end_age_ms))
-    });
-    writeln!(out,"PLAY ACTIVE={} STATUS={} IN={} OUT={} INPUT_UV={} OUTPUT_UV={} UPDATES={} MAX_CYCLES={} MAX_GAP_CYCLES={}",
-        active,status,input,output,uv,voltage,updates,cycles,gap)?;
-    let nominal=with_app(|app|app.ui.opts.tracker.page.value==Page::Quantizer);
-    writeln!(out,"PLAY QUANTIZE={}",if nominal {"SCALE"} else if chromatic {"CHROMATIC"} else {"OFF"})?;
-    if with_app(|app|app.ui.opts.tracker.page.value==Page::Quantizer) {
-        let (id,root,transpose,equal)=critical_section::with(|cs| {
-            let p=PLAYBACK.borrow_ref(cs);(p.scale_id,p.root,p.transpose,p.equal)
-        });
-        writeln!(out,"QUANTIZER SCALE_ID={} ROOT_CLASS={} TRANSPOSE_SEMITONES={}",id,root,transpose)?;
-        let masks=critical_section::with(|cs|*QUANT_NOTES.borrow_ref(cs));
-        writeln!(out,"QUANTIZER MAPPING={} MASK_A={:03X} MASK_B={:03X}",
-            if equal {"EQUAL"} else {"NEAREST"},masks[0],masks[1])?;
-        writeln!(out,"QUANTIZER MAPPING=NOMINAL_1V_OCT PROFILE=NONE TARGET_MC={} OUTPUT_RANGE_UV=-5000000..5000000",pitch)?;
-        let channels=with_app(|app|app.quant_channels);
-        for (index,c) in channels.iter().enumerate() {
-            writeln!(out,"QCFG OUT={} IN={} ZERO={} SCALE={} ROOT={} TRANSPOSE={} EQUAL={} A={:03X} B={:03X}",
-                index,c.input,c.zero,c.scale,c.root,c.transpose,c.equal as u8,c.masks[0],c.masks[1])?;
-        }
-        return Ok(());
-    }
-    if active && value.valid && value.qualified {
-        if settled {
-            writeln!(out,"PLAY AUDIO_HZ={:.3} TARGET_MC={} ERROR_C={:+.2}",value.frequency_hz,pitch,
-                (pitch_math::millicents(value.frequency_hz,440.0) as i64-pitch as i64) as f32/1000.0)?;
-        } else {writeln!(out,"PLAY AUDIO_HZ={:.3} TARGET_MC={} CHECK=SETTLING",value.frequency_hz,pitch)?;}
     }
     Ok(())
 }
@@ -1438,7 +1370,7 @@ fn publish_markers(display: &pac::TUNER_DISPLAY, markers: Markers,
 
 #[derive(Clone, Copy)]
 struct UiFrame {
-    run_tuner:bool,
+    bind_route:bool,
     save_setup:bool,
     load_setup:bool,
     save_notes:bool,
@@ -1468,23 +1400,36 @@ fn poll_ui_frame() -> UiFrame {
     // The output selector also selects its independent configuration. Capture
     // the old editor before loading the new channel. Never automatically arm.
     with_app(|app|critical_section::with(|cs| {
-        let old=app.quant_selected as usize;
-        let q=MULTI_QUANT.borrow_ref(cs);
-        if q.lanes[old].active {
-            show_quant_settings(&mut app.ui.opts.quantizer,q.configs[old]);
-            *QUANT_NOTES.borrow_ref_mut(cs)=q.configs[old].masks;
+        use strum::IntoEnumIterator;
+        let r=OWNERS.borrow_ref(cs);
+        if let Some(focus)=r.focus(app.ui.opts.tuner.input.value,app.tuner_focus) {
+            app.ui.opts.tuner.input.value=focus;app.tuner_focus=focus;
         }
-        let edited=quant_settings(&app.ui.opts.quantizer,*QUANT_NOTES.borrow_ref(cs));
+        let old=app.quant_selected as usize;
+        let route_page=app.ui.opts.tracker.page.value==Page::Play;
+        let selected=if route_page {app.ui.opts.play.output.value} else {app.ui.opts.quantizer.output.value}.min(3);
+        let q=MULTI_QUANT.borrow_ref(cs);
+        let mut edited=app.quant_channels[old];
+        if q.lanes[old].active {edited=q.configs[old];}
+        else if route_page {
+            edited.input=app.ui.opts.play.input.value;edited.zero=app.ui.opts.play.zero_note.value;
+            edited.quantize=app.ui.opts.play.quantize.value==options::RouteQuantize::Scale;
+            edited.correction=app.ui.opts.play.correction.value as u8;
+        } else {
+            edited=quant_settings(&app.ui.opts.quantizer,*QUANT_NOTES.borrow_ref(cs),edited.quantize,edited.correction);
+        }
         if app.quant_channels[old]!=edited {
             *SETUP_STATUS.borrow_ref_mut(cs)=(app.ui.opts.quant_setups.slot.value,"EDITED - SAVE SETUP");
         }
-        let selected=app.ui.opts.quantizer.output.value.min(3);
-        let Some(settings)=quantizer_setup::select(&mut app.quant_channels,&mut app.quant_selected,edited,selected)
-            else {return false;};
-        show_quant_settings(&mut app.ui.opts.quantizer,settings);
-        *QUANT_NOTES.borrow_ref_mut(cs)=settings.masks;
-        *NOTE_STATUS.borrow_ref_mut(cs)=(app.ui.opts.quant_notes.slot.value,"CHANNEL NOTES - SAVE TO KEEP");
-        true
+        quantizer_setup::select(&mut app.quant_channels,&mut app.quant_selected,edited,selected);
+        let c=app.quant_channels[selected as usize];
+        show_quant_settings(&mut app.ui.opts.quantizer,c);
+        app.ui.opts.quantizer.output.value=selected;
+        app.ui.opts.play.output.value=selected;app.ui.opts.play.input.value=c.input;
+        app.ui.opts.play.zero_note.value=c.zero;
+        app.ui.opts.play.quantize.value=if c.quantize {options::RouteQuantize::Scale} else {options::RouteQuantize::Off};
+        app.ui.opts.play.correction.value=options::Correction::iter().nth(c.correction as usize).unwrap_or_default();
+        *QUANT_NOTES.borrow_ref_mut(cs)=c.masks;
     }));
     with_app(|app| {
         let toggle=app.ui.opts.quant_notes.toggle.poll();
@@ -1508,7 +1453,7 @@ fn poll_ui_frame() -> UiFrame {
         let menu_active = app.ui.draw();
         app.ui.set_menu_visible(menu_active);
         UiFrame {
-            run_tuner:app.ui.opts.tuner.run.poll(),
+            bind_route:app.ui.opts.play.bind.poll(),
             save_setup:app.ui.opts.quant_setups.save.poll(),
             load_setup:app.ui.opts.quant_setups.load.poll(),
             save_notes:app.ui.opts.quant_notes.save.poll(),
@@ -1554,7 +1499,7 @@ type TunerPersistence = FlashOptionsPersistence<SPIFlash0,1100>;
 
 #[inline(never)]
 fn persist_setup(storage:&mut Option<TunerPersistence>,save:bool)->&'static str {
-    if critical_section::with(|cs|PLAYBACK.borrow_ref(cs).active || MULTI_QUANT.borrow_ref(cs).running) {return "STOP OUTPUT FIRST";}
+    if critical_section::with(|cs|MULTI_QUANT.borrow_ref(cs).running) {return "STOP OUTPUT FIRST";}
     let slot=with_app(|app|app.ui.opts.quant_setups.slot.value);
     let Some(key)=quantizer_setup::key(slot) else {return "INVALID SETUP SLOT";};
     if with_app(|app|app.ui.opts.all().any(|o|o.key().value()==key)) {return "SETUP KEY CONFLICT";}
@@ -1578,6 +1523,7 @@ fn persist_setup(storage:&mut Option<TunerPersistence>,save:bool)->&'static str 
             let current=channels[app.quant_selected as usize];
             show_quant_settings(&mut app.ui.opts.quantizer,current);
             critical_section::with(|cs| {
+                MULTI_QUANT.borrow_ref_mut(cs).bound=[0;4];
                 *QUANT_NOTES.borrow_ref_mut(cs)=current.masks;
                 *NOTE_STATUS.borrow_ref_mut(cs)=(app.ui.opts.quant_notes.slot.value,"NOTES FROM SETUP");
             });
@@ -1588,7 +1534,7 @@ fn persist_setup(storage:&mut Option<TunerPersistence>,save:bool)->&'static str 
 
 #[inline(never)]
 fn persist_notes(storage:&mut Option<TunerPersistence>,save:bool)->&'static str {
-    if critical_section::with(|cs|PLAYBACK.borrow_ref(cs).active || MULTI_QUANT.borrow_ref(cs).running) {return "STOP OUTPUT FIRST";}
+    if critical_section::with(|cs|MULTI_QUANT.borrow_ref(cs).running) {return "STOP OUTPUT FIRST";}
     let slot=with_app(|app|app.ui.opts.quant_notes.slot.value);
     let Some(key)=note_pattern::key(slot) else {return "INVALID NOTE SLOT";};
     if with_app(|app|app.ui.opts.all().any(|o|o.key().value()==key)) {return "NOTE KEY CONFLICT";}
@@ -1620,6 +1566,52 @@ fn expanded_window(storage:&TunerPersistence)->core::ops::Range<u32> {
 fn profile_key(slot:u8)->Option<u32> {
     let key=oscillator_calibration::storage::key(slot)?;
     if with_app(|app| app.ui.opts.all().any(|o|o.key().value()==key)) {None} else {Some(key)}
+}
+
+// Flash reads share the journal/cache path with profile recall. Keep them out
+// of active output service. RAM binding only copies a bounded immutable curve.
+#[inline(never)]
+fn bind_route(storage:&mut Option<TunerPersistence>,cal:&calibration_live::Live,
+              output:usize,source:u8)->&'static str {
+    if output>=4 || source>5 {return "INVALID ROUTE";}
+    if critical_section::with(|cs|MULTI_QUANT.borrow_ref(cs).lanes[output].active) {
+        return "STOP THIS OUTPUT BEFORE BINDING";
+    }
+    // A failed replacement must not arm a stale curve under the new request.
+    critical_section::with(|cs|MULTI_QUANT.borrow_ref_mut(cs).bound[output]=0);
+    if source==0 {
+        critical_section::with(|cs|MULTI_QUANT.borrow_ref_mut(cs).bound[output]=0);
+        return "NOMINAL CV - NO CORRECTION";
+    }
+    if source==1 {
+        let Some(profile)=cal.profile.as_ref() else {return "NO ACCEPTED RAM PROFILE";};
+        return install_route_curve(output,source,profile);
+    }
+    if cal.active() || outputs_running() {return "STOP OUTPUTS BEFORE FLASH READ";}
+    let Some(key)=profile_key(source-1) else {return "INVALID PROFILE SLOT";};
+    let Some(storage)=storage.as_mut() else {return "NO PROFILE STORAGE";};
+    let mut bytes=[0;oscillator_calibration::storage::MAX_BYTES+1];
+    let result=match storage.load_key_in(expanded_window(storage),key,&mut bytes) {
+        Ok(None)=>storage.load_key(key,&mut bytes),other=>other,
+    };
+    let len=match result {Ok(Some(n))=>n,Ok(None)=>return "EMPTY PROFILE SLOT",Err(_)=>return "PROFILE READ FAILED"};
+    bind_route_record(output,source,&bytes[..len])
+}
+
+#[inline(never)]
+fn bind_route_record(output:usize,source:u8,bytes:&[u8])->&'static str {
+    let Ok(record)=oscillator_calibration::storage::decode(bytes) else {return "INVALID STORED PROFILE";};
+    install_route_curve(output,source,&record.profile)
+}
+
+#[inline(never)]
+fn install_route_curve(output:usize,source:u8,profile:&oscillator_calibration::Profile)->&'static str {
+    critical_section::with(|cs| {
+        let mut q=MULTI_QUANT.borrow_ref_mut(cs);
+        if !q.lanes[output].bind_profile(profile) {return "CANNOT BIND PROFILE";}
+        q.bound[output]=source;
+        "CURVE BOUND - RUN TO START"
+    })
 }
 
 #[inline(never)]
@@ -1861,7 +1853,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
             #[cfg(tuner_nsdf)]
             let ui_period_ms=nsdf_trace.ui_period_ms(!calibration.active()
                 && with_app(|app|app.ui.opts.tracker.page.value==options::Page::Tuner)
-                && !critical_section::with(|cs|PLAYBACK.borrow_ref(cs).active),ui_period_ms);
+                && !outputs_running(),ui_period_ms);
             let ui_elapsed_ms=now.wrapping_sub(last_ui_ms);
             if ui_elapsed_ms<ui_period_ms {continue;}
             last_ui_ms=now;
@@ -1869,7 +1861,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 let mut r=OWNERS.borrow_ref_mut(cs);
                 let q=MULTI_QUANT.borrow_ref(cs);
                 for n in 0..4 {if !q.lanes[n].active {r.release(Owner::Quant(n as u8));}}
-                if !PLAYBACK.borrow_ref(cs).active {r.release(Owner::Play);}
+
                 if !calibration.active() {r.release(Owner::Calibration);}
             });
             // The menu may be browsed freely, but an active operation keeps
@@ -1885,49 +1877,17 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     }
                 });}
             }
-            critical_section::with(|cs| {
-                let play=PLAYBACK.borrow_ref(cs);
-                if play.active {with_app(|app| {
-                    app.ui.opts.play.input.value=play.input;
-                    app.ui.opts.play.quantize.value=if play.chromatic {options::QuantizeMode::Chromatic} else {options::QuantizeMode::Off};
-                });}
-            });
             let ui_frame = poll_ui_frame();
-            if ui_frame.run_tuner {critical_section::with(|cs| {
-                let owner=Owner::Tuner(ui_frame.controls.tuner_input);
-                let mut r=OWNERS.borrow_ref_mut(cs);
-                *TUNER_STATUS.borrow_ref_mut(cs)=if r.held(owner) {r.release(owner);"INPUT RELEASED"}
-                    else if r.claim(owner,1<<ui_frame.controls.tuner_input,0) {"TUNING - INPUT RESERVED"}
-                    else {"INPUT BUSY - STOP ITS OWNER"};
-            });}
-            if ui_frame.run_play && ui_frame.controls.mode==runtime::OperatingMode::Quantizer {
+            if ui_frame.bind_route {
+                let (n,c)=with_app(|app|(app.quant_selected as usize,app.quant_channels[app.quant_selected as usize]));
+                let status=bind_route(persistence,&calibration,n,c.correction);
+                critical_section::with(|cs|MULTI_QUANT.borrow_ref_mut(cs).lanes[n].status=status);
+            }
+            if ui_frame.run_play {
                 critical_section::with(|cs| {
                     let mut q=MULTI_QUANT.borrow_ref_mut(cs);
                     let (n,c)=with_app(|app|(app.quant_selected as usize,app.quant_channels[app.quant_selected as usize]));
                     q.toggle(&tuner,n,c,ui_frame.now_ms as u32,counts_per_v as i32,&mut OWNERS.borrow_ref_mut(cs));
-                });
-            }
-            if ui_frame.run_play && matches!(ui_frame.controls.mode,
-                runtime::OperatingMode::Play) {
-                critical_section::with(|cs| {
-                    let mut play=PLAYBACK.borrow_ref_mut(cs);
-                    if play.active {
-                        tuner.cal_command().write(|w|unsafe{w.value().bits(play.stop("STOPPED BY USER"))});
-                    } else if calibration.pending_profile.is_some() {
-                        play.status="ACCEPT OR DISCARD CAL FIRST";
-                    } else if !calibration.active() {
-                        if let (Some(profile),Some(route))=(calibration.profile.as_ref(),calibration.profile_route) {
-                            let input=with_app(|app|app.ui.opts.play.input.value);
-                            if !OWNERS.borrow_ref_mut(cs).claim(Owner::Play,(1<<input)|(1<<route.input()),1<<route.output()) {
-                                play.status="CHANNEL BUSY - STOP ITS OWNER";return;
-                            }
-                            if play.arm(profile,input,route.output(),ui_frame.controls.zero_note,
-                                counts_per_v as i32,ui_frame.now_ms as u32,tuner.cal_status().read().value().bits()) {
-                                play.chromatic=with_app(|app|app.ui.opts.play.quantize.value==options::QuantizeMode::Chromatic);
-                                tuner.cv_channel().write(|w|unsafe{w.channel().bits(input)});
-                            }
-                        } else {play.status="LOAD OR CALIBRATE A PROFILE";}
-                    }
                 });
             }
             #[cfg(not(tuner_nsdf))]
@@ -2060,7 +2020,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 }
                 if refine {
                     capture_trace.cancel(&tuner);
-                    let can_start=!calibration.active() && !critical_section::with(|cs|PLAYBACK.borrow_ref(cs).active)
+                    let can_start=!calibration.active()
                         && calibration.profile_route.is_some_and(|route|critical_section::with(|cs|
                             OWNERS.borrow_ref_mut(cs).claim(Owner::Calibration,1<<route.input(),1<<route.output())));
                     if can_start {calibration_controls=Some(controls);calibration.start_refinement(&tuner,controls,ui_frame.now_ms);}
@@ -2071,7 +2031,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     capture_trace.cancel(&tuner);
                     run_verify=false;
                     let can_start=calibration.verifying || (!calibration.active()
-                        && !critical_section::with(|cs|PLAYBACK.borrow_ref(cs).active)
+
                         && calibration.profile_route.is_some_and(|route|critical_section::with(|cs|
                             OWNERS.borrow_ref_mut(cs).claim(Owner::Calibration,1<<route.input(),1<<route.output()))));
                     if can_start {calibration_controls=Some(controls);calibration.toggle_verify(&tuner,controls,ui_frame.now_ms);}
@@ -2082,24 +2042,13 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     capture_trace.cancel(&tuner);
                     run_calibration = false;
                     if controls.mode == runtime::OperatingMode::Calibrator {
-                        let can_start=!calibration.verifying && !critical_section::with(|cs|PLAYBACK.borrow_ref(cs).active)
+                        let can_start=!calibration.verifying
                             && (calibration.active() || critical_section::with(|cs|OWNERS.borrow_ref_mut(cs).claim(
                                 Owner::Calibration,1<<controls.calibration_input,1<<controls.calibration_output)));
                         if can_start {calibration_controls=Some(controls);calibration.toggle(&tuner, controls, ui_frame.now_ms);}
                         else {calibration.status="CHANNEL BUSY - STOP ITS OWNER";}
                         verification[calibration.input as usize].clear();
                     }
-                }
-                // PLAY checks the loaded oscillator, not all four audio lanes.
-                // Pin the shared verifier before reading so note changes don't
-                // wait for a round trip through unrelated inputs. Raw four-lane
-                // pitch acquisition remains continuous.
-                let playback_audio=if controls.mode==runtime::OperatingMode::Play {
-                    calibration.profile_route.map(|route|route.input())
-                } else {None};
-                if let Some(input)=playback_audio {
-                    tuner.verify_channel().write(|w|unsafe{w.channel().bits(input)});
-                    verification_frames=0;
                 }
                 let previous_capture_mode=tuner.verify_capture().read().mode().bits();
                 for input in 0..4u8 {
@@ -2126,7 +2075,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 if calibration.active() {
                     tuner.verify_channel().write(|w| unsafe {w.channel().bits(calibration.input)});
                     verification_frames = 0;
-                } else if playback_audio.is_none() && verification_frames >= dwell {
+                } else if verification_frames >= dwell {
                     verification_frames = 0;
                     let next = (tuner.verify_channel().read().channel().bits()+1) & 3;
                     tuner.verify_channel().write(|w| unsafe { w.channel().bits(next) });
@@ -2187,11 +2136,8 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 // Dynamic fields still replace their full bounded footprint.
                 if calibration_view {
                     text.clear(false);
-                    if controls.mode == runtime::OperatingMode::Quantizer {
+                    if matches!(controls.mode,runtime::OperatingMode::Quantizer|runtime::OperatingMode::Play) {
                         publish_quantizer(&tuner_display,&mut text,ui_frame.menu_active);
-                    } else if controls.mode == runtime::OperatingMode::Play {
-                        publish_playback(&tuner_display,&mut text,&calibration,controls,
-                            measurements.channel(calibration.input),ui_frame.menu_active);
                     } else if controls.mode == runtime::OperatingMode::Profiles {
                         publish_profiles(&tuner_display,&mut text,&calibration,&name_editor,
                             ui_frame.profile_slot,ui_frame.name_position,profile_status,ui_frame.menu_active);

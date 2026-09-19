@@ -100,6 +100,8 @@ pub struct PlaybackEngine<P:ProfileStorage> {
     pub max_gap_cycles:usize,
     pub chromatic:bool,
     pub standalone:bool,
+    /// Full scale stage, independent from nominal/corrected voltage mapping.
+    pub scale_enabled:bool,
     pub scale_id:u8,
     pub root:u8,
     pub transpose:i8,
@@ -113,21 +115,21 @@ impl<P:ProfileStorage> PlaybackEngine<P> {
     pub const fn new()->Self {Self{profile:None,active:false,status:"STOPPED - RUN TO START",
         input:0,output:0,zero_note:60,input_uv:0,output_uv:0,pitch:0,sequence:None,
         last_sample:0,pending:None,token:0,counts_per_v:4000,updates:0,max_cycles:0,last_irq_cycle:0,max_gap_cycles:0,
-        chromatic:false,standalone:false,scale_id:0,root:0,transpose:0,equal:false,
+        chromatic:false,standalone:false,scale_enabled:false,scale_id:0,root:0,transpose:0,equal:false,
         pattern:crate::scale::Pattern::empty(),quantized_pitch:None,last_command:None,target_since:0}}
     pub fn arm(&mut self,profile:&Profile,input:u8,output:u8,zero:u8,counts:i32,now:u32,status:u32)->bool where P:From<Profile> {
         if self.active || status&768!=0 || input>3 || output>3 || counts<=0
             || profile.points().len()<2 || !(12..=108).contains(&zero) {
             self.status="CANNOT ARM - CHECK PROFILE";return false;
         }
-        self.profile=Some(profile.clone().into());self.standalone=false;
+        self.profile=Some(profile.clone().into());self.standalone=false;self.scale_enabled=false;
         self.start(input,output,zero,counts,now)
     }
     pub fn arm_nominal(&mut self,input:u8,output:u8,zero:u8,counts:i32,now:u32,status:u32)->bool {
         if self.active || status&768!=0 || input>3 || output>3 || counts<=0 || !(12..=108).contains(&zero) {
             self.status="CANNOT ARM - CHECK ROUTE";return false;
         }
-        self.profile=None;self.standalone=true;self.chromatic=true;
+        self.profile=None;self.standalone=true;self.chromatic=true;self.scale_enabled=true;
         self.scale_id=0;self.root=0;self.transpose=0;self.equal=false;
         self.start(input,output,zero,counts,now)
     }
@@ -138,6 +140,22 @@ impl<P:ProfileStorage> PlaybackEngine<P> {
         self.last_command=None;self.target_since=now;self.output_uv=0;
         self.active=true;self.status="WAITING FOR CV";self.updates=0;self.max_cycles=0;
         self.last_irq_cycle=0;self.max_gap_cycles=0;true
+    }
+    /// Immutable per-output curve; binding is never allowed while running.
+    pub fn bind_profile(&mut self,profile:&Profile)->bool where P:From<Profile> {
+        if self.active || profile.points().len()<2 {return false;}
+        self.profile=Some(profile.clone().into());true
+    }
+    pub fn profile_name(&self)->Option<&str> {self.profile.as_ref().and_then(ProfileStorage::measured).map(Profile::name)}
+    pub fn arm_route(&mut self,input:u8,output:u8,zero:u8,counts:i32,now:u32,status:u32,
+                     corrected:bool,quantize:bool)->bool {
+        if self.active || status&768!=0 || input>3 || output>3 || counts<=0
+            || !(12..=108).contains(&zero)
+            || (corrected && self.profile.as_ref().and_then(ProfileStorage::measured).is_none()) {
+            self.status="CANNOT ARM - CHECK ROUTE / CURVE";return false;
+        }
+        self.standalone=!corrected;self.scale_enabled=quantize;self.chromatic=quantize;
+        self.start(input,output,zero,counts,now)
     }
     pub fn stop(&mut self,reason:&'static str)->u32 {
         self.active=false;self.pending=None;self.quantized_pitch=None;self.last_command=None;self.output_uv=0;self.status=reason;0
@@ -178,7 +196,7 @@ impl<P:ProfileStorage> PlaybackEngine<P> {
         let Ok(mut pitch)=pitch_from_cv(self.input_uv,self.zero_note) else {
             return Some(self.stop("STOPPED - INPUT CONVERSION"));
         };
-        if self.standalone {
+        if self.scale_enabled {
             let scale=if self.scale_id==6 {self.pattern.scale()} else {crate::scale::preset(self.scale_id)};
             let Some(scale)=scale else {
                 return Some(self.stop("STOPPED - INVALID SCALE"));
@@ -235,7 +253,10 @@ impl<P:ProfileStorage> PlaybackEngine<P> {
         self.output_uv=target.applied_microvolts;self.pitch=target.pitch_millicents;
         self.token=self.token.wrapping_add(1);self.pending=Some((self.token,now));
         self.updates=self.updates.wrapping_add(1);
-        self.status=if self.standalone {"QUANTIZING - NOMINAL CV"} else {"PLAYING - CORRECTED CV"};
+        self.status=match (self.standalone,self.scale_enabled) {
+            (true,true)=>"QUANTIZING - NOMINAL CV",(true,false)=>"PLAYING - NOMINAL CV",
+            (false,true)=>"QUANTIZING - CORRECTED CV",(false,false)=>"PLAYING - CORRECTED CV",
+        };
         let command=target.dac_bits as u32 | ((self.output as u32)<<16) | (1<<18)
             | ((self.input as u32)<<19) | ((self.token as u32)<<21) | (1<<29);
         self.last_command=Some(command);Some(command)
@@ -245,6 +266,41 @@ impl<P:ProfileStorage> PlaybackEngine<P> {
 #[cfg(test)] mod tests {
     use super::*;
     use crate::oscillator_calibration::Point;
+    #[test] fn route_stages_are_independent_and_curve_is_a_snapshot() {
+        for quantize in [false,true] {for corrected in [false,true] {
+            let mut profile=curve();let mut e=Engine::new();
+            assert!(e.bind_profile(&profile));
+            assert!(e.arm_route(0,3,60,4000,0,0,corrected,quantize));
+            e.scale_id=1; // C major: C# becomes D, before correction.
+            assert!(!e.bind_profile(&profile));
+            let command=e.tick(1,sample(1,334),0,true).unwrap();
+            let pitch=if quantize {6_200_000} else {pitch_from_cv(83500,60).unwrap()};
+            assert_eq!(e.pitch,pitch);
+            assert_eq!(command as u16,if corrected {map_pitch(&profile,pitch).unwrap().dac_bits}
+                else {map_nominal(pitch,60).unwrap().dac_bits});
+            profile.rename("changed externally").unwrap();
+            assert_eq!(e.profile_name(),Some("variable"));
+        }}
+        let mut e=Engine::new();assert!(!e.arm_route(0,0,60,4000,0,0,true,true));
+        assert!(!e.active);
+    }
+    #[test] fn four_corrected_routes_share_cv_but_not_curves_or_state() {
+        let mut lanes:[Engine;4]=core::array::from_fn(|_|Engine::new());
+        let mut commands=[0;4];
+        for (n,e) in lanes.iter_mut().enumerate() {
+            let mut p=Profile::new("own curve",-5_000_000,5_000_000).unwrap();
+            for step in -24..=24 {p.push(Point{microvolts:step*50000+n as i32*1000,
+                millicents:6_000_000+step*100000}).unwrap();}
+            assert!(e.bind_profile(&p));assert!(e.arm_route(1,n as u8,60,4000,0,0,true,true));
+            commands[n]=e.tick(1,sample(1,0),0,true).unwrap();assert_eq!(e.output_uv,n as i32*1000);
+        }
+        for (n,e) in lanes.iter_mut().enumerate() {
+            e.tick(3,sample(2,0),if n==0 {512} else {ack(commands[n])},true);
+            assert_eq!(e.active,n!=0);
+        }
+        // One immutable curve per output; no duplicate calibration state.
+        assert!(core::mem::size_of::<[Engine;4]>()<5200);
+    }
     #[test] fn four_lightweight_lanes_keep_history_and_faults_independent() {
         assert!(core::mem::size_of::<QuantEngine>()<384);
         assert!(core::mem::size_of::<Engine>()>core::mem::size_of::<QuantEngine>()+900);

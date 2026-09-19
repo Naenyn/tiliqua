@@ -33,7 +33,7 @@ started -5..+5 V oscillator tracking sweep with up to 121 points; see
 RAM profile to a requested note name/octave and cents offset, showing measured error
 against that target (fixed A4=440 Hz). It uses the successful calibration's
 route, requires Run to start, and stops on explicit stop or a range/output
-error. PLAY provides single-channel external-CV playback through that same curve.
+error. ROUTE provides per-output external-CV playback through an explicitly bound curve.
 Otherwise outputs remain at zero, including
 while sitting on CAL before a run.
 
@@ -163,17 +163,18 @@ remain immediate rather than waiting for a group commit.
 Running settings are locked; channel selection and page navigation do not stop
 outputs. An empty custom pattern cannot arm its lane.
 Per-lane stale CV, missing ACK, rail, and output faults stop that lane; scheduling
-or shared CPU-budget faults stop the whole group. Calibration/corrected PLAY has
+or shared CPU-budget faults stop the whole group. Calibration has
 hardware priority only on its reserved output; unrelated quantizer lanes continue.
 The earlier four-quantizer implementation passed live operation; mixed-mode
 operation passes simulation and routed FPGA timing but awaits hardware validation.
 Direct physical CV edge alignment remains unmeasured; see the checkpoint.
 Four lightweight lanes share the scale/mapping implementation;
-they do not retain four copies of the oscillator calibration profile.
+corrected routes retain one immutable measured curve each, without duplicating the detector.
 
 **SETUPS** offers eight explicit SAVE/LOAD slots for all four channels together,
 including their note masks. Save is read-back verified; load validates the entire
-record before replacing RAM settings and never arms output. SETTINGS/Save still
+record before replacing RAM settings, clears curve bindings and never arms output.
+TQS2 adds per-output quantization enable and correction source; TQS1 is still readable. SETTINGS/Save still
 only saves menu settings; use SETUPS/Save to retain all four configurations.
 Missing/invalid setups leave current settings intact. Setup slots, pattern slots,
 and oscillator profile slots are separate; existing records are preserved.
@@ -193,51 +194,25 @@ upload files to the module. Numerical table precision is 0.001 cent; nominal
 DAC steps are 250 microvolts (0.3 cent at 1 V/oct), so table precision is not a
 claim of analog output accuracy or distinguishability of arbitrarily close notes.
 
-## Corrected pitch-CV playback
+## Routing, correction and quantization
 
-PLAY includes `quantize`: OFF (default) or CHROMATIC. Unlike standalone QUANT,
-this mode uses the loaded oscillator profile. It rounds incoming pitch to the nearest semitone before
-applying the same measured calibration curve. Midpoint ties round upward; once
-a note is selected, it is retained until pitch moves more than 55 cents from it
-(five cents beyond the usual boundary). Large changes jump directly to the
-nearest note. Stop/restart clears that history. Changing quantization mode during
-playback is blocked until explicit stop. Unreachable selected notes hold
-the last valid output and resume automatically on reentry; before the first valid
-note output remains disabled. Notes are never clamped to the profile edge.
-Fresh out-of-range samples renew the held command, while stale measurements,
-input rails, output faults and explicit stop retain the zero-output safety path.
-The oscillator may remain patched to the loaded profile's audio input for pitch
-checking. Frequency is shown while settling; cents error requires the entire
-measurement window to follow the last target change plus a settling margin.
-This check observes audio; it does not retune the output or alter the profile.
-During PLAY, the shared audio verifier stays on the loaded profile's audio input
-instead of rotating through all four inputs. Rapid target changes can still
-prevent a qualified, settled reading; CV quantization does not depend on this
-optional audio check.
-There is no trigger,
-scale selection, polyphonic quantization or automatic output arming yet.
-The standalone quantizer will be extended to multiple independent CV channels.
-Applying an oscillator profile will be optional, not a prerequisite.
+See [CONCURRENCY.md](CONCURRENCY.md) for the current assignment model and test plan.
+ROUTE (formerly PLAY) and QUANT edit the same per-output processing chain.
+Each OUT 0–3 can read any CV input, quantize to its selected scale optionally,
+then apply an independently bound oscillator calibration curve optionally.
+Use CORRECTION NONE for nominal voltage, RAM or SLOT 1–4 plus BIND for correction.
+BIND is explicit and never starts playback. RUN controls only the selected output.
 
-Load a profile, keep its oscillator tuning unchanged, then select PLAY (after
-HELP in the page list). PLAY/input selects the pitch-CV source; the output comes
-from the loaded profile and cannot be silently rerouted. Oscillator audio can
-remain patched to its tuner input. Supply 1 V/oct pitch CV, where 0 V means the
-profile's saved zero-note setting (normally C4). RUN explicitly starts/stops.
-Leaving PLAY does not stop output; its input is locked while running. Loading a profile never starts
-playback. The original calibration and all saved profiles remain unchanged.
+TUNER is always read-only: active CV inputs are hidden/unfocusable, but the audio
+input of a calibration scan remains available. One calibration/verification
+operation can run alongside independent output routes. Simultaneous scans are
+not supported. Profile flash access and setup recall require stopped outputs.
+Changing route settings requires stopping the affected output; navigation does not.
 
-PLAY uses a separate DC-preserving 64-sample snapshot and a 1-kHz interrupt
-service, not the audio DC estimator or 50-Hz display loop. A requested pitch
-outside the measured curve holds the last valid output until it reenters range,
-without clamping or extrapolating the calibration curve.
-Stale CV, input rails, output faults/ack timeouts, excessive computation time
-or scheduling gaps latch a stop requiring another explicit RUN. Unplugged CV
-can resemble valid zero and is not detectable as a disconnected cable.
-Nominal stopped output is zero; that is not an audio mute or universally safe
-pitch. With quantize OFF this playback path is continuous and does
-not promise audio-rate FM. Serial reports input/output microvolts, update count,
-peak computation cycles and peak service gap for hardware qualification.
+Curves are immutable per-output snapshots. Setup records save the correction
+source and quantization enable, not curve contents; rebind after setup recall
+or reboot. Legacy setups remain readable. Keep the oscillator tuning unchanged;
+verify residual error if moving a curve to a different physical DAC output.
 
 ## Oscillator profiles
 

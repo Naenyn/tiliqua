@@ -51,13 +51,13 @@ def test_standalone_quantizer_menu_and_mode_have_independent_controls():
     fields=re.findall(r'pub (\w+):',options.split('pub struct QuantizerOpts {')[1].split('}')[0])
     assert fields==['input','output','zero_note','run','scale','root','transpose','mapping']
     main=(firmware/'main.rs').read_text()
-    assert '(Page::Quantizer, 2) => "0v note"' in main
-    assert 'page==Page::Quantizer && index==2' in main
+    assert '(Page::Quantizer, 2) | (Page::Play, 2) => "0v note"' in main
+    assert 'matches!(page,Page::Quantizer|Page::Play) && index==2' in main
     assert 'Page::Quantizer => "QUANT"' in main
-    assert 'let allowed=OWNERS.borrow_ref(cs).held(Owner::Play)' in main
-    assert 'lane.arm_nominal(c.input,n as u8,c.zero' in main
+    assert 'Page::Play => "ROUTE"' in main
+    assert 'lane.arm_route(c.input,n as u8,c.zero' in main
     assert 'if q.lanes[old].active' in main
-    assert 'show_quant_settings(&mut app.ui.opts.quantizer,q.configs[old])' in main
+    assert 'if q.lanes[old].active {edited=q.configs[old];}' in main
     assert 'RUN / STOP SELECTED; SETTINGS LOCKED' in main
     presets=options.split('pub enum ScalePreset {')[1].split('}')[0]
     assert re.findall(r'\] (\w+),',presets)==[
@@ -78,10 +78,12 @@ def test_note_slots_fit_menu_and_legacy_slot_is_preserved():
     assert 'slot==status_slot' in main
 
 
-def test_playback_audio_verifier_is_pinned_before_measurement_reads():
+def test_routes_do_not_consume_audio_or_start_a_second_playback_engine():
     main = (Path(__file__).parents[1] / "src/top/tuner/fw/src/main.rs").read_text()
-    pin = main.index("let playback_audio=if controls.mode==runtime::OperatingMode::Play")
-    read = main.index("let measurement = read_measurement", pin)
-    assert "calibration.profile_route.map(|route|route.input())" in main[pin:read]
-    assert "tuner.verify_channel().write" in main[pin:read]
-    assert "else if playback_audio.is_none() && verification_frames >= dwell" in main[read:]
+    assert 'static PLAYBACK:' not in main
+    assert 'Owner::Play' not in main
+    assert 'Owner::Tuner' not in main
+    assert 'r.claim(Owner::Quant(n as u8),1<<c.input,1<<n)' in main
+    assert 'r.focus(app.ui.opts.tuner.input.value,app.tuner_focus)' in main
+    assert 'if cal.active() || outputs_running() {return "STOP OUTPUTS BEFORE FLASH READ";}' in main
+    assert 'BIND CORRECTION ON ROUTE FIRST' in main
