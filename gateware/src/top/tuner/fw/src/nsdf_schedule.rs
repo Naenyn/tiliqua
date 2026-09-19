@@ -40,23 +40,33 @@ impl Scheduler {
             *slot=((hz*1000.0) as u32,qualified,end_age,now);
         }
     }
-    fn selected(&self,input:u8,now:u64)->publish::Pitch {
+    fn selected(&self,input:u8,now:u64,settled:bool)->publish::Pitch {
         if input>=4 {return publish::Pitch::NONE;}
         let frame=|r:Latest|publish::Frame {mhz:r.mhz,count:r.count,completed:r.done,
             request_ms:r.dt,qualified:r.valid && r.raw && r.guard};
-        publish::display(frame(self.latest[input as usize*2]),frame(self.latest[input as usize*2+1]),now)
+        let n=frame(self.latest[input as usize*2]);let l=frame(self.latest[input as usize*2+1]);
+        if settled {publish::publish(n,l,now)}else{publish::display(n,l,now)}
     }
     /// Display-only pitch. Re-evaluate freshness on every render; never fall
     /// back to an old result or the baseline detector when unqualified.
     pub fn display_hz(&self,input:u8,now:u64)->Option<f32> {
-        let pitch=self.selected(input,now);
+        let pitch=self.selected(input,now,false);
         if matches!(pitch.source,1|2) {Some(pitch.mhz as f32/1000.0)} else {None}
     }
     /// Frequency, qualification, consumer sequence, full-window and endpoint
     /// ages. CAL's existing post-output settling gate uses these conservative
     /// ages; repeated UI reads are not additional acquired measurements.
     pub fn measurement(&self,input:u8,now:u64,identity:&mut Sequence)->(f32,bool,u16,u32,u32) {
-        let p=self.selected(input,now);
+        self.measurement_with(input,now,identity,false)
+    }
+    /// Settled CAL/CHECK observations prefer the longer low-rate bank in its
+    /// overlap, retaining cross-bank disagreement and full-window age guards.
+    /// Do not apply this asynchronous-bank veto to the live tuner display.
+    pub fn calibration_measurement(&self,input:u8,now:u64,identity:&mut Sequence)->(f32,bool,u16,u32,u32) {
+        self.measurement_with(input,now,identity,true)
+    }
+    fn measurement_with(&self,input:u8,now:u64,identity:&mut Sequence,settled:bool)->(f32,bool,u16,u32,u32) {
+        let p=self.selected(input,now,settled);
         if input<4 {
             if let Some(sequence)=identity.observe(p.source,p.generation) {
                 return (p.mhz as f32/1000.0,true,sequence,p.window_age_ms,p.end_age_ms);
@@ -155,7 +165,7 @@ impl Scheduler {
                     resolve::Candidate {mhz:r.mhz,age,qualified:lq});
                 write!(self.pending,"NSDF PICK ch={} ms={} n={} na={} nq={} l={} la={} lq={} mhz={} src={}\n",
                     self.report>>1,now as u32,n.mhz,na,nq,r.mhz,age,lq,selected.mhz,selected.source).ok();
-                let p=self.selected(self.report>>1,now);
+                let p=self.selected(self.report>>1,now,false);
                 let (base,bq,end_age,observed)=self.baseline[(self.report>>1) as usize];
                 let bage=now.saturating_sub(observed).saturating_add(end_age as u64).min(u32::MAX as u64) as u32;
                 write!(self.pending,"NSDF COMP ch={} ms={} mhz={} src={} gen={} age={} win={} base={} bq={} bage={}\n",

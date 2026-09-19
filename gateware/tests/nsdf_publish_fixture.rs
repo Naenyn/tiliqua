@@ -37,4 +37,14 @@ fn main() {
     assert_eq!(publish::display(Frame{count:0,..n},l,120).source,1);
     assert_eq!(publish::display(f(599999,110,2),l,120).source,1);
     assert_eq!(publish::display(f(20000001,110,2),l,120).source,1);
+    // Generate3's +2.33325V failure on 2026-09-19: native estimates in
+    // the overlap jitter, while the low-rate estimate is repeatable.
+    // The display remains responsive; calibration must use the settled bank.
+    for native in [600030,601420,600985,602862,604197,603276] {
+        let n=f(native,100,5);let l=f(602006,110,6);
+        let settled=publish(n,l,120);
+        assert_eq!((settled.mhz,settled.source,settled.generation),(602006,1,6));
+        assert_eq!(publish::display(n,l,120).mhz,native);
+        assert!(settled.window_age_ms>=settled.end_age_ms+110);
+    }
 }

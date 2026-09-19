@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import capture_nsdf_cpu
 
 
-@pytest.mark.parametrize('scenario',[0,1,2,3])
+@pytest.mark.parametrize('scenario',[0,1,2,3,4])
 def test_real_scheduler_keeps_acquiring_during_uart_stall(tmp_path,scenario):
     here=Path(__file__).parent
     exe=tmp_path/'scheduler'

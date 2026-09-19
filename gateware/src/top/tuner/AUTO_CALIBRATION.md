@@ -116,6 +116,24 @@ preflight and final zero checks are unchanged. The integration regression now
 includes intermittent qualification at the floor instead of suppressing jitter
 there. A fresh physical retry is required for this correction.
 
+The next physical run crossed zero and reached +2.33325 V with 55 retained
+points, then timed out on qualified but unstable pitch near 602 Hz. Serial
+showed a wiring error in the software consumers: CAL inherited the live
+display's native-bank preference above 600 Hz. Native observations included
+600.030–604.197 Hz, while the concurrently computed low-bank readings in that
+excerpt stayed at 602.006–602.112 Hz. The settled resolver already preferred
+that longer window below 1 kHz, but CAL was not using it.
+
+Active CAL/CHECK now explicitly uses the existing settled publication policy;
+other inputs and live tuner display retain the fast motion policy. Both banks
+still use their existing confidence, energy and freshness gates, and conflicting
+qualified overlap candidates still invalidate a settled reading. Consumer
+sequence and full-window age metadata follow the selected bank. This adds no
+acquisition or hardware bank. `NSDF COMP` remains the live-display descriptor;
+`NSDF PICK` shows the strict arbitration diagnostic (with logging-time ages).
+Host scheduler tests exercise both paths with different bank estimates, and a
+regression checks the actual CAL-only wiring. Physical confirmation is pending.
+
 Host coverage includes complete automatic operation, navigation during work,
 successful refinement, rejection of full-range regressions, cancellation,
 deadline and output-fault rollback, profile serialization, journal recovery and

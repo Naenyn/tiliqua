@@ -2100,7 +2100,11 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     #[cfg(tuner_nsdf_continuous)]
                     let measurement = {
                         let (hz,qualified,sequence,window_age_ms,end_age_ms)=
-                            nsdf_trace.measurement(input,ui_frame.now_ms,&mut nsdf_sequences[input as usize]);
+                            if calibration.active() && input==calibration.input {
+                                nsdf_trace.calibration_measurement(input,ui_frame.now_ms,&mut nsdf_sequences[input as usize])
+                            } else {
+                                nsdf_trace.measurement(input,ui_frame.now_ms,&mut nsdf_sequences[input as usize])
+                            };
                         ChannelMeasurement {frequency_hz:hz,valid:qualified,qualified,
                             sequence,window_age_ms,end_age_ms,..measurement}
                     };

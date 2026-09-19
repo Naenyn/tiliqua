@@ -57,8 +57,9 @@ impl NSDF_PERIPH {
 }
 mod nsdf_select {
     pub struct Result {pub hz:f32,pub unrefined_hz:f32,pub clarity:f32,pub qualified:bool}
-    pub fn select_frame(_:impl FnMut(usize)->i32,_:bool,_:u64,_:bool,_:bool)->Option<Result>{
-        Some(Result{hz:880.,unrefined_hz:880.,clarity:0.99,qualified:true})
+    pub fn select_frame(_:impl FnMut(usize)->i32,low:bool,_:u64,_:bool,_:bool)->Option<Result>{
+        let hz=super::STATE.with(|s|if s.borrow().scenario==4 && !low {881.0}else{880.0});
+        Some(Result{hz,unrefined_hz:hz,clarity:0.99,qualified:true})
     }
 }
 #[path="../src/top/tuner/fw/src/nsdf_trace.rs"] mod trace;
@@ -106,7 +107,15 @@ fn main() {
                     // must remove markers rather than holding the last pitch.
                     assert_eq!(hz,None);
                 }
-                if now>11000 {assert_eq!(hz,Some(880.0));}
+                if now>11000 {
+                    assert_eq!(hz,Some(if scenario==4 {881.0}else{880.0}));
+                    let mut live_id=trace::Sequence::default();let mut cal_id=trace::Sequence::default();
+                    let live=trace.measurement(channel,now,&mut live_id);
+                    let cal=trace.calibration_measurement(channel,now,&mut cal_id);
+                    assert_eq!(live.0,if scenario==4 {881.0}else{880.0});
+                    assert_eq!(cal.0,880.0);assert!(live.1 && cal.1);
+                    assert!(cal.3>=cal.4+110);
+                }
             }
         }
         STATE.with(|s|{let s=s.borrow();assert!(s.out.len()-before<=32);

@@ -5,6 +5,15 @@ from analyze_nsdf_schedule import analyze_comparisons,analyze_picks,analyze_sche
 import math
 
 
+def test_calibration_uses_settled_policy_without_changing_other_inputs():
+    firmware=Path(__file__).parents[1]/'src/top/tuner/fw/src'
+    main=(firmware/'main.rs').read_text()
+    selection=main.split('let (hz,qualified,sequence,window_age_ms,end_age_ms)=')[1].split('ChannelMeasurement')[0]
+    assert 'if calibration.active() && input==calibration.input' in selection
+    assert 'nsdf_trace.calibration_measurement(input,' in selection
+    assert '} else {' in selection and 'nsdf_trace.measurement(input,' in selection
+
+
 def test_actual_publication_lifecycle_and_audio_window_age(tmp_path):
     here=Path(__file__).parent;exe=tmp_path/'publish'
     subprocess.run([str(Path.home()/'.cargo/bin/rustc'),'--edition=2021','-O','-C','overflow-checks=yes',
