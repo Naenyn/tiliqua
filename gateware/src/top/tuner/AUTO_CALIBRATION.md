@@ -479,6 +479,38 @@ The low hardware computation is explicitly bounded below 6 ms in simulation
 at 60 MHz, within its 10 ms scheduling slot. This excludes CPU selection time,
 which must also be measured on the installed production scheduler.
 
+Serial sessions can now be summarized reproducibly from `gateware` with
+`python tests/summarize_nsdf_schedule.py /path/to/session.log --last-seconds 60`.
+The read-only tool reports per-bank qualified observations, frequency spread,
+update rates, faults and selector/guard CPU work. It rejects malformed or mixed
+boot sessions rather than silently joining them. Frequency spread is only a
+repeatability metric when the input is stationary, not proof of absolute
+accuracy; serial sampling cannot establish an all-frame dropout rate or a
+worst-case runtime. No device firmware or resource cost is added by this tool.
+
+Build `1e586139` completed full synthesis/routing and was flashed successfully
+to **slot 1**, preserving the 24576-byte options region (`Refresh: DONE`, exit
+zero). It is TUNER, R5, 192 kHz, unrotated 1280x720p60, spread spectrum 0.0.
+Final clocks pass: system 66.12/60 MHz, pixel 90.32/74.25 MHz, serializer
+420.34/371.33 MHz, audio 68.12/49.152 MHz. Allocation is 19347 LUT4, 45/56 EBR,
+14/28 DSP; CPU working RAM remains 32 KiB. Firmware is 238336 bytes in PSRAM.
+Bitstream SHA256: `4133237a11029b013e415b0367bc882e2fd35386d3bd57ee67b15b95a079667b`.
+
+Validation: 257 tests passed, 19 separately gated long-running tests skipped;
+the updated bank-boundary suite and publication/scheduler suite were rerun
+separately (45 and 27 passes). An additional real-CSR test passes for every
+low-bank score, proving addresses 512–621 do not alias earlier scores or sample
+readback. The serial summary tool has seven passing tests.
+
+**Physical after-flash confirmation is pending.** The rack stayed powered but
+the installed bootloader reports `cold_boot: false`, returns to its selection
+menu and has not started TUNER. No bootloader/EEPROM changes were made to bypass
+that behavior. User is asleep; do not claim the new detector was measured live.
+First resume action: select TUNER slot 1, leaving the patch/tuning unchanged.
+Record a stationary 60-second IN2 low-bank control near 20.94 Hz. CORE/IN1 is
+below 20 Hz and is expected to remain unqualified. Only then repatch OUT1 to
+Generate3 V/oct and retune for a fresh FUNDAMENTAL calibration/automatic check.
+
 Host coverage includes complete automatic operation, navigation during work,
 successful refinement, rejection of full-range regressions, cancellation,
 deadline and output-fault rollback, profile serialization, journal recovery and

@@ -55,3 +55,42 @@ only selected runtime data should consume scarce CPU memory.
 Next: prototype the MSC resource cost in an isolated build, then choose the
 live-host or service approach before changing bootloader compatibility or
 exposing a USB menu. Test with a disposable FAT32 drive before real libraries.
+
+## Offline file tools and dependency boundary (September 19)
+
+`tests/tuner_library_file.py` now validates existing TUCP oscillator records
+(v1 legacy or v2, up to 129 measured/refined points) and TSC1 scales by content,
+length, checksum and semantic constraints. It prints an inspectable JSON
+representation without changing either file. Calibration profiles retain their
+actual variable voltage/pitch curve; they are not interpreted as note scales.
+Zero-note labels use note name/octave. Point pitches retain the codec's internal
+milli-cent units relative to note zero, not cents relative to the profile's
+user-selected zero-voltage note.
+
+From `gateware`:
+
+```sh
+python tests/tuner_library_file.py oscillator.tprofile
+python tests/tuner_library_file.py custom.tscale
+python tests/tuner_library_file.py custom.tscale --export-scala custom.scl --description "My scale"
+python tests/tuner_scale_import.py custom.scl roundtrip.tscale
+```
+
+Scala export preserves every stored interval at 0.001-cent resolution, including
+non-octave periods and up to 128 degrees. It writes decimal cent tokens so
+integer-valued cents cannot be misread as ratios. It cannot export an oscillator
+profile as a scale, overwrite existing files/symlinks, or create a destination
+from a malformed record. Descriptions must be supplied separately: TSC1 stores
+intervals, not the original Scala title/comments or pre-rounding ratios.
+The converter and file tools pass 37 tests, including systematic corruption and
+truncation parity against the **actual live Rust profile/scale decoders**.
+
+These are offline tools, **not device upload/download**. They add no FPGA or
+CPU-memory cost and do not imply a USB menu exists. The installed Python build
+environment currently contains `guh` commit
+`be2b947e5aa9a5ddb396de3be6a831d01b13d0c8`, whose MSC engine is explicitly a
+read-only block interface (`READ_10`, no write operation). That installed code
+is not the read/write DMA filesystem integration described by the newer upstream
+documentation. A live-host prototype must use compatible pinned gateware and
+Rust versions together; do not update this shared environment implicitly or
+claim current installed read-only support fulfills load/save requirements.

@@ -71,3 +71,48 @@ def test_diagnostic_csr_frame_handoff():
         a=frame[:674-lag];b=frame[lag:];corr=int(a@b);energy=int(a@a+b@b)
         q=(abs(corr)<<21)//energy;expected.append(-q if corr<0 else q)
     assert observed==expected
+
+
+def test_extended_low_scores_do_not_alias_at_512_or_sample_address(monkeypatch):
+    # Short FIR only accelerates history warm-up. Exercise the REAL CSR and
+    # enlarged score RAM, including every high address and the inspect selector.
+    monkeypatch.setattr('top.tuner.experiment.nsdf_peripheral.coefficients',lambda:[131071])
+    dut=Peripheral()
+    samples=np.random.default_rng(829).integers(-15000,15000,22000)
+    async def write(ctx,address,value):
+        for byte in range(4):
+            ctx.set(dut.bus.addr,address+byte);ctx.set(dut.bus.w_data,(value>>(byte*8))&255)
+            ctx.set(dut.bus.w_stb,1);await ctx.tick()
+        ctx.set(dut.bus.w_stb,0);await ctx.tick().repeat(3)
+    async def read(ctx,address):
+        value=0
+        for byte in range(4):
+            ctx.set(dut.bus.addr,address+byte);ctx.set(dut.bus.r_stb,1);await ctx.tick()
+            value|=ctx.get(dut.bus.r_data)<<(byte*8)
+        ctx.set(dut.bus.r_stb,0);await ctx.tick()
+        return value
+    async def data(ctx,address):
+        await write(ctx,8,address)
+        value=await read(ctx,12)
+        return value-(1<<32) if value&(1<<31) else value
+    async def bench(ctx):
+        for x in samples:
+            ctx.set(dut.sample2,int(x));ctx.set(dut.input_valid,1);await ctx.tick()
+            ctx.set(dut.input_valid,0);await ctx.tick().repeat(9)
+        await ctx.tick().repeat(100)
+        await write(ctx,0,1|4|(2<<3))
+        for _ in range(360):
+            await ctx.tick().repeat(1000)
+            status=await read(ctx,4)
+            if status&2:break
+        else:raise AssertionError('extended low frame did not finish')
+        assert status&0x1f==2 and status>>16==622
+        frame=np.array([await data(ctx,1024|i) for i in range(674)],dtype=np.int64)
+        observed=[await data(ctx,k) for k in range(622)]
+        from analyze_nsdf_wave import replay
+        assert observed==replay(frame.tolist(),621)
+        assert observed[512:]!=observed[:110]
+        for k in (622,1023,1024|674,2047):
+            assert await data(ctx,k)==0
+        assert await read(ctx,4)==status
+    sim=Simulator(dut);sim.add_clock(1/60e6);sim.add_testbench(bench);sim.run()

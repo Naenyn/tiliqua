@@ -1,8 +1,11 @@
 # Resource headroom audit: tuner, calibrator, quantizer
 
-**Current September 13 checkpoint:** the combined NSDF/four-output build now
-uses 19312 LUT4, 44/56 EBR and 14/28 DSP, with all routed clocks passing.
-See [current checkpoint](CHECKPOINT.md) for measured clocks and live CPU budgets.
+**Current September 19 build `1e586139`:** the combined instrument with bounded
+low-bank refinement uses 19347 LUT4, 45/56 EBR and 14/28 DSP. All final routed
+clocks pass (system 66.12/60 MHz). CPU RAM remains 32 KiB. The added lag range
+costs one EBR, not an additional detector. Live CPU/cadence validation of this
+build awaits bootloader selection; do not reuse old measured CPU budgets as
+proof of this build's runtime. See [calibration evidence](AUTO_CALIBRATION.md).
 The allocation model below is historical, not the current netlist count.
 
 Analysis checkpoint, September 11, 2026. Production firmware is unchanged.
