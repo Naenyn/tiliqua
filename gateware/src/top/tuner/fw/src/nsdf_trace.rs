@@ -45,7 +45,7 @@ impl Trace {
         match self.state {
             0 => {
                 if now < self.due { return; }
-                if nsdf.identity().read().value().bits() != 0x4e534405 {
+                if nsdf.identity().read().value().bits() != 0x4e534406 {
                     self.pending.push_str("NSDF ERROR incompatible gateware\n").ok();
                     self.due = now.saturating_add(5000); return;
                 }
@@ -59,7 +59,7 @@ impl Trace {
             1 => {
                 let status = nsdf.status().read().value().bits();
                 if status & 2 == 0 && now.saturating_sub(self.started) < 1000 { return; }
-                let last = if self.low { 621 } else { 321 };
+                let last = 621;
                 if status & 0x1c != 0 || status & 2 == 0 || status >> 16 != last + 1 {
                     nsdf.control().write(|w| unsafe { w.value().bits(2) });
                     write!(self.pending,"NSDF ERROR ch={} low={} status={:08x}\n",self.channel,self.low,status).ok();
@@ -103,7 +103,7 @@ impl Trace {
                 let (hz,raw,clarity,qualified)=result.map_or((0,0,0,false),|r|
                     ((r.hz*1000.0) as u32,(r.unrefined_hz*1000.0) as u32,
                      (r.clarity*1000000.0) as u32,r.qualified));
-                write!(self.pending,"NSDF CPU ch={} low={} seq={} mhz={} raw={} ppm={} ok={} cycles={} reads={} guard={} gc={} policy=2\n",
+                write!(self.pending,"NSDF CPU ch={} low={} seq={} mhz={} raw={} ppm={} ok={} cycles={} reads={} guard={} gc={} policy=3\n",
                     self.channel,self.low,nsdf.sequence().read().value().bits(),hz,raw,clarity,qualified,cycles,reads,guard,guard_cycles).ok();
                 self.state=if FAST {7} else {5};
             }
@@ -123,7 +123,7 @@ impl Trace {
                 // Separate diagnostic baseline for one full score-register
                 // sweep. Not part of selector timing or production work.
                 // Interrupts stay enabled; elapsed times include ISR work.
-                let count=if self.low {622} else {322};
+                let count=622;
                 let started=crate::playback_cycles();
                 let mut checksum=0_u32;
                 for index in 0..count {
@@ -138,7 +138,7 @@ impl Trace {
             }
             4 => {
                 let status=nsdf.status().read().value().bits();
-                let last=if self.low {621} else {321};
+                let last=621;
                 let energy = (nsdf.energy_low().read().value().bits() as u64)
                     | ((nsdf.energy_high().read().value().bits() as u64) << 32);
                 write!(self.pending,"NSDF BEGIN ch={} low={} fs={} n={} last={} seq={} energy={} scaled={} clipped={}\n",
@@ -147,7 +147,7 @@ impl Trace {
                 self.index=0;self.state=2;
             }
             2 => {
-                let count = if self.low { 622 } else { 322 };
+                let count = 622;
                 if self.index == count {
                     self.pending.push_str("NSDF END\n").ok(); self.state=8;
                 } else {

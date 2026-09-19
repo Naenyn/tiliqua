@@ -22,7 +22,7 @@ def test_cpu_selector_matches_model_without_frame_buffer(tmp_path):
             words=[int(x,16) for x in lines[1:-1]]
             cases.append((low,[x-(1<<32) if x&(1<<31) else x for x in words]))
     for low in (False,True):
-        fs,n,last,minimum,maximum=(6000,674,621,20,1500) if low else (192000,674,321,600,20000)
+        fs,n,last,minimum,maximum=(6000,674,621,20,1500) if low else (192000,674,621,600,20000)
         frequencies=list(np.geomspace(minimum*1.001,maximum*.999,24))
         frequencies.extend([minimum,maximum,minimum*(1-2e-6),maximum*(1+2e-6)])
         if not low:frequencies.extend([9900,10000,10100,18000,18500,19000,19900])
@@ -42,7 +42,8 @@ def test_cpu_selector_matches_model_without_frame_buffer(tmp_path):
     output=subprocess.run([str(exe)],input='\n'.join(lines)+'\n',capture_output=True,text=True,check=True).stdout.splitlines()
     assert len(output)==len(cases)
     for (low,scores),line in zip(cases,output):
-        expected=select(scores,6000 if low else 192000,20 if low else 600,1500 if low else 20000,fallback=True,refine_quality=low)
+        expected=select(scores,6000 if low else 192000,20 if low else 600,1500 if low else 20000,
+                        fallback=True,refine_quality=True,reject_early_outside=low)
         if expected is None:assert line.startswith('none ');continue
         hz,clarity,qualified,original,reads=line.split()
         assert (qualified=='true')==expected['qualified']
@@ -60,6 +61,34 @@ def test_fixed_point_fraction_uses_exact_bounded_arithmetic(tmp_path):
     subprocess.run([str(exe)],check=True,capture_output=True,text=True)
 
 
+def test_native_repeating_interval_covers_calibration_handoff(tmp_path):
+    # Controlled synthetic truth, motivated by live ~1017-Hz variation.
+    # This does not claim to reproduce Generate3's exact physical waveform.
+    here=Path(__file__).parent;exe=tmp_path/'selector'
+    subprocess.run([str(Path.home()/'.cargo/bin/rustc'),'--edition=2021','-O',
+                    '-C','overflow-checks=on',str(here/'nsdf_selector_fixture.rs'),'-o',str(exe)],check=True)
+    lines=[];truth=[];old=[]
+    for frequency in (980,1000,1016.71,1100,1200,1250,1300,1400,1490,1703,2000,4000,10000,18500,19900):
+        for amplitude in (72,14000):
+            for phase in np.linspace(0,2,32,endpoint=False):
+                p=np.arange(674)*frequency/192000+phase
+                x=np.rint(amplitude*(np.sin(2*np.pi*p)+.0076*np.sin(np.pi*p+.7)+.0091*np.sin(3*np.pi*p+.4)))
+                scores=scores_for(x,621)
+                lines.append('high '+' '.join(map(str,scores)))
+                truth.append((frequency,amplitude))
+                if frequency==1016.71 and amplitude==14000:
+                    previous=select(scores[:322],192000,600,20000,fallback=True)
+                    old.append(1200*math.log2(previous['hz']/frequency))
+    output=subprocess.check_output([exe],input='\n'.join(lines)+'\n',text=True).splitlines()
+    assert len(output)==len(truth)==960
+    assert max(old)-min(old)>1.5
+    for line,(frequency,amplitude) in zip(output,truth):
+        fields=line.split()
+        assert fields[0]!='none' and fields[2]=='true'
+        assert abs(1200*math.log2(float(fields[0])/frequency))<(.5 if amplitude==72 else .2)
+        assert int(fields[4])<=2*322+63 # Extended lags are not rescanned.
+
+
 @pytest.mark.parametrize('waveform',['sine','triangle'])
 def test_bank_boundary_does_not_fold_upper_tone_into_low_bank(tmp_path,waveform):
     # Generate3 CORE at ~1521 Hz produced native ~1521 / low ~761 Hz,
@@ -72,11 +101,11 @@ def test_bank_boundary_does_not_fold_upper_tone_into_low_bank(tmp_path,waveform)
         subprocess.run([rustc,'--edition=2021','-O','-C','overflow-checks=on',
                         str(here/source),'-o',str(exe)],check=True)
     cases=[];lines=[]
-    for frequency in (1400,1490,1500,1501,1521,1600,2000):
+    for frequency in (1400,1490,1500,1501,1521,1600,1650,1680,1703,1750,1800,1850,2000):
         for phase in np.linspace(0,1,8,endpoint=False):
             cases.append(frequency)
             for low in (False,True):
-                fs,n,last=(6000,674,621) if low else (192000,674,321)
+                fs,n,last=(6000,674,621) if low else (192000,674,621)
                 p=(np.arange(n)*frequency/fs+phase)%1
                 x=np.rint(14000*(np.sin(2*np.pi*p) if waveform=='sine' else 4*np.abs(p-.5)-1))
                 lines.append(('low' if low else 'high')+' '+' '.join(map(str,scores_for(x,last))))

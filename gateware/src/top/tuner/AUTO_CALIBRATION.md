@@ -557,3 +557,52 @@ FUNDAMENTAL on IN2, retune to a useful midrange, and run automatic calibration
 with input 2/output 1. Calibration success remains unconfirmed on this build;
 do not weaken the stability guards to turn the remaining excursions into an
 apparent pass.
+
+### FUNDAMENTAL automatic run and native handoff correction (September 19)
+
+With FUNDAMENTAL on IN2, CORE on IN1, and OUT1 driving V/oct, the user retuned
+near 120 Hz at zero and started CAL. Build `1e586139` passed low-range discovery
+and zero, collected 77 anchors, then automatically checked 135 of 151 targets
+before timing out. Output returned to zero. This is **not** a verified profile.
+The complete run spans `/tmp/tuner-gen3-low-repeat-after.serial.log` and
+`/tmp/tuner-gen3-cal-low-repeat-check.serial.log`; the reader was restarted
+between them to extend its recording deadline, without rebooting the device.
+
+Two remaining detector limitations were observed:
+
+1. At +3.833 V, native reported about 1703 Hz while low reported about 853 Hz.
+   Both qualified, so strict settled arbitration rejected them and ended the
+   discovered range. This is not evidence of the oscillator's upper limit.
+   A pure synthetic sine reproduces the problem at 1650–1800 Hz: the first
+   out-of-band maximum clears absolute confidence but parabolic peak-height
+   bias places it below the relative 90% cutoff. Skipping it selects a later
+   multiple. Expanded sine/triangle tests fail on the prior selector.
+2. Verification timed out at target 8350000 millicents (B5 +50c), commanded
+   3088500 microvolts, immediately above the 1-kHz settled-bank handoff. Both
+   banks qualified and agreed within the unchanged cross-bank tolerance, but
+   native varied roughly 1015.97–1018.18 Hz in representative logged samples
+   while low stayed around 1015.45–1015.56 Hz. The empty `VERIFY AVG` diagnostic
+   is the unused low-note averaging path, **not** proof of absent pitch here.
+   The native 321-lag limit cannot compare two cycles near 1 kHz.
+
+The next candidate rejects a low-bank frame when an earlier out-of-band key
+maximum already clears the absolute confidence gate, even if it misses the
+relative cutoff. Weak early peaks remain skippable. Native selection and the
+cross-bank disagreement tolerance are not bypassed to accept an octave error.
+The native score engine also computes through lag 621 using its existing
+674-sample frame and already allocated score RAM. Initial selection stays
+bounded to lag 321 (301 in low); only the existing seven bounded refinement
+neighborhoods use the extra scores. Both banks prefer the strongest repeating
+interval, avoiding an odd multiple when alternating cycles are present.
+Hardware identity becomes `0x4e534406`, diagnostic selector policy 3; historical
+policies remain explicitly decoded with their original behavior.
+
+Simply extending low-bank preference above 1 kHz was considered and rejected:
+a controlled 1400-Hz alternating-cycle probe incurred roughly 15 cents of
+low-bank bias. The chosen native correction instead passes 960 controlled
+frequency/amplitude/phase cases from 980 Hz through 19.9 kHz, with <0.2-cent
+full-level and <0.5-cent low-level errors. These are synthetic tests, not new
+physical accuracy claims. The 103-test targeted host suite passes. Hardware
+simulation, full build/routing, measured resource cost and physical recheck
+are still required before claiming the candidate qualified. No calibration
+stability threshold, acquisition deadline or profile acceptance rule changed.

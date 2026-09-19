@@ -20,19 +20,19 @@ def test_diagnostic_csr_frame_handoff():
         return result
     observed=[]
     async def bench(ctx):
-        assert await read32(ctx,32)==0x4e534405
+        assert await read32(ctx,32)==0x4e534406
         await write32(ctx,0,1);await ctx.tick().repeat(12)
         assert (await read32(ctx,4))&7==6 # Finished, faulted, not busy.
         for sample in x:
             ctx.set(dut.sample2,int(sample));ctx.set(dut.input_valid,1);await ctx.tick()
             ctx.set(dut.input_valid,0);await ctx.tick().repeat(312)
         await write32(ctx,0,1|(2<<3))
-        for _ in range(210):
+        for _ in range(360):
             await ctx.tick().repeat(1000)
             status=await read32(ctx,4)
             if status&2:break
         else:raise AssertionError('score frame never published')
-        assert status&0x1f==2 and status>>16==322
+        assert status&0x1f==2 and status>>16==622
         assert (status>>6)&3==2
         assert await read32(ctx,16)==700
         assert await read32(ctx,60)==700
@@ -46,7 +46,7 @@ def test_diagnostic_csr_frame_handoff():
             ctx.set(dut.input_valid,0);await ctx.tick().repeat(312)
         assert [await read32(ctx,address) for address in range(36,60,4)]==source
         assert await read32(ctx,60)==700
-        for lag in range(322):
+        for lag in range(622):
             await write32(ctx,8,lag)
             value=await read32(ctx,12)
             observed.append(value-(1<<32) if value&(1<<31) else value)
@@ -67,7 +67,7 @@ def test_diagnostic_csr_frame_handoff():
         assert await read32(ctx,52)==1024 and await read32(ctx,56)==0
     sim=Simulator(dut);sim.add_clock(1/60e6);sim.add_testbench(bench);sim.run()
     frame=x[-674:];frame=frame-int(np.rint(frame.mean()));expected=[]
-    for lag in range(322):
+    for lag in range(622):
         a=frame[:674-lag];b=frame[lag:];corr=int(a@b);energy=int(a@a+b@b)
         q=(abs(corr)<<21)//energy;expected.append(-q if corr<0 else q)
     assert observed==expected

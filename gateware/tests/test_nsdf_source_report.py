@@ -56,7 +56,7 @@ def test_export_identifies_selector_policy_without_reinterpreting_archives():
     current=re.sub(r'^NSDF CPU ([^\n]+)',update,original,flags=re.M)
     assert not next(analyze_source(current))['qualified']
     with pytest.raises(ValueError,match='unknown selector policy'):
-        list(analyze_source(current.replace('policy=1','policy=3')))
+        list(analyze_source(current.replace('policy=1','policy=4')))
 
 
 @pytest.mark.parametrize('offset',[-512,-40,0,128,512])

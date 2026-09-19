@@ -52,3 +52,16 @@ def test_worst_case_fast_line_fits_existing_buffer():
     text=('NSDF FAST ch=3 low=false seq=4294967295 energy=723701989376 '
           'scaled=1 clipped=1 start_ms=18446744073709551615 end_ms=18446744073709551615\n')
     assert len(text)<192
+
+
+def test_current_native_summary_uses_extended_geometry():
+    import re
+    text=example(low=False)
+    def update(match):
+        f=dict(p.split('=') for p in match.group(1).split())
+        f.update(policy='3',reads='1000')
+        return 'NSDF CPU '+' '.join(f'{k}={v}' for k,v in f.items())
+    current=re.sub(r'^NSDF CPU ([^\n]+)',update,text,flags=re.M)
+    assert next(analyze_fast(current))['frame_samples']==674
+    with pytest.raises(ValueError,match='invalid selector work'):
+        list(analyze_fast(current.replace('policy=3','policy=2')))

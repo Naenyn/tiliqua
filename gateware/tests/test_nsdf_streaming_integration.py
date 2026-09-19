@@ -12,7 +12,7 @@ class StreamingProbe(Elaboratable):
     def __init__(self):
         self.acquisition=NsdfAcquisition(coefficients())
         self.snapshot=NsdfSnapshot()
-        self.score=NsdfDirect()
+        self.score=NsdfDirect(max_lag=621)
 
     def elaborate(self,platform):
         m=Module();a=self.acquisition;s=self.snapshot;d=self.score
@@ -27,14 +27,14 @@ class StreamingProbe(Elaboratable):
 
 def test_native_snapshot_and_score_while_four_channel_filter_runs():
     dut=StreamingProbe();a=dut.acquisition;s=dut.snapshot;d=dut.score
-    rng=np.random.default_rng(714);samples=rng.integers(-18000,18000,(1700,4))
-    samples[:,2]=np.rint(15000*np.sin(np.arange(1700)*2*np.pi*7678.1/192000)+7000)
+    rng=np.random.default_rng(714);samples=rng.integers(-18000,18000,(2200,4))
+    samples[:,2]=np.rint(15000*np.sin(np.arange(2200)*2*np.pi*7678.1/192000)+7000)
     got=[];window=[];cycles=[]
     async def bench(ctx):
         ctx.set(a.low_ready,1);ctx.set(s.length,674);ctx.set(s.channel,2)
-        ctx.set(d.length,674);ctx.set(d.limit,321);ctx.set(d.ready,1)
+        ctx.set(d.length,674);ctx.set(d.limit,621);ctx.set(d.ready,1)
         batch=0;started=False;start_cycle=0
-        for cycle in range(530000):
+        for cycle in range(660000):
             ctx.set(a.input_valid,0);ctx.set(s.start,0)
             if batch<len(samples) and cycle>=batch*625//2:
                 assert ctx.get(a.input_ready)
@@ -48,14 +48,16 @@ def test_native_snapshot_and_score_while_four_channel_filter_runs():
                 cycles.append(cycle-start_cycle)
             if ctx.get(d.valid):got.append((ctx.get(d.lag),ctx.get(d.score)))
             assert not ctx.get(a.overrun)
-            if ctx.get(d.done):break
+            if ctx.get(d.done):
+                assert cycle-start_cycle<360000 # <6 ms; shared 10-ms slot.
+                break
             await ctx.tick()
         else:raise AssertionError('streaming score deadline missed')
         assert ctx.get(a.sequence)>1400 # Acquisition continued during analysis.
     sim=Simulator(dut);sim.add_clock(1/60e6);sim.add_testbench(bench);sim.run()
     x=np.asarray(window,dtype=np.int64);x-=int(np.rint(x.mean()))
     expected=[]
-    for lag in range(322):
+    for lag in range(622):
         first=x[:len(x)-lag];second=x[lag:]
         corr=int(first@second);energy=int(first@first+second@second)
         q=(abs(corr)<<21)//energy

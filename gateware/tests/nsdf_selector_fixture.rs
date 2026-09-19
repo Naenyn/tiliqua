@@ -18,7 +18,7 @@ fn main() {
         let low=words.next().unwrap()=="low";
         let scores:Vec<i32>=words.map(|v|v.parse().unwrap()).collect();
         // Shorter arrays replay historical physical windows without padding.
-        assert!(if low {[302,502,602,622].contains(&scores.len())}else{scores.len()==322});
+        assert!(if low {[302,502,602,622].contains(&scores.len())}else{[322,622].contains(&scores.len())});
         let mut reads=0;
         let result=selector::select_with_limit(|k|{reads+=1;scores[k]},low,scores.len()-1);
         assert!(reads<=2*scores.len()+63);

@@ -12,10 +12,10 @@ from pathlib import Path
 
 
 def select(scores,fs,minimum,maximum,refine=True,fallback=False,legacy_range_first=False,
-           refine_quality=False):
+           refine_quality=False,reject_early_outside=False):
     values=[v/(1<<20) for v in scores];last=len(values)-1
     peaks=[];skipped=False;best=None
-    primary_last=min(last,301) if refine_quality else last
+    primary_last=min(last,301 if fs==6000 else 321) if refine_quality else last
     for k in range(1,primary_last):
         if values[k]<=0:
             skipped=True
@@ -38,7 +38,10 @@ def select(scores,fs,minimum,maximum,refine=True,fallback=False,legacy_range_fir
             candidates.append((lag,height))
     if not candidates:return None
     cutoff=.9*max(height for _,height in candidates)
-    lag,height=next(c for c in candidates if c[1]>=cutoff)
+    for lag,height in candidates:
+        if reject_early_outside and height>=.8 and not minimum*(1-1e-6)<=fs/lag<=maximum*(1+1e-6):
+            return None
+        if height>=cutoff:break
     hz=fs/lag;original_hz=hz;qualified=height>=.8
     if not minimum*(1-1e-6)<=hz<=maximum*(1+1e-6):return None
     if refine and qualified:
@@ -78,7 +81,7 @@ def decode(lines):
             if header['low'] not in ('true','false'):raise ValueError('invalid bank')
             low=header['low']=='true'
             shape=tuple(header[k] for k in ('fs','n','last'))
-            valid_shapes=((6000,604,301),(6000,674,621)) if low else ((192000,674,321),)
+            valid_shapes=((6000,604,301),(6000,674,621)) if low else ((192000,674,321),(192000,674,621))
             if shape not in valid_shapes or len(scores)!=shape[2]+1:
                 raise ValueError('wrong frame size or sample rate')
             if not 0<=header['ch']<=3 or any(abs(v)>(1<<20) for v in scores):

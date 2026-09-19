@@ -53,7 +53,7 @@ class NsdfFrontend(wiring.Component):
             s.read_sample.eq(Mux(self.frame_low_bank,read.data[:16].as_signed(),a.raw_sample)),
             s.read_clipped.eq(Mux(self.frame_low_bank,read.data[16],
                 (a.raw_sample==32767)|(a.raw_sample==-32768))),
-            d.length.eq(s.length),d.limit.eq(Mux(self.frame_low_bank,621,321)),
+            d.length.eq(s.length),d.limit.eq(621),
             d.clear.eq(accepting|self.cancel|s.fault|a.overrun),
             d.load_valid.eq(s.sample_valid),d.sample.eq(s.sample),s.sample_ready.eq(d.load_ready),
             d.start.eq(s.done & ~s.fault),d.ready.eq(self.score_ready),

@@ -71,7 +71,7 @@ fn peaks(read: &mut impl FnMut(usize)->i32,last:usize,mut visit:impl FnMut(Peak)
 }
 
 pub fn select(read:impl FnMut(usize)->i32,low:bool)->Option<Estimate> {
-    select_with_limit(read,low,if low {621} else {321})
+    select_with_limit(read,low,621)
 }
 
 // Explicit limit also lets host tests replay historical short captures through
@@ -84,10 +84,10 @@ pub fn select_with_limit(mut read:impl FnMut(usize)->i32,low:bool,last:usize)->O
     let max_lag=(numerator/(min*999999)) as i32;
     let in_range=|p:Peak| p.lag>=min_lag && p.lag<=max_lag;
     let mut highest=0;
-    // Extra low-bank lags only refine an already established period. Letting
+    // Extra lags only refine an already established period. Letting
     // their short-overlap peaks compete for initial selection can reject
     // otherwise trackable moving tones or choose a spurious subharmonic.
-    let primary_last=if low {last.min(301)} else {last};
+    let primary_last=last.min(if low {301} else {321});
     // Choose the first strong key maximum BEFORE checking the bank's range.
     // Filtering peaks first can turn a 1520-Hz tone into a qualified 760-Hz
     // low-bank result: its real period is excluded, but its double survives.
@@ -96,6 +96,14 @@ pub fn select_with_limit(mut read:impl FnMut(usize)->i32,low:bool,last:usize)->O
     if highest<=0 {return None;}
     let mut chosen=None;
     peaks(&mut read,primary_last,|p| {
+        // At only 3–4 low-rate samples/cycle, parabolic peak height can
+        // understate a real out-of-band period below the relative 90% cutoff.
+        // If it still clears the absolute confidence gate, do not skip it
+        // and turn a later multiple into an apparently valid low-bank tone.
+        // Reject this ambiguous bank; native selection and the cross-bank
+        // disagreement guard remain unchanged. Weak early peaks may still
+        // be skipped, and this never accepts a previously rejected pitch.
+        if low && p.height>=838861 && !in_range(p) {return true;}
         if p.height*10>=9*highest {chosen=Some(p);true} else {false}
     });
     let mut p=chosen?;
@@ -123,13 +131,12 @@ pub fn select_with_limit(mut read:impl FnMut(usize)->i32,low:bool,last:usize)->O
                     && new*max>=fs*1048576 && new*min<=fs*1048576
                     && old*1005792941>=new*1000000000
                     && old*1000000000<=new*1005792941 {
-                    // At low frequencies small alternating-cycle components
+                    // Small alternating-cycle components in either bank
                     // can bias odd multiples. Prefer the strongest repeating
                     // interval; equal heights retain the longer interval.
                     if refined.map_or(true,|(_,height)|candidate.height>height) {
                         refined=Some((lag,candidate.height));
                     }
-                    if !low {break;}
                 }
             }
         }
@@ -156,6 +163,19 @@ mod tests {
             assert!(accepted.qualified);
             assert_eq!(accepted.hz,if low {1000.0}else{12000.0});
         }
+    }
+
+    #[test]
+    fn qualified_outside_peak_below_relative_cutoff_still_vetoes_low_bank() {
+        let mut scores=[0_i32;622];
+        scores[3]=838861; // Absolute confidence passes, relative 90% does not.
+        scores[6]=1048576;
+        assert!(super::select(|k|scores[k],true).is_none());
+        scores[3]=838860; // A weak early peak is not an out-of-band veto.
+        assert!(super::select(|k|scores[k],true).unwrap().qualified);
+        // Native-bank policy keeps its existing relative peak cutoff.
+        scores=[0;622];scores[8]=838861;scores[16]=1048576;
+        assert!(super::select(|k|scores[k],false).unwrap().qualified);
     }
 
     #[test]

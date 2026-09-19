@@ -74,7 +74,7 @@ class Peripheral(wiring.Component):
                 d.frame_low_bank,d.frame_channel,d.frame_scaled,d.frame_clipped,
                 Const(0,6),count)),
             self.fill.f.value.r_data.eq(Cat(d.native_filled,Const(0,5),d.low_filled)),
-            self.identity.f.value.r_data.eq(0x4e534405),e.input_valid.eq(self.input_valid),
+            self.identity.f.value.r_data.eq(0x4e534406),e.input_valid.eq(self.input_valid),
             self.frame_native_end.f.value.r_data.eq(d.frame_native_end)]
         for ch in range(4):
             m.d.comb += [getattr(d,f'sample{ch}').eq(getattr(self,f'sample{ch}')),

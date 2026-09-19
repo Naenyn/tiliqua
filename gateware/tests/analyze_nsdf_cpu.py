@@ -37,12 +37,13 @@ def validate(cpu,io,block):
     # New exports explicitly identify range-after-peak selection; never silently
     # reinterpret historical CPU results or guess an unknown algorithm version.
     policy=cpu.get('policy','0')
-    if policy not in ('0','1','2'):raise ValueError('unknown selector policy')
-    if policy=='2' and (report['n'],report['last'])!=(674,621 if low else 321):
+    if policy not in ('0','1','2','3'):raise ValueError('unknown selector policy')
+    if policy in ('2','3') and (report['n'],report['last'])!=(674,621 if low or policy=='3' else 321):
         raise ValueError('selector policy/frame shape mismatch')
     expected=None if gated else select(scores,report['fs'],20 if low else 600,
                                       1500 if low else 20000,fallback=True,
-                                      legacy_range_first=policy=='0',refine_quality=policy=='2' and low)
+                                      legacy_range_first=policy=='0',refine_quality=policy=='3' or (policy=='2' and low),
+                                      reject_early_outside=policy=='3' and low)
     if gated and int(cpu['reads'])!=0:raise ValueError('early gate read scores')
     if cpu['ok'] not in ('true','false'):raise ValueError('invalid qualification flag')
     if expected is None:

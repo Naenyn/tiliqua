@@ -8,6 +8,26 @@ def records(name='nsdf-cpu-integer-screen.json'):
     return json.loads((Path(__file__).parent/'fixtures'/name).read_text())
 
 
+def test_policy_three_does_not_reinterpret_policy_two_scores():
+    import numpy as np
+    from nsdf_refinement_probe import scores_for
+    from nsdf_trace_analysis import select
+    x=np.rint(14000*np.sin(2*np.pi*(np.arange(674)*1703/6000+.17))).astype(np.int64)
+    scores=scores_for(x,621);words=[v&0xffffffff for v in scores]
+    block=(f'NSDF BEGIN ch=2 low=true fs=6000 n=674 last=621 seq=100 energy={int(x@x)} scaled=0 clipped=0\n'
+           +''.join(f'{v:08x}\n' for v in words)+'NSDF END\n')
+    io=dict(ch='2',low='true',seq='100',reads='622',cycles='100',sum=f'{sum(words)&0xffffffff:08x}')
+    r=select(scores,6000,20,1500,fallback=True,refine_quality=True)
+    assert r['qualified'] and 850<r['hz']<856
+    cpu=dict(ch='2',low='true',seq='100',policy='2',reads='700',cycles='100',
+             mhz=str(int(r['hz']*1000)),raw=str(int(r['unrefined_hz']*1000)),
+             ppm=str(int(r['clarity']*1000000)),ok='true')
+    assert validate(cpu,io,block)['qualified']
+    with pytest.raises(ValueError,match='unexpected CPU candidate'):
+        validate(dict(cpu,policy='3'),io,block)
+    assert not validate(dict(cpu,policy='3',mhz='0',raw='0',ppm='0',ok='false'),io,block)['qualified']
+
+
 @pytest.mark.parametrize('name',['nsdf-cpu-integer-screen.json','nsdf-cpu-fixedpoint.json','nsdf-cpu-native-div.json','nsdf-cpu-sine55.json','nsdf-cpu-sine10k.json','nsdf-cpu-sine18500.json','nsdf-cpu-sine-lowedge.json'])
 def test_complete_records_and_boundary_fragments(name):
     f=records(name);parts=[]
