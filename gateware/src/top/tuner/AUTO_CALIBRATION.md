@@ -606,3 +606,28 @@ physical accuracy claims. The 103-test targeted host suite passes. Hardware
 simulation, full build/routing, measured resource cost and physical recheck
 are still required before claiming the candidate qualified. No calibration
 stability threshold, acquisition deadline or profile acceptance rule changed.
+
+Candidate `537c4a29` has now passed full synthesis/routing, 268 regression tests
+(19 optional long-running tests skipped), and the separate 16-test RTL/wave
+suite. Native computation stays below 6 ms in its 10-ms hardware slot while
+four-channel acquisition continues. Final timing passes: system 67.04/60 MHz,
+pixel 85.70/74.25 MHz, serializer 443.85/371.33 MHz, audio 66.75/49.152 MHz.
+Allocation is 20116/24288 TRELLIS_COMB, 45/56 EBR and 14/28 DSP; RAM and DSP
+block counts are unchanged. Firmware is 237952 bytes; CPU working RAM remains
+32 KiB. The archive is TUNER, R5, 192 kHz, unrotated 1280x720p60, spread spectrum
+0.0. Bitstream SHA256:
+`09128577b73f37aefa0e8e8420a67799e30083fbc41d07e903f5327ac5c56ae1`.
+
+The failing handoff also had occasional low-bank excursions: over device
+times 1078500–1082400 ms, both banks qualified 10/10 logged observations, with
+3.7567-cent native and 3.1937-cent low spread. The low bank was not uniformly
+stable across the whole timeout. Physical calibration and live CPU/scheduler
+measurements on the new candidate remain required; no completed verified
+Generate3 FUNDAMENTAL profile is claimed yet.
+
+The candidate was flashed successfully to slot 1 (exit zero, `Refresh: DONE`),
+without erasing the 24576-byte options/profile region. Flash transcript:
+`/tmp/tuner-native-repeat-flash.log`. The next boot/run is logged separately to
+`/tmp/tuner-native-repeat-537c4a29.serial.log`. Select TUNER, retain FUNDAMENTAL
+on IN2 / CORE on IN1 / OUT1 to V/oct and the current approximately 120-Hz zero
+tuning, then rerun CAL input 2 / output 1 without adjusting the oscillator.
