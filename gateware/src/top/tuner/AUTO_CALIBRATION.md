@@ -257,6 +257,26 @@ path/estimator effects. Next compare its CORE triangle at unchanged tuning and
 with V/oct still disconnected; do not relax calibration acceptance from this
 periodically logged data alone.
 
+Switching only Generate3's output from FUNDAMENTAL to CORE, with tuning
+unchanged and V/oct unpatched, produced a substantially steadier result.
+Device timestamps 4,181,219–4,240,946 ms contain 147 qualified low-bank frames,
+zero faults: 24.988–24.996 Hz, mean 24.990973 Hz, 0.5542 cents peak-to-peak
+and 0.1069 cents population standard deviation over 59.727 seconds. The
+fundamental control's span was approximately ten times larger. This points
+toward the waveform/output path interacting with measurement rather than
+general core-frequency instability; it does not identify the exact mechanism
+or independently establish absolute accuracy. An offline 128-phase clean
+signal check at 25.0076 Hz found only 0.0413 cents span for a sine and 0.0348
+for a triangle (14,000-count amplitude, existing 604-sample low-bank model).
+Neither ideal-signal result accounts for the measured fundamental variation.
+
+Next functional hardware check: retain CORE into IN1, connect OUT1 to
+Generate3 V/oct, tune near 120 Hz at zero output, and run automatic calibration.
+This tests the same negative-CV region with the steadier waveform without
+changing the detector, stability guards, or firmware. A successful CORE run
+would establish a usable Generate3 calibration path, not close investigation
+of the fundamental output's waveform-dependent behavior.
+
 Host coverage includes complete automatic operation, navigation during work,
 successful refinement, rejection of full-range regressions, cancellation,
 deadline and output-fault rollback, profile serialization, journal recovery and
