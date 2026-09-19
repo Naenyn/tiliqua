@@ -525,3 +525,35 @@ without an improvement pass. Then test concurrency with unrelated routes.
 
 See [USB storage](USB_STORAGE.md) for removable-library work that is not yet
 enabled in this build.
+
+### Live low-note confirmation (September 19, after bootloader selection)
+
+The user selected TUNER after the overnight flash, leaving the stationary patch
+unchanged: Generate3 CORE into IN1, FUNDAMENTAL into IN2, V/oct unpatched. Serial
+reconnected at 115200 through `/dev/cu.usbmodem83102`. Transcript:
+`/tmp/tuner-gen3-low-repeat-after.serial.log` (single boot, continuing logger).
+The summary ending at device time 233012 ms uses the preceding 60 seconds;
+IN2 low-bank observations span device times 173335–232803 ms:
+
+- 145/145 logged observations qualified; 20.913–20.964 Hz, mean 20.917283 Hz.
+- Spread 4.2168 cents; standard deviation 0.6552 cents. The prior build's
+  stationary control measured 8.9299 cents spread and 3.2152 cents standard
+  deviation. This is a substantial repeatability improvement, but occasional
+  excursions remain; the live result does not reproduce the sub-cent spread
+  of the finite offline waveform captures. Neither measurement establishes
+  independent absolute accuracy or excludes drift between sessions.
+- All eight banks measured approximately 11.97–11.99 acquisitions/s, with zero
+  scheduler faults. Combined selector/guard CPU measured 4.0522% (previous
+  control 3.9335%); this excludes other firmware work. Maximum reported low-bank
+  acquisition time was 5 ms; IN2 selector/guard time was at most 0.78745 ms.
+- IN0 low bank remained qualified in 146/146 observations with 0.1953-cent
+  spread near 523 Hz. IN1 CORE remained unqualified as expected below 20 Hz.
+
+The figures describe decimated serial observations, not all acquired frames or
+worst-case timing. `tests/test_nsdf_schedule.py` passed all 21 tests, including
+the summary parser. No additional firmware change or flash was made for this
+measurement. Next physical test: patch OUT1 to Generate3 V/oct, retain
+FUNDAMENTAL on IN2, retune to a useful midrange, and run automatic calibration
+with input 2/output 1. Calibration success remains unconfirmed on this build;
+do not weaken the stability guards to turn the remaining excursions into an
+apparent pass.
