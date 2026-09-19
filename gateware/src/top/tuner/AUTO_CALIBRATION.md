@@ -287,6 +287,21 @@ changing the detector, stability guards, or firmware. A successful CORE run
 would establish a usable Generate3 calibration path, not close investigation
 of the fundamental output's waveform-dependent behavior.
 
+Important interpretation correction: the
+[official Generate3 manual](https://joranalogue.com/generate-3/manual),
+version 2023-09-12, section 9,
+states that CORE is one octave below FUNDAMENTAL and bypasses its phase
+modulator. Section 12 explicitly recommends FUNDAMENTAL for tuning. The earlier
+sequential ~25-Hz measurements must therefore NOT be treated as proven
+same-frequency waveform comparisons. If tuning really remained unchanged,
+similar reported frequencies suggest an octave-selection issue or another
+unresolved difference in the test, not proof of oscillator instability.
+Next isolate this by reading CORE and FUNDAMENTAL simultaneously on IN1/IN2,
+with V/oct unpatched and modulation/sync inputs unpatched. Confirm their 2:1
+relationship before drawing a stronger conclusion from the serial variation.
+The successful CORE calibration remains valid evidence for that output only;
+it does not validate FUNDAMENTAL or justify ignoring its failure.
+
 That CORE calibration completed on `d66264e3`: 75 anchors from -2.583250
 to +3.583250 V (E0 -46.1c through F6 +46.5c), all 147 verification targets
 and the local follow-up passed, worst measured error -0.99 cents, no improvement
