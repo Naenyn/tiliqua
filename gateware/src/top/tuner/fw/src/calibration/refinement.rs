@@ -25,7 +25,7 @@ pub struct Refinement {
     }
     fn acquire(r:&mut Refinement,p:&Profile,offset:f32) {
         for mean in [0.0,-2.0,0.0,0.0,-2.0,0.0,0.0,-2.0,0.0] {
-            r.record(p,Summary{mean:mean+offset,spread:1.0,count:8});
+            r.record(p,Summary{averaged:false,mean:mean+offset,spread:1.0,count:8});
         }
     }
     #[test] fn paired_validation_requires_repeatability_and_gain_without_regression() {
@@ -42,7 +42,7 @@ pub struct Refinement {
                 if scenario==1 && i==3 {mean+=1.0;}
                 if scenario==2 && candidate && i/4==2 {mean=0.8;}
                 if scenario==3 && candidate && i/4<2 {mean=-1.5;}
-                r.record(&p,Summary{mean,spread:1.0,count:8});
+                r.record(&p,Summary{averaged:false,mean,spread:1.0,count:8});
             }
             assert_eq!(p.points(),original);
             assert_eq!(r.stage,if scenario==0 {Stage::Ready} else {Stage::Rejected});
@@ -60,7 +60,7 @@ pub struct Refinement {
             assert_eq!(r.stage,Stage::Rejected);assert!(r.take_candidate(&p).is_none());
         }
         let mut r=Refinement::new(&p,6050000).unwrap();
-        for mean in [f32::NAN,f32::INFINITY] {r.record(&p,Summary{mean,spread:0.0,count:8});}
+        for mean in [f32::NAN,f32::INFINITY] {r.record(&p,Summary{averaged:false,mean,spread:0.0,count:8});}
         assert_eq!(r.check.tested,0);r.reject("cancel");assert!(r.request(&p).is_none());
         assert!(Refinement::new(&p,6100000).is_err());
         let mut full=Profile::new("full",0,200000).unwrap();
@@ -72,7 +72,7 @@ pub struct Refinement {
         let mut r=Refinement::new(&p,6050000).unwrap();
         for (i,target) in LocalCheck::ORDER.into_iter().enumerate() {
             let mean=3.2+if target==2 {[0.32,0.17,0.13][i/3]} else {0.0};
-            r.record(&p,Summary{mean,spread:1.0,count:8});
+            r.record(&p,Summary{averaged:false,mean,spread:1.0,count:8});
         }
         assert_eq!(r.stage,Stage::Rejected);
         assert_eq!(r.reason,"LOCAL ERROR <1C - NO REFINE");
@@ -122,7 +122,7 @@ impl Refinement {
     #[inline(never)]
     pub fn record(&mut self,original:&Profile,s:Summary) {
         if !self.active() {return;}
-        if s.count<8 || !s.mean.is_finite() || !s.spread.is_finite() || !(0.0..=3.0).contains(&s.spread) {return;}
+        if !self.request(original).is_some_and(|p|s.settled(p.millicents)) {return;}
         if self.stage==Stage::Acquire {
             if !self.check.record(s) || self.check.next().is_some() {return;}
             if let Some(reason)=self.check.refinement_issue() {self.reject(reason);return;}

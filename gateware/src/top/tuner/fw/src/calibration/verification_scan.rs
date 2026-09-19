@@ -44,8 +44,7 @@ impl LocalCheck {
         Some(Self{targets:[pair[0],pair[1],Point{microvolts:uv,millicents:pitch}],results:[None;9],tested:0})
     }
     pub fn record(&mut self,s:Summary)->bool {
-        if self.tested==Self::ORDER.len() || s.count<8 || !s.mean.is_finite() || !s.spread.is_finite()
-            || !(0.0..=3.0).contains(&s.spread) {return false;}
+        if self.tested==Self::ORDER.len() || !s.settled(self.next().unwrap().millicents) {return false;}
         self.results[self.tested]=Some(s);self.tested+=1;true
     }
     pub fn residual(&self)->Option<f32> {
@@ -116,8 +115,7 @@ impl Scan {
     /// Each result is a settled, fresh window from the adapter. Reject unstable
     /// windows rather than calling them an accuracy measurement.
     pub fn record(&mut self,s:Summary)->bool {
-        if self.complete || s.count<8 || !s.mean.is_finite() || !s.spread.is_finite()
-            || !(0.0..=3.0).contains(&s.spread) {return false;}
+        if self.complete || !s.settled(self.target) {return false;}
         if self.tested==0 || s.mean.abs()>self.worst_error.abs() {
             self.worst_error=s.mean;self.worst_pitch=self.target;
             self.worst_index=self.tested as usize;
@@ -144,16 +142,16 @@ impl Scan {
         let mut check=LocalCheck::new(&p,6600000).unwrap();
         assert!(LocalCheck::new(&p,5900000).is_none());
         assert_eq!(check.targets[2].microvolts,500000);
-        assert!(!check.record(Summary{mean:0.0,spread:4.0,count:8}));
+        assert!(!check.record(Summary{averaged:false,mean:0.0,spread:4.0,count:8}));
         assert_eq!(check.tested,0);assert!(check.residual().is_none());
         for mean in [-1.0,-3.0,-1.0,-1.0,-3.0,-1.0,-1.0,-3.0,-1.0] {
-            assert!(check.record(Summary{mean,spread:1.0,count:8}));
+            assert!(check.record(Summary{averaged:false,mean,spread:1.0,count:8}));
         }
         assert_eq!(check.residual(),Some(-2.0));
         assert_eq!(check.residuals(),Some([-2.0;3]));
         assert_eq!(check.aggregate(2),Some((-3.0,1.0,0.0)));
         assert!(check.next().is_none());
-        assert!(!check.record(Summary{mean:99.0,spread:0.0,count:8}));
+        assert!(!check.record(Summary{averaged:false,mean:99.0,spread:0.0,count:8}));
     }
     #[test] fn advice_distinguishes_repeatability_and_large_endpoint_bias() {
         let p=profile(6000000,8400000);
@@ -161,7 +159,7 @@ impl Scan {
             let mut c=LocalCheck::new(&p,6600000).unwrap();
             assert_eq!(c.advice(),"LOCAL CHECK INCOMPLETE");
             for (i,target) in LocalCheck::ORDER.into_iter().enumerate() {
-                c.record(Summary{mean:bias+if target==2 {residuals[i/3]} else {0.0},spread:1.0,count:8});
+                c.record(Summary{averaged:false,mean:bias+if target==2 {residuals[i/3]} else {0.0},spread:1.0,count:8});
             }
             c
         };
@@ -184,7 +182,7 @@ impl Scan {
         for (i,mean) in [-1.0,-3.0,-1.0, 1.0,-2.0,1.0, 2.0,1.0,2.0].into_iter().enumerate() {
             assert_eq!(check.next().unwrap().millicents,check.targets[LocalCheck::ORDER[i]].millicents);
             assert!(check.residual().is_none());
-            check.record(Summary{mean,spread:0.5,count:8});
+            check.record(Summary{averaged:false,mean,spread:0.5,count:8});
         }
         assert_eq!(check.residuals(),Some([-2.0,-3.0,-1.0]));
         assert_eq!(check.residual(),Some(-2.0));
@@ -198,20 +196,20 @@ impl Scan {
             while !s.complete {
                 assert!(p.voltage_for_pitch(s.target).is_ok());
                 assert_eq!(s.target%50000,0);
-                assert!(s.record(Summary{mean:-1.5,spread:1.0,count:8}));
+                assert!(s.record(Summary{averaged:false,mean:-1.5,spread:1.0,count:8}));
             }
             assert_eq!(s.tested,s.total);assert_eq!(s.worst_error,-1.5);
-            assert!(!s.record(Summary{mean:99.0,spread:0.0,count:8}));
+            assert!(!s.record(Summary{averaged:false,mean:99.0,spread:0.0,count:8}));
         }
         assert!(Scan::new(&profile(6000001,6049999)).is_none());
     }
     #[test] fn rejects_unstable_or_invalid_results_and_retains_worst_signed_mean() {
         let mut s=Scan::new(&profile(6000000,8400000)).unwrap();
         for (mean,spread,count) in [(0.0,3.1,8),(f32::NAN,0.0,8),(0.0,0.0,7),(0.0,-1.0,8)] {
-            assert!(!s.record(Summary{mean,spread,count}));assert_eq!(s.tested,0);
+            assert!(!s.record(Summary{averaged:false,mean,spread,count}));assert_eq!(s.tested,0);
         }
-        s.record(Summary{mean:1.0,spread:2.0,count:8});
-        s.record(Summary{mean:-2.0,spread:1.0,count:8});
+        s.record(Summary{averaged:false,mean:1.0,spread:2.0,count:8});
+        s.record(Summary{averaged:false,mean:-2.0,spread:1.0,count:8});
         assert_eq!(s.worst_pitch,6050000);assert_eq!(s.worst_error,-2.0);assert_eq!(s.max_spread,2.0);
     }
     #[test] fn covers_profile_beyond_manual_note_limits_without_counter_overflow() {

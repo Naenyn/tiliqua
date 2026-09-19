@@ -5,9 +5,10 @@
 //! No candidate escapes until a final disabled/zero request is acknowledged.
 use crate::bipolar::{self,Density,Direction};
 use crate::oscillator_calibration::{Point,Route,sweep::{Measurement,Policy}};
+use crate::oscillator_calibration::averaging::{Average,LOW_PITCH};
 
 #[derive(Clone,Copy,Debug,PartialEq)]
-pub enum Failure {NoOrigin,OriginChanged,NotTracking,Output,Clock}
+pub enum Failure {NoOrigin,OriginChanged,NotTracking,UnstablePitch,RangeBeforeZero,Output,Clock}
 #[derive(Clone,Copy,Debug,PartialEq)]
 pub enum Outcome {Complete,Cancelled,Failed(Failure)}
 #[derive(Clone,Copy,Debug,PartialEq)]
@@ -60,8 +61,11 @@ pub struct Sweep {
     measured_zero:bool,
     upper_flat_points:u8,
     saw_qualified:bool,
+    average:Average,needs_average:bool,
+    failure_voltage:Option<i32>,
 }
 impl Sweep {
+    pub fn failure_voltage(&self)->Option<i32> {self.failure_voltage}
     pub fn tracking_failure(&self)->Option<TrackingFailure> {self.tracking_failure}
     pub fn origin_error(&self)->Option<i32> {self.origin_error}
     pub fn point_count(&self)->usize {self.candidate.as_ref().map_or(0,|c|c.points().len())}
@@ -70,7 +74,8 @@ impl Sweep {
         Some(Self{candidate:Some(Curve::new()),route,density,policy,phase:Phase::Origin,
             state:State::Applying,index:0,token:1,point_started:now,last_now:now,
             last_sequence:None,count:0,minimum:0,maximum:0,sum:0,origin:0,origin_tolerance,origin_error:None,
-            tracking_failure:None,measured_zero:false,upper_flat_points:0,saw_qualified:false})
+            tracking_failure:None,measured_zero:false,upper_flat_points:0,saw_qualified:false,
+            average:Average::new(),needs_average:false,failure_voltage:None})
     }
     fn voltage(&self)->i32 {
         match self.phase {
@@ -86,9 +91,13 @@ impl Sweep {
         if matches!(phase,Phase::CheckEnd) {self.origin_error=None;}
         self.phase=phase;self.index=index;self.token+=1;self.point_started=now;
         self.state=State::Applying;self.count=0;self.saw_qualified=false;
+        self.average.clear();self.needs_average=false;
     }
     fn restore(&mut self,outcome:Outcome) {
         if matches!(self.state,State::Finished(_)) {return;}
+        if matches!(outcome,Outcome::Failed(_)) && self.failure_voltage.is_none() {
+            self.failure_voltage=Some(self.voltage());
+        }
         if !matches!(self.state,State::Restoring(_)) {self.token+=1;}
         self.state=State::Restoring(outcome);
         if outcome!=Outcome::Complete {self.candidate=None;}
@@ -123,6 +132,14 @@ impl Sweep {
                 Phase::Ascending=>{
                     if self.tracking_failure.is_some() || self.upper_flat_points>0 {
                         self.restore(Outcome::Failed(Failure::NotTracking));return true;
+                    }
+                    // Qualified but nonrepeatable pitch is not silence or an
+                    // upper range boundary. Keep the real failing voltage.
+                    if self.saw_qualified {
+                        self.restore(Outcome::Failed(Failure::UnstablePitch));return true;
+                    }
+                    if self.point_count()>=2 && !self.measured_zero {
+                        self.restore(Outcome::Failed(Failure::RangeBeforeZero));return true;
                     }
                     let curve=self.candidate.as_mut().unwrap();
                     if curve.count<2 && self.index<2*bipolar::intervals(self.density) {
@@ -229,7 +246,7 @@ impl Sweep {
                     self.count=0;return;
                 }
                 if self.candidate.as_ref().unwrap().count<2 {self.restore(Outcome::Failed(Failure::NotTracking));}
-                else if !self.measured_zero {self.restore(Outcome::Failed(Failure::NoOrigin));}
+                else if !self.measured_zero {self.restore(Outcome::Failed(Failure::RangeBeforeZero));}
                 else {self.restore(Outcome::Complete);}
             }
         }
@@ -252,18 +269,26 @@ impl Sweep {
                     // Require every accepted recheck sample to match the origin,
                     // and retain the existing deadline for recovery or failure.
                     if !s.qualified || (checking && self.origin_error.unwrap_or(0).unsigned_abs()>self.origin_tolerance) {
-                        self.count=0;
+                        self.count=0;self.average.clear();
                     }
                     else {
+                        let averaged=if s.millicents<=LOW_PITCH {
+                            self.average.observe(s.millicents,s.window_start_ms,s.window_end_ms)
+                        } else {self.average.clear();None};
                         let lo=if self.count==0 {s.millicents} else {self.minimum.min(s.millicents)};
                         let hi=if self.count==0 {s.millicents} else {self.maximum.max(s.millicents)};
                         if (hi as i64-lo as i64)>self.policy.tolerance_millicents as i64 {
+                            if s.millicents<=LOW_PITCH {self.needs_average=true;}
                             self.count=1;self.minimum=s.millicents;self.maximum=s.millicents;self.sum=s.millicents as i64;
                         } else {
                             if self.count==0 {self.sum=0;}
                             self.minimum=lo;self.maximum=hi;self.sum+=s.millicents as i64;self.count+=1;
                         }
-                        if self.count>=self.policy.stable_samples {self.accept((self.sum/self.count as i64) as i32,now);}
+                        if self.needs_average {
+                            if let Some(mean)=averaged {self.accept(mean.mean,now);}
+                        } else if self.count>=self.policy.stable_samples {
+                            self.accept((self.sum/self.count as i64) as i32,now);
+                        }
                     }
                 }
             }
@@ -312,6 +337,12 @@ impl Sweep {
         panic!("bounded sweep did not finish")
     }
     fn ideal(uv:i32)->i32 {6000000+(uv as i64*1200000/1000000) as i32}
+    #[test] fn signal_gap_below_zero_does_not_claim_zero_pitch_loss() {
+        let (outcome,curve,_)=walk(Density::Semitone,|uv|
+            if (-1_000_000..=-500_000).contains(&uv) {None}else{Some(ideal(uv))});
+        assert_eq!(outcome,Outcome::Failed(Failure::RangeBeforeZero));
+        assert!(curve.is_none());
+    }
     #[test] fn only_empty_leading_points_use_short_discovery_deadline() {
         let make_live=||Sweep::new(Route::new(2,3).unwrap(),Density::Semitone,
             Policy{settle_ms:350,point_timeout_ms:5000,stable_samples:8,

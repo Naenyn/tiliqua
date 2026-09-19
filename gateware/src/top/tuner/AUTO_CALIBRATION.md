@@ -75,6 +75,37 @@ or select slots 5–8; do not assume backward compatibility after downgrading.
 
 ## Validation and next hardware check
 
+### September 19: Generate3 low-note acquisition correction
+
+The IN1/OUT1 serial capture found the apparent "failure at zero" actually
+started at commanded -2.16675 V, around 26.68 Hz. Qualified readings covered
+26.642–26.715 Hz (about 4.74 cents), exceeding the old 3-cent consecutive-window
+limit. The timeout was mistaken for a range endpoint below zero; the final
+zero check then misleadingly reported missing zero pitch. The final zero
+reading itself matched the preflight within 0.06 cents. This does not establish
+whether the variation originates in the oscillator, detection or both.
+
+Below C3 (about 131 Hz), a failed tight-window acquisition now falls back to
+eight non-overlapping measurement windows. Raw span must stay within 8 cents;
+quarter-block means must agree within 2 cents and half-block means within 1
+cent. Fresh overlapping observations still participate in the raw-span guard,
+so decimation cannot conceal alternating outliers. The initial 350 ms settling
+time, 5-second point deadline, freshness checks and final zero-drift guard remain.
+Automatic low-note verification uses the same bounded mean; diagnostics retain
+the raw spread, not a smoothed spread. This is a repeatability heuristic, not a
+statistical confidence interval or guarantee of sub-cent absolute accuracy.
+
+Unstable qualified pitch is now distinct from a silent range endpoint. A range
+ending before its zero anchor is also reported explicitly. Failure voltage is
+latched before returning output to zero and included on screen and serial as
+`CAL FAILED_AT_UV`; verification summaries include `AVERAGED`.
+
+The firmware-only change retains the existing FPGA design, 32-KiB CPU RAM,
+profile format, saved slots and flash reservation. Host tests cover captured
+low-note variation, full simulated automatic operation, overlapping outlier
+rejection, drift, missing/stale frames and failure-voltage reporting. Physical
+Generate3 confirmation remains pending after flashing.
+
 Host coverage includes complete automatic operation, navigation during work,
 successful refinement, rejection of full-range regressions, cancellation,
 deadline and output-fault rollback, profile serialization, journal recovery and

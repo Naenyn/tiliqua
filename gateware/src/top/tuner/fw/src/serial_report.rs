@@ -3,6 +3,7 @@ use core::fmt::{self,Write};
 use crate::{calibration_live::Live,pitch_units};
 
 pub fn verification(out:&mut impl Write,cal:&Live)->fmt::Result {
+    if let Some(uv)=cal.failure_voltage {writeln!(out,"CAL FAILED_AT_UV={}",uv)?;}
     if let Some(auto)=cal.automatic.as_ref() {
         writeln!(out,"AUTO PHASE={} PASSES={}/8 STATUS={}",auto.label(),auto.passes,cal.status)?;
         if let Some(scan)=auto.best.as_ref() {
@@ -107,7 +108,7 @@ pub fn verification(out:&mut impl Write,cal:&Live)->fmt::Result {
     }
     if let Some(error)=cal.error_cents {writeln!(out,"VERIFY CURRENT_C={:+.2}",error)?;}
     if let Some(s)=cal.deviation {
-        writeln!(out,"VERIFY MEAN_C={:+.2} SPAN_C={:.2} SAMPLES={}",s.mean,s.spread,s.count)?;
+        writeln!(out,"VERIFY MEAN_C={:+.2} SPAN_C={:.2} SAMPLES={} AVERAGED={}",s.mean,s.spread,s.count,s.averaged)?;
     }
     if let Some(error)=cal.zero_error_cents {writeln!(out,"CAL ZERO_CHECK_C={:+.2}",error)?;}
     Ok(())

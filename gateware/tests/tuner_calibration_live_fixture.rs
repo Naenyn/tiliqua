@@ -40,6 +40,48 @@ mod pac {
 
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn generate3_low_pitch_jitter_completes_automatic_scan_and_check() {
+        let mut live=calibration_live::Live::new();let p=pac::TUNER_PERIPH::default();
+        let mut c=controls();c.calibration_input=1;c.calibration_output=1;
+        live.toggle_automatic(&p,c,0);
+        let mut checked=false;
+        for n in 1..12000u16 {
+            p.ack();let volts=p.command.get() as u16 as i16 as f64/4000.0;
+            let ideal=119.73*2.0f64.powf(volts);
+            // 4.8c peak-to-peak jitter, including the reported 26.68Hz region.
+            // Two frames share each sign, avoiding phase-lock with the 120ms
+            // non-overlap requirement at this simulated 80ms publication rate.
+            let jitter=if (20.1..130.0).contains(&ideal) {if (n/2)%2==0 {2.4}else{-2.4}}else{0.0};
+            let hz=(ideal*2.0f64.powf(jitter/1200.0)) as f32;
+            let valid=(20.0..=20000.0).contains(&hz);
+            live.tick(&p,ChannelMeasurement{frequency_hz:hz,valid,qualified:valid,sequence:n,
+                window_age_ms:120,end_age_ms:10},c,n as u64*80);
+            checked|=live.verifying;
+            if !live.active() {break;}
+        }
+        assert!(checked,"{} {:?}",live.status,live.failure_voltage);assert!(!live.active(),"{}",live.status);
+        assert!(live.pending_profile.is_some(),"{}",live.status);
+        assert!(live.automatic.as_ref().unwrap().best.as_ref().unwrap().complete);
+        assert!(live.failure_voltage.is_none());assert_eq!(p.command.get(),0);
+    }
+    #[test] fn low_pitch_instability_reports_actual_voltage_not_zero_loss() {
+        let mut live=calibration_live::Live::new();let p=pac::TUNER_PERIPH::default();
+        let c=controls();live.toggle_automatic(&p,c,0);
+        for n in 1..12000u16 {
+            p.ack();let volts=p.command.get() as u16 as i16 as f64/4000.0;
+            let jitter=if (-2.20..-2.12).contains(&volts) {if n%2==0 {10.0}else{-10.0}}else{0.0};
+            let hz=(119.73*2.0f64.powf(volts+jitter/1200.0)) as f32;
+            let valid=(20.0..=20000.0).contains(&hz);
+            live.tick(&p,ChannelMeasurement{frequency_hz:hz,valid,qualified:valid,sequence:n,
+                window_age_ms:120,end_age_ms:10},c,n as u64*80);
+            if !live.active() {break;}
+        }
+        assert_eq!(live.status,"FAILED - PITCH NOT STABLE");
+        assert_eq!(live.failure_voltage,Some(-2166750));
+        assert!(live.pending_profile.is_none());assert_eq!(p.command.get(),0);
+        let mut report=String::new();serial_report::verification(&mut report,&live).unwrap();
+        assert!(report.contains("CAL FAILED_AT_UV=-2166750"));
+    }
     #[test] fn automatic_scan_checks_before_review_and_preserves_prior_profile() {
         let mut live=ready();let original=live.profile.as_ref().unwrap().points().to_vec();
         let p=pac::TUNER_PERIPH::default();let c=controls();
@@ -144,9 +186,9 @@ mod pac {
         for (pass,points) in [true,false].iter().enumerate() {
             let mut verify=c;verify.mode=OperatingMode::Verify;
             verify.verify_scan=true;verify.verify_points=*points;
-            let start=(pass as u64+1)*400000;
+            let start=(pass as u64+1)*800000;
             live.toggle_verify(&p,verify,start);assert!(live.verifying,"{}",live.status);
-            for tick in 1..30000u64 {
+            for tick in 1..70000u64 {
                 let now=start+tick*10;p.ack();
                 if tick%9==0 {
                     generation+=1;
@@ -262,7 +304,7 @@ mod pac {
         for uv in [-100000,0,100000,200000] {profile.push(Point{microvolts:uv,millicents:6000000+uv}).unwrap();}
         let mut scan=Scan::new(&profile).unwrap();scan.complete=true;scan.tested=scan.total;scan.worst_pitch=6050000;
         let mut local=LocalCheck::new(&profile,6050000).unwrap();
-        for _ in 0..9 {local.record(Summary{mean:0.0,spread:0.0,count:8});}
+        for _ in 0..9 {local.record(Summary{averaged:false,mean:0.0,spread:0.0,count:8});}
         scan.local=Some(local);live.profile=Some(profile);live.scan=Some(scan);live
     }
     fn refinement_measurement(command:u32,n:u16)->ChannelMeasurement {

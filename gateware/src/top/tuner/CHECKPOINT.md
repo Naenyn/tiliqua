@@ -1,5 +1,12 @@
 # TUNER pause checkpoint — September 13, 2026
 
+**September 19 update:** Generate3 calibration diagnosis found qualified
+low-note jitter exceeding acquisition's stability limit, followed by a
+misleading zero-pitch error after output restoration. Bounded low-note
+averaging and honest failure-voltage diagnostics are implemented and
+host-tested; see [AUTO_CALIBRATION.md](AUTO_CALIBRATION.md). Hardware retry is
+the next qualification step. Saved profiles and FPGA hardware are unchanged.
+
 **September 18 update:** development resumed; passive tuner plus unified
 per-output routing (optional quantization then optional correction) supersedes
 the first mode-owned implementation. One scan may coexist with other outputs.

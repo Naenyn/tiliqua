@@ -1,6 +1,15 @@
 //! Readout-only, bounded rolling statistics. Never feeds the DAC/profile.
 #[derive(Clone,Copy,Debug)]
-pub struct Summary {pub mean:f32,pub spread:f32,pub count:usize}
+pub struct Summary {pub mean:f32,pub spread:f32,pub count:usize,pub averaged:bool}
+impl Summary {
+    /// `averaged` is set only by the non-overlapping, block-agreement estimator.
+    /// Keep raw spread in reports, not the much smaller spread of block means.
+    pub fn settled(&self,pitch:i32)->bool {
+        self.count>=8 && self.mean.is_finite() && self.spread.is_finite()
+            && self.spread>=0.0 && (self.spread<=3.0 || (self.averaged
+                && pitch<=super::averaging::LOW_PITCH && self.spread<=8.0))
+    }
+}
 pub struct Deviation {
     values:[f32;16], times:[u64;16], next:usize, count:usize, sequence:Option<u16>,
 }
@@ -23,11 +32,20 @@ impl Deviation {
             if now<self.times[i] || now-self.times[i]>max_age_ms {continue;}
             let value=self.values[i];sum+=value;lo=lo.min(value);hi=hi.max(value);n+=1;
         }
-        if n<8 {None} else {Some(Summary{mean:sum/n as f32,spread:hi-lo,count:n})}
+        if n<8 {None} else {Some(Summary{averaged:false,mean:sum/n as f32,spread:hi-lo,count:n})}
     }
 }
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn wider_span_requires_bounded_average_and_low_pitch() {
+        let s=Summary{mean:0.3,spread:4.8,count:8,averaged:true};
+        assert!(s.settled(super::super::averaging::LOW_PITCH));
+        assert!(!s.settled(super::super::averaging::LOW_PITCH+1));
+        assert!(!Summary{averaged:false,..s}.settled(3_000_000));
+        assert!(!Summary{count:7,..s}.settled(3_000_000));
+        assert!(!Summary{spread:8.1,..s}.settled(3_000_000));
+        assert!(!Summary{mean:f32::NAN,..s}.settled(3_000_000));
+    }
     #[test] fn repeated_sequence_cannot_fill_or_keep_statistics_alive() {
         let mut d=Deviation::new();
         for now in 0..100 {d.observe(Some(1.0),0,now);}

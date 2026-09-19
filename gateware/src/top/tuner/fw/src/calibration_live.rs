@@ -8,6 +8,7 @@ use crate::pitch_math;
 use crate::oscillator_calibration::deviation::{Deviation,Summary};
 use crate::oscillator_calibration::verification_scan::Scan;
 use crate::oscillator_calibration::automatic::{Automatic,Phase};
+use crate::oscillator_calibration::averaging::{Average,LOW_PITCH};
 
 /// Keep operation controls independent of the visible page. Manual VERIFY
 /// may adjust its target while visible; navigation cannot retarget a run.
@@ -30,12 +31,14 @@ pub struct Live {
     pub error_cents: Option<f32>,
     pub deviation: Option<Summary>,
     statistics: Deviation,
+    average:Average,
     suggested_note: Option<u8>,
     verify_command: u32,
     verify_started: u64,
     verify_token: u8,
     pub status: &'static str,
     pub zero_error_cents:Option<f32>,
+    pub failure_voltage:Option<i32>,
     pub tracking_failure:Option<crate::bipolar_sweep::TrackingFailure>,
     pub rejected_detector:Option<(f32,u8)>,
     pub rejected_verifier:Option<crate::pitch_verification::Diagnostic>,
@@ -55,7 +58,8 @@ impl Live {
     pub fn new() -> Self {
         Self { automatic:None,sweep:None,profile:None,pending_profile:None,pending_route:None,profile_route:None,verifying:false,scan:None,refinement:None,
             target_millicents:0,error_cents:None,verify_command:0,verify_started:0,verify_token:0,
-            deviation:None,statistics:Deviation::new(),suggested_note:None,
+            deviation:None,statistics:Deviation::new(),average:Average::new(),suggested_note:None,
+            failure_voltage:None,
             status:"READY - RUN IN MENU",zero_error_cents:None,tracking_failure:None,rejected_detector:None,rejected_verifier:None,input:0,output:1,
             millivolts:0,point:0,point_count:121,sweep_command:0,waiting:None,previous_sequence:None,sequence:0 }
     }
@@ -64,6 +68,7 @@ impl Live {
         if self.active() || self.pending_profile.is_some() {return false;}
         self.automatic=None;
         self.scan=None;
+        self.failure_voltage=None;
         self.refinement=None;
         self.input=record.route.input();self.output=record.route.output();
         self.point_count=record.profile.points().len() as u8;self.point=0;
@@ -191,6 +196,7 @@ impl Live {
             self.stop_verify(tuner,"OUT OF RANGE - ZERO");return;
         };
         self.target_millicents=pitch;
+        self.average.clear();
         self.error_cents=None;
         self.statistics.clear();self.deviation=None;
         self.verify_token=self.verify_token.wrapping_add(1);
@@ -234,6 +240,7 @@ impl Live {
         self.refinement=None;
         self.input=controls.calibration_input; self.output=controls.calibration_output;
         self.zero_error_cents=None;
+        self.failure_voltage=None;
         self.tracking_failure=None;
         self.rejected_detector=None;
         self.rejected_verifier=None;
@@ -357,16 +364,28 @@ impl Live {
                 Some(pitch_math::semitones(value.frequency_hz,440.0)*100.0
                     -self.target_millicents as f32/1000.0)
             } else {None};
+            let mut averaged=None;
             if !value.valid || !value.qualified {
                 self.statistics.clear();
+                self.average.clear();
                 self.previous_sequence=Some(value.sequence);
             } else if self.previous_sequence!=Some(value.sequence) {
                 self.previous_sequence=Some(value.sequence);
                 self.statistics.observe(self.error_cents,value.sequence,now);
+                if self.target_millicents<=LOW_PITCH {
+                    if let Some(error)=self.error_cents {
+                        averaged=self.average.observe((error*1000.0) as i32,
+                            now.saturating_sub(value.window_age_ms as u64),
+                            now.saturating_sub(value.end_age_ms as u64));
+                    } else {self.average.clear();}
+                }
             }
             // Low pitches publish at most once per cycle. Eight independent
             // observations may not fit the manual readout's 500 ms window.
-            self.deviation=if self.scan.is_some() {
+            self.deviation=if self.scan.is_some() && self.target_millicents<=LOW_PITCH {
+                averaged.map(|v|Summary{mean:v.mean as f32/1000.0,spread:v.spread as f32/1000.0,
+                    count:8,averaged:true})
+            } else if self.scan.is_some() {
                 self.statistics.summary_with_max_age(now,4000)
             } else {self.statistics.summary(now)};
             if self.verifying && self.scan.is_some() {
@@ -451,6 +470,7 @@ impl Live {
             s.acknowledge(self.waiting.unwrap(),now);
             request=s.poll(now,None);
         }
+        self.failure_voltage=s.failure_voltage();
         match request {
             Request::Apply {output,microvolts,token} => {
                 self.status="SETTLING / MEASURING"; self.millivolts=microvolts/1000;
@@ -493,6 +513,8 @@ impl Live {
                     Outcome::Failed(Failure::NoOrigin)=>"FAILED - ZERO PITCH LOST",
                     Outcome::Failed(Failure::OriginChanged)=>"FAILED - ZERO PITCH CHANGED",
                     Outcome::Failed(Failure::NotTracking)=>"FAILED - NOT TRACKING",
+                    Outcome::Failed(Failure::UnstablePitch)=>"FAILED - PITCH NOT STABLE",
+                    Outcome::Failed(Failure::RangeBeforeZero)=>"FAILED - RANGE ENDED BELOW ZERO",
                     _=>"FAILED - OUTPUT/CLOCK",
                 };
                 self.sweep=None;self.waiting=None;self.millivolts=0;

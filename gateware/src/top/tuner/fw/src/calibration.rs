@@ -13,6 +13,8 @@ pub mod sweep;
 pub mod plan;
 #[path = "calibration/deviation.rs"]
 pub mod deviation;
+#[path = "calibration/averaging.rs"]
+pub mod averaging;
 #[path = "calibration/storage.rs"]
 pub mod storage;
 #[path = "calibration/name.rs"]

@@ -1289,6 +1289,10 @@ fn publish_calibration(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,
         return;
     }
     for row in [22,24,26,28] {write_centered(text,row,"",32);}
+    if let Some(uv)=cal.failure_voltage {
+        line.clear();write!(line,"FAILED AT {:+.4} V",uv as f32/1e6).ok();
+        write_centered(text,24,&line,32);
+    }
     if let Some(failure)=cal.tracking_failure {
         if let Some(previous)=failure.neighbour {
             line.clear();write!(line,"PREV {:+.4}V ",previous.microvolts as f32/1e6).ok();
