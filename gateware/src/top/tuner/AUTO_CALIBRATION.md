@@ -246,6 +246,17 @@ before changing stability guards. A stable result would redirect investigation
 toward driven-CV behavior; an unstable result would still require distinguishing
 actual pitch variation from measurement error, not labeling the oscillator bad.
 
+The unpatched Generate3 fundamental control is now captured in the same serial
+log, device timestamps 4,000,005–4,059,921 ms. All 147 logged low-bank frames
+were qualified, with zero scheduler faults. Frequency was 24.967–25.047 Hz,
+mean 25.007612 Hz: 5.5384 cents peak-to-peak and 1.7586 cents population standard
+deviation over 59.916 seconds. Variation persists without any Tiliqua output
+connected to its V/oct, so driven output CV is not necessary to reproduce it.
+This still does not identify actual frequency variation versus waveform/input
+path/estimator effects. Next compare its CORE triangle at unchanged tuning and
+with V/oct still disconnected; do not relax calibration acceptance from this
+periodically logged data alone.
+
 Host coverage includes complete automatic operation, navigation during work,
 successful refinement, rejection of full-range regressions, cancellation,
 deadline and output-fault rollback, profile serialization, journal recovery and
