@@ -343,6 +343,34 @@ Next hardware check is a fresh CORE calibration at unchanged oscillator tuning
 to verify that acquisition crosses the old ~1500-Hz cutoff and still meets the
 automatic accuracy checks.
 
+### Simultaneous Generate3 CORE / FUNDAMENTAL check
+
+On `2ea8160c`, with V/oct unpatched, CORE into IN1 and FUNDAMENTAL into IN2,
+the serial capture at device timestamps 263,033–322,760 ms confirms the
+expected octave relationship. CORE: 147/147 qualified logged observations,
+24.982–24.992 Hz, mean 24.987497 Hz, 0.6929-cent span, 0.1419-cent population
+standard deviation. FUNDAMENTAL: 148/148 qualified, 49.968–49.988 Hz, mean
+49.975899 Hz, 0.6928-cent span, 0.1437-cent standard deviation. No scheduler
+faults. Ratio of means is 2.000036 (0.0314 cents from an exact octave); these
+are asynchronously logged frames, not phase-aligned or independently verified
+absolute-frequency measurements. FUNDAMENTAL is repeatable at ~50 Hz here.
+This does not settle the earlier ~25-Hz FUNDAMENTAL failure.
+
+An offline sensitivity probe offers a hypothesis, not a physical diagnosis:
+604 low-bank samples of a fixed 25-Hz sine plus a 1%-amplitude 12.5-Hz component
+produce about 3.36 cents of phase-dependent estimate span (3% gives 10.09 cents).
+At 50 Hz with the corresponding 25-Hz component, the same model stays near
+0.039 cents span because a later full repeating period is available to the
+existing refinement. The 25-Hz double period exceeds the current 301-lag
+low-bank limit. The probe uses rounded 14,000-count amplitude, relative
+subharmonic phase 0.7 radians, and 64 phases across two nominal sine periods.
+No such component has yet been measured in Generate3's physical output.
+Do not infer that it exists from this synthetic example or enlarge hardware
+on that assumption. Next test lowers FUNDAMENTAL on IN2 to ~25 Hz; CORE then
+falls below the 20-Hz qualification floor, so losing its displayed pitch is
+expected rather than a new failure. No calibration sweep is needed for this
+steady-source comparison.
+
 Host coverage includes complete automatic operation, navigation during work,
 successful refinement, rejection of full-range regressions, cancellation,
 deadline and output-fault rollback, profile serialization, journal recovery and
