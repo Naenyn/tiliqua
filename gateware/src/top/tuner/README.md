@@ -14,8 +14,9 @@ headers return to the parent. TUNER, SETTINGS and HELP remain top-level pages.
 
 The [USB storage investigation](USB_STORAGE.md) covers upstream read/write
 support and the remaining integration/resource work; thumb-drive support is
-not enabled yet. Automatic calibration has host-test coverage and awaits its
-first hardware trial.
+not enabled yet. Automatic calibration has host-test coverage and has completed
+a Generate3 FUNDAMENTAL hardware run with automatic verification. See the
+dated results in AUTO_CALIBRATION.md for the tested range and remaining checks.
 
 On the selected NSDF feature-development build (`TILIQUA_TUNER_NSDF=1`), both
 tuner views, calibration, verification and playback audio checks use the shared
@@ -157,10 +158,10 @@ The shared engine uses nearest-degree rounding with midpoint hysteresis (up to
 five cents, capped to a quarter of each adjacent interval for dense scales), retains
 the last valid note for out-of-range CV, and stops on stale CV, rails, output
 faults, or missed processing deadlines. STOP commands 0 V, not an audio mute.
-The tuner acquisition continues independently. This first standalone version
-has one active output and no trigger input; multichannel
-quantization and optional oscillator-profile correction remain future work.
-No new renderer, pitch engine, FPGA logic, or retained profile copy is added.
+The tuner acquisition continues independently. Four output routes support
+optional oscillator-profile correction; a trigger input is not implemented.
+Routes share the renderer and pitch engine, with one immutable curve snapshot
+per corrected output.
 The scale math supports non-octave periods and fractional intervals. See
 [SCALES.md](SCALES.md) for the offline Scala converter, explicit format limits,
 and the remaining device-import/storage work. The converter does not yet
@@ -174,7 +175,7 @@ See [CONCURRENCY.md](CONCURRENCY.md) for the current assignment model and test p
 ROUTE (formerly PLAY) and QUANT edit the same per-output processing chain.
 Each OUT 0–3 can read any CV input, quantize to its selected scale optionally,
 then apply an independently bound oscillator calibration curve optionally.
-Use CORRECTION NONE for nominal voltage, RAM or SLOT 1–4 plus BIND for correction.
+Use CORRECTION NONE for nominal voltage, RAM or SLOT 1–8 plus BIND for correction.
 BIND is explicit and never starts playback. RUN controls only the selected output.
 
 TUNER is always read-only: active CV inputs are hidden/unfocusable, but the audio

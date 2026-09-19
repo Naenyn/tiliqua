@@ -1,8 +1,10 @@
 # Automatic calibration — September 18, 2026
 
 This is the current UI/workflow specification. It supersedes the manual
-VERIFY/REFINE instructions in older investigation documents. Hardware testing
-of this automatic controller is pending; its state machine is host-tested.
+VERIFY/REFINE instructions in older investigation documents. The state machine
+is host-tested and has completed an automatically verified Generate3 FUNDAMENTAL
+hardware run. Dated validation below records its limits and subsequent changes;
+one successful run is not broad oscillator qualification.
 
 ## Simple workflow
 
@@ -699,3 +701,39 @@ Flashed to slot 1 successfully (`Refresh: DONE`, exit zero), preserving the
 Fresh serial log: `/tmp/tuner-filter-e3b1e805.serial.log`. Next physical test is
 CAL input 2 / output 1 on the unchanged Generate3 FUNDAMENTAL patch and tuning;
 confirm range discovery passes +4.25 V and automatic checking still completes.
+
+### Filtered handoff physical run: full positive voltage range verified
+
+The next `e3b1e805` run completed on the unchanged Generate3 FUNDAMENTAL IN2 /
+CORE IN1 / OUT1 patch. The original logger's one-hour timeout had expired;
+the read-only logger was reconnected during automatic checking. The new log
+does not contain range discovery itself, but the final review confirms its
+retained endpoints:
+
+```
+CAL STATUS REFINE NO GAIN - ORIGINAL ACTIVE=false IN=2 OUT=1 MV=0 POINT=92 COUNT=92
+AUTO PHASE=REVIEW RESULT PASSES=1/8 STATUS=REFINE NO GAIN - ORIGINAL
+AUTO BEST_WORST_C=+2.23 TARGET_C=2.0 VERIFIED=181/181
+CAL REVIEW POINTS=92 LOW_UV=-2583250 HIGH_UV=5000000
+CAL REVIEW LOW=E0 -48.8c HIGH=A#7 +45.1c
+```
+
+All 181 corrected targets completed. The previous +4.25-V cutoff no longer
+occurred on this run; the retained curve reaches the requested +5 V. The
+low-voltage endpoint remains limited by measurable pitch at this oscillator
+tuning, rather than guaranteeing coverage to -5 V. This is not a 20-kHz
+qualification: the highest measured pitch here is around 3.8 kHz.
+
+Worst signed verification error was +2.23 cents, slightly outside the best-effort
+2-cent target. One local refinement attempt found no gain and preserved the
+original fully checked candidate. No full-range recheck of an inserted point
+was started and no improvement is claimed. This verifies completion and safe
+fallback, not successful refinement or independently measured absolute accuracy.
+The candidate is available for explicit ACCEPT; no saved profile was changed.
+
+Transcript: `/tmp/tuner-filter-e3b1e805-cal.serial.log` (temporary evidence).
+No nonzero scheduler fault counters appear in the captured portion. A 30-second
+post-run window measured about 3.59% CPU for selector/guard work only; it does
+not measure total CPU utilization or worst-case execution time. No firmware
+change or reflash was needed after this run. Mixed CAL/ROUTES operation and
+broader oscillator/frequency qualification remain separate physical tests.

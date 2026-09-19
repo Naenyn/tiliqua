@@ -1,11 +1,16 @@
 # TUNER pause checkpoint — September 13, 2026
 
-**September 19 update:** Generate3 calibration diagnosis found qualified
-low-note jitter exceeding acquisition's stability limit, followed by a
-misleading zero-pitch error after output restoration. Bounded low-note
-averaging and honest failure-voltage diagnostics are implemented and
-host-tested; see [AUTO_CALIBRATION.md](AUTO_CALIBRATION.md). Hardware retry is
-the next qualification step. Saved profiles and FPGA hardware are unchanged.
+**Latest September 19 update:** `e3b1e805` is built and flashed to slot 1.
+Generate3 FUNDAMENTAL automatic calibration completed with 92 anchors from
+-2.58325 to +5 V and 181/181 corrected targets checked. Worst error was +2.23
+cents; one no-gain refinement attempt safely kept the verified original curve.
+The previous +4.25-V detector conflict is resolved on this run. See
+[AUTO_CALIBRATION.md](AUTO_CALIBRATION.md) for the filter/native-refinement
+changes, limits, resource costs and evidence. This is internal verification,
+not absolute accuracy or full 20-kHz qualification. Mixed CAL/ROUTES operation
+remains to be physically tested; USB storage integration remains pending.
+Saved profiles were not changed. The historical pause snapshot below is not
+the current build or workflow.
 
 **September 18 update:** development resumed; passive tuner plus unified
 per-output routing (optional quantization then optional correction) supersedes
