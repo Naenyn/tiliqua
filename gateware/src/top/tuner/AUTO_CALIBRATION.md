@@ -73,6 +73,16 @@ Existing profile keys and flash reservation are unchanged. Older v1/v2 profiles
 remain readable. Firmware predating this change cannot read a 129-point record
 or select slots 5–8; do not assume backward compatibility after downgrading.
 
+## Development test-data policy — September 19
+
+The user considers all current calibrations test data, not normal-use profiles,
+until we are satisfied with the first release-candidate pass. An unsaved review
+candidate does not require a save/discard confirmation before an otherwise
+authorized flash. Record useful diagnostic results first. Continue preserving
+saved slots by default; this is not a request to erase them unnecessarily.
+Do not interrupt an active scan needed for diagnosis merely to flash sooner.
+Revisit this policy when transitioning to release-candidate/normal-use data.
+
 ## Validation and next hardware check
 
 ### September 19: Generate3 low-note acquisition correction
