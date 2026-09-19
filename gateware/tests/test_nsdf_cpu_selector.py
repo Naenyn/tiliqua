@@ -148,7 +148,7 @@ def test_physical_cpu_reports_match_exported_scores(name):
         # Current Rust is separately compared against these same score arrays
         # using the new policy by test_cpu_selector_matches_model_without_frame_buffer.
         expected=select(scores,report['fs'],20 if low else 600,1500 if low else 20000,
-                        fallback=True,legacy_range_first=True)
+                        fallback=True,legacy_range_first=cpu.get('policy','0')=='0')
         if fixture.get('early_gate') and (report['rms_counts']<=2 or report['clipped']):
             expected=None
             assert int(cpu['reads'])==0

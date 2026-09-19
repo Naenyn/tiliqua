@@ -35,6 +35,28 @@ def test_explicit_native_endpoint_and_serial_line_bound():
           'n=20480 sum=-671088640 squares=21990232555520 status=15 '
           'frame_end=4294967295\n')
     assert len(line)<192
+    line=('NSDF CPU ch=3 low=false seq=4294967295 mhz=20000000 '
+          'raw=20000000 ppm=1100000 ok=false cycles=4294967295 reads=707 '
+          'guard=false gc=4294967295 policy=1\n')
+    assert len(line)<192
+
+
+def test_export_identifies_selector_policy_without_reinterpreting_archives():
+    # This legacy score frame selected an in-range multiple of an out-of-band
+    # peak. The new selector rejects it; historical CPU evidence stays intact.
+    original=example()
+    assert next(analyze_source(original))['qualified']
+    with pytest.raises(ValueError,match='unexpected CPU candidate'):
+        list(analyze_source(original.replace('NSDF CPU ','NSDF CPU policy=1 ')))
+    import re
+    def update(match):
+        fields=dict(part.split('=') for part in match.group(1).split())
+        fields.update(policy='1',mhz='0',raw='0',ppm='0',ok='false')
+        return 'NSDF CPU '+' '.join(f'{k}={v}' for k,v in fields.items())
+    current=re.sub(r'^NSDF CPU ([^\n]+)',update,original,flags=re.M)
+    assert not next(analyze_source(current))['qualified']
+    with pytest.raises(ValueError,match='unknown selector policy'):
+        list(analyze_source(current.replace('policy=1','policy=2')))
 
 
 @pytest.mark.parametrize('offset',[-512,-40,0,128,512])

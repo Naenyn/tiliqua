@@ -371,6 +371,25 @@ falls below the 20-Hz qualification floor, so losing its displayed pitch is
 expected rather than a new failure. No calibration sweep is needed for this
 steady-source comparison.
 
+The steady FUNDAMENTAL-only low-note check on IN2 reproduced the issue on
+`2ea8160c`: 147/147 qualified logged frames, no faults, at device timestamps
+408,096–467,902 ms. Range 24.956–25.038 Hz, mean 24.996088 Hz, span 5.6791 cents,
+population standard deviation 1.7636 cents. CORE is now below the supported
+20-Hz range, as expected. This confirms repeatability of the frequency-dependent
+symptom with V/oct disconnected; it does not prove its waveform mechanism.
+
+The existing `TILIQUA_TUNER_NSDF_TRACE=full` firmware diagnostic can export
+immutable NSDF score frames and aligned source moments on the unchanged FPGA.
+It is a temporary diagnostic, not the production continuous scheduler: leave
+it on the idle tuner page and do not run CAL/ROUTES. Normal live pitch display
+is not supported in this mode. Restore the normal continuous build afterward.
+New diagnostic CPU reports include `policy=1` for range-after-peak selection;
+unversioned historical reports retain range-first interpretation. Host validation
+rejects unknown versions and mismatched CPU/score results. The 192-byte line
+buffer is unchanged and its maximum-length report remains covered by tests.
+These exports are correlation scores, not raw audio; conclusions must respect
+that limitation. No new detector, score buffer or FPGA resources are introduced.
+
 Host coverage includes complete automatic operation, navigation during work,
 successful refinement, rejection of full-range regressions, cancellation,
 deadline and output-fault rollback, profile serialization, journal recovery and
