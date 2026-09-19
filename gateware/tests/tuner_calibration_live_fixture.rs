@@ -40,6 +40,77 @@ mod pac {
 
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn automatic_scan_checks_before_review_and_preserves_prior_profile() {
+        let mut live=ready();let original=live.profile.as_ref().unwrap().points().to_vec();
+        let p=pac::TUNER_PERIPH::default();let c=controls();
+        live.toggle_automatic(&p,c,0);
+        let mut checked=false;
+        for n in 1..18000u16 {
+            p.ack();let now=n as u64*50;
+            let volts=p.command.get() as u16 as i16 as f64/4000.0;
+            let hz=(440.0*2.0f64.powf(volts)) as f32;
+            let valid=(20.0..=20000.0).contains(&hz);
+            let mut navigated=c;navigated.mode=OperatingMode::Tuner;
+            live.tick(&p,ChannelMeasurement{frequency_hz:hz,valid,qualified:valid,
+                sequence:n,window_age_ms:100,end_age_ms:1},navigated,now);
+            assert_eq!(live.profile.as_ref().unwrap().points(),original);
+            checked|=live.verifying;
+            if !live.active() {break;}
+        }
+        assert!(checked);assert!(!live.active(),"{}",live.status);
+        assert!(live.pending_profile.is_some(),"{}",live.status);
+        assert!(live.automatic.as_ref().unwrap().best.as_ref().unwrap().complete);
+        assert_eq!(live.status,"READY - WITHIN 2C TARGET");
+        assert_eq!(p.command.get()&(1<<18),0);
+        p.ack();live.accept_scan(&p);
+        assert!(live.pending_profile.is_none());assert!(live.automatic.is_none());
+        assert_ne!(live.profile.as_ref().unwrap().points(),original);
+    }
+    #[test] fn automatic_refinement_rechecks_and_rolls_back_worse_or_faulted_candidates() {
+        use oscillator_calibration::automatic::{Automatic,Phase};
+        for scenario in 0..4 {
+            let mut live=refinement_ready();let prior=live.profile.as_ref().unwrap().points().to_vec();
+            let p=pac::TUNER_PERIPH::default();let mut c=controls();
+            c.mode=OperatingMode::Verify;c.verify_scan=true;
+            live.toggle_verify(&p,c,0);
+            live.pending_profile=live.profile.clone();
+            let mut auto=Automatic::new(0);auto.phase=Phase::Verify;live.automatic=Some(auto);
+            let mut rechecked=false;
+            for n in 1..12000u16 {
+                p.ack();let phase=live.automatic.as_ref().unwrap().phase;
+                rechecked|=phase==Phase::Reverify;
+                let uv=bipolar::decode_voltage(p.command.get() as u16).unwrap();
+                let x=uv as f64/100000.0;
+                let mut mc=6000000.0+uv as f64-if (0..=100000).contains(&uv) {16000.0*x*(1.0-x)} else {0.0};
+                if scenario==1 && phase==Phase::Reverify {mc+=10000.0;}
+                if scenario==2 && phase==Phase::Reverify {p.status.set(512);}
+                if scenario==3 && phase==Phase::Reverify {
+                    live.toggle_automatic(&p,c,n as u64*20);break;
+                }
+                let hz=(440.0*2.0f64.powf((mc/100000.0-69.0)/12.0)) as f32;
+                live.tick(&p,ChannelMeasurement{frequency_hz:hz,valid:true,qualified:true,
+                    sequence:n,window_age_ms:100,end_age_ms:1},c,n as u64*20);
+                assert_eq!(live.profile.as_ref().unwrap().points(),prior);
+                if !live.active(){break;}
+            }
+            assert!(rechecked,"{}",live.status);assert!(!live.active());
+            assert_eq!(p.command.get(),0);
+            if scenario==0 {
+                assert_eq!(live.pending_profile.as_ref().unwrap().points().len(),prior.len()+1);
+                assert!(live.automatic.as_ref().unwrap().best.as_ref().unwrap().worst_error.abs()<=2.0);
+            } else if scenario==3 {assert!(live.pending_profile.is_none());}
+            else {assert_eq!(live.pending_profile.as_ref().unwrap().points(),prior);}
+        }
+    }
+    #[test] fn automatic_without_completed_verification_cannot_offer_a_profile() {
+        use oscillator_calibration::automatic::{Automatic,Phase,MAX_DURATION_MS};
+        let mut live=ready();let p=pac::TUNER_PERIPH::default();let c=controls();
+        live.pending_profile=live.profile.clone();
+        let mut auto=Automatic::new(0);auto.phase=Phase::Verify;live.automatic=Some(auto);
+        live.tick(&p,ChannelMeasurement::default(),c,MAX_DURATION_MS);
+        assert!(!live.active());assert!(live.pending_profile.is_none());assert!(live.profile.is_some());
+        assert_eq!(p.command.get(),0);
+    }
     #[test] fn nsdf_window_and_generation_handoff_completes_sweep() {
         let p=pac::TUNER_PERIPH::default();let mut live=ready();let c=controls();
         let mut identity=nsdf_sequence::Sequence::default();

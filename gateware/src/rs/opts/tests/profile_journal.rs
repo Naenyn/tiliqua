@@ -82,6 +82,46 @@ fn expanded_flash()->Flash {
     Flash(Rc::new(RefCell::new(State{bytes:vec![255;24576],remaining:None,erases:0})))
 }
 
+#[test] fn eight_129_point_profiles_survive_gc_and_reopen() {
+    let f=expanded_flash();
+    open(&f).save_key(KEY,&[42;296]).unwrap();
+    let legacy=f.0.borrow().bytes[..8192].to_vec();
+    for slot in 0..8 {expanded(&f).save_key(KEY+slot,&[slot as u8;1072]).unwrap();}
+    for version in 0..160u8 {
+        expanded(&f).save_key(KEY+(version%8) as u32,&[version;1072]).unwrap();
+    }
+    let mut bytes=[0;1072];
+    for slot in 0..8 {
+        assert_eq!(expanded(&f).load_key(KEY+slot,&mut bytes).unwrap(),Some(1072));
+        assert_eq!(bytes,[152+slot as u8;1072]);
+    }
+    assert_eq!(&f.0.borrow().bytes[..8192],legacy);
+}
+
+#[test] fn eight_full_profiles_survive_interrupted_gc() {
+    let f=expanded_flash();
+    for slot in 0..8 {expanded(&f).save_key(KEY+slot,&[slot as u8;1072]).unwrap();}
+    let mut found=false;
+    for _ in 0..80 {
+        let before=f.0.borrow().clone();
+        expanded(&f).save_key(KEY,&[0;1072]).unwrap();
+        if f.0.borrow().erases>before.erases {*f.0.borrow_mut()=before;found=true;break;}
+    }
+    assert!(found);
+    let baseline=f.0.borrow().clone();
+    for cut in (0..20000).step_by(113) {
+        let interrupted=Flash(Rc::new(RefCell::new(baseline.clone())));
+        interrupted.0.borrow_mut().remaining=Some(cut);
+        let _=expanded(&interrupted).save_key(KEY,&[99;1072]);
+        interrupted.0.borrow_mut().remaining=None;
+        let mut bytes=[0;1072];
+        for slot in 0..8 {
+            assert_eq!(expanded(&interrupted).load_key(KEY+slot,&mut bytes).unwrap(),Some(1072),"cut {cut} slot {slot}");
+            assert!(bytes==[slot as u8;1072] || (slot==0 && bytes==[99;1072]));
+        }
+    }
+}
+
 #[test] fn single_owner_isolates_journals_and_rejects_unreserved_or_overlapping_windows() {
     let f=expanded_flash();
     let mut storage=ExpandedJournal::with_reserved_buffer(f.clone(),0..8192,0..24576).unwrap();

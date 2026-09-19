@@ -2,21 +2,35 @@ use opts::*;
 use serde_derive::{Deserialize, Serialize};
 use strum_macros::{EnumIter, IntoStaticStr};
 
-#[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default,
+#[derive(Clone, Copy, PartialEq, EnumIter, Default,
          Serialize, Deserialize)]
 #[strum(serialize_all = "SCREAMING-KEBAB-CASE")]
 pub enum Page {
     #[default]
     Tuner,
     Calibrate,
+    #[strum(disabled)]
     Verify,
+    #[strum(disabled)]
     Profiles,
     Settings,
     Help,
     Play,
     Quantizer,
+    #[strum(disabled)]
     QuantNotes,
+    #[strum(disabled)]
     QuantSetups,
+}
+// EnumIter excludes child screens, but labels must remain valid for every
+// screen. Deriving IntoStaticStr with `disabled` would panic for a child.
+impl From<Page> for &'static str {
+    fn from(page:Page)->Self {match page {
+        Page::Tuner=>"TUNER",Page::Calibrate=>"CAL",Page::Verify=>"CHECK",
+        Page::Profiles=>"PROFILES",Page::Settings=>"SETTINGS",Page::Help=>"HELP",
+        Page::Play=>"ROUTES",Page::Quantizer=>"SCALES",Page::QuantNotes=>"NOTES",
+        Page::QuantSetups=>"SETUPS",
+    }}
 }
 
 #[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default,
@@ -106,7 +120,7 @@ int_params!(ReferenceParams<u16> {
     format: IntFormat::Scaled { divisor: 1, precision: 0, suffix: "Hz" }
 });
 int_params!(ScrollParams<u8> { step: 1, min: 0, max: 60 });
-int_params!(ProfileSlotParams<u8> { step: 1, min: 1, max: 4 });
+int_params!(ProfileSlotParams<u8> { step: 1, min: 1, max: 8 });
 int_params!(NamePositionParams<u8> { step: 1, min: 1, max: 24 });
 int_params!(NameCharacterParams<u8> { step: 1, min: 32, max: 126 });
 
@@ -144,6 +158,8 @@ pub struct CalibrateOpts {
     pub accept: ButtonOption<OneShotButtonParams>,
     #[option(false)]
     pub discard: ButtonOption<OneShotButtonParams>,
+    #[option(false)]
+    pub profiles: ButtonOption<OneShotButtonParams>,
 }
 
 #[derive(OptionPage, Clone)]
@@ -168,6 +184,8 @@ pub struct PlayOpts {
     pub quantize: EnumOption<RouteQuantize>,
     #[option(false)]
     pub run: ButtonOption<OneShotButtonParams>,
+    #[option(false)]
+    pub scales: ButtonOption<OneShotButtonParams>,
 }
 
 #[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]
@@ -176,6 +194,8 @@ pub enum Correction {
     #[strum(serialize="RAM")] Ram,
     #[strum(serialize="SLOT 1")] Slot1, #[strum(serialize="SLOT 2")] Slot2,
     #[strum(serialize="SLOT 3")] Slot3, #[strum(serialize="SLOT 4")] Slot4,
+    #[strum(serialize="SLOT 5")] Slot5, #[strum(serialize="SLOT 6")] Slot6,
+    #[strum(serialize="SLOT 7")] Slot7, #[strum(serialize="SLOT 8")] Slot8,
 }
 #[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]
 pub enum RouteQuantize { #[strum(serialize="OFF")] Off, #[default] #[strum(serialize="SCALE")] Scale }
@@ -183,13 +203,7 @@ pub enum RouteQuantize { #[strum(serialize="OFF")] Off, #[default] #[strum(seria
 #[derive(OptionPage, Clone)]
 pub struct QuantizerOpts {
     #[option(1)]
-    pub input: IntOption<InputParams>,
-    #[option(1)]
     pub output: IntOption<InputParams>,
-    #[option(60)]
-    pub zero_note: IntOption<NoteParams>,
-    #[option(false)]
-    pub run: ButtonOption<OneShotButtonParams>,
     #[option]
     pub scale: EnumOption<ScalePreset>,
     #[option]
@@ -198,6 +212,12 @@ pub struct QuantizerOpts {
     pub transpose: IntOption<TransposeParams>,
     #[option]
     pub mapping: EnumOption<Distribution>,
+    #[option(false)]
+    pub notes: ButtonOption<OneShotButtonParams>,
+    #[option(false)]
+    pub setups: ButtonOption<OneShotButtonParams>,
+    #[option(false)]
+    pub routes: ButtonOption<OneShotButtonParams>,
 }
 
 #[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default,
@@ -207,20 +227,10 @@ pub enum QuantizeMode { #[default] Off, Chromatic }
 
 #[derive(OptionPage, Clone)]
 pub struct VerifyOpts {
-    #[option(60)]
-    pub note: IntOption<NoteParams>,
-    #[option(0)]
-    pub cents: IntOption<CentsParams>,
-    #[option]
-    pub mode: EnumOption<VerifyMode>,
     #[option(false)]
     pub run: ButtonOption<OneShotButtonParams>,
     #[option(false)]
-    pub refine: ButtonOption<OneShotButtonParams>,
-    #[option(false)]
-    pub accept: ButtonOption<OneShotButtonParams>,
-    #[option(false)]
-    pub discard: ButtonOption<OneShotButtonParams>,
+    pub back: ButtonOption<OneShotButtonParams>,
 }
 
 #[derive(OptionPage, Clone)]
@@ -235,6 +245,10 @@ pub struct ProfileOpts {
     pub save: ButtonOption<OneShotButtonParams>,
     #[option(false)]
     pub load: ButtonOption<OneShotButtonParams>,
+    #[option(false)]
+    pub check: ButtonOption<OneShotButtonParams>,
+    #[option(false)]
+    pub back: ButtonOption<OneShotButtonParams>,
 }
 
 #[derive(Options, Clone)]

@@ -10,12 +10,12 @@ def test_calibration_menu_overrides_match_option_order():
     firmware = Path(__file__).parents[1] / "src/top/tuner/fw/src"
     options = (firmware / "options.rs").read_text()
     fields = re.findall(r"pub (\w+):", options.split("pub struct CalibrateOpts {")[1].split("}")[0])
-    assert fields == ["input", "output", "zero_note", "run", "accept", "discard"]
+    assert fields == ["input", "output", "zero_note", "run", "accept", "discard", "profiles"]
     snapshot = (firmware / "main.rs").read_text().split("impl MenuSnapshot {")[1].split("#[inline(never)]")[0]
     overrides = {int(index): label for index, label in re.findall(
         r'\(Page::Calibrate, (\d+)\) => "([^"]+)"', snapshot)}
     assert [overrides.get(i, field) for i, field in enumerate(fields)] == [
-        "input", "output", "0v note", "run", "accept", "discard"]
+        "input", "output", "0v note", "run", "accept", "discard", "profiles"]
     formatted_index = re.search(r"page==Page::Calibrate && index==(\d+)", snapshot)
     assert fields[int(formatted_index[1])] == "zero_note"
 
@@ -45,16 +45,18 @@ def test_all_menu_pages_fit_without_hidden_scrolling():
         constants["MENU_Y"] + constants["MENU_H"]
 
 
-def test_standalone_quantizer_menu_and_mode_have_independent_controls():
+def test_scale_editor_and_routes_share_configuration_but_only_routes_run():
     firmware = Path(__file__).parents[1] / "src/top/tuner/fw/src"
     options=(firmware/'options.rs').read_text()
     fields=re.findall(r'pub (\w+):',options.split('pub struct QuantizerOpts {')[1].split('}')[0])
-    assert fields==['input','output','zero_note','run','scale','root','transpose','mapping']
+    assert fields==['output','scale','root','transpose','mapping','notes','setups','routes']
     main=(firmware/'main.rs').read_text()
-    assert '(Page::Quantizer, 2) | (Page::Play, 2) => "0v note"' in main
-    assert 'matches!(page,Page::Quantizer|Page::Play) && index==2' in main
-    assert 'Page::Quantizer => "QUANT"' in main
-    assert 'Page::Play => "ROUTE"' in main
+    assert '(Page::Play, 2) => "0v note"' in main
+    assert 'page==Page::Play && index==2' in main
+    assert 'Page::Quantizer => "SCALES"' in main
+    assert 'Page::Play => "ROUTES"' in main
+    assert '!c.quantize && c.correction==0' in main
+    assert 'quantizer.run' not in main
     assert 'lane.arm_route(c.input,n as u8,c.zero' in main
     assert 'if q.lanes[old].active' in main
     assert 'if q.lanes[old].active {edited=q.configs[old];}' in main
@@ -63,6 +65,18 @@ def test_standalone_quantizer_menu_and_mode_have_independent_controls():
     assert re.findall(r'\] (\w+),',presets)==[
         'Chromatic','Major','Minor','MajorPentatonic','MinorPentatonic','Edo24','Custom2']
     assert 'Page::Quantizer' in (firmware/'runtime.rs').read_text()
+
+
+def test_calibration_children_are_not_top_level_modes_and_refine_is_automatic():
+    firmware = Path(__file__).parents[1] / "src/top/tuner/fw/src"
+    options = (firmware / 'options.rs').read_text()
+    for page in ['Verify', 'Profiles', 'QuantNotes', 'QuantSetups']:
+        assert f'#[strum(disabled)]\n    {page},' in options
+    verify = options.split('pub struct VerifyOpts {')[1].split('}')[0]
+    assert re.findall(r'pub (\w+):', verify) == ['run', 'back']
+    main = (firmware / 'main.rs').read_text()
+    assert 'calibration.toggle_automatic(&tuner' in main
+    assert 'else if header_back {parent}' in main
 
 
 def test_note_slots_fit_menu_and_legacy_slot_is_preserved():

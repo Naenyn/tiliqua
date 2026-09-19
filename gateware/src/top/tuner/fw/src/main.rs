@@ -74,14 +74,14 @@ struct App {
     tuner_focus:u8,
 }
 
-fn quant_settings(opts:&options::QuantizerOpts,masks:[u16;2],quantize:bool,correction:u8)->quantizer_setup::Channel {
-    quantizer_setup::Channel{input:opts.input.value,zero:opts.zero_note.value,
+fn quant_settings(opts:&options::QuantizerOpts,masks:[u16;2],current:quantizer_setup::Channel)->quantizer_setup::Channel {
+    quantizer_setup::Channel{input:current.input,zero:current.zero,
         scale:opts.scale.value as u8,root:opts.root.value as u8,transpose:opts.transpose.value,
-        equal:opts.mapping.value==options::Distribution::Equal,masks,quantize,correction}
+        equal:opts.mapping.value==options::Distribution::Equal,masks,quantize:current.quantize,correction:current.correction}
 }
 fn show_quant_settings(opts:&mut options::QuantizerOpts,c:quantizer_setup::Channel) {
     use strum::IntoEnumIterator;
-    opts.input.value=c.input;opts.zero_note.value=c.zero;opts.transpose.value=c.transpose;
+    opts.transpose.value=c.transpose;
     opts.scale.value=options::ScalePreset::iter().nth(c.scale as usize).unwrap_or_default();
     opts.root.value=options::ScaleRoot::iter().nth(c.root as usize).unwrap_or_default();
     opts.mapping.value=if c.equal {options::Distribution::Equal} else {options::Distribution::Nearest};
@@ -132,6 +132,8 @@ impl MultiQuant {
     fn toggle(&mut self,t:&pac::TUNER_PERIPH,n:usize,c:quantizer_setup::Channel,now:u32,counts:i32,r:&mut Reservations) {
         if self.lanes[n].active {
             quant_command(t,n,self.lanes[n].stop("STOPPED BY USER"));r.release(Owner::Quant(n as u8));
+        } else if !c.quantize && c.correction==0 {
+            self.lanes[n].status="CHOOSE SCALE OR CORRECTION";
         } else if c.correction!=0 && self.bound[n]!=c.correction {
             self.lanes[n].status="BIND CORRECTION ON ROUTE FIRST";
         } else if !r.claim(Owner::Quant(n as u8),1<<c.input,1<<n) {
@@ -160,7 +162,7 @@ impl App {
     fn new(opts: Opts) -> Self {
         let quant_selected=opts.quantizer.output.value.min(3);
         let mut quant_channels=quantizer_setup::DEFAULT;
-        quant_channels[quant_selected as usize]=quant_settings(&opts.quantizer,[0xfff,0],true,0);
+        quant_channels[quant_selected as usize]=quant_settings(&opts.quantizer,[0xfff,0],quant_channels[quant_selected as usize]);
         let peripherals = unsafe { pac::Peripherals::steal() };
         let encoder = Encoder0::new(peripherals.ENCODER0);
         let pca9635 = Pca9635Driver::new(I2c0::new(peripherals.I2C0));
@@ -701,12 +703,12 @@ impl MenuSnapshot {
         let page_label = match page {
             Page::Tuner => "TUNER",
             Page::Calibrate => "CAL",
-            Page::Verify => "VERIFY",
+            Page::Verify => "CHECK",
             Page::Profiles => "PROFILES",
             Page::Settings => "SETTINGS",
             Page::Help => "HELP",
-            Page::Play => "ROUTE",
-            Page::Quantizer => "QUANT",
+            Page::Play => "ROUTES",
+            Page::Quantizer => "SCALES",
             Page::QuantNotes => "NOTES",
             Page::QuantSetups => "SETUPS",
         };
@@ -721,8 +723,7 @@ impl MenuSnapshot {
                     // acquired continuously, this selects only tuner focus.
                     (Page::Tuner, 0) => "focus",
                     (Page::Calibrate, 2) => "0v note",
-                    (Page::Quantizer, 2) | (Page::Play, 2) => "0v note",
-                    (Page::Verify, 0) => "note",
+                    (Page::Play, 2) => "0v note",
                     (Page::Profiles, 1) => "name pos",
                     (Page::Profiles, 2) => "letter",
                     (Page::Settings, 0) => "a4 ref",
@@ -736,12 +737,9 @@ impl MenuSnapshot {
                 } else if page==Page::QuantNotes && index==0 {
                     let mut value=OptionString::new();
                     value.push_str(if opts.quant_notes.octave.value==0 {"A"} else {"B"}).ok();value
-                } else if (page==Page::Verify && index==0) || (page==Page::Calibrate && index==2)
-                    || (matches!(page,Page::Quantizer|Page::Play) && index==2) {
+                } else if (page==Page::Calibrate && index==2) || (page==Page::Play && index==2) {
                     let mut value=OptionString::new();
-                    let note=if page==Page::Verify {opts.verify.note.value}
-                        else if page==Page::Play {opts.play.zero_note.value}
-                        else if page==Page::Quantizer {opts.quantizer.zero_note.value}
+                    let note=if page==Page::Play {opts.play.zero_note.value}
                         else {opts.calibrate.zero_note.value};
                     pitch_units::write_note(&mut value,note as i32).ok();value
                 } else if page==Page::Profiles && index==2 {
@@ -1015,7 +1013,7 @@ fn publish_profiles(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,
 fn publish_verification(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,
                         cal:&calibration_live::Live,controls:RuntimeControls,
                         value:ChannelMeasurement,menu_active:bool) {
-    write_centered(text,3,"VERIFY CALIBRATION",28);
+    write_centered(text,3,"CHECK CALIBRATION PROFILE",28);
     let mut line:String<48>=String::new();
     if let Some(route)=cal.profile_route {
         write!(line,"OUT {} -> V/OCT; AUDIO -> IN {}",route.output(),route.input()).ok();
@@ -1129,7 +1127,7 @@ fn publish_quantizer(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,menu:b
         }
         write_centered(text,29,"SAVE INCLUDES ALL FOUR NOTE PATTERNS",42);
         write_centered(text,32,"LOAD DOES NOT START OUTPUT",38);
-        write_centered(text,35,"QUANT RUN STARTS SELECTED OUTPUT",42);
+        write_centered(text,35,"RUN OUTPUTS IN ROUTES; HEADER BACK",42);
         let (status_slot,status)=critical_section::with(|cs|*SETUP_STATUS.borrow_ref(cs));
         write!(line,"SLOT {}: {}",slot,if slot==status_slot {status} else {"SAVE OR LOAD A SETUP"}).ok();
         write_centered(text,39,&line,42);
@@ -1154,7 +1152,7 @@ fn publish_quantizer(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,menu:b
             if masks[octave]&(1<<note)!=0 {"ON"} else {"OFF"}).ok();
         write_centered(text,22,&line,38);
         write_centered(text,27,"TOGGLE NOTE; CLEAR/FILL OCTAVE",40);
-        write_centered(text,31,"SELECT CUSTOM 2 IN QUANT",38);
+        write_centered(text,31,"CUSTOM 2 IN SCALES; HEADER TO RETURN",38);
         write_centered(text,35,if masks==[0,0] {"EMPTY PATTERN - CANNOT RUN"}
             else if masks[0]==0 || masks[1]==0 {"ONE OCTAVE REPEAT"} else {"TWO OCTAVE REPEAT"},38);
         let slot=with_app(|app|app.ui.opts.quant_notes.slot.value);
@@ -1164,8 +1162,9 @@ fn publish_quantizer(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,menu:b
         write_centered(text,39,&line,42);
         publish_markers(display,Markers([None;4]),false,menu);return;
     }
-    let (input,output,zero)=with_app(|app|(app.ui.opts.quantizer.input.value,
-        app.ui.opts.quantizer.output.value,app.ui.opts.quantizer.zero_note.value));
+    let (input,output,zero)=with_app(|app| {
+        let c=app.quant_channels[app.quant_selected as usize];(c.input,app.quant_selected,c.zero)
+    });
     let (active,status,uv,out,pitch,updates,cycles)=critical_section::with(|cs| {
         let q=MULTI_QUANT.borrow_ref(cs);let p=&q.lanes[output as usize];
         (p.active,p.status,p.input_uv,p.output_uv,p.pitch,p.updates,q.max_cycles)
@@ -1243,9 +1242,27 @@ fn publish_calibration(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,
     write_centered(text,14,"UPWARD -5 TO +5V; 121 PTS",30);
     write_centered(text,16,"RUN AGAIN TO CANCEL",30);
     write_centered(text,18,"NAVIGATION KEEPS SCAN RUNNING",38);
+    if let Some(auto)=cal.automatic.as_ref().filter(|a|a.active()) {
+        write_centered(text,14,"AUTO: SCAN / CHECK / IMPROVE",34);
+        write_centered(text,22,auto.label(),34);
+        line.clear();write!(line,"REFINEMENT PASS {} / 8",auto.passes).ok();
+        write_centered(text,24,&line,34);
+        line.clear();
+        if let Some(scan)=cal.scan.as_ref() {write!(line,"CHECK {} / {}",scan.tested,scan.total).ok();}
+        else {write!(line,"SCAN {} / 121",cal.point).ok();}
+        write_centered(text,26,&line,34);
+        line.clear();write!(line,"OUT {:+.3} V    {:.2} HZ",cal.millivolts as f32/1000.0,value.frequency_hz).ok();
+        write_centered(text,28,&line,34);
+        write_centered(text,32,cal.status,34);
+        write_centered(text,36,"PRIOR PROFILE AND SAVED SLOTS KEPT",34);
+        write_centered(text,38,"REVIEW BEFORE ACCEPTING OR SAVING",34);
+        write_centered(text,41,"ENCODER: MENU",24);
+        publish_markers(display,Markers([None;4]),false,menu_active);return;
+    }
     if let Some(profile)=cal.pending_profile.as_ref() {
         let points=profile.points();let low=points[0];let high=points[points.len()-1];
-        write_centered(text,12,"SCAN COMPLETE - OUTPUT ZERO",30);
+        write_centered(text,12,if cal.automatic.is_some() {"BEST CHECKED RESULT - OUTPUT ZERO"}
+            else {"SCAN COMPLETE - OUTPUT ZERO"},30);
         write_centered(text,14,"ACCEPT: USE RESULT IN RAM",30);
         write_centered(text,16,"RUN: ADJUST AND RESCAN",30);
         write_centered(text,18,"DISCARD: KEEP PRIOR PROFILE",30);
@@ -1259,7 +1276,10 @@ fn publish_calibration(display:&pac::TUNER_DISPLAY,text:&mut TextWriter<'_>,
         write_centered(text,24,&line,32);
         write_centered(text,26,oscillator_calibration::discovery::advice(profile),32);
         write_centered(text,28,"ADVICE IS NOT A RANGE GUARANTEE",32);
-        write_centered(text,30,"RETUNING REQUIRES A NEW SCAN",32);
+        if let Some(scan)=cal.automatic.as_ref().and_then(|a|a.best.as_ref()) {
+            line.clear();write!(line,"CHECKED WORST {:+.2}C; TARGET 2C",scan.worst_error).ok();
+            write_centered(text,30,&line,32);
+        } else {write_centered(text,30,"RETUNING REQUIRES A NEW SCAN",32);}
         write_centered(text,32,cal.status,32);
         write_centered(text,34,"SAVED SLOTS ARE UNCHANGED",32);
         write_centered(text,36,"ACCEPT DOES NOT SAVE TO FLASH",32);
@@ -1416,7 +1436,7 @@ fn poll_ui_frame() -> UiFrame {
             edited.quantize=app.ui.opts.play.quantize.value==options::RouteQuantize::Scale;
             edited.correction=app.ui.opts.play.correction.value as u8;
         } else {
-            edited=quant_settings(&app.ui.opts.quantizer,*QUANT_NOTES.borrow_ref(cs),edited.quantize,edited.correction);
+            edited=quant_settings(&app.ui.opts.quantizer,*QUANT_NOTES.borrow_ref(cs),edited);
         }
         if app.quant_channels[old]!=edited {
             *SETUP_STATUS.borrow_ref_mut(cs)=(app.ui.opts.quant_setups.slot.value,"EDITED - SAVE SETUP");
@@ -1450,6 +1470,27 @@ fn poll_ui_frame() -> UiFrame {
         }
         let save = app.ui.opts.settings.save_opts.poll();
         let wipe = app.ui.opts.settings.wipe_opts.poll();
+        // Supporting screens are entered through their parent, not mixed into
+        // the top-level page selector. Clicking a child header returns home.
+        let page=app.ui.opts.tracker.page.value;
+        let parent=match page {
+            Page::Verify=>Some(Page::Profiles),Page::Profiles=>Some(Page::Calibrate),
+            Page::QuantNotes|Page::QuantSetups=>Some(Page::Quantizer),_=>None,
+        };
+        let header_back=app.ui.opts.tracker.selected.is_none() && app.ui.opts.tracker.modify;
+        let destination=if app.ui.opts.calibrate.profiles.poll() {Some(Page::Profiles)}
+            else if app.ui.opts.profiles.check.poll() {Some(Page::Verify)}
+            else if app.ui.opts.profiles.back.poll() {Some(Page::Calibrate)}
+            else if app.ui.opts.verify.back.poll() {Some(Page::Profiles)}
+            else if app.ui.opts.play.scales.poll() {Some(Page::Quantizer)}
+            else if app.ui.opts.quantizer.notes.poll() {Some(Page::QuantNotes)}
+            else if app.ui.opts.quantizer.setups.poll() {Some(Page::QuantSetups)}
+            else if app.ui.opts.quantizer.routes.poll() {Some(Page::Play)}
+            else if header_back {parent} else {None};
+        if let Some(page)=destination {
+            app.ui.opts.tracker.page.value=page;app.ui.opts.tracker.selected=Some(0);
+            app.ui.opts.tracker.modify=false;app.ui.external_modify();
+        }
         let menu_active = app.ui.draw();
         app.ui.set_menu_visible(menu_active);
         UiFrame {
@@ -1458,14 +1499,14 @@ fn poll_ui_frame() -> UiFrame {
             load_setup:app.ui.opts.quant_setups.load.poll(),
             save_notes:app.ui.opts.quant_notes.save.poll(),
             load_notes:app.ui.opts.quant_notes.load.poll(),
-            run_play:app.ui.opts.play.run.poll() | app.ui.opts.quantizer.run.poll(),
+            run_play:app.ui.opts.play.run.poll(),
             run_calibration: app.ui.opts.calibrate.run.poll(),
             accept_scan:app.ui.opts.calibrate.accept.poll(),
             discard_scan:app.ui.opts.calibrate.discard.poll(),
             run_verify: app.ui.opts.verify.run.poll(),
-            refine:app.ui.opts.verify.refine.poll(),
-            accept_refinement:app.ui.opts.verify.accept.poll(),
-            discard_refinement:app.ui.opts.verify.discard.poll(),
+            refine:false,
+            accept_refinement:false,
+            discard_refinement:false,
             profile_slot: app.ui.opts.profiles.slot.value,
             name_position: app.ui.opts.profiles.position.value,
             name_character: app.ui.opts.profiles.character.value,
@@ -1573,7 +1614,7 @@ fn profile_key(slot:u8)->Option<u32> {
 #[inline(never)]
 fn bind_route(storage:&mut Option<TunerPersistence>,cal:&calibration_live::Live,
               output:usize,source:u8)->&'static str {
-    if output>=4 || source>5 {return "INVALID ROUTE";}
+    if output>=4 || source>oscillator_calibration::storage::SLOTS+1 {return "INVALID ROUTE";}
     if critical_section::with(|cs|MULTI_QUANT.borrow_ref(cs).lanes[output].active) {
         return "STOP THIS OUTPUT BEFORE BINDING";
     }
@@ -1871,10 +1912,6 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     app.ui.opts.calibrate.input.value=c.calibration_input;
                     app.ui.opts.calibrate.output.value=c.calibration_output;
                     app.ui.opts.calibrate.zero_note.value=c.zero_note;
-                    if calibration.verifying {
-                        app.ui.opts.verify.mode.value=if c.verify_points {options::VerifyMode::Points}
-                            else if c.verify_scan {options::VerifyMode::Scan} else {options::VerifyMode::Manual};
-                    }
                 });}
             }
             let ui_frame = poll_ui_frame();
@@ -2042,10 +2079,9 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     capture_trace.cancel(&tuner);
                     run_calibration = false;
                     if controls.mode == runtime::OperatingMode::Calibrator {
-                        let can_start=!calibration.verifying
-                            && (calibration.active() || critical_section::with(|cs|OWNERS.borrow_ref_mut(cs).claim(
-                                Owner::Calibration,1<<controls.calibration_input,1<<controls.calibration_output)));
-                        if can_start {calibration_controls=Some(controls);calibration.toggle(&tuner, controls, ui_frame.now_ms);}
+                        let can_start=calibration.active() || critical_section::with(|cs|OWNERS.borrow_ref_mut(cs).claim(
+                                Owner::Calibration,1<<controls.calibration_input,1<<controls.calibration_output));
+                        if can_start {calibration_controls=Some(controls);calibration.toggle_automatic(&tuner, controls, ui_frame.now_ms);}
                         else {calibration.status="CHANNEL BUSY - STOP ITS OWNER";}
                         verification[calibration.input as usize].clear();
                     }
@@ -2105,14 +2141,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     capture_trace.arm(&tuner,ui_frame.now_ms,raw,factor,v.diagnostic());
                 }
                 }
-                if let Some(note)=calibration.take_suggested_note() {
-                    with_app(|app| {
-                        app.ui.opts.verify.note.value=note;
-                        app.ui.opts.verify.cents.value=0;
-                        app.ui.external_modify();
-                    });
-                    menu_dirty_banks=0b11;
-                }
+                calibration.take_suggested_note();
                 let reference_hz = controls.reference_hz as f32;
                 // Never wait for video in the real-time loop. If scanout is
                 // stopped or still owns a pending frame, keep servicing the

@@ -7,6 +7,7 @@ use crate::pac;
 use crate::pitch_math;
 use crate::oscillator_calibration::deviation::{Deviation,Summary};
 use crate::oscillator_calibration::verification_scan::Scan;
+use crate::oscillator_calibration::automatic::{Automatic,Phase};
 
 /// Keep operation controls independent of the visible page. Manual VERIFY
 /// may adjust its target while visible; navigation cannot retarget a run.
@@ -16,6 +17,7 @@ pub fn background_controls(mut captured:RuntimeControls,current:RuntimeControls,
 }
 
 pub struct Live {
+    pub automatic:Option<Automatic>,
     sweep: Option<Sweep>,
     pub profile: Option<Profile>,
     pub pending_profile: Option<Profile>,
@@ -51,7 +53,7 @@ pub struct Live {
 impl Live {
     #[inline(never)]
     pub fn new() -> Self {
-        Self { sweep:None,profile:None,pending_profile:None,pending_route:None,profile_route:None,verifying:false,scan:None,refinement:None,
+        Self { automatic:None,sweep:None,profile:None,pending_profile:None,pending_route:None,profile_route:None,verifying:false,scan:None,refinement:None,
             target_millicents:0,error_cents:None,verify_command:0,verify_started:0,verify_token:0,
             deviation:None,statistics:Deviation::new(),suggested_note:None,
             status:"READY - RUN IN MENU",zero_error_cents:None,tracking_failure:None,rejected_detector:None,rejected_verifier:None,input:0,output:1,
@@ -60,6 +62,7 @@ impl Live {
     pub fn take_suggested_note(&mut self)->Option<u8> {self.suggested_note.take()}
     pub fn recall(&mut self,record:crate::oscillator_calibration::storage::Recalled)->bool {
         if self.active() || self.pending_profile.is_some() {return false;}
+        self.automatic=None;
         self.scan=None;
         self.refinement=None;
         self.input=record.route.input();self.output=record.route.output();
@@ -69,7 +72,24 @@ impl Live {
         self.error_cents=None;self.deviation=None;self.statistics.clear();self.millivolts=0;
         self.status="LOADED - OUTPUT STOPPED";true
     }
-    pub fn active(&self) -> bool { self.sweep.is_some() || self.verifying }
+    pub fn active(&self) -> bool { self.sweep.is_some() || self.verifying
+        || self.automatic.as_ref().is_some_and(|a|a.active()) }
+    fn operation_profile(&self)->Option<&Profile> {
+        if self.automatic.as_ref().is_some_and(|a|a.active()) {self.pending_profile.as_ref()}
+        else {self.profile.as_ref()}
+    }
+    /// Start the whole workflow without replacing the previously accepted profile.
+    pub fn toggle_automatic(&mut self,tuner:&pac::TUNER_PERIPH,controls:RuntimeControls,now:u64) {
+        if self.automatic.as_ref().is_some_and(|a|a.active()) {
+            self.sweep=None;self.stop_verify(tuner,"CANCELLED - PRIOR PROFILE KEPT");
+            self.pending_profile=None;self.pending_route=None;self.automatic=None;
+            self.scan=None;self.refinement=None;return;
+        }
+        if self.active() {self.status="BUSY - STOP CHECK FIRST";return;}
+        self.automatic=None;
+        self.toggle(tuner,controls,now);
+        if self.sweep.is_some() {self.automatic=Some(Automatic::new(now));}
+    }
     pub fn accept_scan(&mut self,tuner:&pac::TUNER_PERIPH) {
         if self.active() || tuner.cal_status().read().value().bits()&768!=0 {
             self.status="BUSY - STOP OUTPUT FIRST";return;
@@ -78,11 +98,13 @@ impl Live {
             self.suggested_note=profile.suggested_note();
             self.profile=Some(profile);self.profile_route=self.pending_route.take();
             self.status="ACCEPTED IN RAM - SAVE PROFILE";
+            self.automatic=None;
         } else {self.status="NO SCAN TO ACCEPT";}
     }
     pub fn discard_scan(&mut self) {
         if self.active() {self.status="BUSY - STOP OUTPUT FIRST";return;}
         if self.pending_profile.take().is_some() {
+            self.automatic=None;
             self.pending_route=None;self.status="DISCARDED - PRIOR PROFILE KEPT";
         } else {self.status="NO SCAN TO DISCARD";}
     }
@@ -155,7 +177,7 @@ impl Live {
         self.apply_target(tuner,target,now);
     }
     fn apply_target(&mut self,tuner:&pac::TUNER_PERIPH,pitch:i32,now:u64) {
-        let voltage=self.profile.as_ref().and_then(|p| {
+        let voltage=self.operation_profile().and_then(|p| {
             if let Some(r)=self.refinement.as_ref().filter(|r|r.active()) {
                 r.request(p).filter(|point|point.millicents==pitch).map(|point|point.microvolts)
             } else if let Some(check)=self.scan.as_ref().and_then(|s|s.local.as_ref()) {
@@ -230,8 +252,93 @@ impl Live {
     #[inline(never)]
     pub fn tick(&mut self,tuner:&pac::TUNER_PERIPH,value:ChannelMeasurement,
                 controls:RuntimeControls,now:u64) {
+        if self.automatic.as_ref().is_some_and(|a|a.active()) {
+            self.tick_automatic(tuner,value,controls,now);return;
+        }
         if self.verifying {self.tick_verification(tuner,value,controls,now);}
         else {self.tick_sweep(tuner,value,controls,now);}
+    }
+    fn begin_auto_check(&mut self,tuner:&pac::TUNER_PERIPH,now:u64) {
+        self.refinement=None;
+        self.scan=self.pending_profile.as_ref().and_then(Scan::new);
+        if let Some(scan)=self.scan.as_ref() {
+            let pitch=scan.target;self.verifying=true;self.apply_target(tuner,pitch,now);
+        } else {self.finish_automatic(tuner,"CHECK FAILED - PRIOR PROFILE KEPT");}
+    }
+    /// Undo the single tentative insertion; no extra full-profile RAM copy.
+    fn rollback_auto(&mut self) {
+        if let Some(auto)=self.automatic.as_mut() {
+            if let Some(point)=auto.undo.take() {
+                if !self.pending_profile.as_mut().is_some_and(|p|p.undo_refinement(point)) {
+                    self.pending_profile=None;auto.best=None;
+                }
+            }
+            self.scan=auto.best.clone();
+        }
+    }
+    fn finish_automatic(&mut self,tuner:&pac::TUNER_PERIPH,reason:&'static str) {
+        self.rollback_auto();
+        self.sweep=None;self.stop_verify(tuner,reason);self.refinement=None;
+        let auto=self.automatic.as_mut().unwrap();
+        auto.phase=Phase::Review;
+        if auto.best.is_none() {self.pending_profile=None;self.pending_route=None;}
+        if let Some(p)=self.pending_profile.as_ref() {self.point_count=p.points().len() as u8;}
+    }
+    #[inline(never)]
+    fn tick_automatic(&mut self,tuner:&pac::TUNER_PERIPH,value:ChannelMeasurement,
+                      mut controls:RuntimeControls,now:u64) {
+        if self.automatic.as_ref().unwrap().expired(now) {
+            self.finish_automatic(tuner,"STOPPED - CALIBRATION TIME LIMIT");return;
+        }
+        let phase=self.automatic.as_ref().unwrap().phase;
+        if phase==Phase::Sweep {
+            controls.mode=OperatingMode::Calibrator;
+            controls.calibration_input=self.input;controls.calibration_output=self.output;
+            self.tick_sweep(tuner,value,controls,now);
+            if self.sweep.is_none() {
+                if self.pending_profile.is_some() {
+                    self.automatic.as_mut().unwrap().phase=Phase::Verify;
+                    self.begin_auto_check(tuner,now);
+                } else {self.finish_automatic(tuner,self.status);}
+            }
+            return;
+        }
+        controls.mode=OperatingMode::Verify;controls.verify_scan=true;controls.verify_points=false;
+        self.tick_verification(tuner,value,controls,now);
+        if self.verifying {return;}
+        if phase==Phase::Refine {
+            let point=self.refinement.as_ref().and_then(|r|r.ready_point());
+            if let Some(point)=point {
+                let candidate=self.refinement.as_mut().unwrap().take_candidate(self.pending_profile.as_ref().unwrap());
+                if let Some(candidate)=candidate {
+                    self.pending_profile=Some(candidate);
+                    let auto=self.automatic.as_mut().unwrap();auto.undo=Some(point);auto.phase=Phase::Reverify;
+                    self.begin_auto_check(tuner,now);return;
+                }
+            }
+            self.finish_automatic(tuner,self.status);return;
+        }
+        if self.status!="SCAN DONE - OUTPUT ZERO" || !self.scan.as_ref().is_some_and(|s|s.complete) {
+            self.finish_automatic(tuner,self.status);return;
+        }
+        let scan=self.scan.as_ref().unwrap();
+        let auto=self.automatic.as_mut().unwrap();
+        if !auto.improves(scan) {
+            self.finish_automatic(tuner,"REVIEW - NO FULL-RANGE GAIN");return;
+        }
+        auto.undo=None;auto.best=Some(scan.clone());
+        let profile=self.pending_profile.as_ref().unwrap();
+        if let Some(reason)=auto.stop_reason(scan,profile.points().len()) {
+            self.finish_automatic(tuner,reason);return;
+        }
+        match crate::oscillator_calibration::refinement::Refinement::new(profile,scan.worst_pitch) {
+            Ok(r)=>{
+                let pitch=r.request(profile).unwrap().millicents;
+                auto.passes+=1;auto.phase=Phase::Refine;
+                self.refinement=Some(r);self.verifying=true;self.apply_target(tuner,pitch,now);
+            }
+            Err(reason)=>self.finish_automatic(tuner,reason),
+        }
     }
     // Verification/refinement must not nest under the sweep's profile-copy
     // temporaries. Keep these mutually exclusive stack frames separate.
@@ -270,8 +377,11 @@ impl Live {
                 } else if let Some(summary)=self.deviation.filter(|_|
                     self.error_cents.is_some() && value.end_age_ms<=100) {
                     if let Some(r)=self.refinement.as_mut().filter(|r|r.active()) {
-                        r.record(self.profile.as_ref().unwrap(),summary);
-                        if let Some(point)=r.request(self.profile.as_ref().unwrap()) {
+                        let profile=if self.automatic.as_ref().is_some_and(|a|a.active()) {
+                            self.pending_profile.as_ref().unwrap()
+                        } else {self.profile.as_ref().unwrap()};
+                        r.record(profile,summary);
+                        if let Some(point)=r.request(profile) {
                             self.apply_target(tuner,point.millicents,now);
                         } else {
                             let reason=r.reason;self.stop_verify(tuner,reason);
@@ -292,7 +402,9 @@ impl Live {
                         if scan.complete {
                             if !scan.points_mode {
                                 scan.local=crate::oscillator_calibration::verification_scan::LocalCheck::new(
-                                    self.profile.as_ref().unwrap(),scan.worst_pitch);
+                                    if self.automatic.as_ref().is_some_and(|a|a.active()) {
+                                        self.pending_profile.as_ref().unwrap()
+                                    } else {self.profile.as_ref().unwrap()},scan.worst_pitch);
                             }
                             if let Some(check)=scan.local.as_ref() {
                                 let target=check.targets[0].millicents;

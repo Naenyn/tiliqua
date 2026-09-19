@@ -1,5 +1,22 @@
 # TUNER proof of concept
 
+## Current interface — September 18, 2026
+
+See [automatic calibration](AUTO_CALIBRATION.md) and [routing](CONCURRENCY.md)
+for the current interface. CAL performs measurement, verification and guarded
+refinement automatically, followed by explicit review/accept/save. It supports
+121 initial positions, up to eight additional refinement points and eight
+oscillator profile slots. PROFILES and its optional read-only CHECK sit under
+CAL. SCALES edits scales; ROUTES is the only playback RUN page and combines
+optional quantization with optional oscillator correction per output. A route
+needs at least one stage enabled. NOTES/SETUPS sit under SCALES. Child-page
+headers return to the parent. TUNER, SETTINGS and HELP remain top-level pages.
+
+The [USB storage investigation](USB_STORAGE.md) covers upstream read/write
+support and the remaining integration/resource work; thumb-drive support is
+not enabled yet. Automatic calibration has host-test coverage and awaits its
+first hardware trial.
+
 On the selected NSDF feature-development build (`TILIQUA_TUNER_NSDF=1`), both
 tuner views, calibration, verification and playback audio checks use the shared
 NSDF detector. Calibration hardware trials have passed; the original detector
@@ -22,98 +39,54 @@ This bitstream continuously measures all four monophonic audio inputs and displa
 
 The reference-tone feature has been removed from production firmware and
 gateware. All outputs remain at calibrated zero unless an explicitly started
-calibration sweep, corrected-note verification, explicitly armed PLAY, or QUANT owns them. A4 remains configurable as a tuning reference,
+calibration operation, profile check, or explicitly armed route owns them. A4 remains configurable as a tuning reference,
 not an audio output.
 
 All channel labels follow the physical panel's 0–3 numbering.
-Standalone QUANT now supports four independently configured CV outputs without
-requiring an oscillator calibration profile. CAL exposes an explicitly
-started -5..+5 V oscillator tracking sweep with up to 121 points; see
-[calibration status and hardware test](CALIBRATION.md). VERIFY can apply the
-RAM profile to a requested note name/octave and cents offset, showing measured error
-against that target (fixed A4=440 Hz). It uses the successful calibration's
-route, requires Run to start, and stops on explicit stop or a range/output
-error. ROUTE provides per-output external-CV playback through an explicitly bound curve.
-Otherwise outputs remain at zero, including
-while sitting on CAL before a run.
+ROUTES supports four independently configured CV outputs, with optional scale
+quantization and/or an explicitly bound oscillator correction curve. CAL and
+CHECK use fixed A4=440 Hz for profile measurement. Sitting on either page does
+not start output; otherwise unowned outputs remain at commanded calibrated zero.
 
 ## Controls
 
-Press the encoder to open an OSCIO/SONORO-style boxed menu over the live tuner.
-Rotate to navigate, press to begin editing, rotate to change the selected value,
-and press again to finish. Select the page heading to switch between TUNER,
-CAL, VERIFY, PROFILES, SETTINGS, HELP, PLAY, QUANT, NOTES, and SETUPS. CAL contains input,
-output, 0v note, run, accept, and discard. Every sweep uses nominal semitone voltage spacing,
-up to 121 points across -5..+5 V, scanning upward from low to high.
-Unmeasurable edges and qualified boundary plateaus can produce a limited-range
-profile; internal tracking failures remain errors.
-Coverage depends on the oscillator and detector; 10 V does not guarantee ten
-measurable octaves. Existing saved density settings are ignored.
-Completed scans now open a review showing measured CV/pitch coverage and cautious
-tuning advice. ACCEPT replaces the active RAM profile; it does not save a slot.
-RUN discards the pending result and rescans, allowing oscillator adjustment first.
-DISCARD keeps the previous profile. Saved slots are unchanged throughout.
-Pending results block PLAY, VERIFY, refinement, save and recall until resolved.
-If the oscillator was retuned, its previous profile no longer describes the patch:
-rescan before using it again, even if you discarded the newer result.
-CAL's `0v note` sets the nominal 0 V note
-(default C4) for the displayed 1 V/oct voltage; this is distinct from the
-profile-corrected output voltage. The menu hides after five seconds of inactivity and exposes
-focus, display mode, A4 reference, and option persistence.
-Each boot restores saved instrument settings but starts navigation at the TUNER
-page heading, outside edit mode. The menu remains hidden until the encoder press.
+Press the encoder to open the boxed menu, rotate to navigate, press to edit,
+and press again to finish. The top-level pages are TUNER, CAL, SETTINGS, HELP,
+ROUTES and SCALES. Supporting pages are reached through parent-page buttons.
+The menu hides after five seconds of inactivity. Boot restores saved settings
+but starts navigation at TUNER, with no output armed.
 
-After accepting a calibration, the VERIFY target is set to
-a whole note near the middle of the measured range. Output remains zero until Run.
-VERIFY also displays rolling MEAN
-deviation and SPAN (maximum minus minimum) over up to 16 fresh qualified pitches,
-at most 500 ms old. The instantaneous deviation remains visible; statistics
-never adjust output or calibration data and reset when the target changes.
+CAL contains input, output, 0v note, run, accept, discard and profiles. RUN
+performs the automatic procedure described in [AUTO_CALIBRATION.md](AUTO_CALIBRATION.md).
+Initial measurement runs upward with nominal semitone voltage spacing over
+-5..+5 V; valid edge limits can yield a smaller range. Ten volts does not
+guarantee ten measurable octaves. The 0v note is the musical reference for
+nominal voltage display, not the oscillator's measured pitch at zero.
 
-VERIFY's `mode` selects MANUAL (default) or SCAN. With the calibration patch
-unchanged and a calibrated or loaded profile, select SCAN and Run to check all
-whole notes and 50-cent midpoints inside its measured range.
-SCAN ignores the manual note/cents controls. It waits for fresh, settled samples
-at each corrected output
-and retains up to four seconds of distinct readings so slow low-frequency
-publication can satisfy the eight-reading minimum (manual statistics retain
-their half-second window). The per-target timeout remains five seconds.
-It then shows the tested/total count, worst signed mean
-error and its target, and maximum within-target pitch span. These are measured
-results, not an automatic pass/fail threshold. A two-octave profile typically
-has 48–49 targets and takes about a minute, depending on detector windows.
-Completion restores zero; Run again also stops output. Navigation keeps the run
-active; verification mode is locked until it stops. Missing/unstable input times out after five seconds per
-target. Partial results remain visible but are not a complete scan. No scan
-result changes or saves the calibration curve. Results are not retained on boot.
+Review shows measured coverage, checked worst error and cautious tuning advice.
+ACCEPT replaces RAM only; save explicitly in PROFILES. DISCARD keeps the prior
+accepted profile. RUN rescans. Saved slots remain unchanged throughout.
+Retuning the oscillator invalidates the old curve even if a new result is
+discarded. Pending review must be resolved before saving/recalling profiles.
 
-VERIFY's POINTS mode instead replays each stored calibration voltage and compares
-the new measured pitch with the pitch recorded there. This includes the exact
-0 V endpoint and avoids interpolation. It shares SCAN's freshness, stability,
-timeout and cancellation rules. Results include worst error and its stored
-voltage, plus `P0` and `P1` errors for the first two recorded points. For a
-low-end discrepancy, load the existing profile and run POINTS without recalibrating
-or moving the oscillator's tuning knob. Disagreement at stored points indicates
-acquisition/repeatability/drift somewhere in the measurement/output/oscillator
-chain; disagreement only between them points toward interpolation or local
-response nonlinearity. Neither test alone identifies which physical component
-is responsible. POINTS never changes the saved curve.
+PROFILES offers eight slots and CHECK for non-mutating accuracy checks of the
+accepted/loaded profile. CHECK sweeps corrected pitches on a 50-cent grid,
+reports worst signed mean error and within-target span, then returns output
+to zero. It requires the original oscillator patch and tuning. Run again stops
+it; navigation does not stop it. Measurement freshness, settling, repeatability
+and timeouts are shared with automatic calibration. Check results do not modify
+or save the curve.
 
-SCAN also repeats measurements at the worst target and its two surrounding
-stored points. The result includes local refinement advice on-screen and over
-serial. REFINE reacquires those measurements, proposes one interior point, and
-compares the candidate with the original at independent pitches. ACCEPT changes
-RAM only; DISCARD retains the original, and saving is always separate. A full
-121-point profile refuses refinement rather than removing original anchors.
-Advice and local comparison are not a full-range accuracy certificate: verify
-the accepted profile again before saving. Recalibrate rather than fitting
-corrections to a shifted or unstable oscillator response.
+The former manual note/POINTS/refinement controls are retained only in internal
+measurement helpers/tests, not exposed in the normal interface. Serial
+diagnostics remain available. Refinement is now part of CAL, with independent
+local tests followed by a full-range recheck and rollback on regression.
 
 ## Standalone quantizer
 
-The QUANT menu opens a separate, single-channel scale quantizer. It does
-not require a loaded oscillator profile or qualified audio. Select CV input,
-output (both physical 0–3), and the note name for 0 V, then explicitly RUN.
+Nominal quantization does not require a loaded oscillator profile or qualified
+audio. On ROUTES select CV input, output (both physical 0–3), the note name for
+0 V, correction NONE and quantize SCALE, then explicitly RUN.
 The output is nominal 1 V/oct over -5..+5 V, with the motherboard's normal
 DAC calibration still applied, but no oscillator-specific correction curve.
 Choose CHROMATIC, MAJOR, natural MINOR, MAJ PENTA, MIN PENTA, or 24 EDO
@@ -146,16 +119,17 @@ store note masks, not channel setups or imported microtonal scales.
 Saving oscillator profiles or settings does not save these masks. The status
 line distinguishes edited, saved, loaded, missing, and failed records. Loading
 invalid data leaves the current edits intact. Opening NOTES does not stop output;
-edits to an active channel are rejected. Return to QUANT, select
-CUSTOM 2, and RUN to audition. No new renderer or microtonal-format restriction
+edits to an active channel are rejected. Return to SCALES, select
+CUSTOM 2, then use RUN on ROUTES to audition. No new renderer or microtonal-format restriction
 is introduced by this conventional 24-note editor.
 
-QUANT's **output** selector now selects independent settings for OUT 0–3:
-input, 0 V note, scale, root, transpose, mapping, and the two note masks.
+SCALES' **output** selector selects independent settings for OUT 0–3:
+scale, root, transpose, mapping, and the two note masks. Input and 0 V note
+are set on ROUTES for that same selected output.
 Switching output recalls that output's settings in RAM without stopping playback.
 NOTES edits/loads only the selected output's pattern. Pattern slots are reusable
 copies: editing a channel does not modify a saved pattern or another channel.
-QUANT **RUN starts/stops only the selected output**, using its own configuration.
+ROUTES **RUN starts/stops only the selected output**, using its own configuration.
 Two outputs are calculated per 1 ms interrupt, giving each output a 500 Hz update
 rate. Both batches use the same captured input readings, and all four staged
 voltages are committed together at one DAC update boundary. Safety disables

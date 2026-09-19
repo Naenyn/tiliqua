@@ -9,14 +9,14 @@ pub fn key(slot:u8)->Option<u32> {
 pub struct Channel {
     pub input:u8, pub zero:u8, pub scale:u8, pub root:u8,
     pub transpose:i8, pub equal:bool, pub masks:[u16;2],
-    pub quantize:bool, pub correction:u8, // 0:none, 1:RAM snapshot, 2..5:slot 1..4
+    pub quantize:bool, pub correction:u8, // 0:none, 1:RAM snapshot, 2..9:slot 1..8
 }
 impl Channel {
     pub const fn new(input:u8)->Self {
         Self{input,zero:60,scale:0,root:0,transpose:0,equal:false,masks:[0xfff,0],quantize:true,correction:0}
     }
     fn valid(&self)->bool {
-        self.input<4 && (12..=108).contains(&self.zero) && self.scale<=6 && self.correction<=5
+        self.input<4 && (12..=108).contains(&self.zero) && self.scale<=6 && self.correction<=9
             && self.root<12 && (-12..=12).contains(&self.transpose)
             && self.masks.iter().all(|m|m&!0xfff==0)
     }
@@ -70,7 +70,8 @@ pub fn decode(bytes:&[u8])->Option<[Channel;4]> {
         for c in &channels {assert!(c.quantize);assert_eq!(c.correction,0);}
         for (n,c) in channels.iter_mut().enumerate() {c.quantize=n%2==0;c.correction=n as u8+1;}
         assert_eq!(decode(&encode(&channels).unwrap()),Some(channels));
-        channels[0].correction=6;assert!(encode(&channels).is_none());
+        channels[0].correction=9;assert!(encode(&channels).is_some());
+        channels[0].correction=10;assert!(encode(&channels).is_none());
     }
     #[test] fn switching_retains_each_editor_without_linking_masks() {
         let mut channels=DEFAULT;let mut selected=1;

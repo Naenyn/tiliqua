@@ -3,6 +3,11 @@
 **September 18 update:** development resumed; passive tuner plus unified
 per-output routing (optional quantization then optional correction) supersedes
 the first mode-owned implementation. One scan may coexist with other outputs.
+CAL now runs a bounded automatic measure/check/improve workflow; eight profile
+slots support up to 129 points (121 initial positions plus eight refinements).
+See [AUTO_CALIBRATION.md](AUTO_CALIBRATION.md) for the simplified UI and pending
+hardware test, and [USB_STORAGE.md](USB_STORAGE.md) for the upstream thumb-drive
+integration investigation (not yet enabled).
 See [CONCURRENCY.md](CONCURRENCY.md) for the
 new behavior, build evidence and pending hardware test. The pause snapshot below
 is historical; its page-change/setting-change stop behavior is superseded.

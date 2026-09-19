@@ -112,6 +112,9 @@ impl Refinement {
         }
     }
     pub fn reject(&mut self,reason:&'static str) {self.stage=Stage::Rejected;self.reason=reason;self.candidate=None;}
+    pub fn ready_point(&self)->Option<Point> {
+        if self.stage==Stage::Ready {self.candidate} else {None}
+    }
     pub fn take_candidate(&mut self,original:&Profile)->Option<Profile> {
         if self.stage!=Stage::Ready {return None;}
         original.refined_with(self.candidate.take()?).ok()

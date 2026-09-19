@@ -3,6 +3,7 @@ use super::{Profile,Point,deviation::Summary};
 
 /// Three read-only triplets, placing the target between endpoint measurements.
 /// Reverse alternate passes to expose direction/settling sensitivity.
+#[derive(Clone)]
 pub struct LocalCheck {
     pub targets:[Point;3],
     pub results:[Option<Summary>;9],
@@ -75,6 +76,7 @@ impl LocalCheck {
     }
 }
 
+#[derive(Clone)]
 pub struct Scan {
     pub points_mode: bool,
     pub first_errors: [Option<f32>;2],

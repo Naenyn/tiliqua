@@ -3,6 +3,16 @@ use core::fmt::{self,Write};
 use crate::{calibration_live::Live,pitch_units};
 
 pub fn verification(out:&mut impl Write,cal:&Live)->fmt::Result {
+    if let Some(auto)=cal.automatic.as_ref() {
+        writeln!(out,"AUTO PHASE={} PASSES={}/8 STATUS={}",auto.label(),auto.passes,cal.status)?;
+        if let Some(scan)=auto.best.as_ref() {
+            writeln!(out,"AUTO BEST_WORST_C={:+.2} TARGET_C=2.0 VERIFIED={}/{}",scan.worst_error,scan.tested,scan.total)?;
+        }
+        if auto.active() {
+            if let Some(scan)=cal.scan.as_ref() {writeln!(out,"AUTO CHECK={}/{}",scan.tested,scan.total)?;}
+            return Ok(());
+        }
+    }
     if let Some(profile)=cal.pending_profile.as_ref() {
         let points=profile.points();let low=points[0];let high=points[points.len()-1];
         writeln!(out,"CAL REVIEW POINTS={} LOW_UV={} HIGH_UV={}",points.len(),low.microvolts,high.microvolts)?;

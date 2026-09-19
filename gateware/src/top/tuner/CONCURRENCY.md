@@ -10,16 +10,19 @@ a competing operation that needs RUN.
   skipped by focus selection. The audio input of a calibration scan remains
   visible. With all four inputs used as CV, focus reads NONE. This is explicit
   routing, not a claim that a detector can infer the purpose of every waveform.
-- **CAL:** one profile-building scan at a time. It exclusively reserves the
+- **CAL:** one automatic profile-building operation at a time. It exclusively reserves the
   chosen audio input against CV use, and its CV output against playback.
-  VERIFY/REFINE use the same exclusive operation slot. Navigation does not stop
-  the scan; its input/output controls remain locked.
-- **ROUTE (formerly PLAY):** select OUT 0–3 and any IN 0–3. Select the musical
+  Measurement, automatic verification and guarded refinement keep the same
+  exclusive operation slot. Navigation does not stop the operation; its
+  input/output controls remain locked. PROFILES and read-only CHECK are child
+  pages; manual REFINE is no longer a normal menu operation.
+- **ROUTES (formerly PLAY):** select OUT 0–3 and any IN 0–3. Select the musical
   0 V note, correction source, and quantize OFF or SCALE. Each output owns:
   CV input -> optional scale quantization -> optional measured curve -> DAC.
-- **QUANT:** edits the selected route's scale, root, transpose, mapping and notes.
-  ROUTE and QUANT are two editors of the same output, not competing engines.
-  RUN on either page starts/stops that selected output. Stop before edits.
+- **SCALES:** edits the selected route's scale, root, transpose, mapping and notes.
+  ROUTES and SCALES are two editors of the same output, not competing engines.
+  RUN exists only on ROUTES and requires quantization or correction. Stop before
+  edits. NOTES and SETUPS are reached from SCALES.
 - Several outputs may share one CV input, with independent scales/curves.
   Stopping one releases only its claim. A scan cannot take that input until
   every active CV route using it has stopped. Input and output numbers need not
@@ -32,12 +35,12 @@ input roles do not conflict. No second detector or renderer was added.
 
 ## Assigning correction
 
-1. Select output and input on ROUTE.
-2. Choose CORRECTION: NONE, RAM, or SLOT 1–4.
+1. Select output and input on ROUTES.
+2. Choose CORRECTION: NONE, RAM, or SLOT 1–8.
 3. With correction enabled, select **BIND** to copy the accepted RAM curve or
    saved slot into that output's immutable runtime snapshot.
 4. Choose QUANTIZE: OFF for continuous corrected CV, SCALE for quantize then
-   correct. Configure scale on QUANT if enabled, then RUN.
+   correct. Configure scale on SCALES if enabled, then RUN on ROUTES.
 
 BIND never starts an output. A missing/corrupt/unbound curve cannot run corrected
 playback. Active curves cannot be replaced; scans and later RAM profile loads
@@ -69,18 +72,20 @@ lane). Combined route processing has a 500-us CPU guard; expensive work stops
 outputs rather than silently breaking their deadlines.
 
 Four resident curves replace the former single PLAY curve plus four nominal
-engines. Target MULTI_QUANT storage is 4,892 bytes; linked stack region is
-26,856 bytes within the unchanged 32-KiB CPU RAM. Current foreground frame is
-11,648 bytes; this is not a whole-call-tree or measured stack high-water bound.
+engines. Target MULTI_QUANT storage is 5,148 bytes; linked stack region is
+26,616 bytes within the unchanged 32-KiB CPU RAM. Current foreground frame is
+11,968 bytes; this is not a whole-call-tree or measured stack high-water bound.
 Serial status buffer is 1,536 bytes to accommodate four routes plus calibration
 diagnostics. Live CPU and stack qualification remain important.
 
-175 regression tests pass, including host subtests for optional stage composition,
+176 regression tests pass, including host subtests for optional stage composition,
 four independent corrected routes, immutable curve binding, CV sharing, passive
 tuner eligibility, conflict rejection, TQS1 migration and TQS2 roundtrips.
 This is a firmware-only change using e3f48f83's timing-qualified hardware:
 19,148 LUT4, 44 EBR, 14 DSP; 60-MHz system clock passes at 65.61 MHz.
 192-kHz audio, 720p output and spread_spectrum=0.0 remain unchanged.
+See [AUTO_CALIBRATION.md](AUTO_CALIBRATION.md) for automatic-operation bounds,
+129-point capacity, eight-slot journal tests and the next physical trial.
 
 ## Physical test still required
 

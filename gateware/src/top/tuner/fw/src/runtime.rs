@@ -37,8 +37,8 @@ pub struct RuntimeControls {
 impl RuntimeControls {
     pub fn from_options(opts: &Opts) -> Self {
         Self {
-            verify_scan: opts.verify.mode.value!=crate::options::VerifyMode::Manual,
-            verify_points: opts.verify.mode.value==crate::options::VerifyMode::Points,
+            verify_scan: true,
+            verify_points: false,
             zero_note: opts.calibrate.zero_note.value.clamp(12,108),
             mode: if opts.tracker.page.value == crate::options::Page::Calibrate {
                 OperatingMode::Calibrator
@@ -51,8 +51,7 @@ impl RuntimeControls {
             } else if matches!(opts.tracker.page.value,crate::options::Page::Quantizer|crate::options::Page::QuantNotes|crate::options::Page::QuantSetups) {
                 OperatingMode::Quantizer
             } else { OperatingMode::Tuner },
-            target_millicents: opts.verify.note.value as i32 * 100000
-                + opts.verify.cents.value as i32 * 1000,
+            target_millicents: 6000000,
             calibration_input: opts.calibrate.input.value,
             calibration_output: opts.calibrate.output.value,
             tuner_input: opts.tuner.input.value,

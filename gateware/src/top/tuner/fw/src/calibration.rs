@@ -2,7 +2,9 @@
 //! Acquisition must qualify settled pitches before inserting points. These
 //! types alone do not establish confidence or authorize a DAC write.
 
-pub const MAX_POINTS: usize = 121;
+pub const INITIAL_POINTS: usize = 121;
+pub const REFINEMENT_POINTS: usize = 8;
+pub const MAX_POINTS: usize = INITIAL_POINTS + REFINEMENT_POINTS;
 pub const NAME_BYTES: usize = 24;
 
 #[path = "calibration/sweep.rs"]
@@ -19,6 +21,8 @@ pub mod name;
 pub mod verification_scan;
 #[path = "calibration/refinement.rs"]
 pub mod refinement;
+#[path = "calibration/automatic.rs"]
+pub mod automatic;
 #[path = "calibration/playback.rs"]
 pub mod playback;
 #[path = "calibration/discovery.rs"]
@@ -145,6 +149,16 @@ impl Profile {
         candidate.points[index]=measured;candidate.count+=1;
         Ok(candidate)
     }
+    /// Undo only the exact interior point added by the automatic controller.
+    /// The original measured anchors are never replaced or resampled.
+    pub fn undo_refinement(&mut self, measured:Point)->bool {
+        let Some(index)=self.points().iter().position(|p|*p==measured) else {return false;};
+        if index==0 || index+1==self.count as usize {return false;}
+        self.points.copy_within(index+1..self.count as usize,index);
+        self.count-=1;
+        self.points[self.count as usize]=Point::default();
+        true
+    }
     fn refinement_index(&self, measured:Point)->Result<usize,Error> {
         let points=self.points();
         if points.len()<2 {return Err(Error::Incomplete);}
@@ -230,7 +244,7 @@ mod tests {
         let mut mc=-500_000;
         for i in 0..MAX_POINTS {
             mc+=71_003+(i as i32*739)%40_000;
-            p.push(point(-5_000_000+i as i32*80_001,mc)).unwrap();
+            p.push(point(-5_000_000+i as i32*77_001,mc)).unwrap();
         }
         let reference=|pitch:i32| {
             let pair=p.points().windows(2).find(|a|pitch<=a[1].millicents).unwrap();
@@ -339,7 +353,7 @@ mod tests {
         for n in 0..MAX_POINTS as i32 { p.push(point(n, n)).unwrap(); }
         assert_eq!(p.push(point(MAX_POINTS as i32, MAX_POINTS as i32)), Err(Error::Full));
         assert_eq!(p.points().len(), MAX_POINTS);
-        assert!(core::mem::size_of::<Profile>() <= 1024);
+        assert!(core::mem::size_of::<Profile>() <= 1080);
     }
 
     #[test]

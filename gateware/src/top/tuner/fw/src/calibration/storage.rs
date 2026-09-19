@@ -1,6 +1,6 @@
 //! Versioned profile records sharing the options journal; no direct flash writes.
 use super::{Profile,Route,Point,MAX_POINTS};
-pub const SLOTS:u8=4;
+pub const SLOTS:u8=8;
 pub const MAX_BYTES:usize=40+8*MAX_POINTS;
 pub fn key(slot:u8)->Option<u32> {if (1..=SLOTS).contains(&slot) {Some(0x54555030+slot as u32)} else {None}}
 
@@ -67,7 +67,7 @@ pub fn decode(data:&[u8])->Result<Recalled,Error> {
         assert_eq!(r.profile.name(),"Generate 3");assert_eq!(r.route,Route::new(2,3).unwrap());
         assert_eq!(r.zero_note,48);assert_eq!(r.profile.points().len(),25);
         assert_eq!(r.profile.voltage_for_pitch(6599600),Ok(83000));
-        assert_eq!(key(0),None);assert_eq!(key(5),None);
+        assert_eq!(key(0),None);assert_eq!(key(SLOTS+1),None);
     }
     #[test] fn reads_legacy_and_roundtrips_all_121_signed_points() {
         let (mut legacy,n)=record();legacy[4]=1;
@@ -94,6 +94,17 @@ pub fn decode(data:&[u8])->Result<Recalled,Error> {
         let (bytes,n)=record();
         for end in 0..n {assert!(decode(&bytes[..end]).is_err());}
         for i in 0..n {for bit in 0..8 {let mut b=bytes;b[i]^=1<<bit;assert!(decode(&b[..n]).is_err(),"byte {i} bit {bit}");}}
+    }
+    #[test] fn refinement_capacity_roundtrips_without_changing_old_record_layout() {
+        let mut p=Profile::new("129 points",-5000000,5000000).unwrap();
+        for n in 0..MAX_POINTS as i32 {
+            p.push(Point{microvolts:-5000000+n*77000,millicents:n*92400}).unwrap();
+        }
+        let mut bytes=[0;MAX_BYTES];
+        let len=encode(&p,Route::new(0,1).unwrap(),60,"129 points",&mut bytes).unwrap();
+        assert_eq!(len,1072);assert!(MAX_BYTES+4<=1100);
+        assert_eq!(decode(&bytes[..len]).unwrap().profile.points(),p.points());
+        for slot in 1..=8 {assert_eq!(key(slot),Some(0x54555030+slot as u32));}
     }
     #[test] fn checks_semantics_even_with_valid_checksum() {
         let (bytes,n)=record();
