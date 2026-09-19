@@ -227,6 +227,25 @@ Waves near 120 Hz at the current zero output, then repeat IN1/OUT1 calibration
 without changing Generate3's controls. RUN replaces the unaccepted test result,
 not a saved profile; the old result must not be reused after retuning.
 
+That matched-range Twin Waves run also completed on unchanged `d66264e3`
+firmware: 76 anchors from -2.583250 to +3.666750 V, measured E0 -33.9c
+through F#6 +4.1c. All 149 verification targets and the local follow-up
+completed, with worst measured error +1.62 cents, zero improvement passes,
+and final status `READY - WITHIN 2C TARGET`. Output returned to zero and
+the candidate remains unaccepted; no saved profile was written. In particular,
+verification passed the negative-CV/low-frequency region where Generate3
+failed. This argues against a source-independent failure in that region, but
+does not distinguish Generate3 pitch variation, waveform-dependent estimator
+error, or a source/load-dependent CV effect.
+
+Next isolation: measure Generate3's fundamental near 24–25 Hz with its V/oct
+input unpatched, using IN1 and the tuner only. This deliberately requires
+retuning Generate3 and invalidates reuse of its previous calibration curves.
+Compare the serial repeatability with the independent Twin Waves 25-Hz control
+before changing stability guards. A stable result would redirect investigation
+toward driven-CV behavior; an unstable result would still require distinguishing
+actual pitch variation from measurement error, not labeling the oscillator bad.
+
 Host coverage includes complete automatic operation, navigation during work,
 successful refinement, rejection of full-range regressions, cancellation,
 deadline and output-fault rollback, profile serialization, journal recovery and
