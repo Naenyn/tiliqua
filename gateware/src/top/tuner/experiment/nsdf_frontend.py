@@ -24,6 +24,7 @@ class NsdfFrontend(wiring.Component):
             'native_filled':Out(range(1025)),'low_filled':Out(range(1025)),
             'score_valid':Out(1),'score_ready':In(1),'lag':Out(range(322)),
             'score':Out(signed(22)),'frame_energy':Out(42),
+            'inspect':In(1),'inspect_address':In(10),'inspect_sample':Out(signed(16)),
             'frame_sequence':Out(32),'frame_native_end':Out(32),'frame_channel':Out(2),'frame_low_bank':Out(1),
             'frame_scaled':Out(1),'frame_clipped':Out(1),'overrun':Out(1)})
 
@@ -56,6 +57,8 @@ class NsdfFrontend(wiring.Component):
             d.clear.eq(accepting|self.cancel|s.fault|a.overrun),
             d.load_valid.eq(s.sample_valid),d.sample.eq(s.sample),s.sample_ready.eq(d.load_ready),
             d.start.eq(s.done & ~s.fault),d.ready.eq(self.score_ready),
+            d.inspect.eq(self.inspect & ~self.busy & ~accepting & ~self.cancel & ~self.fault),
+            d.inspect_address.eq(self.inspect_address),self.inspect_sample.eq(d.inspect_sample),
             self.score_valid.eq(d.valid & ~self.fault),self.score.eq(d.score),self.lag.eq(d.lag),
             self.frame_energy.eq(d.frame_energy),self.frame_scaled.eq(s.scaled),
             self.frame_sequence.eq(s.frame_sequence),self.frame_clipped.eq(s.clipped)]

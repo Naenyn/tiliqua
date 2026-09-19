@@ -20,7 +20,7 @@ def test_diagnostic_csr_frame_handoff():
         return result
     observed=[]
     async def bench(ctx):
-        assert await read32(ctx,32)==0x4e534403
+        assert await read32(ctx,32)==0x4e534404
         await write32(ctx,0,1);await ctx.tick().repeat(12)
         assert (await read32(ctx,4))&7==6 # Finished, faulted, not busy.
         for sample in x:
@@ -51,7 +51,17 @@ def test_diagnostic_csr_frame_handoff():
             value=await read32(ctx,12)
             observed.append(value-(1<<32) if value&(1<<31) else value)
         assert await read32(ctx,4)==status
+        frame=x[-674:];frame=frame-int(np.rint(frame.mean()))
+        for index in range(674):
+            await write32(ctx,8,1024|index)
+            value=await read32(ctx,12)
+            assert value==(int(frame[index])&0xffffffff)
+        for index in (674,1023):
+            await write32(ctx,8,1024|index)
+            assert await read32(ctx,12)==0
+        # Leaving the diagnostic address selected must not disturb a new job.
         await write32(ctx,0,1) # Different channel, new atomic source snapshot.
+        assert await read32(ctx,12)==0
         assert await read32(ctx,36)==1024
         assert await read32(ctx,40)==0 and await read32(ctx,44)==0
         assert await read32(ctx,52)==1024 and await read32(ctx,56)==0

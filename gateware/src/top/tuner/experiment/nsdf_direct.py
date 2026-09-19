@@ -24,6 +24,8 @@ class NsdfDirect(wiring.Component):
             'length':In(range(frame+1)),'limit':In(range(max_lag+1)),
             'busy':Out(1),'valid':Out(1),'ready':In(1),
             'lag':Out(range(max_lag+1)),'score':Out(signed(22)),
+            'inspect':In(1),'inspect_address':In(range(frame)),
+            'inspect_sample':Out(signed(16)),
             'done':Out(1),'frame_energy':Out(self.width)})
 
     def elaborate(self,platform):
@@ -37,7 +39,7 @@ class NsdfDirect(wiring.Component):
         filled=Signal(range(n+1));index=Signal(range(n));retired=Signal(range(n))
         active_n=Signal(range(n+1));active_last=Signal(range(self.max_lag+1))
         config_valid=Signal()
-        issue=Signal();rv=Signal();pv=Signal()
+        issue=Signal();rv=Signal();pv=Signal();inspect=Signal();inspect_valid=Signal()
         product=Signal(signed(32));ea=Signal(32);eb=Signal(32)
         total=Signal(signed(w));energy=Signal(w+1)
         denominator=Signal(w+1);numerator=Signal(bits)
@@ -50,9 +52,15 @@ class NsdfDirect(wiring.Component):
             wr.en.eq(self.load_valid & self.load_ready),
             wr.addr.eq(a.addr if self.shared_load_port else filled),wr.data.eq(self.sample),
             a.addr.eq(Mux(self.busy,index,filled) if self.shared_load_port else index),
-            b.addr.eq(index+self.lag),a.en.eq(issue),b.en.eq(issue),issue.eq(0),
+            # Reuse the idle B port, never add a sample buffer or RAM port.
+            # Acquisition/loading and score computation always take priority.
+            inspect.eq(self.inspect & ~self.busy & ~self.clear & ~self.start &
+                       ~self.load_valid & self.full & (self.inspect_address<self.length)),
+            b.addr.eq(Mux(inspect,self.inspect_address,index+self.lag)),
+            a.en.eq(issue),b.en.eq(issue|inspect),issue.eq(0),
+            self.inspect_sample.eq(Mux(inspect_valid & inspect,b.data,0)),
             trial.eq((remainder<<1)|numerator[-1])]
-        m.d.sync += [self.done.eq(0),rv.eq(issue),pv.eq(rv)]
+        m.d.sync += [self.done.eq(0),rv.eq(issue),pv.eq(rv),inspect_valid.eq(inspect)]
         with m.If(wr.en):m.d.sync += filled.eq(filled+1)
         with m.If(rv):
             m.d.sync += [product.eq(a.data*b.data),ea.eq(a.data*a.data),eb.eq(b.data*b.data)]

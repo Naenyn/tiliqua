@@ -390,6 +390,27 @@ buffer is unchanged and its maximum-length report remains covered by tests.
 These exports are correlation scores, not raw audio; conclusions must respect
 that limitation. No new detector, score buffer or FPGA resources are introduced.
 
+The `5dfa3abe` full-mode run validated 131 complete frames, including 16
+FUNDAMENTAL/IN2 low-bank frames retained in
+`tests/fixtures/nsdf-gen3-fundamental-25-scores.json`. All 16 are unclipped,
+source-guarded and CPU/host-consistent, spanning 24.957–25.031 Hz. Production
+`2ea8160c` was restored after capture (`Refresh: DONE`). Exploratory host fits
+of a sine plus weak half-frequency and/or second-harmonic terms do not uniquely
+explain the variation; do not identify physical leakage or alter calibration
+thresholds from those fits.
+
+The next diagnostic extends full-mode exports with `NSDF WAVE` records of the
+exact centered/scaled samples used for each score frame. It reuses the idle
+score-engine RAM B port: no extra capture memory, multiplier or CPU frame buffer.
+Address bit 10 selects samples; ordinary score addressing is unchanged. Gateware
+identity is now `0x4e534404` and matching firmware is required. Readback is zero
+during loading/computation, cancellation/fault, or beyond the valid frame length.
+Normal continuous firmware does not export samples. Full mode stays diagnostic
+only and must not run calibration/routes. Host validation requires matching
+frame identity, exact energy and bit-exact replay of every exported score before
+using the samples as evidence. These are filtered/centered estimator inputs,
+not untouched ADC samples, and do not provide an independent frequency truth.
+
 Host coverage includes complete automatic operation, navigation during work,
 successful refinement, rejection of full-range regressions, cancellation,
 deadline and output-fault rollback, profile serialization, journal recovery and

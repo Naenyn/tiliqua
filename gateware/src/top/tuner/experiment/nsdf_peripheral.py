@@ -4,7 +4,7 @@ The baseline detector remains authoritative. This adapter never controls DACs.
 Single-buffer/request-driven export is for hardware validation, not the final
 four-channel 20-Hz scheduler or production double-buffered handoff.
 """
-from amaranth import Array, Cat, Const, Module, Signal, signed, unsigned
+from amaranth import Array, Cat, Const, Module, Mux, Signal, signed, unsigned
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In
 from amaranth.lib.memory import Memory
@@ -20,7 +20,7 @@ class Peripheral(wiring.Component):
     class Write(csr.Register,access='w'):
         value:csr.Field(csr.action.W,unsigned(32))
     class Address(csr.Register,access='rw'):
-        value:csr.Field(csr.action.RW,unsigned(9))
+        value:csr.Field(csr.action.RW,unsigned(11))
 
     def __init__(self):
         regs=csr.Builder(addr_width=6,data_width=8)
@@ -55,12 +55,18 @@ class Peripheral(wiring.Component):
         completed=Signal();count=Signal(10);dropped=Signal()
         command=self.control.element.w_data;strobe=self.control.element.w_stb
         start=Signal()
+        address=self.address.f.value.data
         m.d.comb += [start.eq(strobe & command[0] & d.ready),d.start.eq(start),
             d.cancel.eq(strobe & command[1]),d.low_bank.eq(command[2]),d.channel.eq(command[3:5]),
             d.input_valid.eq(self.input_valid),d.score_ready.eq(1),
             write.en.eq(d.score_valid),write.addr.eq(d.lag),write.data.eq(d.score),
-            read.addr.eq(self.address.f.value.data),read.en.eq(1),
-            self.data.f.value.r_data.eq(read.data),self.sequence.f.value.r_data.eq(d.frame_sequence),
+            read.addr.eq(address[:9]),read.en.eq(1),
+            d.inspect.eq(address[10] & completed & ~d.fault & ~d.overrun & ~dropped),
+            d.inspect_address.eq(address[:10]),
+            # Address bit 10 selects the immutable, centered/scaled frame used
+            # for these scores. Samples are sign extended just like scores.
+            self.data.f.value.r_data.eq(Mux(address[10],d.inspect_sample,read.data)),
+            self.sequence.f.value.r_data.eq(d.frame_sequence),
             self.energy_low.f.value.r_data.eq(d.frame_energy[:32]),
             self.energy_high.f.value.r_data.eq(d.frame_energy[32:]),
             # bits 0..9 state/metadata; bits 16..25 number of completed scores.
@@ -68,7 +74,7 @@ class Peripheral(wiring.Component):
                 d.frame_low_bank,d.frame_channel,d.frame_scaled,d.frame_clipped,
                 Const(0,6),count)),
             self.fill.f.value.r_data.eq(Cat(d.native_filled,Const(0,5),d.low_filled)),
-            self.identity.f.value.r_data.eq(0x4e534403),e.input_valid.eq(self.input_valid),
+            self.identity.f.value.r_data.eq(0x4e534404),e.input_valid.eq(self.input_valid),
             self.frame_native_end.f.value.r_data.eq(d.frame_native_end)]
         for ch in range(4):
             m.d.comb += [getattr(d,f'sample{ch}').eq(getattr(self,f'sample{ch}')),

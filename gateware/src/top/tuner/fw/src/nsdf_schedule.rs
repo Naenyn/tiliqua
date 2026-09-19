@@ -131,7 +131,7 @@ impl Scheduler {
                 self.finish(now);
             }
         } else if now>=self.due {
-            if nsdf.identity().read().value().bits()!=0x4e534403 {
+            if nsdf.identity().read().value().bits()!=0x4e534404 {
                 self.faults=self.faults.saturating_add(1);
                 self.latest=[Latest::EMPTY;8];self.due=now.saturating_add(5000);
             } else {

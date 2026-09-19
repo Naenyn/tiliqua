@@ -45,7 +45,7 @@ impl Trace {
         match self.state {
             0 => {
                 if now < self.due { return; }
-                if nsdf.identity().read().value().bits() != 0x4e534403 {
+                if nsdf.identity().read().value().bits() != 0x4e534404 {
                     self.pending.push_str("NSDF ERROR incompatible gateware\n").ok();
                     self.due = now.saturating_add(5000); return;
                 }
@@ -149,10 +149,27 @@ impl Trace {
             2 => {
                 let count = if self.low { 302 } else { 322 };
                 if self.index == count {
-                    self.pending.push_str("NSDF END\n").ok(); self.state=3;
+                    self.pending.push_str("NSDF END\n").ok(); self.state=8;
                 } else {
                     nsdf.address().write(|w| unsafe { w.value().bits(self.index) });
                     let _ = nsdf.data().read(); // Settle synchronous score RAM.
+                    write!(self.pending,"{:08x}\n",nsdf.data().read().value().bits()).ok();
+                    self.index+=1;
+                }
+            }
+            8 => {
+                write!(self.pending,"NSDF WAVE ch={} low={} seq={} n={}\n",
+                    self.channel,self.low,nsdf.sequence().read().value().bits(),
+                    if self.low {604} else {674}).ok();
+                self.index=0;self.state=9;
+            }
+            9 => {
+                let count=if self.low {604} else {674};
+                if self.index==count {
+                    self.pending.push_str("NSDF WAVE END\n").ok();self.state=3;
+                } else {
+                    nsdf.address().write(|w|unsafe {w.value().bits(1024|self.index)});
+                    let _=nsdf.data().read();
                     write!(self.pending,"{:08x}\n",nsdf.data().read().value().bits()).ok();
                     self.index+=1;
                 }

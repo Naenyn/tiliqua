@@ -14,15 +14,21 @@ def run_frame(samples,last,stall=True,capacity=None,shared_load_port=False):
             ctx.set(dut.sample,int(sample));ctx.set(dut.load_valid,1);await ctx.tick()
         ctx.set(dut.load_valid,0);assert ctx.get(dut.full)
         ctx.set(dut.start,1);await ctx.tick();ctx.set(dut.start,0)
+        ctx.set(dut.inspect,1);ctx.set(dut.inspect_address,7)
         while not ctx.get(dut.done):
+            assert ctx.get(dut.inspect_sample)==0
             ready=not stall or cycles%7!=0;ctx.set(dut.ready,ready)
             if ctx.get(dut.valid) and ready:
                 result.append((ctx.get(dut.lag),ctx.get(dut.score)))
             await ctx.tick();cycles+=1
             assert cycles<2_000_000
+        for i,sample in enumerate(samples):
+            ctx.set(dut.inspect_address,i);await ctx.tick()
+            assert ctx.get(dut.inspect_sample)==int(sample)
         # Verify clearing permits a fresh frame, not just a second start.
         ctx.set(dut.clear,1);await ctx.tick();ctx.set(dut.clear,0)
         assert not ctx.get(dut.full) and not ctx.get(dut.valid) and ctx.get(dut.load_ready)
+        assert ctx.get(dut.inspect_sample)==0
     sim=Simulator(dut);sim.add_clock(1/60e6);sim.add_testbench(bench);sim.run()
     assert [k for k,_ in result]==list(range(last+1))
     return np.array([v for _,v in result]),cycles

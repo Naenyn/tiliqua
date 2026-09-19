@@ -24,7 +24,7 @@ impl Bits {pub fn value(self)->Self{self} pub fn bits(self)->u32{self.0} pub fn 
 pub struct Reg(u8);
 impl Reg {
     pub fn read(&self)->Bits {Bits(STATE.with(|s|{let s=s.borrow();let low=s.command&4!=0;match self.0 {
-        0=>(s.ready && s.space>0) as u32,1=>0x4e534403,
+        0=>(s.ready && s.space>0) as u32,1=>0x4e534404,
         2=>if s.scenario==2 && (4000..5000).contains(&s.now) {0}else{1024|(1024<<16)},
         3=>if s.scenario==1 && s.command==1 && (3000..4000).contains(&s.now) {0}else{2|((if low {302}else{322})<<16)},4=>s.seq,
         5=>s.seq-s.seq%512,6=>20480,7=>0,8=>204800000,9=>0,

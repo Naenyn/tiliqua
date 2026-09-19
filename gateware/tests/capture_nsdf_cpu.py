@@ -33,6 +33,7 @@ def main():
     parser.add_argument('--timeout',type=float,default=180,help='Maximum capture seconds')
     mode=parser.add_mutually_exclusive_group()
     mode.add_argument('--source',action='store_true',help='Also require validated frozen source metadata')
+    mode.add_argument('--wave',action='store_true',help='Require exact waveform/score replay for all banks')
     mode.add_argument('--fast',action='store_true',help='Capture timestamped summaries instead of scores')
     mode.add_argument('--continuous',action='store_true',help='Capture independent scheduler latest-value reports')
     parser.add_argument('--round-robin',action='store_true',help='Require fast-all channel/bank order (with --fast)')
@@ -93,7 +94,14 @@ def main():
                     if len(reports)>=args.fast_frames:
                         print(f'Validated {len(reports)} fast summaries; disconnected.',file=sys.stderr)
                         return
-                if not args.fast and line=='NSDF END\n' and complete_cycle(''.join(fragments),args.source):
+                if args.wave and line=='NSDF WAVE END\n':
+                    from analyze_nsdf_wave import analyze_wave
+                    reports=list(analyze_wave(''.join(fragments)))
+                    if {(r['channel'],r['bank']) for r in reports} >= {
+                            (ch,bank) for ch in range(4) for bank in ('native','low')}:
+                        print('Validated waveforms and scores for all banks; disconnected.',file=sys.stderr)
+                        return
+                if not args.fast and not args.wave and line=='NSDF END\n' and complete_cycle(''.join(fragments),args.source):
                     print('Validated all four channels and both banks; disconnected.',file=sys.stderr)
                     return
             # Human-operated level adjustments need more than a 50-second
