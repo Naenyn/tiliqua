@@ -32,6 +32,8 @@ pub struct Live {
     pub deviation: Option<Summary>,
     statistics: Deviation,
     average:Average,
+    pub verify_retried:bool,
+    pub failure_verification:Option<crate::oscillator_calibration::averaging::Snapshot>,
     suggested_note: Option<u8>,
     verify_command: u32,
     verify_started: u64,
@@ -60,7 +62,7 @@ impl Live {
         Self { automatic:None,sweep:None,profile:None,pending_profile:None,pending_route:None,profile_route:None,verifying:false,scan:None,refinement:None,
             target_millicents:0,error_cents:None,verify_command:0,verify_started:0,verify_token:0,
             deviation:None,statistics:Deviation::new(),average:Average::new(),suggested_note:None,
-            failure_voltage:None,failure_acquisition:None,
+            failure_voltage:None,failure_acquisition:None,verify_retried:false,failure_verification:None,
             status:"READY - RUN IN MENU",zero_error_cents:None,tracking_failure:None,rejected_detector:None,rejected_verifier:None,input:0,output:1,
             millivolts:0,point:0,point_count:121,sweep_command:0,waiting:None,previous_sequence:None,sequence:0 }
     }
@@ -71,6 +73,7 @@ impl Live {
         self.scan=None;
         self.failure_voltage=None;
         self.failure_acquisition=None;
+        self.failure_verification=None;self.verify_retried=false;
         self.refinement=None;
         self.input=record.route.input();self.output=record.route.output();
         self.point_count=record.profile.points().len() as u8;self.point=0;
@@ -198,6 +201,8 @@ impl Live {
             self.stop_verify(tuner,"OUT OF RANGE - ZERO");return;
         };
         self.target_millicents=pitch;
+        self.failure_voltage=None;
+        self.verify_retried=false;self.failure_verification=None;
         self.average.clear();
         self.error_cents=None;
         self.statistics.clear();self.deviation=None;
@@ -244,6 +249,7 @@ impl Live {
         self.zero_error_cents=None;
         self.failure_voltage=None;
         self.failure_acquisition=None;
+        self.failure_verification=None;self.verify_retried=false;
         self.tracking_failure=None;
         self.rejected_detector=None;
         self.rejected_verifier=None;
@@ -383,8 +389,8 @@ impl Live {
                     } else {self.average.clear();}
                 }
             }
-            // Low pitches publish at most once per cycle. Eight independent
-            // observations may not fit the manual readout's 500 ms window.
+            // Low-note independent windows need more time than the manual
+            // readout's 500 ms statistics window.
             self.deviation=if self.scan.is_some() && self.target_millicents<=LOW_PITCH {
                 averaged.map(|v|Summary{mean:v.mean as f32/1000.0,spread:v.spread as f32/1000.0,
                     count:crate::oscillator_calibration::averaging::WINDOWS,averaged:true})
@@ -395,6 +401,21 @@ impl Live {
                 // A missing/unstable signal must not leave a scan holding a
                 // pitch forever. Manual VERIFY remains an explicitly held CV.
                 if now.saturating_sub(self.verify_started)>=5000 {
+                    // A full-range check begins with a potentially large
+                    // downward jump. Permit exactly one fresh acquisition at
+                    // this unchanged voltage, never relax stability limits.
+                    // Other targets, manual scans and refinement keep 5s.
+                    let first_auto_check=self.automatic.as_ref().is_some_and(|a|
+                        matches!(a.phase,Phase::Verify|Phase::Reverify))
+                        && self.scan.as_ref().is_some_and(|s|s.tested==0 && s.local.is_none());
+                    if first_auto_check && !self.verify_retried {
+                        self.verify_retried=true;self.verify_started=now;
+                        self.average.clear();self.statistics.clear();self.deviation=None;
+                        self.error_cents=None;self.previous_sequence=Some(value.sequence);
+                        return;
+                    }
+                    self.failure_voltage=bipolar::decode_voltage(self.verify_command as u16);
+                    self.failure_verification=Some(self.average.snapshot());
                     self.stop_verify(tuner,"SCAN TIMEOUT - OUTPUT ZERO");
                 } else if let Some(summary)=self.deviation.filter(|_|
                     self.error_cents.is_some() && value.end_age_ms<=100) {

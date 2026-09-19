@@ -4,6 +4,15 @@ use crate::{calibration_live::Live,pitch_units};
 
 pub fn verification(out:&mut impl Write,cal:&Live)->fmt::Result {
     if let Some(uv)=cal.failure_voltage {writeln!(out,"CAL FAILED_AT_UV={}",uv)?;}
+    if cal.verify_retried {writeln!(out,"VERIFY FIRST_TARGET_RETRY=1/1; SAME VOLTAGE; FRESH ACQUISITION")?;}
+    if let Some(a)=cal.failure_verification.as_ref() {
+        writeln!(out,"VERIFY FAILED_TARGET_MC={}",cal.target_millicents)?;
+        writeln!(out,"VERIFY AVG COUNT={} SEEN={} OVERLAP={} SPAN_RESETS={} GAP_RESETS={}",a.count,a.seen,a.overlap,a.span_resets,a.gap_resets)?;
+        writeln!(out,"VERIFY AVG RAW_SPAN_MC={} QUARTER_DELTA_MC={} HALF_DELTA_MC={}",a.raw_span,a.quarter_delta,a.half_delta)?;
+        write!(out,"VERIFY AVG ERRORS_MC=")?;
+        for (i,value) in a.values[..a.count].iter().enumerate() {write!(out,"{}{}",if i==0 {""}else{","},value)?;}
+        writeln!(out)?;
+    }
     if let Some(d)=cal.failure_acquisition.as_ref() {
         let a=&d.average;
         writeln!(out,"CAL ACQUIRE QUAL={} UNQUAL={} TIGHT={} AVERAGING={}",d.qualified,d.unqualified,d.tight_count,d.needs_average)?;

@@ -489,6 +489,60 @@ mod pac {
             assert_eq!(live.scan.as_ref().unwrap().tested,0);
         }
     }
+    #[test] fn first_automatic_check_retries_once_without_changing_voltage_or_limits() {
+        use oscillator_calibration::{Profile,Point,automatic::{Automatic,Phase}};
+        for scenario in 0..6 {
+            let mut live=ready();let mut profile=Profile::new("low",0,1000000).unwrap();
+            for (microvolts,millicents) in [(0,2000000),(1000000,3200000)] {
+                profile.push(Point{microvolts,millicents}).unwrap();
+            }
+            live.profile=Some(profile);let prior=live.profile.as_ref().unwrap().points().to_vec();
+            let p=pac::TUNER_PERIPH::default();let mut c=controls();
+            c.mode=OperatingMode::Verify;c.verify_scan=true;live.toggle_verify(&p,c,0);
+            live.pending_profile=live.profile.clone();
+            let mut auto=Automatic::new(0);auto.phase=Phase::Verify;live.automatic=Some(auto);
+            let command=p.command.get();let mut retried=false;let mut progressed=false;
+            for n in 1..=120u16 {
+                let now=n as u64*90;p.ack();
+                // Synthetic large-jump settling: about 8c over the first 5s,
+                // then stationary. The remaining cases never become usable.
+                let error=if scenario==0 {(-8.0+now as f64*0.0016).min(0.0)}
+                    else {now as f64*0.002};
+                let hz=(440.0*2.0f64.powf((20.0+error/100.0-69.0)/12.0)) as f32;
+                let m=ChannelMeasurement{frequency_hz:hz,valid:scenario!=2,
+                    qualified:scenario!=5,sequence:if scenario==4 {0}else{n},
+                    window_age_ms:120,end_age_ms:if scenario==3 {101}else{10}};
+                live.tick(&p,m,c,now);
+                retried|=live.verify_retried;
+                if live.scan.as_ref().is_some_and(|s|s.tested>0) {
+                    assert_eq!(scenario,0);assert!(!live.verify_retried);
+                    assert!(now>5000 && now<10000);progressed=true;break;
+                }
+                if !live.active() {assert!(now>=10000 && now<10200);break;}
+                assert_eq!(p.command.get(),command); // no zero pulse or CV change on retry
+            }
+            assert!(retried);assert_eq!(progressed,scenario==0);
+            assert_eq!(live.profile.as_ref().unwrap().points(),prior);
+            if !progressed {
+                assert_eq!(live.status,"SCAN TIMEOUT - OUTPUT ZERO");
+                assert!(!live.active());assert_eq!(p.command.get(),0);
+                assert_eq!(live.failure_voltage,Some(0));
+                assert!(live.failure_verification.is_some());
+                let mut report=String::new();serial_report::verification(&mut report,&live).unwrap();
+                assert!(report.contains("VERIFY FIRST_TARGET_RETRY=1/1"));
+                assert!(report.contains("VERIFY AVG ERRORS_MC="));
+                assert!(report.len()+400<1536);
+            } else {
+                // The second target does not inherit an extra attempt.
+                for n in 121..=185u16 {
+                    p.ack();live.tick(&p,ChannelMeasurement::default(),c,n as u64*90);
+                    if !live.active() {break;}
+                }
+                assert_eq!(live.status,"SCAN TIMEOUT - OUTPUT ZERO");
+                assert!(!live.verify_retried);assert_eq!(p.command.get(),0);
+            }
+        }
+    }
     #[test] fn local_followup_timeout_and_leaving_verify_stop_output_without_curve_edits() {
         for fail_after in [0,6] {
         for cancel in [false,true] {

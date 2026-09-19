@@ -161,11 +161,28 @@ reject drift/outliers/overlap aliasing, and check full serial packet capacity.
 This adds 32 bytes per averaging buffer/snapshot, with no new FPGA resources.
 Physical confirmation of the longer-window policy remains pending.
 
+The next physical run on `0fa8ad38` crossed zero and completed its initial
+sweep with 74 anchors. Automatic verification then timed out at its first
+target (commanded about -2.460 V, measured about 21.8 Hz). Logged qualified
+readings drifted from 21.757 to 21.834 Hz during the check (roughly 6 cents).
+The trace does not distinguish analog settling from estimator behavior.
+Automatic full-range verification now permits one fresh five-second attempt
+at the same initial target, without interrupting or changing its output CV.
+Statistics are cleared and only newly settled windows count; stability limits
+are unchanged. This applies only to the first target of Verify/Reverify, not
+manual checks, later targets or local refinement. The total 15-minute operation
+limit still applies. Failure after that retry still restores zero and keeps the
+prior accepted profile. Serial reports the retry and, on timeout, the actual
+commanded voltage, target, and retained averaging error diagnostics. Host tests
+cover transient recovery, sustained drift, invalid/stale/cached/unqualified
+readings, unchanged retry voltage and the ordinary subsequent-target deadline.
+Physical confirmation of this verification retry remains pending.
+
 Host coverage includes complete automatic operation, navigation during work,
 successful refinement, rejection of full-range regressions, cancellation,
 deadline and output-fault rollback, profile serialization, journal recovery and
 actual menu labels/navigation. The broader 178-test regression suite passes,
-including the live adapter's 139 Rust subtests.
+including the live adapter's 140 Rust subtests.
 
 On hardware, run CAL once with the existing calibration patch and stable sine.
 Confirm that measuring, checking and any justified improvement proceed without
