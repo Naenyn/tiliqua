@@ -4,25 +4,46 @@ pub const LOW_PITCH:i32=4_800_000; // C3, about 130.8 Hz at A4=440.
 pub struct Average {
     values:[i32;8],next:usize,count:usize,last_end:Option<u64>,
     raw_low:i32,raw_high:i32,
+    seen:u16,overlap:u16,span_resets:u16,gap_resets:u16,
+}
+#[derive(Clone,Copy,Debug)]
+pub struct Snapshot {
+    pub count:usize,pub seen:u16,pub overlap:u16,pub span_resets:u16,pub gap_resets:u16,
+    pub raw_span:u32,pub quarter_delta:u32,pub half_delta:u32,pub values:[i32;8],
 }
 #[derive(Clone,Copy,Debug)]
 pub struct Estimate {pub mean:i32,pub spread:u32}
 impl Average {
-    pub fn new()->Self {Self{values:[0;8],next:0,count:0,last_end:None,raw_low:i32::MAX,raw_high:i32::MIN}}
-    pub fn clear(&mut self) {self.next=0;self.count=0;self.last_end=None;self.raw_low=i32::MAX;self.raw_high=i32::MIN;}
+    pub fn new()->Self {Self{values:[0;8],next:0,count:0,last_end:None,raw_low:i32::MAX,raw_high:i32::MIN,
+        seen:0,overlap:0,span_resets:0,gap_resets:0}}
+    fn reset_windows(&mut self) {self.next=0;self.count=0;self.last_end=None;self.raw_low=i32::MAX;self.raw_high=i32::MIN;}
+    pub fn clear(&mut self) {self.reset_windows();self.seen=0;self.overlap=0;self.span_resets=0;self.gap_resets=0;}
+    pub fn snapshot(&self)->Snapshot {
+        let mut values=[0;8];let mut sums=[0i64;4];
+        for i in 0..self.count {
+            values[i]=self.values[(if self.count==8 {self.next+i}else{i})%8];
+            sums[i/2]+=values[i] as i64;
+        }
+        Snapshot {count:self.count,seen:self.seen,overlap:self.overlap,span_resets:self.span_resets,gap_resets:self.gap_resets,
+            raw_span:if self.count==0 {0}else{(self.raw_high as i64-self.raw_low as i64) as u32},
+            quarter_delta:if self.count==8 {((sums.iter().max().unwrap()-sums.iter().min().unwrap())/2) as u32}else{0},
+            half_delta:if self.count==8 {((sums[0]+sums[1]-sums[2]-sums[3]).abs()/4) as u32}else{0},values}
+    }
     pub fn observe(&mut self,value:i32,start:u64,end:u64)->Option<Estimate> {
         if start>end {self.clear();return None;}
         if let Some(last)=self.last_end {
             if end<=last {return None;}
-            if start.saturating_sub(last)>500 {self.clear();}
+            if start.saturating_sub(last)>500 {self.gap_resets=self.gap_resets.saturating_add(1);self.reset_windows();}
         }
+        self.seen=self.seen.saturating_add(1);
         // Include fresh overlapping frames in the instability guard too:
         // decimating alternate frames must not conceal alternating errors.
         self.raw_low=self.raw_low.min(value);self.raw_high=self.raw_high.max(value);
         if self.raw_high as i64-self.raw_low as i64>8000 {
-            self.clear();self.raw_low=value;self.raw_high=value;
+            self.span_resets=self.span_resets.saturating_add(1);
+            self.reset_windows();self.raw_low=value;self.raw_high=value;
         }
-        if self.last_end.is_some_and(|last|start<last) {return None;}
+        if self.last_end.is_some_and(|last|start<last) {self.overlap=self.overlap.saturating_add(1);return None;}
         self.last_end=Some(end);
         self.values[self.next]=value;self.next=(self.next+1)%8;
         self.count=(self.count+1).min(8);

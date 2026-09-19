@@ -81,9 +81,17 @@ mod pac {
         }
         assert_eq!(live.status,"FAILED - PITCH NOT STABLE");
         assert_eq!(live.failure_voltage,Some(-2166750));
+        let diagnostic=live.failure_acquisition.as_ref().unwrap();
+        assert!(diagnostic.qualified>=8);assert!(diagnostic.needs_average);
+        assert!(diagnostic.average.span_resets>0);
         assert!(live.pending_profile.is_none());assert_eq!(p.command.get(),0);
         let mut report=String::new();serial_report::verification(&mut report,&live).unwrap();
         assert!(report.contains("CAL FAILED_AT_UV=-2166750"));
+        assert!(report.contains("CAL AVG PITCH_MC="));assert!(report.len()<1000);
+        let mut repeated=String::new();serial_report::verification(&mut repeated,&live).unwrap();
+        assert_eq!(report,repeated); // no acquisition state is consumed by logging
+        live.toggle_automatic(&p,c,1_000_000);
+        assert!(live.failure_acquisition.is_none());
     }
     #[test] fn automatic_scan_checks_before_review_and_preserves_prior_profile() {
         let mut live=ready();let original=live.profile.as_ref().unwrap().points().to_vec();

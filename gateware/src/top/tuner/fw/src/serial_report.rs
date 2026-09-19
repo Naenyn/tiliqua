@@ -4,6 +4,15 @@ use crate::{calibration_live::Live,pitch_units};
 
 pub fn verification(out:&mut impl Write,cal:&Live)->fmt::Result {
     if let Some(uv)=cal.failure_voltage {writeln!(out,"CAL FAILED_AT_UV={}",uv)?;}
+    if let Some(d)=cal.failure_acquisition.as_ref() {
+        let a=&d.average;
+        writeln!(out,"CAL ACQUIRE QUAL={} UNQUAL={} TIGHT={} AVERAGING={}",d.qualified,d.unqualified,d.tight_count,d.needs_average)?;
+        writeln!(out,"CAL AVG COUNT={} SEEN={} OVERLAP={} SPAN_RESETS={} GAP_RESETS={}",a.count,a.seen,a.overlap,a.span_resets,a.gap_resets)?;
+        writeln!(out,"CAL AVG RAW_SPAN_MC={} QUARTER_DELTA_MC={} HALF_DELTA_MC={}",a.raw_span,a.quarter_delta,a.half_delta)?;
+        write!(out,"CAL AVG PITCH_MC=")?;
+        for (i,value) in a.values[..a.count].iter().enumerate() {write!(out,"{}{}",if i==0 {""}else{","},value)?;}
+        writeln!(out)?;
+    }
     if let Some(auto)=cal.automatic.as_ref() {
         writeln!(out,"AUTO PHASE={} PASSES={}/8 STATUS={}",auto.label(),auto.passes,cal.status)?;
         if let Some(scan)=auto.best.as_ref() {

@@ -39,6 +39,7 @@ pub struct Live {
     pub status: &'static str,
     pub zero_error_cents:Option<f32>,
     pub failure_voltage:Option<i32>,
+    pub failure_acquisition:Option<crate::bipolar_sweep::AcquisitionDiagnostic>,
     pub tracking_failure:Option<crate::bipolar_sweep::TrackingFailure>,
     pub rejected_detector:Option<(f32,u8)>,
     pub rejected_verifier:Option<crate::pitch_verification::Diagnostic>,
@@ -59,7 +60,7 @@ impl Live {
         Self { automatic:None,sweep:None,profile:None,pending_profile:None,pending_route:None,profile_route:None,verifying:false,scan:None,refinement:None,
             target_millicents:0,error_cents:None,verify_command:0,verify_started:0,verify_token:0,
             deviation:None,statistics:Deviation::new(),average:Average::new(),suggested_note:None,
-            failure_voltage:None,
+            failure_voltage:None,failure_acquisition:None,
             status:"READY - RUN IN MENU",zero_error_cents:None,tracking_failure:None,rejected_detector:None,rejected_verifier:None,input:0,output:1,
             millivolts:0,point:0,point_count:121,sweep_command:0,waiting:None,previous_sequence:None,sequence:0 }
     }
@@ -69,6 +70,7 @@ impl Live {
         self.automatic=None;
         self.scan=None;
         self.failure_voltage=None;
+        self.failure_acquisition=None;
         self.refinement=None;
         self.input=record.route.input();self.output=record.route.output();
         self.point_count=record.profile.points().len() as u8;self.point=0;
@@ -241,6 +243,7 @@ impl Live {
         self.input=controls.calibration_input; self.output=controls.calibration_output;
         self.zero_error_cents=None;
         self.failure_voltage=None;
+        self.failure_acquisition=None;
         self.tracking_failure=None;
         self.rejected_detector=None;
         self.rejected_verifier=None;
@@ -496,6 +499,7 @@ impl Live {
                 self.waiting=Some(token);
             }
             Request::Finished(outcome) => {
+                if matches!(outcome,Outcome::Failed(_)) {self.failure_acquisition=Some(s.acquisition_diagnostic());}
                 let mut limited=false;
                 if let Some(curve)=s.take_curve() {
                     let mut profile=Profile::new("RAM profile",bipolar::MIN_UV,bipolar::MAX_UV).unwrap();

@@ -28,6 +28,11 @@ pub struct TrackingFailure {
     pub rejected:Point,
     pub neighbour:Option<Point>,
 }
+#[derive(Clone,Copy)]
+pub struct AcquisitionDiagnostic {
+    pub qualified:u16,pub unqualified:u16,pub tight_count:u8,pub needs_average:bool,
+    pub average:crate::oscillator_calibration::averaging::Snapshot,
+}
 
 pub struct Curve {
     points:[Point;bipolar::MAX_POINTS],
@@ -63,8 +68,13 @@ pub struct Sweep {
     saw_qualified:bool,
     average:Average,needs_average:bool,
     failure_voltage:Option<i32>,
+    qualified_count:u16,unqualified_count:u16,
 }
 impl Sweep {
+    pub fn acquisition_diagnostic(&self)->AcquisitionDiagnostic {
+        AcquisitionDiagnostic{qualified:self.qualified_count,unqualified:self.unqualified_count,
+            tight_count:self.count,needs_average:self.needs_average,average:self.average.snapshot()}
+    }
     pub fn failure_voltage(&self)->Option<i32> {self.failure_voltage}
     pub fn tracking_failure(&self)->Option<TrackingFailure> {self.tracking_failure}
     pub fn origin_error(&self)->Option<i32> {self.origin_error}
@@ -75,7 +85,7 @@ impl Sweep {
             state:State::Applying,index:0,token:1,point_started:now,last_now:now,
             last_sequence:None,count:0,minimum:0,maximum:0,sum:0,origin:0,origin_tolerance,origin_error:None,
             tracking_failure:None,measured_zero:false,upper_flat_points:0,saw_qualified:false,
-            average:Average::new(),needs_average:false,failure_voltage:None})
+            average:Average::new(),needs_average:false,failure_voltage:None,qualified_count:0,unqualified_count:0})
     }
     fn voltage(&self)->i32 {
         match self.phase {
@@ -92,6 +102,7 @@ impl Sweep {
         self.phase=phase;self.index=index;self.token+=1;self.point_started=now;
         self.state=State::Applying;self.count=0;self.saw_qualified=false;
         self.average.clear();self.needs_average=false;
+        self.qualified_count=0;self.unqualified_count=0;
     }
     fn restore(&mut self,outcome:Outcome) {
         if matches!(self.state,State::Finished(_)) {return;}
@@ -262,6 +273,8 @@ impl Sweep {
                     && now-s.window_end_ms<=100
                     && self.last_sequence.map_or(true,|last|s.sequence>last) {
                     self.last_sequence=Some(s.sequence);
+                    if s.qualified {self.qualified_count=self.qualified_count.saturating_add(1);}
+                    else {self.unqualified_count=self.unqualified_count.saturating_add(1);}
                     self.saw_qualified|=s.qualified;
                     let checking=matches!(self.phase,Phase::CheckEnd);
                     if checking && s.qualified {

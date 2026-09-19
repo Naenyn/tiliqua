@@ -134,6 +134,19 @@ acquisition or hardware bank. `NSDF COMP` remains the live-display descriptor;
 Host scheduler tests exercise both paths with different bank estimates, and a
 regression checks the actual CAL-only wiring. Physical confirmation is pending.
 
+The following retry stopped at -1.75 V near 35.6 Hz. Periodic telemetry showed
+mostly close readings but cannot establish what happened between logged frames.
+Do not widen acceptance thresholds from this decimated trace. A diagnostic-only
+follow-up retains the failed point's eligible qualified/unqualified counts,
+tight-window count, averaging-window count, overlap skips, span/gap reset counts,
+raw span, quarter/half mean differences, and up to eight actual retained pitches.
+These are emitted as `CAL ACQUIRE` and `CAL AVG` after failure, before the sweep
+object is discarded. Pitches/differences are in integer millicents; counts refer
+to frames that passed the sweep's timestamp/route/sequence eligibility checks.
+Counters reset for each voltage; averaging counters also reset after invalid
+measurements. Logging does not change acquisition policy or extend a deadline.
+The snapshot costs bounded firmware RAM only; no detector or FPGA change.
+
 Host coverage includes complete automatic operation, navigation during work,
 successful refinement, rejection of full-range regressions, cancellation,
 deadline and output-fault rollback, profile serialization, journal recovery and
