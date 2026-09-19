@@ -69,3 +69,40 @@ def test_actual_firmware_wave_export_survives_uart_backpressure(tmp_path):
         wave_meta=dict(v.split('=') for v in wave.split())
         assert all(score_meta[k]==wave_meta[k] for k in ('ch','low','seq','n'))
         assert len(body.splitlines())==int(wave_meta['n'])
+
+
+def test_physical_gen3_waveforms_replay_and_support_longer_lag_probe():
+    from nsdf_trace_analysis import select
+    fixture=json.loads((Path(__file__).parent/'fixtures/nsdf-gen3-fundamental-25-wave.json').read_text())
+    text=''
+    for source,cpu,io,frame,wave in zip(fixture['source_reports'],fixture['cpu_reports'],
+                                      fixture['io_reports'],fixture['frames'],fixture['waveforms']):
+        text+=''.join('NSDF '+name+' '+' '.join(f'{k}={v}' for k,v in data.items())+'\n'
+                      for name,data in [('SOURCE',source),('CPU',cpu),('IO',io)])+frame+wave
+    reports=list(analyze_wave(text))
+    assert len(reports)==6
+    old=[r['hz'] for r in reports]
+    new=[select(replay(r['samples'],501),6000,20,1500,fallback=True)['hz'] for r in reports]
+    span=lambda values:1200*math.log2(max(values)/min(values))
+    assert 4.4<span(old)<4.6
+    assert span(new)<.5
+    # This proves repeatability improvement on identical measured samples,
+    # NOT absolute accuracy, production timing, or performance at 20 Hz.
+
+
+def test_blindly_extending_lags_can_regress_alternating_cycle_signal():
+    import numpy as np
+    from nsdf_refinement_probe import scores_for
+    from nsdf_trace_analysis import select
+    errors=[[],[]]
+    for phase in np.linspace(0,2,32,endpoint=False):
+        for i,(n,last) in enumerate(((604,301),(674,621))):
+            p=np.arange(n)*50/6000+phase
+            x=np.rint(14000*(np.sin(2*np.pi*p)+.0076*np.sin(np.pi*p+.7)+.0091*np.sin(3*np.pi*p+.4)))
+            result=select(scores_for(x,last),6000,20,1500,fallback=True)
+            assert result is not None and result['qualified']
+            errors[i].append(abs(1200*math.log2(result['hz']/50)))
+    assert max(errors[0])<.05
+    assert max(errors[1])>.5
+    # The longest accepted multiple may be odd and retain alternating-cycle
+    # bias. Do not deploy a larger lag range alone as a universal correction.

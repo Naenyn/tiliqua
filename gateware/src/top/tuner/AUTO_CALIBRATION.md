@@ -411,6 +411,35 @@ frame identity, exact energy and bit-exact replay of every exported score before
 using the samples as evidence. These are filtered/centered estimator inputs,
 not untouched ADC samples, and do not provide an independent frequency truth.
 
+Waveform diagnostic `e3d46971` passed routed timing at 66.37 MHz system
+(60 MHz required), 87.90 MHz pixel, 434.97 MHz serializer and 65.29 MHz audio.
+EBR remains 44/56 and multipliers 14/28. All 252 host regressions passed;
+19 separately gated long-running tests were skipped. The two temporary test
+failures during fixture-format migration were corrected and the full suite
+rerun. Flash completed with `Refresh: DONE`. Six IN2 low-bank waveform/score
+pairs are retained in `tests/fixtures/nsdf-gen3-fundamental-25-wave.json`.
+Their energies and every score replay bit-exactly, ruling out mismatched
+waveform/score records as an explanation of their pitch variation.
+
+On those SAME six measured frames, the existing 301-lag selector reports
+24.954–25.019 Hz (4.5036 cents span). Host-only recomputation through lag 501
+lets its existing refinement compare the two-cycle repetition: 24.985898–
+24.992595 Hz, 0.46394 cents span. No samples were tiled or invented. The
+waveforms exhibit small alternating-cycle differences; harmonic least-squares
+fits find repeatable half-frequency and 1.5x components around 0.75% and 0.9%
+of the main component. Fits are exploratory, not independent frequency truth
+or proof of which analogue circuit introduces the differences.
+
+Do NOT deploy a blind longer-lag change: a synthetic 50-Hz signal with these
+small alternating components regresses from <0.05c error to >0.5c when the
+largest accepted multiple becomes odd. A regression test retains this warning.
+Any correction must select an appropriate repeating interval, retain range and
+confidence safeguards, cover the 20-Hz boundary, and be resource/timing-budgeted.
+The low-note waveform evidence is a strong direction, not a completed fix.
+Production `2ea8160c` was restored successfully after capture, and live serial
+measurements resumed with zero scheduler faults. Next physical control is
+FUNDAMENTAL near 21–22 Hz with the same unmodulated, V/oct-unpatched setup.
+
 Host coverage includes complete automatic operation, navigation during work,
 successful refinement, rejection of full-range regressions, cancellation,
 deadline and output-fault rollback, profile serialization, journal recovery and
