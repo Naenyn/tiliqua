@@ -277,6 +277,34 @@ changing the detector, stability guards, or firmware. A successful CORE run
 would establish a usable Generate3 calibration path, not close investigation
 of the fundamental output's waveform-dependent behavior.
 
+That CORE calibration completed on `d66264e3`: 75 anchors from -2.583250
+to +3.583250 V (E0 -46.1c through F6 +46.5c), all 147 verification targets
+and the local follow-up passed, worst measured error -0.99 cents, no improvement
+passes. Final status is `READY - WITHIN 2C TARGET`; output zero and candidate
+awaiting acceptance. This confirms the low-frequency Generate3 workflow works
+with CORE under the unchanged stability limits, not that FUNDAMENTAL is fixed.
+
+The same trace exposed a separate upper-bank boundary defect. At commanded
++3.666750 V, native measured about 1521 Hz while low reported about 761 Hz;
+both qualified, so settled arbitration correctly rejected the disagreement and
+discovery ended the range. The selector had discarded peaks outside a bank's
+range *before* choosing the first strong key maximum, allowing a later multiple
+of the real period to masquerade as a valid lower tone. Synthetic sine and
+triangle regressions reproduce this near 1500 Hz with actual production Rust
+selection and arbitration; both tests failed before the correction.
+
+Selection now finds the first peak above the unchanged relative-height cutoff
+across the available key maxima, then rejects it if outside the bank's range.
+It does not substitute a later period to fit the range. Weak early maxima still
+allow a stronger in-range period. Confidence, energy, source guards, freshness,
+settled disagreement and calibration stability limits are unchanged. This is
+firmware only, retaining the same two score scans/read bound and no new buffer.
+Archived CPU/score-report validators explicitly retain the old selection policy
+to preserve historical evidence; current production tests separately replay
+those same scores against the updated model. Physical confirmation beyond the
+1500-Hz boundary remains pending on a new build; do not flash over the current
+unsaved review candidate without arranging acceptance/save or discard first.
+
 Host coverage includes complete automatic operation, navigation during work,
 successful refinement, rejection of full-range regressions, cancellation,
 deadline and output-fault rollback, profile serialization, journal recovery and

@@ -1,4 +1,4 @@
-//! Diagnostic-only NSDF key-maxima selector. No heap or score-sized CPU buffer.
+//! NSDF key-maxima selector. No heap or score-sized CPU buffer.
 //! Reads a stable score frame twice, then at most seven three-neighbor searches.
 //! Guarded later-peak fallback is our extension, not the paper's algorithm.
 
@@ -78,13 +78,18 @@ pub fn select(mut read:impl FnMut(usize)->i32,low:bool)->Option<Estimate> {
     let max_lag=(numerator/(min*999999)) as i32;
     let in_range=|p:Peak| p.lag>=min_lag && p.lag<=max_lag;
     let mut highest=0;
-    peaks(&mut read,last,|p| {if in_range(p) {highest=highest.max(p.height);} false});
+    // Choose the first strong key maximum BEFORE checking the bank's range.
+    // Filtering peaks first can turn a 1520-Hz tone into a qualified 760-Hz
+    // low-bank result: its real period is excluded, but its double survives.
+    // Reject an out-of-band selection instead of inventing a subharmonic.
+    peaks(&mut read,last,|p| {highest=highest.max(p.height);false});
     if highest<=0 {return None;}
     let mut chosen=None;
     peaks(&mut read,last,|p| {
-        if in_range(p) && p.height*10>=9*highest {chosen=Some(p);true} else {false}
+        if p.height*10>=9*highest {chosen=Some(p);true} else {false}
     });
     let mut p=chosen?;
+    if !in_range(p) {return None;}
     let original_lag=p.lag;
     let qualified=p.height>=838861; // ceil(0.8 * 2^20)
     if qualified {
@@ -121,6 +126,21 @@ pub fn select(mut read:impl FnMut(usize)->i32,low:bool)->Option<Estimate> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn strong_out_of_band_peak_is_not_replaced_by_its_multiple() {
+        for (low,first) in [(true,3),(false,8)] {
+            let mut scores=[0_i32;322];
+            scores[first]=1048576;
+            scores[2*first]=1048576;
+            assert!(super::select(|k|scores[k],low).is_none());
+            // Weak early maxima still do not veto a stronger, valid period.
+            scores[first]=524288;
+            let accepted=super::select(|k|scores[k],low).unwrap();
+            assert!(accepted.qualified);
+            assert_eq!(accepted.hz,if low {1000.0}else{12000.0});
+        }
+    }
+
     #[test]
     fn fractional_division_matches_wide_reference() {
         for denominator in [1,2,3,7,511,512,513,65535,1048576,2097152,4194304] {

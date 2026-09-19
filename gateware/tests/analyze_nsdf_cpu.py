@@ -33,8 +33,12 @@ def validate(cpu,io,block):
         raise ValueError('invalid elapsed timing')
     gated=report['rms_counts']<=2 or bool(report['clipped'])
     low=report['low']=='true'
+    # Archived NSDF CPU/IO exports used range-first key-maxima selection.
+    # Keep validating those historical reports against their original policy;
+    # production selector tests replay the scores against the current policy.
     expected=None if gated else select(scores,report['fs'],20 if low else 600,
-                                      1500 if low else 20000,fallback=True)
+                                      1500 if low else 20000,fallback=True,
+                                      legacy_range_first=True)
     if gated and int(cpu['reads'])!=0:raise ValueError('early gate read scores')
     if cpu['ok'] not in ('true','false'):raise ValueError('invalid qualification flag')
     if expected is None:

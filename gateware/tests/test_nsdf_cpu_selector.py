@@ -60,6 +60,48 @@ def test_fixed_point_fraction_uses_exact_bounded_arithmetic(tmp_path):
     subprocess.run([str(exe)],check=True,capture_output=True,text=True)
 
 
+@pytest.mark.parametrize('waveform',['sine','triangle'])
+def test_bank_boundary_does_not_fold_upper_tone_into_low_bank(tmp_path,waveform):
+    # Generate3 CORE at ~1521 Hz produced native ~1521 / low ~761 Hz,
+    # causing the unchanged settled disagreement guard to end CAL's range.
+    # Exercise actual production selection AND arbitration, with known truth.
+    here=Path(__file__).parent
+    rustc=shutil.which('rustc') or str(Path.home()/'.cargo/bin/rustc')
+    selector=tmp_path/'selector';resolver=tmp_path/'resolver'
+    for exe,source in ((selector,'nsdf_selector_fixture.rs'),(resolver,'nsdf_resolve_fixture.rs')):
+        subprocess.run([rustc,'--edition=2021','-O','-C','overflow-checks=on',
+                        str(here/source),'-o',str(exe)],check=True)
+    cases=[];lines=[]
+    for frequency in (1400,1490,1500,1501,1521,1600,2000):
+        for phase in np.linspace(0,1,8,endpoint=False):
+            cases.append(frequency)
+            for low in (False,True):
+                fs,n,last=(6000,604,301) if low else (192000,674,321)
+                p=(np.arange(n)*frequency/fs+phase)%1
+                x=np.rint(14000*(np.sin(2*np.pi*p) if waveform=='sine' else 4*np.abs(p-.5)-1))
+                lines.append(('low' if low else 'high')+' '+' '.join(map(str,scores_for(x,last))))
+    output=subprocess.run([str(selector)],input='\n'.join(lines)+'\n',
+                          capture_output=True,text=True,check=True).stdout.splitlines()
+    arbitration=[]
+    for i,frequency in enumerate(cases):
+        banks=[]
+        for line in output[2*i:2*i+2]:
+            words=line.split()
+            banks.append((0,0) if words[0]=='none' else (round(float(words[0])*1000),int(words[2]=='true')))
+        (native,nq),(low,lq)=banks
+        assert nq and abs(1200*math.log2(native/1000/frequency))<.5
+        # A boundary estimate may be just inside the range; it must not fold
+        # by an octave (or more) to manufacture an in-range candidate.
+        assert not lq or abs(1200*math.log2(low/1000/frequency))<35
+        arbitration.append(f'{native} 0 {nq} {low} 0 {lq}')
+    output=subprocess.run([str(resolver)],input='\n'.join(arbitration)+'\n',
+                          capture_output=True,text=True,check=True).stdout.splitlines()
+    for frequency,line in zip(cases,output):
+        mhz,source=map(int,line.split())
+        assert source==2
+        assert abs(1200*math.log2(mhz/1000/frequency))<.5
+
+
 @pytest.mark.parametrize('frequency,tolerance',[(9900,.04),(10000,.04),(10100,.04),
                                               (18000,.16),(18500,.16),(19000,.16),(19900,.16)])
 @pytest.mark.parametrize('amplitude',[72,14000])
@@ -102,7 +144,11 @@ def test_physical_cpu_reports_match_exported_scores(name):
         words=[int(s,16) for s in block.splitlines()[1:-1]]
         scores=[w-(1<<32) if w&(1<<31) else w for w in words]
         low=report['low']=='true'
-        expected=select(scores,report['fs'],20 if low else 600,1500 if low else 20000,fallback=True)
+        # CPU reports are immutable historical observations of the old policy.
+        # Current Rust is separately compared against these same score arrays
+        # using the new policy by test_cpu_selector_matches_model_without_frame_buffer.
+        expected=select(scores,report['fs'],20 if low else 600,1500 if low else 20000,
+                        fallback=True,legacy_range_first=True)
         if fixture.get('early_gate') and (report['rms_counts']<=2 or report['clipped']):
             expected=None
             assert int(cpu['reads'])==0

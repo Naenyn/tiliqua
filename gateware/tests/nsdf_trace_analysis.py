@@ -11,7 +11,7 @@ import math
 from pathlib import Path
 
 
-def select(scores,fs,minimum,maximum,refine=True,fallback=False):
+def select(scores,fs,minimum,maximum,refine=True,fallback=False,legacy_range_first=False):
     values=[v/(1<<20) for v in scores];last=len(values)-1
     peaks=[];skipped=False;best=None
     for k in range(1,last):
@@ -28,11 +28,13 @@ def select(scores,fs,minimum,maximum,refine=True,fallback=False):
     candidates=[]
     for k in peaks:
         lag,height=interpolate(k);hz=fs/lag
-        if minimum*(1-1e-6)<=hz<=maximum*(1+1e-6):candidates.append((lag,height))
+        if not legacy_range_first or minimum*(1-1e-6)<=hz<=maximum*(1+1e-6):
+            candidates.append((lag,height))
     if not candidates:return None
     cutoff=.9*max(height for _,height in candidates)
     lag,height=next(c for c in candidates if c[1]>=cutoff)
     hz=fs/lag;original_hz=hz;qualified=height>=.8
+    if not minimum*(1-1e-6)<=hz<=maximum*(1+1e-6):return None
     if refine and qualified:
         largest=min(8,int((last-2)/lag))
         multiples=range(largest,1,-1) if fallback else [largest]
@@ -68,7 +70,11 @@ def decode(lines):
                 raise ValueError('wrong frame size or sample rate')
             if not 0<=header['ch']<=3 or any(abs(v)>(1<<20) for v in scores):
                 raise ValueError('invalid channel or score')
-            result=select(scores,header['fs'],20 if low else 600,1500 if low else 20000)
+            # These archived opt-in exports predate range-after-peak selection.
+            # Preserve their original interpretation; production-model tests
+            # call select() with its current policy instead.
+            result=select(scores,header['fs'],20 if low else 600,1500 if low else 20000,
+                          legacy_range_first=True)
             rms=math.sqrt(header['energy']/header['n'])*(2 if header['scaled'] else 1)
             if result is not None:result['qualified'] &= not header['clipped'] and rms>2
             yield dict(**header,rms_counts=rms,result=result)
