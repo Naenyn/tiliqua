@@ -305,6 +305,19 @@ those same scores against the updated model. Physical confirmation beyond the
 1500-Hz boundary remains pending on a new build; do not flash over the current
 unsaved review candidate without arranging acceptance/save or discard first.
 
+Validation for the correction: 192 host regressions passed, including the
+production selector/arbitration boundary cases, historical capture validation,
+motion, ownership, quantization, persistence and automatic-calibration tests.
+Build `2ea8160c` is R5, 192 kHz, unrotated 1280x720, spread spectrum 0.0.
+Firmware is 237,104 bytes (392 bytes smaller); FPGA SHA-256 remains
+`4a366828b96013f60160b42eac8ed9392dfe05f83e5894650a8dd8369bf3dd6d`.
+CPU RAM remains 32 KiB, static/stack boundary 0x1808 and stack top 0x8000.
+After explicit permission to discard the unsaved CORE test result, slot 1
+flashing completed with `Refresh: DONE`; saved-profile allocation is unchanged.
+Next hardware check is a fresh CORE calibration at unchanged oscillator tuning
+to verify that acquisition crosses the old ~1500-Hz cutoff and still meets the
+automatic accuracy checks.
+
 Host coverage includes complete automatic operation, navigation during work,
 successful refinement, rejection of full-range regressions, cancellation,
 deadline and output-fault rollback, profile serialization, journal recovery and
