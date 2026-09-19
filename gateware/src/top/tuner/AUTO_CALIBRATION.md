@@ -214,6 +214,19 @@ variation. Next isolation step: retain Twin Waves' tuning, connect OUT1 to
 its V/oct instead, and run automatic calibration on IN1/OUT1. No detector or
 stability-threshold change is justified by this comparison alone.
 
+With OUT1 then connected to Twin Waves' V/oct and its tuning unchanged, the
+automatic run on the same `d66264e3` firmware succeeded: 64 anchors from
+-0.250 to +5.000 V, measured E0 +38.1c through G5 -15.3c; all 125 verification
+targets plus the local follow-up completed. Final status was `READY - WITHIN
+2C TARGET`, worst measured error -1.81 cents, zero improvement passes, and no
+initial-target retry. Output returned to zero; result awaits explicit acceptance
+in RAM, with no saved-slot write. This shows the workflow can complete with
+this source; it is not a proof of absolute accuracy or of stable negative-range
+CV output around -2.3 V. The next matched-range comparison is to retune Twin
+Waves near 120 Hz at the current zero output, then repeat IN1/OUT1 calibration
+without changing Generate3's controls. RUN replaces the unaccepted test result,
+not a saved profile; the old result must not be reused after retuning.
+
 Host coverage includes complete automatic operation, navigation during work,
 successful refinement, rejection of full-range regressions, cancellation,
 deadline and output-fault rollback, profile serialization, journal recovery and
