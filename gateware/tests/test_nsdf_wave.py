@@ -42,7 +42,11 @@ def test_corrupt_or_mixed_waveform_is_rejected(change):
 
 def test_physical_gen3_score_fixture_parity_without_frequency_truth():
     fixture=json.loads((Path(__file__).parent/'fixtures/nsdf-gen3-fundamental-25-scores.json').read_text())
-    reports=list(analyze_source(''.join(fixture['records'])))
+    records=[]
+    for source,cpu,io,frame in zip(fixture['source_reports'],fixture['cpu_reports'],fixture['io_reports'],fixture['frames']):
+        records.append(''.join('NSDF '+name+' '+' '.join(f'{k}={v}' for k,v in data.items())+'\n'
+                       for name,data in [('SOURCE',source),('CPU',cpu),('IO',io)])+frame)
+    reports=list(analyze_source(''.join(records)))
     assert len(reports)==16
     assert all(r['qualified'] and r['device_guard'] and not r['clipped'] for r in reports)
     hz=[r['hz'] for r in reports]
