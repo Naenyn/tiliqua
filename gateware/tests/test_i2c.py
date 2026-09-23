@@ -128,6 +128,69 @@ class I2CTests(unittest.TestCase):
         with sim.write_vcd(vcd_file=open("test_i2c_peripheral.vcd", "w")):
             sim.run()
 
+    def test_i2c_master_user_nvm_transactions(self):
+        """REZO's lean NVM path reads and writes the writable reserved byte."""
+
+        m = Module()
+        dut = eurorack_pmod.I2CMaster(
+            audio_192=False, with_user_nvm=True, i2c_period_cyc=8)
+        m.submodules += dut
+
+        async def eeprom_responder(ctx):
+            # Release SDA while idle. Pull it low for every ACK bit and return
+            # zero for read data; the synchronizer requires beginning at the
+            # ACK/data setup state rather than waiting for the sample edge.
+            ack_states = (
+                "WRITE-ACK-SCL-L", "WRITE-ACK-SDA-H",
+                "WRITE-ACK-SCL-H", "WRITE-ACK-SDA-N",
+            )
+            read_states = (
+                "READ-DATA-SCL-L", "READ-DATA-SDA-H",
+                "READ-DATA-SCL-H", "READ-DATA-SDA-N",
+            )
+            ctx.set(dut.pins.sda.i, 1)
+            while True:
+                pull_low = any(ctx.get(
+                    dut.i2c_stream.i2c._fsm.ongoing(state))
+                    for state in ack_states + read_states)
+                ctx.set(dut.pins.sda.i, 0 if pull_low else 1)
+                await ctx.tick()
+
+        async def testbench(ctx):
+            data_written = []
+            write_requested = False
+            for _ in range(100_000):
+                if ctx.get(dut.i2c_stream.i2c.write):
+                    data_written.append(ctx.get(dut.i2c_stream.i2c.data_i))
+
+                if ctx.get(dut.nvm_valid) and not write_requested:
+                    self.assertEqual(ctx.get(dut.nvm_value), 0)
+                    ctx.set(dut.nvm_write_value, 2)
+                    ctx.set(dut.nvm_write_request, 1)
+                    write_requested = True
+
+                if ctx.get(dut.nvm_write_done):
+                    ctx.set(dut.nvm_write_request, 0)
+                    break
+                await ctx.tick()
+            else:
+                self.fail("NVM transaction did not complete")
+
+            def contains(sequence):
+                width = len(sequence)
+                return any(data_written[ix:ix + width] == sequence
+                           for ix in range(len(data_written) - width + 1))
+
+            # Device address bytes are 0xa4/0xa5 for 7-bit address 0x52.
+            self.assertTrue(contains([0xa4, 0x60, 0xa5]))
+            self.assertTrue(contains([0xa4, 0x60, 0x02]))
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.add_testbench(eeprom_responder, background=True)
+        sim.run()
+
     def test_i2c_luna_register_interface(self):
 
         m = Module()
