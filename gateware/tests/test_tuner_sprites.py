@@ -5,7 +5,7 @@ import pytest
 from amaranth import Value
 from amaranth.sim import Simulator
 
-from top.tuner.sprites import ScanlineSprites
+from top.intono.sprites import ScanlineSprites
 
 
 @pytest.mark.parametrize("slots", [1, 4])

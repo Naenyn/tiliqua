@@ -62,8 +62,8 @@ mod nsdf_select {
         Some(Result{hz,unrefined_hz:hz,clarity:0.99,qualified:true})
     }
 }
-#[path="../src/top/tuner/fw/src/nsdf_trace.rs"] mod trace;
-#[path="../src/top/tuner/fw/src/nsdf_guard.rs"] mod nsdf_guard;
+#[path="../src/top/intono/fw/src/nsdf_trace.rs"] mod trace;
+#[path="../src/top/intono/fw/src/nsdf_guard.rs"] mod nsdf_guard;
 fn main() {
     let scenario=std::env::args().nth(1).map_or(0,|s|s.parse::<u8>().unwrap());
     STATE.with(|s|s.borrow_mut().scenario=scenario);

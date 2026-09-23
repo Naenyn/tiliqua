@@ -1,5 +1,5 @@
 //! Synthetic graphics only: no calibration/quantization or audio acquisition.
-#[path = "../src/top/tuner/fw/src/ui_canvas.rs"]
+#[path = "../src/top/intono/fw/src/ui_canvas.rs"]
 mod ui_canvas;
 use std::io::{self, Write};
 use ui_canvas::{Rect, Point};

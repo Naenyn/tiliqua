@@ -11,7 +11,7 @@ from tuner_scale_import import parse_scl, encode
 
 @pytest.mark.parametrize('module', ['scale', 'quantizer_setup'])
 def test_scale_engine(tmp_path, module):
-    source = Path(__file__).parents[1] / f'src/top/tuner/fw/src/{module}.rs'
+    source = Path(__file__).parents[1] / f'src/top/intono/fw/src/{module}.rs'
     compiler = shutil.which('rustc') or str(Path.home() / '.cargo/bin/rustc')
     executable = tmp_path / 'scale-tests'
     subprocess.run([compiler, '--edition=2021', '--test', str(source), '-o',
@@ -44,7 +44,7 @@ def test_scala_invalid_or_unsupported_scales_rejected(text):
 
 
 def test_binary_python_to_rust_and_corruption_is_atomic(tmp_path):
-    source = Path(__file__).parents[1] / 'src/top/tuner/fw/src/scale.rs'
+    source = Path(__file__).parents[1] / 'src/top/intono/fw/src/scale.rs'
     good = encode([0, 100000, 701955], 1901955)
     path = tmp_path / 'good.tscale'
     path.write_bytes(good)

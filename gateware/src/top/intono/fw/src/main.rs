@@ -666,7 +666,7 @@ fn write_static_text(
                 write_text(display, column, row, label);
             }
         }
-        write_text(display, 20, 1, "TUNER");
+        write_text(display, 20, 1, "INTONO");
     }
     ui_text::field(
         9,
@@ -759,7 +759,7 @@ impl MenuSnapshot {
     fn from_options(opts: &Opts) -> Self {
         let page = opts.tracker.page.value;
         let page_label = match page {
-            Page::Tuner => "TUNER",
+            Page::Tuner => "INTONO",
             Page::Calibrate => "CAL",
             Page::Verify => "CHECK",
             Page::Profiles => "PROFILES",

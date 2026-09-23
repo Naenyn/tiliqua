@@ -6,7 +6,7 @@ import math
 
 
 def test_calibration_uses_settled_policy_without_changing_other_inputs():
-    firmware=Path(__file__).parents[1]/'src/top/tuner/fw/src'
+    firmware=Path(__file__).parents[1]/'src/top/intono/fw/src'
     main=(firmware/'main.rs').read_text()
     selection=main.split('let (hz,qualified,sequence,window_age_ms,end_age_ms)=')[1].split('ChannelMeasurement')[0]
     assert 'if calibration.active() && input==calibration.input' in selection

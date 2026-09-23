@@ -12,8 +12,8 @@ from amaranth import Module, unsigned
 from amaranth.lib.memory import Memory
 from amaranth.sim import Simulator
 
-from top.tuner.display import TunerOverlay
-from top.tuner.renderer import TextPlane, Panel
+from top.intono.display import TunerOverlay
+from top.intono.renderer import TextPlane, Panel
 from test_tuner_renderer import atlas, text_cells, reference_pixel
 
 

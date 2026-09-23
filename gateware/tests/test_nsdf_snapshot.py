@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 from amaranth.sim import Simulator
-from top.tuner.experiment.nsdf_snapshot import NsdfSnapshot
+from top.intono.experiment.nsdf_snapshot import NsdfSnapshot
 
 
 @pytest.mark.parametrize('samples', [

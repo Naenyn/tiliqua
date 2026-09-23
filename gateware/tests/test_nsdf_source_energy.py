@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 from amaranth.sim import Simulator
-from top.tuner.experiment.nsdf_source_energy import NsdfSourceEnergy
+from top.intono.experiment.nsdf_source_energy import NsdfSourceEnergy
 
 
 @pytest.mark.parametrize('block_size,blocks,count',[(1,1,9),(8,3,83),(512,40,21504)])

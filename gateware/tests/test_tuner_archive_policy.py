@@ -8,7 +8,7 @@ import pytest
 
 @pytest.mark.parametrize('external',[False,True])
 def test_archive_disables_spread_without_changing_clocks_or_storage(external):
-    source=Path(__file__).parents[1]/'src/top/tuner/top.py'
+    source=Path(__file__).parents[1]/'src/top/intono/top.py'
     tree=ast.parse(source.read_text())
     callback=next(n for n in tree.body if isinstance(n,ast.FunctionDef)
                   and n.name=='configure_archive')

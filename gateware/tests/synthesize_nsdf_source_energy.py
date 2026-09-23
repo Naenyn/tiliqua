@@ -5,7 +5,7 @@ import subprocess
 from amaranth import Value
 from amaranth.back import rtlil
 from amaranth.lib import wiring
-from top.tuner.experiment.nsdf_source_energy import NsdfSourceEnergy
+from top.intono.experiment.nsdf_source_energy import NsdfSourceEnergy
 
 
 if __name__=='__main__':

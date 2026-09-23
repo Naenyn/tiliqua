@@ -7,7 +7,7 @@ valid quiet audio. Keep that limitation visible before production integration.
 import numpy as np
 import pytest
 from scipy.signal import lfilter
-from top.tuner.experiment.nsdf_coefficients import coefficients
+from top.intono.experiment.nsdf_coefficients import coefficients
 
 
 def rms(x):

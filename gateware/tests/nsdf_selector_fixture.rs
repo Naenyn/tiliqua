@@ -1,4 +1,4 @@
-#[path="../src/top/tuner/fw/src/nsdf_select.rs"] mod selector;
+#[path="../src/top/intono/fw/src/nsdf_select.rs"] mod selector;
 use std::io::{self,BufRead};
 fn main() {
     for low in [false,true] {

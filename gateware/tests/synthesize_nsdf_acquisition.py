@@ -5,7 +5,7 @@ import subprocess
 from amaranth import Value
 from amaranth.back import rtlil
 from amaranth.lib import wiring
-from top.tuner.experiment.nsdf_acquisition import NsdfAcquisition
+from top.intono.experiment.nsdf_acquisition import NsdfAcquisition
 from nsdf_filter_budget import coefficients
 
 if __name__=='__main__':

@@ -3,9 +3,9 @@
 import pytest
 from amaranth.sim import Simulator
 
-from top.tuner.display import FONT_INDEX, Peripheral, TunerOverlay
-from top.tuner.font_9x15 import MENU_FONT_BOLD, MENU_FONT_NORMAL
-from top.tuner.renderer import FrameExchange
+from top.intono.display import FONT_INDEX, Peripheral, TunerOverlay
+from top.intono.font_9x15 import MENU_FONT_BOLD, MENU_FONT_NORMAL
+from top.intono.renderer import FrameExchange
 
 
 @pytest.mark.parametrize("cpu_period,pixel_period", [(1e-6, 1.7e-6), (1.7e-6, 1e-6), (1e-6, 1.01e-6)])

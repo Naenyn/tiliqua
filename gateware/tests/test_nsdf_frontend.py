@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 from amaranth.sim import Simulator
-from top.tuner.experiment.nsdf_frontend import NsdfFrontend
+from top.intono.experiment.nsdf_frontend import NsdfFrontend
 
 
 @pytest.mark.parametrize('tap_count',[5,37])

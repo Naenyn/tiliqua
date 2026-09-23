@@ -1,5 +1,5 @@
 use std::io::{self,BufRead};
-#[path="../src/top/tuner/fw/src/nsdf_resolve.rs"] mod resolve;
+#[path="../src/top/intono/fw/src/nsdf_resolve.rs"] mod resolve;
 fn main() {
     let display=std::env::args().any(|arg|arg=="display");
     for line in io::stdin().lock().lines() {

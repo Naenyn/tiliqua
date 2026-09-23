@@ -1,4 +1,4 @@
-#[path="../../../top/tuner/fw/src/options.rs"] mod options;
+#[path="../../../top/intono/fw/src/options.rs"] mod options;
 use opts::*;
 use strum::IntoEnumIterator;
 

@@ -1,5 +1,5 @@
 use std::io::{self,BufRead};
-#[path="../src/top/tuner/fw/src/nsdf_guard.rs"] mod guard;
+#[path="../src/top/intono/fw/src/nsdf_guard.rs"] mod guard;
 fn main() {
     for line in io::stdin().lock().lines() {
         let line=line.unwrap();

@@ -39,8 +39,8 @@ type Journal=FlashOptionsPersistence<Flash,384>;
 fn open(flash:&Flash)->Journal {Journal::with_buffer(flash.clone(),0..8192)}
 const KEY:u32=0x54555031;
 
-#[path="../../../top/tuner/fw/src/note_pattern.rs"] mod tuner_notes;
-#[path="../../../top/tuner/fw/src/quantizer_setup.rs"] mod tuner_setup;
+#[path="../../../top/intono/fw/src/note_pattern.rs"] mod tuner_notes;
+#[path="../../../top/intono/fw/src/quantizer_setup.rs"] mod tuner_setup;
 #[test] fn tuner_note_record_survives_gc_without_changing_profiles() {
     let f=expanded_flash();
     let mut storage=ExpandedJournal::with_reserved_buffer(f.clone(),0..8192,0..24576).unwrap();

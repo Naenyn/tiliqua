@@ -1,28 +1,28 @@
 //! Host integration of the real live adapter with simulated CSR acknowledgments.
-#[path = "../src/top/tuner/fw/src/calibration_live.rs"]
+#[path = "../src/top/intono/fw/src/calibration_live.rs"]
 mod calibration_live;
-#[path = "../src/top/tuner/fw/src/note_pattern.rs"]
+#[path = "../src/top/intono/fw/src/note_pattern.rs"]
 mod note_pattern;
-#[path = "../src/top/tuner/fw/src/nsdf_publish.rs"]
+#[path = "../src/top/intono/fw/src/nsdf_publish.rs"]
 mod nsdf_publish;
-#[path = "../src/top/tuner/fw/src/nsdf_sequence.rs"]
+#[path = "../src/top/intono/fw/src/nsdf_sequence.rs"]
 mod nsdf_sequence;
-#[path = "../src/top/tuner/fw/src/calibration.rs"]
+#[path = "../src/top/intono/fw/src/calibration.rs"]
 mod oscillator_calibration;
-#[path = "../src/top/tuner/fw/src/pitch_math.rs"]
+#[path = "../src/top/intono/fw/src/pitch_math.rs"]
 mod pitch_math;
-#[path = "../src/top/tuner/fw/src/pitch_units.rs"]
+#[path = "../src/top/intono/fw/src/pitch_units.rs"]
 mod pitch_units;
-#[path = "../src/top/tuner/fw/src/scale.rs"]
+#[path = "../src/top/intono/fw/src/scale.rs"]
 mod scale;
-#[path = "../src/top/tuner/fw/src/serial_report.rs"]
+#[path = "../src/top/intono/fw/src/serial_report.rs"]
 mod serial_report;
 // The same bipolar controller and signed conversion used by the live firmware.
-#[path = "../src/top/tuner/fw/src/calibration/bipolar.rs"]
+#[path = "../src/top/intono/fw/src/calibration/bipolar.rs"]
 mod bipolar;
-#[path = "../src/top/tuner/fw/src/calibration/bipolar_storage.rs"]
+#[path = "../src/top/intono/fw/src/calibration/bipolar_storage.rs"]
 mod bipolar_storage;
-#[path = "../src/top/tuner/fw/src/calibration/bipolar_sweep.rs"]
+#[path = "../src/top/intono/fw/src/calibration/bipolar_sweep.rs"]
 mod bipolar_sweep;
 mod options {
     #[derive(Clone, Copy, Debug, Default, PartialEq)]

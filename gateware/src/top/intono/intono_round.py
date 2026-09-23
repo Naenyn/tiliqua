@@ -9,7 +9,7 @@ import runpy
 
 
 if __name__ == "__main__":
-    os.environ["TILIQUA_TUNER_MODELINE"] = "720x720p60r2"
+    os.environ["TILIQUA_INTONO_MODELINE"] = "720x720p60r2"
     # Keep the round archive separate from the standard HDMI build directory.
-    os.environ["TILIQUA_TUNER_NAME"] = "TUNER-ROUND"
+    os.environ["TILIQUA_INTONO_NAME"] = "INTONO-ROUND"
     runpy.run_path(str(Path(__file__).with_name("top.py")), run_name="__main__")

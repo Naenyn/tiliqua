@@ -10,7 +10,7 @@ from amaranth.back import rtlil
 from test_nsdf_streaming_integration import StreamingProbe
 from amaranth import Value
 from amaranth.lib import wiring
-from top.tuner.experiment.nsdf_frontend import NsdfFrontend
+from top.intono.experiment.nsdf_frontend import NsdfFrontend
 from nsdf_filter_budget import coefficients
 
 if __name__=='__main__':

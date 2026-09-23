@@ -4,8 +4,8 @@ from amaranth import Elaboratable, Module
 from amaranth.sim import Simulator
 from nsdf_filter_budget import coefficients
 from nsdf_direct_rtl import NsdfDirect
-from top.tuner.experiment.nsdf_acquisition import NsdfAcquisition
-from top.tuner.experiment.nsdf_snapshot import NsdfSnapshot
+from top.intono.experiment.nsdf_acquisition import NsdfAcquisition
+from top.intono.experiment.nsdf_snapshot import NsdfSnapshot
 
 
 class StreamingProbe(Elaboratable):

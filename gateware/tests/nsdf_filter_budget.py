@@ -2,7 +2,7 @@
 import json
 import numpy as np
 from scipy.signal import firwin, freqz
-from top.tuner.experiment.nsdf_coefficients import coefficients
+from top.intono.experiment.nsdf_coefficients import coefficients
 
 
 def report():

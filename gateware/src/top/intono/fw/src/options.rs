@@ -26,7 +26,7 @@ pub enum Page {
 impl From<Page> for &'static str {
     fn from(page: Page) -> Self {
         match page {
-            Page::Tuner => "TUNER",
+            Page::Tuner => "INTONO",
             Page::Calibrate => "CAL",
             Page::Verify => "CHECK",
             Page::Profiles => "PROFILES",

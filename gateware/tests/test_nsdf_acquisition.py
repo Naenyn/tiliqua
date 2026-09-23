@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 from amaranth.sim import Simulator
-from top.tuner.experiment.nsdf_acquisition import NsdfAcquisition
+from top.intono.experiment.nsdf_acquisition import NsdfAcquisition
 from nsdf_filter_budget import coefficients
 
 

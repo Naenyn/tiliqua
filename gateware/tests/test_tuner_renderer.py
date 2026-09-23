@@ -11,8 +11,8 @@ from amaranth import Module, Signal, unsigned
 from amaranth.lib.memory import Memory
 from amaranth.sim import Simulator
 
-from top.tuner.font_9x15 import MENU_FONT_BOLD, MENU_FONT_NORMAL
-from top.tuner.renderer import Panel, TextCompositor, TextPlane, divide_coordinate
+from top.intono.font_9x15 import MENU_FONT_BOLD, MENU_FONT_NORMAL
+from top.intono.renderer import Panel, TextCompositor, TextPlane, divide_coordinate
 
 
 def atlas():

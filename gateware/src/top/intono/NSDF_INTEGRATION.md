@@ -80,7 +80,7 @@ From `gateware`, with the configured Python, Rust and FPGA toolchains:
 
 ```sh
 PYTHONPATH=src TUNER_NSDF_TESTS=/path/to/nsdf-reference/gateware/tests python -m pytest -q tests/test_nsdf_acquisition.py tests/test_nsdf_snapshot.py tests/test_nsdf_frontend.py tests/test_nsdf_streaming_integration.py tests/test_nsdf_peripheral.py tests/test_nsdf_direct_rtl.py tests/test_nsdf_banked_probe.py tests/test_nsdf_shared_history.py tests/test_nsdf_trace_analysis.py tests/test_spectral_reference.py
-PYTHONPATH=src TILIQUA_TUNER_NSDF=1 python src/top/tuner/top.py build --hw r5
+PYTHONPATH=src TILIQUA_TUNER_NSDF=1 python src/top/intono/top.py build --hw r5
 python tests/nsdf_trace_analysis.py /path/to/serial.log
 ```
 

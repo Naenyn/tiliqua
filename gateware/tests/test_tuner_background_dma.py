@@ -2,7 +2,7 @@
 import pytest
 from amaranth import Module, Signal, ResetSignal
 from amaranth.sim import Simulator
-from top.tuner.background import BackgroundExchange, BackgroundLayout, SceneExchange
+from top.intono.background import BackgroundExchange, BackgroundLayout, SceneExchange
 from tiliqua.video.framebuffer import DMAFramebuffer
 from tiliqua.video.palette import ColorPalette
 

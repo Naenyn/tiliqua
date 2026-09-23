@@ -9,9 +9,9 @@ mod options {
         Forgiving,
     }
 }
-#[path="../src/top/tuner/fw/src/scale.rs"] mod scale;
-#[path="../src/top/tuner/fw/src/calibration.rs"] mod oscillator_calibration;
-#[path="../src/top/tuner/fw/src/calibration/bipolar.rs"] mod bipolar;
+#[path="../src/top/intono/fw/src/scale.rs"] mod scale;
+#[path="../src/top/intono/fw/src/calibration.rs"] mod oscillator_calibration;
+#[path="../src/top/intono/fw/src/calibration/bipolar.rs"] mod bipolar;
 use std::io::{self,BufRead};
 fn main() {
     for line in io::stdin().lock().lines() {

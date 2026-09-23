@@ -1,7 +1,7 @@
 """Exercise byte-wide CSR commands and frozen signed score readback."""
 import numpy as np
 from amaranth.sim import Simulator
-from top.tuner.experiment.nsdf_peripheral import Peripheral
+from top.intono.experiment.nsdf_peripheral import Peripheral
 
 
 def test_diagnostic_csr_frame_handoff():
@@ -76,7 +76,7 @@ def test_diagnostic_csr_frame_handoff():
 def test_extended_low_scores_do_not_alias_at_512_or_sample_address(monkeypatch):
     # Short FIR only accelerates history warm-up. Exercise the REAL CSR and
     # enlarged score RAM, including every high address and the inspect selector.
-    monkeypatch.setattr('top.tuner.experiment.nsdf_peripheral.coefficients',lambda:[131071])
+    monkeypatch.setattr('top.intono.experiment.nsdf_peripheral.coefficients',lambda:[131071])
     dut=Peripheral()
     samples=np.random.default_rng(829).integers(-15000,15000,22000)
     async def write(ctx,address,value):

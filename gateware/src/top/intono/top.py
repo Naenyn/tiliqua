@@ -34,7 +34,7 @@ except ImportError:
 
 
 def configure_archive(archiver):
-    """TUNER-specific clock policy; do not change other bitstreams' defaults."""
+    """INTONO-specific clock policy; do not change other bitstreams' defaults."""
     archiver.with_option_storage(size=24576)
     if archiver.external_pll_config is not None:
         archiver.external_pll_config.spread_spectrum = 0.0
@@ -156,26 +156,26 @@ class TunerSoc(TiliquaSoc):
 
 if __name__ == "__main__":
     this_path = os.path.dirname(os.path.realpath(__file__))
-    modeline = os.getenv("TILIQUA_TUNER_MODELINE", "1280x720p60")
+    modeline = os.getenv("TILIQUA_INTONO_MODELINE", "1280x720p60")
     # Qualified placements for the shared-text renderer. The serializer has a
     # tighter routing constraint on the high-clock HDMI target.
     # Seed 15 became marginal after adding MIDI reception (the 5x DVI domain
     # missed timing in one placement). Seed 18 was routed and hardware-checked
     # on the non-circular R5 target with HDMI lock restored.
     default_seed = "13" if modeline == "720x720p60r2" else "18"
-    seed = int(os.getenv("TILIQUA_TUNER_SEED", default_seed))
-    name = os.getenv("TILIQUA_TUNER_NAME", "TUNER")
+    seed = int(os.getenv("TILIQUA_INTONO_SEED", default_seed))
+    name = os.getenv("TILIQUA_INTONO_NAME", "INTONO")
     top_level_cli(
         TunerSoc,
         path=this_path,
         # Display orientation is a build-time layout decision, just as it is
         # for the REZO family.  The normal target is always the unrotated HDMI
-        # preview; tuner_round.py explicitly selects the physically rotated
+        # preview; intono_round.py explicitly selects the physically rotated
         # production panel.  Do not infer this from mutable bootloader state.
         argparse_callback=lambda parser: parser.set_defaults(
             modeline=modeline, name=name, fs_192khz=True),
         archiver_callback=configure_archive,
         # A generated archive must not silently contain timing-failed logic.
-        # TILIQUA_TUNER_SEED permits explicit, reproducible qualification runs.
+        # TILIQUA_INTONO_SEED permits explicit, reproducible qualification runs.
         nextpnr_opts=f"--seed {seed}",
     )

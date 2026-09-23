@@ -7,7 +7,7 @@ import re
 
 def test_calibration_menu_overrides_match_option_order():
     """Guard position-based snapshot overrides when CAL fields are removed."""
-    firmware = Path(__file__).parents[1] / "src/top/tuner/fw/src"
+    firmware = Path(__file__).parents[1] / "src/top/intono/fw/src"
     options = (firmware / "options.rs").read_text()
     fields = re.findall(r"pub (\w+):", options.split("pub struct CalibrateOpts {")[1].split("}")[0])
     assert fields == ["input", "output", "zero_note", "policy", "run", "accept", "discard", "profiles"]
@@ -30,7 +30,7 @@ def test_live_calibration_protocol_and_profile_math(tmp_path):
 
 
 def test_all_menu_pages_fit_without_hidden_scrolling():
-    firmware = Path(__file__).parents[1] / "src/top/tuner/fw/src"
+    firmware = Path(__file__).parents[1] / "src/top/intono/fw/src"
     main = (firmware / "main.rs").read_text()
     assert "entries: [Option<MenuEntrySnapshot>; 9]" in main
     snapshot = main.split("impl MenuSnapshot {")[1].split("#[inline(never)]")[0]
@@ -46,7 +46,7 @@ def test_all_menu_pages_fit_without_hidden_scrolling():
 
 
 def test_scale_editor_and_routes_share_configuration_but_only_routes_run():
-    firmware = Path(__file__).parents[1] / "src/top/tuner/fw/src"
+    firmware = Path(__file__).parents[1] / "src/top/intono/fw/src"
     options=(firmware/'options.rs').read_text()
     fields=re.findall(r'pub (\w+):',options.split('pub struct QuantizerOpts {')[1].split('}')[0])
     assert fields==['output','scale','root','transpose','mapping','notes','setups','routes']
@@ -68,7 +68,7 @@ def test_scale_editor_and_routes_share_configuration_but_only_routes_run():
 
 
 def test_calibration_children_are_not_top_level_modes_and_refine_is_automatic():
-    firmware = Path(__file__).parents[1] / "src/top/tuner/fw/src"
+    firmware = Path(__file__).parents[1] / "src/top/intono/fw/src"
     options = (firmware / 'options.rs').read_text()
     for page in ['Verify', 'Profiles', 'QuantNotes', 'QuantSetups']:
         assert f'#[strum(disabled)]\n    {page},' in options
@@ -80,7 +80,7 @@ def test_calibration_children_are_not_top_level_modes_and_refine_is_automatic():
 
 
 def test_note_slots_fit_menu_and_legacy_slot_is_preserved():
-    firmware=Path(__file__).parents[1]/'src/top/tuner/fw/src'
+    firmware=Path(__file__).parents[1]/'src/top/intono/fw/src'
     options=(firmware/'options.rs').read_text()
     fields=re.findall(r'pub (\w+):',options.split('pub struct QuantNotesOpts {')[1].split('}')[0])
     assert fields==['octave','note','toggle','clear','fill','learn','save','load','slot']
@@ -99,7 +99,7 @@ def test_note_slots_fit_menu_and_legacy_slot_is_preserved():
 
 
 def test_routes_do_not_consume_audio_or_start_a_second_playback_engine():
-    main = (Path(__file__).parents[1] / "src/top/tuner/fw/src/main.rs").read_text()
+    main = (Path(__file__).parents[1] / "src/top/intono/fw/src/main.rs").read_text()
     assert 'static PLAYBACK:' not in main
     assert 'Owner::Play' not in main
     assert 'Owner::Tuner' not in main

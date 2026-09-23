@@ -105,7 +105,7 @@ firmware/archive. Normal release is R5, 1280x720p60 (unrotated), 192 kHz,
 
 From `gateware`, with the project's Python environment and FPGA/Rust tools on
 PATH, build with `PYTHONPATH=src TILIQUA_TUNER_SEED=17
-python src/top/tuner/top.py build --hw r5`. Add `--fw-only` only when reusing
+python src/top/intono/top.py build --hw r5`. Add `--fw-only` only when reusing
 qualified, unchanged hardware. Never use it to qualify a gateware change.
 Archives are under `gateware/build/tuner-r5/`. Preserve option storage; archives
 contain bitstream, firmware and manifest, not a replacement options payload.

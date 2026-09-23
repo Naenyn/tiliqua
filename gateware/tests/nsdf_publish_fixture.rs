@@ -1,4 +1,4 @@
-#[path="../src/top/tuner/fw/src/nsdf_publish.rs"] mod publish;
+#[path="../src/top/intono/fw/src/nsdf_publish.rs"] mod publish;
 use publish::{Frame,Pitch,publish};
 fn f(hz:u32,time:u64,count:u32)->Frame {Frame {mhz:hz,count,completed:time,request_ms:4,qualified:true}}
 fn main() {

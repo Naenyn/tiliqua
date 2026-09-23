@@ -2,7 +2,7 @@ import pytest
 from amaranth import Module
 from amaranth.sim import Simulator
 from amaranth_stdio.serial import AsyncSerialRX
-from top.tuner.experiment.buffered_uart import Peripheral
+from top.intono.experiment.buffered_uart import Peripheral
 
 
 @pytest.mark.parametrize('divisor', [16, 31])

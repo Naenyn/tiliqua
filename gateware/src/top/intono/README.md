@@ -1,4 +1,4 @@
-# TUNER proof of concept
+# INTONO
 
 The current [oscillator compatibility qualification](OSCILLATOR_QUALIFICATION.md)
 records physical tuning/calibration coverage and its limits, including the
@@ -332,12 +332,12 @@ From `gateware/`:
 PYTHONPATH=src pdm run pytest tests/test_tuner.py -q
 PYTHONPATH=src pdm run pytest tests/test_tuner_display.py tests/test_tuner_renderer.py -q
 PYTHONPATH=src pdm run pytest tests/test_tuner_frames.py -q
-PYTHONPATH=src pdm tuner build --hw r5
-PYTHONPATH=src pdm tuner_round build --hw r5
+PYTHONPATH=src pdm intono build --hw r5
+PYTHONPATH=src pdm intono_round build --hw r5
 ```
 
-`tuner` is the fixed, unrotated 1280x720 HDMI development target.
-`tuner_round` produces a separate `TUNER-ROUND` artifact for the fixed 720x720
+`intono` is the fixed, unrotated 1280x720 HDMI development target.
+`intono_round` produces a separate `INTONO-ROUND` artifact for the fixed 720x720
 production-panel target and compensates for the display's physical 90-degree
 mounting. Keeping these as explicit artifacts prevents mutable bootloader video
 state from selecting the wrong UI transform.

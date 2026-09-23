@@ -7,9 +7,9 @@ from amaranth.hdl import Fragment
 from amaranth.lib.memory import Memory
 from amaranth.sim import Simulator
 
-from top.tuner.display import FONT, FONT_CHARS, FONT_INDEX, Peripheral, TunerOverlay
-from top.tuner.font_9x15 import MENU_FONT_BOLD, MENU_FONT_NORMAL
-from top.tuner.top import TunerSoc
+from top.intono.display import FONT, FONT_CHARS, FONT_INDEX, Peripheral, TunerOverlay
+from top.intono.font_9x15 import MENU_FONT_BOLD, MENU_FONT_NORMAL
+from top.intono.top import TunerSoc
 
 
 def test_blank_backdrop_keeps_text_and_restores_cached_pixels():
