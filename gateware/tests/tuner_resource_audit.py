@@ -8,7 +8,7 @@ from pathlib import Path
 def group(name):
     for fragment,label in [('.mainram.','cpu_working_ram'),('.cpu.','cpu'),
         ('.fb.','framebuffer_fifo'),('.palette_periph.','palette'),
-        ('tuner_display.','display'),('.period_verifier.','legacy_verifier'),
+        ('tuner_display.','display'),
         ('tuner_periph.lane','measurement_lanes'),('.pmod0.','codec_calibration')]:
         if fragment in name:return label
     return 'other'

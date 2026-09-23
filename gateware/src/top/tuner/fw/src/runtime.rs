@@ -4,7 +4,7 @@
 //! scale tables, and renderer state must not become part of the foreground
 //! loop's stack frame just because the menu grows.
 
-use crate::options::{DisplayMode, Opts};
+use crate::options::{CalibrationPolicy, DisplayMode, Opts};
 
 pub const TUNER_CHANNELS: usize = 4;
 
@@ -28,6 +28,7 @@ pub struct RuntimeControls {
     pub reference_hz: u16,
     pub calibration_input: u8,
     pub calibration_output: u8,
+    pub calibration_policy: CalibrationPolicy,
     pub target_millicents: i32,
     pub verify_scan: bool,
     pub verify_points: bool,
@@ -39,7 +40,7 @@ impl RuntimeControls {
         Self {
             verify_scan: true,
             verify_points: false,
-            zero_note: opts.calibrate.zero_note.value.clamp(12,108),
+            zero_note: opts.calibrate.zero_note.value.clamp(12, 108),
             mode: if opts.tracker.page.value == crate::options::Page::Calibrate {
                 OperatingMode::Calibrator
             } else if opts.tracker.page.value == crate::options::Page::Verify {
@@ -48,12 +49,20 @@ impl RuntimeControls {
                 OperatingMode::Profiles
             } else if opts.tracker.page.value == crate::options::Page::Play {
                 OperatingMode::Play
-            } else if matches!(opts.tracker.page.value,crate::options::Page::Quantizer|crate::options::Page::QuantNotes|crate::options::Page::QuantSetups) {
+            } else if matches!(
+                opts.tracker.page.value,
+                crate::options::Page::Quantizer
+                    | crate::options::Page::QuantNotes
+                    | crate::options::Page::QuantSetups
+            ) {
                 OperatingMode::Quantizer
-            } else { OperatingMode::Tuner },
+            } else {
+                OperatingMode::Tuner
+            },
             target_millicents: 6000000,
             calibration_input: opts.calibrate.input.value,
             calibration_output: opts.calibrate.output.value,
+            calibration_policy: opts.calibrate.policy.value,
             tuner_input: opts.tuner.input.value,
             display_mode: opts.tuner.display.value,
             reference_hz: opts.settings.reference.value,

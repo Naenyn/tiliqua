@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 def select(scores,fs,minimum,maximum,refine=True,fallback=False,legacy_range_first=False,
-           refine_quality=False,reject_early_outside=False):
+           refine_quality=False,reject_early_outside=False,relative_cutoff=.9):
     values=[v/(1<<20) for v in scores];last=len(values)-1
     peaks=[];skipped=False;best=None
     primary_last=min(last,301 if fs==6000 else 321) if refine_quality else last
@@ -37,7 +37,7 @@ def select(scores,fs,minimum,maximum,refine=True,fallback=False,legacy_range_fir
         if not legacy_range_first or minimum*(1-1e-6)<=hz<=maximum*(1+1e-6):
             candidates.append((lag,height))
     if not candidates:return None
-    cutoff=.9*max(height for _,height in candidates)
+    cutoff=relative_cutoff*max(height for _,height in candidates)
     for lag,height in candidates:
         if reject_early_outside and height>=.8 and not minimum*(1-1e-6)<=fs/lag<=maximum*(1+1e-6):
             return None
@@ -92,7 +92,8 @@ def decode(lines):
             result=select(scores,header['fs'],20 if low else 600,1500 if low else 20000,
                           legacy_range_first=True)
             rms=math.sqrt(header['energy']/header['n'])*(2 if header['scaled'] else 1)
-            if result is not None:result['qualified'] &= not header['clipped'] and rms>2
+            if result is not None:
+                result['qualified'] &= (header['low'] or not header['clipped']) and rms>2
             yield dict(**header,rms_counts=rms,result=result)
             header=None;scores=[]
         elif header is not None:

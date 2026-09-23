@@ -73,7 +73,8 @@ def source_details(report,source):
         energy=report['energy']*(4 if report['scaled'] else 1)
         frame_n=report.get('frame_samples',604 if report['bank']=='low' else 674)
         source_power=(squares*n-total*total+n*n-1)//(n*n) if n else 0
-        expected=(bool(status&1) and endpoint_offset is not None and not report['clipped']
+        expected=(bool(status&1) and endpoint_offset is not None
+                  and (report['bank']=='low' or not report['clipped'])
                   and energy>4*frame_n
                   and energy*((400 if report.get('policy',0)>=4 else 2500)
                               if report['bank']=='low' else 100)>source_power*frame_n)

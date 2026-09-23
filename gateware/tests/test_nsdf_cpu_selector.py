@@ -178,7 +178,8 @@ def test_physical_cpu_reports_match_exported_scores(name):
         # using the new policy by test_cpu_selector_matches_model_without_frame_buffer.
         expected=select(scores,report['fs'],20 if low else 600,1500 if low else 20000,
                         fallback=True,legacy_range_first=cpu.get('policy','0')=='0')
-        if fixture.get('early_gate') and (report['rms_counts']<=2 or report['clipped']):
+        if fixture.get('early_gate') and (report['rms_counts']<=2 or
+                (report['clipped'] and not low)):
             expected=None
             assert int(cpu['reads'])==0
         else:assert 0<int(cpu['reads'])<=2*len(scores)+63
@@ -196,5 +197,6 @@ def test_physical_cpu_reports_match_exported_scores(name):
         tolerance=expected['hz']*(2**(.005/1200)-1)+.001
         assert abs(int(cpu['mhz'])/1000-expected['hz'])<tolerance
         assert abs(int(cpu['ppm'])/1000000-expected['clarity'])<3e-6
-        qualified=expected['qualified'] and report['rms_counts']>2 and not report['clipped']
+        qualified=(expected['qualified'] and report['rms_counts']>2 and
+                   (low or not report['clipped']))
         assert (cpu['ok']=='true')==qualified

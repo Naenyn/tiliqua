@@ -1,122 +1,181 @@
-//! Bounded, non-blocking export of a rejected point's pre-stop history.
+//! Bounded, non-blocking serial status reporting.
+//!
+//! Raw waveform export used to share the retired crossing detector's period
+//! verifier memory. NSDF diagnostics now come from the NSDF peripheral itself,
+//! so this module deliberately contains no detector or fallback capture path.
 use core::fmt::Write;
 use heapless::String;
 use tiliqua_pac as pac;
-use crate::pitch_verification::Diagnostic;
+
+fn snapshot_microvolts(packed: u32, counts_per_v: i32) -> Option<i32> {
+    if packed >> 31 == 0 || counts_per_v <= 0 {
+        return None;
+    }
+    let counts = packed as u16 as i16 as i32;
+    if counts.abs() >= 32760 {
+        return None;
+    }
+    if counts_per_v == 4000 {
+        Some(counts * 250)
+    } else {
+        i32::try_from(counts as i64 * 1_000_000 / counts_per_v as i64).ok()
+    }
+}
+
+fn write_snapshot<const N: usize>(line: &mut String<N>, packed: u32, counts_per_v: i32) {
+    if let Some(uv) = snapshot_microvolts(packed, counts_per_v) {
+        write!(line, " {}", uv).ok();
+    } else {
+        line.push_str(" X").ok();
+    }
+}
 
 #[derive(Default)]
 pub struct Trace {
-    pending:String<128>, offset:usize, index:u16, started:Option<u64>,
-    ready_offset:usize, ready_at:u64,
-    ready_line:String<128>,
-    // Four route configurations plus concurrent calibration diagnostics.
-    status_line:String<1536>,
-    capture_status:&'static str,
+    // Final automatic reports combine acquisition warnings, verification
+    // evidence, local repeatability, quality grading and recovery history.
+    // 1536 bytes was sufficient before graded policies/local checks, but a
+    // complete FORGIVING report can legitimately exceed it. This extra 512 B
+    // is diagnostic storage only; it does not duplicate calibration profiles
+    // or detector windows.
+    report: String<2048>,
+    offset: usize,
+    due_at: u64,
+    calibration_line: String<128>,
+    unstable_seen: bool,
 }
 
 impl Trace {
-    /// Retain UART ownership until the immutable status report is drained.
-    pub fn status_due(&self,now:u64)->bool {
-        self.started.is_none() && (self.ready_offset!=0 || now>=self.ready_at)
-    }
-    pub fn with_calibration(report:Option<(i32,i32,u8)>,hardware_bits:u8)->Self {
-        let mut trace=Self::default();
-        trace.capture_status="IDLE";
-        if let Some((gain,zero,bits))=report {
-            write!(trace.ready_line,"\nCAPTURE READY\nCAL SOURCE EEPROM OUT1 A={} B={} FBITS={} HWBITS={}\n",
-                gain,zero,bits,hardware_bits).ok();
+    pub fn with_calibration(report: Option<(i32, i32, u8)>, hardware_bits: u8) -> Self {
+        let mut trace = Self::default();
+        if let Some((gain, zero, bits)) = report {
+            write!(
+                trace.calibration_line,
+                "\nTUNER diagnostic link confirmed; ready for CAL.\nCAL SOURCE EEPROM OUT1 A={} B={} FBITS={} HWBITS={}\n",
+                gain, zero, bits, hardware_bits
+            )
+            .ok();
         } else {
-            write!(trace.ready_line,"\nCAPTURE READY\nCAL SOURCE DEFAULT - EEPROM UNAVAILABLE HWBITS={}\n",hardware_bits).ok();
+            write!(
+                trace.calibration_line,
+                "\nTUNER diagnostic link confirmed; ready for CAL.\nCAL SOURCE DEFAULT - EEPROM UNAVAILABLE HWBITS={}\n",
+                hardware_bits
+            )
+            .ok();
         }
         trace
     }
-    pub fn cancel(&mut self,tuner:&pac::TUNER_PERIPH) {
-        if self.started.is_none() {return;}
-        tuner.capture_control().write(|w|w.arm().clear_bit());
-        self.started=None;self.pending.clear();self.offset=0;self.index=0;
+
+    pub fn status_due(&self, now: u64, _calibration_active: bool) -> bool {
+        self.offset != 0 || now >= self.due_at
     }
-    pub fn arm(&mut self,tuner:&pac::TUNER_PERIPH,now:u64,raw:f32,factor:u8,d:Diagnostic) {
-        if self.started.is_some() {return;}
-        self.pending.clear();self.offset=0;self.index=0;self.ready_offset=0;
-        write!(self.pending,"\nCAPTURE BEGIN fs={} div={} lag={} raw={:.3} factor={} error={} span={}\n",
-            tuner.info().read().sample_rate().bits(),d.divisor,d.lag_q8,raw,factor,d.error,d.span).ok();
-        self.started=Some(now);
-        self.capture_status="ARMED";
-        tuner.capture_control().write(|w|w.arm().set_bit());
+
+    pub fn cancel(&mut self, _tuner: &pac::TUNER_PERIPH) {}
+
+    pub fn note_unstable(&mut self) {
+        self.unstable_seen = true;
     }
-    pub fn tick(&mut self,tuner:&pac::TUNER_PERIPH,uart:&pac::UART0,now:u64,cal:&crate::calibration_live::Live,
-                feedback:crate::runtime::ChannelMeasurement) {
-        let cal_active=cal.active();
-        // Confirm the host/bridge path before asking for a hardware scan.
-        // Repeat while idle so opening the reader after boot still works.
-        if self.started.is_none() && now>=self.ready_at {
-            if self.ready_offset==0 {
-                self.status_line.clear();
-                self.status_line.push_str(self.ready_line.as_str()).ok();
-                write!(self.status_line,"CAL STATUS {} ACTIVE={} IN={} OUT={} MV={} POINT={} COUNT={}\nCAPTURE STATUS {}\n",
-                    cal.status,cal_active,cal.input,cal.output,cal.millivolts,cal.point,cal.point_count,
-                    self.capture_status).ok();
-                if let Some(f)=cal.tracking_failure {
-                    write!(self.status_line,"CAL REJECT UV={} MC={}\n",f.rejected.microvolts,f.rejected.millicents).ok();
-                    if let Some(p)=f.neighbour {
-                        write!(self.status_line,"CAL PREVIOUS UV={} MC={}\n",p.microvolts,p.millicents).ok();
+
+    pub fn tick(
+        &mut self,
+        tuner: &pac::TUNER_PERIPH,
+        uart: &pac::UART0,
+        now: u64,
+        cal: &crate::calibration_live::Live,
+        feedback: crate::runtime::ChannelMeasurement,
+        counts_per_v: i32,
+    ) {
+        if self.offset == 0 {
+            if now < self.due_at {
+                return;
+            }
+            self.report.clear();
+            self.report.push_str(self.calibration_line.as_str()).ok();
+            write!(
+                self.report,
+                "CAL STATUS {} ACTIVE={} IN={} OUT={} MV={} POINT={} COUNT={}\nNSDF UNSTABLE_SEEN={}\nCV SNAP UV",
+                cal.status,
+                cal.active(),
+                cal.input,
+                cal.output,
+                cal.millivolts,
+                cal.point,
+                cal.point_count,
+                self.unstable_seen,
+            )
+            .ok();
+            write_snapshot(&mut self.report, tuner.quant_cv0().read().value().bits(), counts_per_v);
+            write_snapshot(&mut self.report, tuner.quant_cv1().read().value().bits(), counts_per_v);
+            write_snapshot(&mut self.report, tuner.quant_cv2().read().value().bits(), counts_per_v);
+            write_snapshot(&mut self.report, tuner.quant_cv3().read().value().bits(), counts_per_v);
+            self.report.push('\n').ok();
+            if let Some(f) = cal.tracking_failure {
+                write!(
+                    self.report,
+                    "CAL REJECT UV={} MC={}\n",
+                    f.rejected.microvolts, f.rejected.millicents
+                )
+                .ok();
+                if let Some(p) = f.neighbour {
+                    write!(
+                        self.report,
+                        "CAL PREVIOUS UV={} MC={}\n",
+                        p.microvolts, p.millicents
+                    )
+                    .ok();
+                }
+            }
+            let result = if crate::playback_visible() {
+                crate::write_playback_status(&mut self.report, feedback)
+            } else {
+                crate::serial_report::verification(&mut self.report, cal)
+            };
+            if result.is_err() {
+                self.report.clear();
+                writeln!(self.report, "\nSERIAL REPORT TRUNCATED").ok();
+                writeln!(
+                    self.report,
+                    "CAL STATUS {} ACTIVE={} POINT={}/{} MV={}",
+                    cal.status,
+                    cal.active(),
+                    cal.point,
+                    cal.point_count,
+                    cal.millivolts
+                )
+                .ok();
+                if let Some(auto) = cal.automatic.as_ref() {
+                    writeln!(
+                        self.report,
+                        "AUTO PHASE={} POLICY={} PASSES={}/8",
+                        auto.label(),
+                        auto.policy_label(),
+                        auto.passes
+                    )
+                    .ok();
+                    if let Some(scan) = auto.best.as_ref() {
+                        let quality = scan.quality();
+                        writeln!(
+                            self.report,
+                            "AUTO SUMMARY GRADE={} WORST_C={:.3} STABILITY_C={:.3} VERIFIED={}/{}",
+                            quality.grade.label(),
+                            quality.worst_cents(),
+                            quality.stability_cents(),
+                            scan.tested,
+                            scan.total
+                        )
+                        .ok();
                     }
                 }
-                if let Some((raw,factor))=cal.rejected_detector {
-                    write!(self.status_line,"CAL DETECTOR RAW={:.3} FACTOR={}\n",raw,factor).ok();
-                }
-                if let Some(d)=cal.rejected_verifier {
-                    write!(self.status_line,"CAL VERIFIER LAG={} DIV={} ERROR={} SPAN={}\n",d.lag_q8,d.divisor,d.error,d.span).ok();
-                }
-                let report=if crate::playback_visible() {crate::write_playback_status(&mut self.status_line,feedback)}
-                    else {crate::serial_report::verification(&mut self.status_line,cal)};
-                if report.is_err() {
-                    // Never transmit a silently truncated report as complete.
-                    self.status_line.clear();
-                    self.status_line.push_str("\nSERIAL REPORT OVERFLOW\n").ok();
-                }
-            }
-            let ready=self.status_line.as_bytes();
-            if uart.tx_ready().read().txe().bit() {
-                uart.tx_data().write(|w|unsafe {w.data().bits(ready[self.ready_offset].into())});
-                self.ready_offset+=1;
-                if self.ready_offset==ready.len() {
-                    self.ready_offset=0;self.ready_at=now.saturating_add(5000);
-                }
             }
         }
-        let Some(start)=self.started else {return;};
-        if now.saturating_sub(start)>180000 {
-            self.capture_status="TIMEOUT - NO COMPLETE EXPORT";
-            self.cancel(tuner);return;
-        }
-        if cal_active {return;}
-        let data=tuner.capture_data().read();
-        if !data.frozen().bit() {return;}
-        if !data.ready().bit() {
-            self.capture_status="UNAVAILABLE - HISTORY NOT FULL";
-            self.cancel(tuner);return;
-        }
-        // Never wait for USB/UART readiness. At most 64 bytes per 5ms UI tick;
-        // a one-byte UART can take about a minute for the complete capture.
-        for _ in 0..64 {
-            if !uart.tx_ready().read().txe().bit() {break;}
-            if self.offset==self.pending.len() {
-                self.pending.clear();self.offset=0;
-                if self.index<2048 {
-                    tuner.capture_control().write(|w|unsafe {w.arm().set_bit().address().bits(self.index)});
-                    // Allow the shared synchronous memory read to settle.
-                    let _=tuner.capture_data().read();
-                    let sample=tuner.capture_data().read().sample().bits();
-                    write!(self.pending,"{:04X}\n",sample).ok();
-                    self.index+=1;
-                } else if self.index==2048 {
-                    self.pending.push_str("CAPTURE END\n").ok();self.index+=1;
-                } else {self.capture_status="EXPORTED";self.cancel(tuner);break;}
+        if uart.tx_ready().read().txe().bit() {
+            uart.tx_data()
+                .write(|w| unsafe { w.data().bits(self.report.as_bytes()[self.offset].into()) });
+            self.offset += 1;
+            if self.offset == self.report.len() {
+                self.offset = 0;
+                self.due_at = now.saturating_add(5000);
             }
-            let byte=self.pending.as_bytes()[self.offset];
-            uart.tx_data().write(|w|unsafe {w.data().bits(byte.into())});
-            self.offset+=1;
         }
     }
 }

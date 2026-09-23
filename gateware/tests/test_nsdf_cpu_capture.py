@@ -42,6 +42,36 @@ def test_source_mode_requires_a_complete_validated_source_cycle():
         complete_cycle(''.join(with_source).replace('n=20480','n=20479'),require_source=True)
 
 
+def test_wave_capture_ignores_connection_mid_frame(monkeypatch,capsys):
+    records=[]
+    for ch in range(4):
+        for low in (False,True):
+            # Mock only cycle completion here, requiring a SOURCE boundary
+            # before parsing. Exact waveform replay has separate tests.
+            records.append(f'NSDF SOURCE ch={ch} low={str(low).lower()}\nNSDF WAVE END\n')
+    raw=('00000000\nNSDF WAVE END\n'+''.join(records)).encode()
+    chunks=iter(raw[i:i+13] for i in range(0,len(raw),13))
+    class Port:
+        closed=False
+        def __enter__(self):return self
+        def __exit__(self,*args):self.closed=True
+        def readline(self):return next(chunks)
+    port=Port();calls=[]
+    def analyze(text):
+        assert 'NSDF SOURCE ' in text
+        calls.append(text)
+        import re
+        return [dict(channel=int(ch),bank='low' if low=='true' else 'native')
+                for ch,low in re.findall(r'^NSDF SOURCE ch=(\d) low=(true|false)$',text,re.M)]
+    import analyze_nsdf_wave
+    monkeypatch.setattr(analyze_nsdf_wave,'analyze_wave',analyze)
+    monkeypatch.setitem(sys.modules,'serial',SimpleNamespace(Serial=lambda *a,**kw:port))
+    monkeypatch.setattr(sys,'argv',['capture_nsdf_cpu.py','fake-port','--wave'])
+    capture_nsdf_cpu.main()
+    assert len(calls)==8 and port.closed
+    assert capsys.readouterr().out==raw.decode()
+
+
 @pytest.mark.parametrize('error',[False,True])
 @pytest.mark.parametrize('fast',[False,True])
 def test_capture_handles_split_reads_and_closes_port(monkeypatch,capsys,error,fast):

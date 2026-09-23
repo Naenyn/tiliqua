@@ -9,11 +9,15 @@ from tuner_scale_import import encode,parse_scl
 
 
 def profile(version=2,count=129):
-    body=bytearray(36)
-    body[:12]=b'TUCP'+bytes([version,1,2,60,8,count,3 if version==2 else 0,0])
+    body=bytearray(48 if version==4 else 36)
+    body[:12]=b'TUCP'+bytes([version,1,2,60,8,count,0 if version==1 else 3,
+                             2 if version==4 else 0])
     body[12:20]=b'Generate'
+    if version==4:
+        struct.pack_into('<II',body,36,1234,567)
     for i in range(count):
-        uv=(-5_000_000+i*10_000_000//(count-1)) if version==2 else i*2_000_000//(count-1)
+        uv=(i*2_000_000//(count-1) if version==1 else
+            -5_000_000+i*(10_000_000 if version==2 else 13_000_000)//(count-1))
         body+=struct.pack('<ii',uv,6_000_000+uv*6//5)
     return bytes(body)+struct.pack('<I',zlib.crc32(body))
 
@@ -22,11 +26,12 @@ def reseal(body):return bytes(body[:-4])+struct.pack('<I',zlib.crc32(body[:-4]))
 
 
 def test_full_refined_profile_and_legacy_inspection():
-    for version,count in [(1,32),(2,121),(2,129)]:
+    for version,count in [(1,32),(2,121),(2,129),(3,129),(4,129)]:
         data=profile(version,count);r=decode(data)
         assert (r['kind'],r['name'],r['zero_note'])==('oscillator_profile','Generate','C4')
         assert len(r['points'])==count
-        assert r['limited_low']==r['limited_high']==(version==2)
+        assert r['limited_low']==r['limited_high']==(version!=1)
+        assert r['quality_grade']==(2 if version==4 else None)
         assert r['input']==1 and r['output']==2
         with pytest.raises(ValueError):scala_text(r)
 
@@ -46,7 +51,8 @@ def test_offline_rejection_matches_actual_firmware_codecs(tmp_path):
     here=Path(__file__).parent;exe=tmp_path/'library'
     subprocess.run([str(Path.home()/'.cargo/bin/rustc'),'--edition=2021','-O',
                     '-C','overflow-checks=yes',str(here/'tuner_library_fixture.rs'),'-o',str(exe)],check=True)
-    originals=[profile(),profile(1,32),encode([0,190_195,701_955],1_901_955),encode([0],1)]
+    originals=[profile(),profile(1,32),profile(3),profile(4),
+               encode([0,190_195,701_955],1_901_955),encode([0],1)]
     cases=[]
     for original in originals:
         cases.extend([original,original+b'\0'])

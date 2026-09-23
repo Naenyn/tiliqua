@@ -1,5 +1,14 @@
 //! Compare offline validators with the actual live firmware codecs.
 #![allow(dead_code)]
+mod options {
+    #[derive(Clone, Copy, Debug, Default, PartialEq)]
+    pub enum CalibrationPolicy {
+        #[default]
+        Auto,
+        Precision,
+        Forgiving,
+    }
+}
 #[path="../src/top/tuner/fw/src/scale.rs"] mod scale;
 #[path="../src/top/tuner/fw/src/calibration.rs"] mod oscillator_calibration;
 #[path="../src/top/tuner/fw/src/calibration/bipolar.rs"] mod bipolar;

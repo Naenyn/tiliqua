@@ -108,9 +108,16 @@ computer without using the encoder, but cannot load them into this build yet.
 4. Define versioned scale storage independently from oscillator profiles. Import
    into staging storage, validate completely, then publish while outputs are
    stopped. A failed import must leave the previous scale and profiles intact.
-5. Add TRS MIDI note learning/transposition. Conventional MIDI note learning
-   supplies twelve-tone intervals; it must not overwrite an imported microtonal
-   scale without an explicit user action.
+5. TRS MIDI note toggling is wired into the conventional two-octave editor:
+   open NOTES, choose A or B, press LEARN, and tap keys to turn their pitch
+   classes on or off. A fresh positive-velocity Note On toggles its note
+   modulo 12 in the chosen octave. Repeated Note Ons while a key is held do
+   nothing; Note Off or zero-velocity Note On releases it for the next tap.
+   LEARN toggles off on a second press or on leaving NOTES. CLEAR is optional.
+   A running selected output cannot be edited. The result remains in RAM until
+   the user explicitly saves it in a NOTES slot. This does not decode USB MIDI,
+   transpose routes, or alter imported microtonal scales. TRS MIDI
+   transposition remains future work.
 6. Evaluate USB MIDI hosting and future upstream USB mass-storage support
    separately for resource use, compatibility, and safe port/power ownership.
    Keep file transport separate from parsing and playback. Encoder editing is

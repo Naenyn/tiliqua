@@ -63,7 +63,7 @@ def reference(v):
     if ch>3 or n!=20480 or status!=(1|(ch<<2)):return False
     if not (-512<=offset<=512 if low else frame==seq and 0<=offset<=512):return False
     if abs(total)>n*32768 or q>n*(1<<30) or total*total>q*n:return False
-    if clipped or energy>samples*(1<<30):return False
+    if (clipped and not low) or energy>samples*(1<<30):return False
     power=(q*n-total*total+n*n-1)//(n*n)
     unscaled=energy*(4 if scaled else 1)
     result=unscaled>4*samples and unscaled*(400 if low else 100)>power*samples

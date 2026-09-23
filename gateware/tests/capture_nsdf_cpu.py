@@ -96,7 +96,11 @@ def main():
                         return
                 if args.wave and line=='NSDF WAVE END\n':
                     from analyze_nsdf_wave import analyze_wave
-                    reports=list(analyze_wave(''.join(fragments)))
+                    text=''.join(fragments)
+                    # Opening a live UART may land inside an old waveform.
+                    # Wait for a SOURCE boundary; never accept/stitch its tail.
+                    if not re.search(r'^NSDF SOURCE ',text,re.M):continue
+                    reports=list(analyze_wave(text))
                     if {(r['channel'],r['bank']) for r in reports} >= {
                             (ch,bank) for ch in range(4) for bank in ('native','low')}:
                         print('Validated waveforms and scores for all banks; disconnected.',file=sys.stderr)

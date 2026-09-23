@@ -880,12 +880,15 @@ additional actual-verifier RTL sine cases (7.6–20 kHz, including dense checks
 around 8 kHz, amplitudes 4000 and 20000 counts) all return factor 1. The hardware
 octave failure is therefore not yet reproduced or claimed fixed.
 
-The controller now performs a zero-signal preflight, then one strictly ascending
--5…+5 V pass. The preflight pitch is not inserted into the curve. Unmeasurable
+The controller now seeks a measurable reference from 0 V upward, then performs
+one strictly ascending -5…+5 V pass. The preflight pitch is not inserted into
+the curve. An inaudible 0 V starting pitch therefore does not fail calibration;
+the bounded search continues through +5 V. Unmeasurable
 leading points are skipped after their bounded measurement deadline; once
-acquisition starts, the first missing point ends the contiguous range. Zero
-must have been measured during that pass; the final repeatability check uses
-that point, retaining the 3-cent tolerance and five fresh qualified readings.
+acquisition starts, the first missing point ends the contiguous range. The
+discovered reference voltage must be measured during that pass; the final
+repeatability check returns to that point, retaining the 3-cent tolerance and
+five fresh qualified readings.
 The final output-disable acknowledgement still gates publication. Searching
 unmeasurable low points may take 5 seconds per point; worst-case acquisition is
 longer than the former outward scan, intentionally keeping confidence unchanged.
@@ -1101,6 +1104,24 @@ resources or sample buffers are used. Host tests cover noisy leading plateaus,
 all-flat rejection, interior flat/octave failures, initial octave failure,
 and provisional gaps. Firmware archive SHA-256:
 `3cf5dd1ecd80c0ba17d32479d39b0bf9c6b501cdc2773deaa6092f7856010058`.
+
+Castor & Pollux II exposed a second valid leading-boundary shape: it ignored
+negative CV, held its panel-set pitch across the entire negative region, then
+reset downward at 0 V before responding normally to positive 1 V/oct control.
+After a leading plateau has already been established, acquisition may now
+replace the provisional anchor with such a lower reading and continue looking
+for the first positive pitch step. The plateau itself is never stored. A lone
+downward or octave-sized reading without the preceding plateau remains a hard
+tracking failure, as do drops after two responsive points establish a curve.
+The final origin replay and automatic sampled verification remain mandatory.
+A host regression models the negative-CV dead zone. Once this behavior is
+proven, the upward pass now continues at the same density to the hardware-safe
++8 V ceiling, retaining at most 97 useful semitone points. This wider command
+path is scoped to measured profiles, their verification, and corrected
+playback; ordinary bipolar acquisition and unprofiled/nominal output remain
+-5..+5 V. Saturation, detector limits, or a signal gap still stop at the last
+contiguous measured boundary without extrapolation. The complete calibration
+fixture covers the extended plan and replay path.
 
 ### Serial result visibility
 

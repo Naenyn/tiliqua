@@ -1,13 +1,17 @@
 # Detector decision: close the alternative-algorithm experiment
 
-September 13 update: feature development is now on `codex/tuner`, using NSDF
-without the legacy pitch hardware. Four-output nominal QUANT is implemented.
+September 21 update: feature development is now on `codex/tuner`, using NSDF
+without the legacy pitch hardware. NSDF is unconditional in ordinary TUNER
+builds; the former `TILIQUA_TUNER_NSDF=1` experiment flag is no longer required,
+so a normal build cannot silently restore the retired detector. Four-output nominal QUANT is implemented.
 See [pause checkpoint](CHECKPOINT.md) for current qualification and remaining
 work; earlier branch names and pending multi-channel plans below are historical.
 
 **Current decision:** NSDF is the single pitch engine for tuner, CAL/VERIFY and
-optional PLAY audio checks on `codex/tuner-nsdf-integration`. The legacy detector
-and verifier have been removed from the NSDF FPGA configuration. Firmware
+optional PLAY audio checks on `codex/tuner`. On September 21, 2026, the legacy
+crossing detector, its verifier, their CSRs, firmware readers and source files
+were removed rather than merely disabled. There is no runtime selector, build
+flag, or synthesized fallback pitch engine. Firmware
 `4e13ffcc` passed hardware verification with the saved 97-point Local Parks
 profile: 192/192 scan targets, worst +3.82c, following +2.61c on the preceding
 combined-hardware build. A subsequent local check found only +0.21c residual
@@ -21,7 +25,8 @@ LUT4, 44/56 EBR and 14/28 DSP. CPU RAM remains 32 KiB. This reclaims 2 EBR and
 1 DSP versus the combined build, but NSDF remains more expensive than the
 original pre-experiment detector. Details and captures: `NSDF_INTEGRATION.md`.
 
-Everything below is the historical decision preceding that migration.
+Everything below is the historical decision preceding that migration. It is
+retained as an engineering record, not as a description of current code.
 
 ## Decision
 

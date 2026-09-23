@@ -31,6 +31,13 @@ fn main() {
     let moving=f(930490,110,2);let current=f(889312,115,3);
     assert_eq!(publish(current,moving,120).source,3);
     assert_eq!(publish::display(current,moving,120).mhz,889312);
+    // CAL prefers strict agreement, but a transient disagreement must not be
+    // converted into total signal loss. Its downstream averager decides
+    // whether successive independently qualified frames are stable.
+    let recovered=publish::calibration(current,moving,120);
+    assert_eq!((recovered.mhz,recovered.source),(889312,2));
+    assert_eq!(publish::calibration(n,l,120),publish(n,l,120));
+    assert_eq!(publish::calibration(empty,empty,120),Pitch::NONE);
     assert_eq!(publish::display(n,l,120).source,2);
     assert_eq!(publish::display(empty,l,120).source,1);
     assert_eq!(publish::display(n,l,357),Pitch::NONE);

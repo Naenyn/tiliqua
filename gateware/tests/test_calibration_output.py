@@ -104,3 +104,36 @@ def test_signed_envelope_all_payloads_and_negative_watchdog():
 
     sim.add_testbench(bench)
     sim.run()
+
+
+def test_asymmetric_extended_positive_envelope():
+    dut = CalibrationOutput(watchdog_cycles=8, maximum_counts=32000)
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+
+    async def command(ctx, value, enabled=True):
+        ctx.set(dut.command, (value & 0xffff) | (int(enabled) << 18))
+        ctx.set(dut.write, 1)
+        await ctx.tick()
+        ctx.set(dut.write, 0)
+        await ctx.tick()
+
+    async def bench(ctx):
+        ctx.set(dut.advance, 1)
+        for value in (-20000, 20001, 32000):
+            await command(ctx, 0, False)
+            await command(ctx, value)
+            assert ctx.get(dut.fault) == 0, value
+            assert ctx.get(dut.active) == 1, value
+            assert ctx.get(dut.value) == (value & 0xffff), value
+        await command(ctx, 0, False)
+        await command(ctx, 32001)
+        assert ctx.get(dut.fault) == 1
+        assert ctx.get(dut.active) == 0
+        await command(ctx, 0, False)
+        await command(ctx, -20001)
+        assert ctx.get(dut.fault) == 1
+        assert ctx.get(dut.active) == 0
+
+    sim.add_testbench(bench)
+    sim.run()

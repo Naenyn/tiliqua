@@ -94,3 +94,32 @@ is not the read/write DMA filesystem integration described by the newer upstream
 documentation. A live-host prototype must use compatible pinned gateware and
 Rust versions together; do not update this shared environment implicitly or
 claim current installed read-only support fulfills load/save requirements.
+
+## Resource check and MIDI transport (September 22)
+
+The TUNER build with a small, dedicated TRS MIDI receive FIFO and nine-row
+menu routes on R5 at 19,270/24,288 total LUT4s (79%), 45/56 EBRs (80%), and
+14/28 DSPs (50%). Its 60-MHz main clock closes at 66.39 MHz. This receiver
+reuses the board's
+dedicated 31.25-kbaud Type-A TRS MIDI input and existing serial decoder; it
+does not claim the USB-C port or source USB VBUS. Its first use is explicit
+Note On learning in the conventional two-octave editor, with no changes to
+running routes and no automatic flash write.
+
+For a reference point only, the repository's standalone, gateware-only
+`usb_host` MIDI-to-CV demo routes at 3,358/24,288 LUT4s (13%) and no EBR.
+That number includes its own codec and CV path, is **not** an incremental cost
+measurement when combined with TUNER, and says nothing about mass storage or
+FAT. Crucially, the demo hardwires VBUS on because it has no SoC Type-C CC
+negotiation. It must never be copied into this instrument as a USB host power
+policy. USB MIDI and USB MSC also need deliberate port ownership and sharing;
+the tiny TRS receiver is not a substitute for either one.
+
+The next USB feasibility experiment should add only the host controller and
+safe CC/VBUS ownership to an isolated copy of the TUNER design, synthesize it,
+and compare incremental LUT/EBR/clock utilization. Then evaluate MIDI class
+and MSC separately. The installed MSC stack is read-only, so even a successful
+fit would not yet deliver the requested thumb-drive save path. If the full
+write-capable stack cannot route with margin, keep the in-bitstream profile
+slots and use an explicit bootloader/service import/export design; do not
+silently reduce the requirement to import-only.

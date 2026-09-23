@@ -48,7 +48,9 @@ fn default_isr_handler() {
     let peripherals = unsafe { pac::Peripherals::steal() };
     let timer = Timer0::new(peripherals.TIMER0, pac::clock::sysclk());
     if timer.is_pending() {
-        unsafe { TIMER0(); }
+        unsafe {
+            TIMER0();
+        }
         timer.clear_pending();
     }
 }

@@ -1,5 +1,9 @@
 # TUNER proof of concept
 
+The current [oscillator compatibility qualification](OSCILLATOR_QUALIFICATION.md)
+records physical tuning/calibration coverage and its limits, including the
+Generate3 CORE/FUNDAMENTAL comparison on the latest detector build.
+
 ## Current interface — September 18, 2026
 
 See [automatic calibration](AUTO_CALIBRATION.md) and [routing](CONCURRENCY.md)
@@ -18,12 +22,24 @@ not enabled yet. Automatic calibration has host-test coverage and has completed
 a Generate3 FUNDAMENTAL hardware run with automatic verification. See the
 dated results in AUTO_CALIBRATION.md for the tested range and remaining checks.
 
-On the selected NSDF feature-development build (`TILIQUA_TUNER_NSDF=1`), both
+The selected NSDF detector is now unconditional on this branch: an ordinary
+TUNER build uses it without an experimental build flag. The old crossing
+detector and period verifier have been deleted, including their CSRs and
+firmware paths, so there is no selectable or accidental fallback. The shared
+`TunerPeripheral` now provides level/DC measurement plus calibrated CV output;
+NSDF owns every pitch result. Both
 tuner views, calibration, verification and playback audio checks use the shared
 NSDF detector. Calibration hardware trials have passed; the original detector
 and verifier are not synthesized in this configuration. See the [pause checkpoint](CHECKPOINT.md)
 for current feature status, qualification, remaining work and build instructions, and the [detector decision](DETECTOR_DECISION.md)
 for evidence, resource tradeoffs and the boundary between those consumers.
+
+TUNER intentionally uses the native signed 16-bit ASQ representation
+(4 counts/mV, nominal -8.192 to +8.19175 V). Its CV command protocol and NSDF
+frontend are both signed 16-bit interfaces. The top level rejects widened-ASQ
+builds so a copied build flag cannot silently change physical output gain or
+truncate detector input samples. Profiles remain stored in microvolts and are
+therefore independent of this internal representation.
 
 See [detector accuracy baseline](ACCURACY.md) for measured synthetic-signal
 limits and the low-level/DC-filter correction. Four-channel acquisition is
@@ -78,10 +94,26 @@ it; navigation does not stop it. Measurement freshness, settling, repeatability
 and timeouts are shared with automatic calibration. Check results do not modify
 or save the curve.
 
+CHECK's worst-error headline includes completed local repeat measurements;
+serial also reports the grid-only worst separately. Operation completion is
+not an accuracy pass: the final accuracy label also requires repeatability.
+Automatic serial reports include per-phase active milliseconds for acquisition,
+initial checking, refinement, and rechecking; these freeze at review.
+Low-note verification may finish after eight independent windows only when all
+observed post-settle readings stay within one cent. A larger excursion disables
+that shortcut for the target; the existing sixteen-window estimator remains
+the fallback. Initial profile acquisition and output settling are unchanged.
+
 The former manual note/POINTS/refinement controls are retained only in internal
 measurement helpers/tests, not exposed in the normal interface. Serial
 diagnostics remain available. Refinement is now part of CAL, with independent
-local tests followed by a full-range recheck and rollback on regression.
+local tests followed by rechecking the same sampled pitches and rollback on
+regression. Automatic calibration checks at most 50 pitches spanning the range,
+including endpoints, the zero-volt reference when available, and probes near
+measured bends. This is explicitly a sampled check, not certification of every
+pitch: narrow errors between probes can escape it. CHECK retains the exhaustive
+50-cent grid. Automatic acceptance includes local absolute repeat errors, not
+just the initial scan result; the total procedure is bounded to 15 minutes.
 
 ## Standalone quantizer
 
@@ -123,6 +155,15 @@ invalid data leaves the current edits intact. Opening NOTES does not stop output
 edits to an active channel are rejected. Return to SCALES, select
 CUSTOM 2, then use RUN on ROUTES to audition. No new renderer or microtonal-format restriction
 is introduced by this conventional 24-note editor.
+
+The NOTES page can also collect conventional pitch classes from the dedicated
+TRS MIDI input. Select octave A or B, press LEARN, and tap notes; each fresh
+press toggles its pitch class on or off. Repeated Note Ons while a key remains
+held do not retrigger the toggle. Use CLEAR first to start an empty pattern.
+Learning toggles off with another press or on leaving NOTES, never changes a
+running output, and never saves automatically. MIDI input is not yet a USB-C
+host or an imported microtonal-scale editor.
+
 
 SCALES' **output** selector selects independent settings for OUT 0–3:
 scale, root, transpose, mapping, and the two note masks. Input and 0 V note
@@ -232,7 +273,7 @@ The main view uses 9x15 glyphs on a centered, 12-pixel horizontal pitch (previou
 edges free. Main-view labels are positioned for this pitch; the established
 OSCIO/SONORO menu geometry and font spacing are unchanged.
 
-## Original detector (historical, not the selected NSDF build)
+## Original detector (historical; code removed)
 
 The first detector is intentionally oscillator-oriented. Gateware removes slow
 DC, applies hysteresis, and counts positive-going cycles over at least 20 ms.
@@ -304,3 +345,11 @@ state from selecting the wrong UI transform.
 Both TUNER targets default to 192 kHz codec sampling for the 20 Hz–20 kHz
 measurement target. This default is local to TUNER, not other bitstreams.
 Building does not flash the archive; flashing is a separate operation.
+
+The non-circular R5 build defaults to routing seed 18. After a gateware change,
+run a full build and check both the 60 MHz CPU and 5× DVI clock timing reports,
+then verify HDMI lock on hardware. `--fw-only` reuses the existing `top.bit` in
+the build directory; use it only after that exact bitstream has been qualified.
+A passing timing report alone does not establish HDMI lock, and a rebuild with
+the same seed can produce a different bitstream, so keep the hardware-verified
+archive when preparing a release.

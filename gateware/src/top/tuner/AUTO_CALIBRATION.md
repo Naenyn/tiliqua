@@ -1,4 +1,4 @@
-# Automatic calibration — September 18, 2026
+# Automatic calibration — September 19, 2026
 
 This is the current UI/workflow specification. It supersedes the manual
 VERIFY/REFINE instructions in older investigation documents. The state machine
@@ -6,12 +6,35 @@ is host-tested and has completed an automatically verified Generate3 FUNDAMENTAL
 hardware run. Dated validation below records its limits and subsequent changes;
 one successful run is not broad oscillator qualification.
 
+The graded acceptance-policy rationale and published-product comparison are in
+[CALIBRATOR_COMPARISON.md](CALIBRATOR_COMPARISON.md). The first implementation
+is now present, but its thresholds and partial-range behavior still require
+physical qualification across the oscillator matrix.
+
 ## Simple workflow
 
+An automatic paired refinement comparison that fails repeatability gets at most
+one fresh local retry per run. It reacquires the local measurements and repeats
+the paired tests on the unchanged curve; it does not restart acquisition or
+relax the 0.75-cent repeatability limit. The retry counts toward eight attempts
+and must reserve time for a complete recheck within the existing 15-minute
+deadline. Persistent instability preserves the best checked curve. Serial
+reports `AUTO UNSTABLE_RETRY=1/1` when used.
+
 - TUNER observes audio inputs, with spiral and linear views.
-- CAL selects the audio input, CV output and nominal 0 V note. RUN starts an
-  upward -5..+5 V measurement, automatically checks the resulting curve, then
+- CAL selects the audio input, CV output, nominal 0 V note, and policy. RUN first seeks
+  a stable measurable reference from 0 V upward, then starts an upward -5..+5 V
+  measurement, automatically checks the resulting curve, then
   attempts guarded improvements when appropriate. RUN again cancels.
+- AUTO is the default: it attempts the two-cent Precision objective, then may
+  offer a safe Musical (at most 5 cents) or Character (at most 10 cents) result
+  with an explicit grade. PRECISION accepts only Precision. FORGIVING uses
+  wider acquisition/replay tolerances but does not relax ambiguity,
+  monotonicity, routing, output-acknowledgement, or DAC safety.
+- The review page reports grade, worst checked error, stability, and measured
+  range. Unsafe automatic results cannot be accepted. Accepted version-four
+  profile records retain this quality metadata; older records load as
+  UNVERIFIED.
 - PROFILES is reached from CAL. It offers eight oscillator slots and a
   read-only CHECK of an accepted/loaded profile. CHECK still drives the
   oscillator; "read-only" means it never changes the curve.
@@ -28,27 +51,69 @@ Other nonconflicting routes may continue running.
 
 ## What automatic means
 
-1. Measure an initial curve and discover its usable range.
-2. Check corrected pitches on a 50-cent grid within that range, including the
-   existing local repeatability measurements at the worst location.
-3. If error exceeds 2 cents and the local response is suitable, measure one
+1. Find a measurable reference. If 0 V is below the 20-Hz detector floor,
+   search upward on the same semitone-voltage grid through +5 V instead of
+   failing. Measure an initial curve and discover its usable range, then return
+   to the discovered reference for the drift check. Completion, cancellation,
+   or failure still disables the output back to commanded calibrated zero.
+2. Check at most 50 corrected pitches: both measured endpoints, 31 interior
+   coverage probes, the measured zero-volt pitch when in range, and midpoints
+   adjoining the eight strongest bends in the measured curve. Duplicate probes
+   are removed. Perform the existing nine local repeat measurements at the
+   worst checked location. This is explicitly a sampled check, not exhaustive.
+3. Aim for at most 1.5 cents before declaring the sampled 2-cent target met,
+   leaving 0.5 cents of empirical headroom for sequential-check variation.
+   This margin is not a measured uncertainty bound or future accuracy guarantee.
+   If error exceeds that completion aim and the local response is suitable, measure one
    additional interior point and independently check the local candidate.
-4. Recheck the full range. Retain the insertion only if worst absolute error
-   improves by at least 0.5 cents. Otherwise undo it and retain the last fully
-   checked candidate. Repeat only while useful and within the limits below.
+4. Recheck the exact same frozen probe set across the range. Local paired
+   candidate validation also checks both newly split intervals and neighboring
+   intervals and must first demonstrate at least 0.5 cents of local gain.
+   Retain that insertion only if the range-wide checked worst absolute error
+   does not increase and the recheck's local repeats remain valid and repeatable.
+   Another pitch becoming worst must not erase a demonstrated local improvement.
+   Otherwise undo it and retain the last checked candidate. Serial retains both
+   scores and the decision. Repeat only within the limits below.
 5. Return output to commanded calibrated zero and present a review. ACCEPT
    replaces RAM only; SAVE in PROFILES is separate. Neither starts playback.
 
-The 2-cent target is best effort, not a guaranteed specification. A 50-cent
-verification grid samples the response; it cannot certify every intermediate
-pitch. Noise, drift, range boundaries or a nonrepeatable response can prevent
-refinement. The result explains why it stopped. Retuning requires a new scan.
+The 2-cent target is best effort, not a guaranteed specification. The reported
+worst includes the individual local repeat means, not just the earlier probe
+scan or endpoint-adjusted residual. All three repeated locations must also have
+between-repeat variation no greater than 0.75 cents for a pass. A sampled pass
+does not certify unmeasured pitches: narrow errors can fall between probes, even
+when the measured anchors look smooth. CHECK retains the exhaustive 50-cent
+grid for diagnostics/comparison. Even that grid is not continuous certification.
+Noise, drift, boundaries or nonrepeatability can prevent refinement. Retuning
+requires a new scan.
 
 The accepted profile and saved slots remain untouched during work. Cancellation
 keeps them. A timeout/fault cannot offer a candidate that never completed its
 first check; after a successful check, a failed tentative improvement is rolled
 back. An operation is bounded to eight improvement attempts and 15 minutes
-total, not eight unbounded rescans. No flash writes happen inside the loop.
+total, not eight unbounded rescans. Before starting each improvement, reserve
+time for 9 local measurements, up to 16 paired tests, the entire verification
+grid and its 9 local measurements, one first-target retry, and 30 seconds of
+transition margin. The reservation uses the existing five-second per-target
+deadline, not optimistic observed speed. For 50 targets this is 7 minutes
+35 seconds. Insufficient remaining time yields `REVIEW - NO TIME FOR FULL RECHECK`
+with the best verified curve, without starting a tentative edit. The hard overall
+deadline and rollback remain safeguards. This ceiling is not a promised duration
+or a guarantee that all eight attempts can run. No flash writes happen inside the loop.
+
+### Calibration-speed requirement
+
+The briefly deployed 45-minute ceiling allowed a 24-minute qualification run,
+but is not the intended normal user experience. Targeted checking restores the
+15-minute hard ceiling; actual hardware speed/accuracy is not yet qualified.
+Initial 121-position acquisition is unchanged. Longer duration is not evidence of superior
+accuracy. The user reports dedicated calibrators completing in under a minute.
+Aim for approximately one-minute normal calibration where signal/range permit;
+feasibility across the full low-frequency range remains to be demonstrated.
+Investigate adaptive settling/acquisition and targeted validation, retaining
+freshness, repeatability, bounded retries, and safe output behavior. Keep
+exhaustive full-range qualification available as an advanced diagnostic rather
+than silently trading away correctness or presenting today's runtime as final.
 
 ## Point count and storage budget
 

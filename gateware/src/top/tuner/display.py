@@ -100,11 +100,11 @@ class TunerOverlay(wiring.Component):
     # OSCIO/SONORO text placement, with enough left padding for SETTINGS.
     # Grow leftward only: text, divider and the right edge stay in place.
     MENU_X = 448
-    MENU_Y = 342
+    MENU_Y = 332
     MENU_W = 256
-    MENU_H = 160
+    MENU_H = 178
     MENU_TEXT_X = 455
-    MENU_TEXT_Y = 349
+    MENU_TEXT_Y = 339
     MENU_COLS = 28
     MENU_ROWS = 9
     MENU_ROW_PITCH = 18

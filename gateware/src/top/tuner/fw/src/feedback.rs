@@ -12,12 +12,16 @@ impl Feedback {
         self.remaining_ms = 2000;
     }
 
-    pub fn message(&self) -> &'static str { self.message }
+    pub fn message(&self) -> &'static str {
+        self.message
+    }
 
     // Returns true only when visible text changes, so both display banks can
     // be invalidated without rebuilding the menu on every timer wakeup.
     pub fn tick(&mut self, elapsed_ms: u16) -> bool {
-        if self.remaining_ms == 0 { return false; }
+        if self.remaining_ms == 0 {
+            return false;
+        }
         self.remaining_ms = self.remaining_ms.saturating_sub(elapsed_ms);
         if self.remaining_ms == 0 {
             self.message = "";

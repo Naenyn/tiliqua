@@ -15,17 +15,22 @@ from amaranth import Module, Mux
 from amaranth.lib import wiring
 from luna_soc.gateware.core import timer
 
+from tiliqua import midi
+from tiliqua.build import sim
 from tiliqua.build.cli import top_level_cli
 from tiliqua.build.types import BitstreamHelp
+from tiliqua.dsp import ASQ
 from tiliqua.dsp.tuner import TunerPeripheral
 from tiliqua.tiliqua_soc import TiliquaSoc
 
 try:
     from .display import Peripheral as TunerDisplayPeripheral
     from .background import BackgroundLayout
+    from .midi_input import Peripheral as MidiInputPeripheral
 except ImportError:
     from display import Peripheral as TunerDisplayPeripheral
     from background import BackgroundLayout
+    from midi_input import Peripheral as MidiInputPeripheral
 
 
 def configure_archive(archiver):
@@ -49,12 +54,19 @@ class TunerSoc(TiliquaSoc):
     )
 
     def __init__(self, **kwargs):
-        if os.getenv("TILIQUA_TUNER_NSDF") == "1":
-            try:
-                from .experiment.buffered_uart import Peripheral as BufferedUART
-            except ImportError:
-                from experiment.buffered_uart import Peripheral as BufferedUART
-            self.UART_PERIPHERAL = BufferedUART
+        # TUNER deliberately uses the native 16-bit, 4-counts/mV sample
+        # representation.  Its CV command protocol and production NSDF
+        # detector are both signed 16-bit interfaces.  Reject an accidental
+        # widened-ASQ build instead of silently halving DAC voltages or
+        # truncating loud detector inputs.
+        assert ASQ.width == 16 and ASQ.i_bits == 1, (
+            "TUNER requires native 16-bit ASQ (unset TILIQUA_ASQ_WIDTH and "
+            "TILIQUA_ASQ_I_BITS)")
+        try:
+            from .experiment.buffered_uart import Peripheral as BufferedUART
+        except ImportError:
+            from experiment.buffered_uart import Peripheral as BufferedUART
+        self.UART_PERIPHERAL = BufferedUART
         modeline = kwargs["clock_settings"].modeline
         assert modeline is not None, "tuner display targets require a fixed modeline"
         round_display = modeline.h_active == 720 and modeline.v_active == 720
@@ -79,17 +91,12 @@ class TunerSoc(TiliquaSoc):
         assert self.fw_base - self.psram_base >= 0x200000
         self.fb.frame_exchange = self.tuner_display.exchange
         self.fb.serializer_circular_shift = True
+        # Pitch belongs exclusively to the NSDF peripheral. This block is now
+        # only the level/CV/output transport used by all three modes.
         self.tuner_periph = TunerPeripheral(
             sample_rate=self.clock_settings.audio_clock.fs(),
             multichannel=True,
-            with_reference=False,
-            # NSDF owns pitch. Preserve level/CV/DAC CSRs, but synthesize no
-            # crossing detector or legacy period-verifier/capture hardware.
-            with_legacy_pitch=os.getenv("TILIQUA_TUNER_NSDF") != "1",
-            # A 50ms observation window limited new pitch estimates to 20Hz.
-            # 20ms still gives sub-cent resolution at the normal 192kHz audio
-            # rate while responding much more promptly to oscillator changes.
-            min_pitch_window_s=0.02)
+            with_reference=False)
         self.csr_decoder.add(
             self.tuner_periph.bus, addr=0x1000, name="tuner_periph")
         self.csr_decoder.add(
@@ -98,15 +105,15 @@ class TunerSoc(TiliquaSoc):
         # for playback diagnostics, without another interrupt source.
         self.playback_timer = timer.Peripheral(width=32)
         self.csr_decoder.add(self.playback_timer.bus, addr=0x1200, name="playback_timer")
-        self.nsdf_periph = None
-        if os.getenv("TILIQUA_TUNER_NSDF") == "1":
-            try:
-                from .experiment.nsdf_peripheral import Peripheral as NsdfPeripheral
-            except ImportError:
-                from experiment.nsdf_peripheral import Peripheral as NsdfPeripheral
-            assert self.clock_settings.audio_clock.fs() == 192000
-            self.nsdf_periph = NsdfPeripheral()
-            self.csr_decoder.add(self.nsdf_periph.bus, addr=0x1300, name="nsdf_periph")
+        try:
+            from .experiment.nsdf_peripheral import Peripheral as NsdfPeripheral
+        except ImportError:
+            from experiment.nsdf_peripheral import Peripheral as NsdfPeripheral
+        assert self.clock_settings.audio_clock.fs() == 192000
+        self.nsdf_periph = NsdfPeripheral()
+        self.csr_decoder.add(self.nsdf_periph.bus, addr=0x1300, name="nsdf_periph")
+        self.midi_input = MidiInputPeripheral()
+        self.csr_decoder.add(self.midi_input.bus, addr=0x1400, name="midi_input")
         self.finalize_csr_bridge()
 
     def elaborate(self, platform):
@@ -118,11 +125,18 @@ class TunerSoc(TiliquaSoc):
 
         pmod = self.pmod0_periph.pmod
         wiring.connect(m, pmod.o_cal, self.tuner_periph.i)
-        if self.nsdf_periph is not None:
-            m.submodules.nsdf_periph = self.nsdf_periph
-            m.d.comb += self.nsdf_periph.input_valid.eq(pmod.o_cal.valid & pmod.o_cal.ready)
-            for channel in range(4):
-                m.d.comb += getattr(self.nsdf_periph, f"sample{channel}").eq(pmod.o_cal.payload[channel].as_value())
+        m.submodules.nsdf_periph = self.nsdf_periph
+        m.submodules.midi_input = self.midi_input
+        if sim.is_hw(platform):
+            midi_pins = platform.request("midi")
+            m.submodules.midi_rx = midi_rx = midi.SerialRx(
+                system_clk_hz=60e6, pins=midi_pins)
+            m.submodules.midi_decode = midi_decode = midi.MidiDecodeSerial()
+            wiring.connect(m, midi_rx.o, midi_decode.i)
+            wiring.connect(m, midi_decode.o, self.midi_input.i_midi)
+        m.d.comb += self.nsdf_periph.input_valid.eq(pmod.o_cal.valid & pmod.o_cal.ready)
+        for channel in range(4):
+            m.d.comb += getattr(self.nsdf_periph, f"sample{channel}").eq(pmod.o_cal.payload[channel].as_value())
 
         # No reference oscillator: idle outputs are always calibrated zero.
         # Keep DAC acceptance connected for calibration command acknowledgments.
@@ -145,7 +159,10 @@ if __name__ == "__main__":
     modeline = os.getenv("TILIQUA_TUNER_MODELINE", "1280x720p60")
     # Qualified placements for the shared-text renderer. The serializer has a
     # tighter routing constraint on the high-clock HDMI target.
-    default_seed = "13" if modeline == "720x720p60r2" else "15"
+    # Seed 15 became marginal after adding MIDI reception (the 5x DVI domain
+    # missed timing in one placement). Seed 18 was routed and hardware-checked
+    # on the non-circular R5 target with HDMI lock restored.
+    default_seed = "13" if modeline == "720x720p60r2" else "18"
     seed = int(os.getenv("TILIQUA_TUNER_SEED", default_seed))
     name = os.getenv("TILIQUA_TUNER_NAME", "TUNER")
     top_level_cli(

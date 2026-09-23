@@ -4,7 +4,7 @@ from tiliqua.dsp.tuner import TunerPeripheral
 
 def test_four_cv_outputs_fault_isolation_and_cal_priority():
     dut = TunerPeripheral(sample_rate=192000, multichannel=True,
-                          with_reference=False, with_legacy_pitch=False)
+                          with_reference=False)
     sim = Simulator(dut)
     sim.add_clock(1e-6)
 
@@ -49,7 +49,7 @@ def test_four_cv_outputs_fault_isolation_and_cal_priority():
         for n in range(4):
             assert ctx.get(dut._quant_status[n].f.value.r_data) == 266
         # A bad command faults just its own output, not its neighbors.
-        await write(0x94, 25000 | (1 << 18))
+        await write(0x94, 32767 | (1 << 18))
         assert ctx.get(dut.quant_value[1]) == 0
         assert ctx.get(dut._quant_status[1].f.value.r_data) & 512
         for n in [0, 2, 3]:

@@ -7,7 +7,13 @@ fn main() {
             for energy in [0,threshold-1,threshold] {
                 assert!(selector::select_frame(|_|panic!("quiet frame read"),low,energy,scaled,false).is_none());
             }
-            assert!(selector::select_frame(|_|panic!("clipped frame read"),low,u64::MAX,scaled,true).is_none());
+            if low {
+                let mut reads=0;
+                assert!(selector::select_frame(|_|{reads+=1;0},low,threshold+1,scaled,true).is_none());
+                assert!(reads>0);
+            } else {
+                assert!(selector::select_frame(|_|panic!("clipped frame read"),low,u64::MAX,scaled,true).is_none());
+            }
             let mut reads=0;
             assert!(selector::select_frame(|_|{reads+=1;0},low,threshold+1,scaled,false).is_none());
             assert!(reads>0);

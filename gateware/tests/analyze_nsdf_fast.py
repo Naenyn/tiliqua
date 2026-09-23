@@ -42,7 +42,7 @@ def analyze_fast(text,round_robin=False):
         if not 0<=int(cpu['ppm'])<=1000000 or not 0<=hz<=20000:
             raise ValueError('invalid pitch summary')
         rms=math.sqrt(energy/n)*(2 if scaled else 1)
-        qualified=cpu['ok']=='true';gated=rms<=2 or bool(clipped)
+        qualified=cpu['ok']=='true';gated=rms<=2 or (bool(clipped) and not low)
         if gated and (reads or qualified or hz):raise ValueError('early gate mismatch')
         if qualified and not (20<=hz<=1500 if low else 600<=hz<=20000):
             raise ValueError('qualified pitch outside bank')

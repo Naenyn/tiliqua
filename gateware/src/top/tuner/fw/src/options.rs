@@ -2,8 +2,7 @@ use opts::*;
 use serde_derive::{Deserialize, Serialize};
 use strum_macros::{EnumIter, IntoStaticStr};
 
-#[derive(Clone, Copy, PartialEq, EnumIter, Default,
-         Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, EnumIter, Default, Serialize, Deserialize)]
 #[strum(serialize_all = "SCREAMING-KEBAB-CASE")]
 pub enum Page {
     #[default]
@@ -25,16 +24,23 @@ pub enum Page {
 // EnumIter excludes child screens, but labels must remain valid for every
 // screen. Deriving IntoStaticStr with `disabled` would panic for a child.
 impl From<Page> for &'static str {
-    fn from(page:Page)->Self {match page {
-        Page::Tuner=>"TUNER",Page::Calibrate=>"CAL",Page::Verify=>"CHECK",
-        Page::Profiles=>"PROFILES",Page::Settings=>"SETTINGS",Page::Help=>"HELP",
-        Page::Play=>"ROUTES",Page::Quantizer=>"SCALES",Page::QuantNotes=>"NOTES",
-        Page::QuantSetups=>"SETUPS",
-    }}
+    fn from(page: Page) -> Self {
+        match page {
+            Page::Tuner => "TUNER",
+            Page::Calibrate => "CAL",
+            Page::Verify => "CHECK",
+            Page::Profiles => "PROFILES",
+            Page::Settings => "SETTINGS",
+            Page::Help => "HELP",
+            Page::Play => "ROUTES",
+            Page::Quantizer => "SCALES",
+            Page::QuantNotes => "NOTES",
+            Page::QuantSetups => "SETUPS",
+        }
+    }
 }
 
-#[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default,
-         Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]
 #[strum(serialize_all = "SCREAMING-KEBAB-CASE")]
 pub enum DisplayMode {
     #[default]
@@ -43,16 +49,29 @@ pub enum DisplayMode {
     Linear,
 }
 
-#[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default,
-         Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]
 pub enum VerifyMode {
     #[default]
-    #[strum(serialize="MANUAL")]
+    #[strum(serialize = "MANUAL")]
     Manual,
-    #[strum(serialize="SCAN")]
+    #[strum(serialize = "SCAN")]
     Scan,
-    #[strum(serialize="POINTS")]
+    #[strum(serialize = "POINTS")]
     Points,
+}
+
+/// User-facing calibration policy.  All modes retain the same hard safety,
+/// routing, monotonicity, and detector-ambiguity checks; this only selects how
+/// much measured pitch error/repeatability is acceptable for a usable curve.
+#[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]
+pub enum CalibrationPolicy {
+    #[default]
+    #[strum(serialize = "AUTO")]
+    Auto,
+    #[strum(serialize = "PRECISION")]
+    Precision,
+    #[strum(serialize = "FORGIVING")]
+    Forgiving,
 }
 
 int_params!(InputParams<u8> { step: 1, min: 0, max: 3 });
@@ -60,19 +79,30 @@ int_params!(TransposeParams<i8> { step: 1, min: -12, max: 12 });
 
 #[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]
 pub enum ScalePreset {
-    #[default] #[strum(serialize="CHROMATIC")] Chromatic,
-    #[strum(serialize="MAJOR")] Major,
-    #[strum(serialize="MINOR")] Minor,
-    #[strum(serialize="MAJ PENTA")] MajorPentatonic,
-    #[strum(serialize="MIN PENTA")] MinorPentatonic,
-    #[strum(serialize="24 EDO")] Edo24,
-    #[strum(serialize="CUSTOM 2")] Custom2,
+    #[default]
+    #[strum(serialize = "CHROMATIC")]
+    Chromatic,
+    #[strum(serialize = "MAJOR")]
+    Major,
+    #[strum(serialize = "MINOR")]
+    Minor,
+    #[strum(serialize = "MAJ PENTA")]
+    MajorPentatonic,
+    #[strum(serialize = "MIN PENTA")]
+    MinorPentatonic,
+    #[strum(serialize = "24 EDO")]
+    Edo24,
+    #[strum(serialize = "CUSTOM 2")]
+    Custom2,
 }
 
 #[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]
 pub enum Distribution {
-    #[default] #[strum(serialize="NEAREST")] Nearest,
-    #[strum(serialize="EQUAL")] Equal,
+    #[default]
+    #[strum(serialize = "NEAREST")]
+    Nearest,
+    #[strum(serialize = "EQUAL")]
+    Equal,
 }
 int_params!(OctaveParams<u8> { step: 1, min: 0, max: 1 });
 int_params!(PatternSlotParams<u8> { step: 1, min: 1, max: 8 });
@@ -100,6 +130,8 @@ pub struct QuantNotesOpts {
     #[option(false)]
     pub fill: ButtonOption<OneShotButtonParams>,
     #[option(false)]
+    pub learn: ButtonOption<OneShotButtonParams>,
+    #[option(false)]
     pub save: ButtonOption<OneShotButtonParams>,
     #[option(false)]
     pub load: ButtonOption<OneShotButtonParams>,
@@ -109,9 +141,24 @@ pub struct QuantNotesOpts {
 
 #[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]
 pub enum ScaleRoot {
-    #[default] C, #[strum(serialize="C#")] Cs, D, #[strum(serialize="D#")] Ds,
-    E, F, #[strum(serialize="F#")] Fs, G, #[strum(serialize="G#")] Gs,
-    A, #[strum(serialize="A#")] As, B,
+    #[default]
+    C,
+    #[strum(serialize = "C#")]
+    Cs,
+    D,
+    #[strum(serialize = "D#")]
+    Ds,
+    E,
+    F,
+    #[strum(serialize = "F#")]
+    Fs,
+    G,
+    #[strum(serialize = "G#")]
+    Gs,
+    A,
+    #[strum(serialize = "A#")]
+    As,
+    B,
 }
 int_params!(NoteParams<u8> { step: 1, min: 12, max: 108 });
 int_params!(CentsParams<i16> { step: 1, min: -50, max: 50 });
@@ -124,7 +171,9 @@ int_params!(ProfileSlotParams<u8> { step: 1, min: 1, max: 8 });
 int_params!(NamePositionParams<u8> { step: 1, min: 1, max: 24 });
 int_params!(NameCharacterParams<u8> { step: 1, min: 32, max: 126 });
 
-button_params!(OneShotButtonParams { mode: ButtonMode::OneShot });
+button_params!(OneShotButtonParams {
+    mode: ButtonMode::OneShot
+});
 
 #[derive(OptionPage, Clone)]
 pub struct TunerOpts {
@@ -148,10 +197,12 @@ pub struct SettingsOpts {
 pub struct CalibrateOpts {
     #[option(0)]
     pub input: IntOption<InputParams>,
-    #[option(1)]
+    #[option(0)]
     pub output: IntOption<InputParams>,
     #[option(60)]
     pub zero_note: IntOption<NoteParams>,
+    #[option]
+    pub policy: EnumOption<CalibrationPolicy>,
     #[option(false)]
     pub run: ButtonOption<OneShotButtonParams>,
     #[option(false)]
@@ -190,15 +241,36 @@ pub struct PlayOpts {
 
 #[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]
 pub enum Correction {
-    #[default] #[strum(serialize="NONE")] None,
-    #[strum(serialize="RAM")] Ram,
-    #[strum(serialize="SLOT 1")] Slot1, #[strum(serialize="SLOT 2")] Slot2,
-    #[strum(serialize="SLOT 3")] Slot3, #[strum(serialize="SLOT 4")] Slot4,
-    #[strum(serialize="SLOT 5")] Slot5, #[strum(serialize="SLOT 6")] Slot6,
-    #[strum(serialize="SLOT 7")] Slot7, #[strum(serialize="SLOT 8")] Slot8,
+    #[default]
+    #[strum(serialize = "NONE")]
+    None,
+    #[strum(serialize = "RAM")]
+    Ram,
+    #[strum(serialize = "SLOT 1")]
+    Slot1,
+    #[strum(serialize = "SLOT 2")]
+    Slot2,
+    #[strum(serialize = "SLOT 3")]
+    Slot3,
+    #[strum(serialize = "SLOT 4")]
+    Slot4,
+    #[strum(serialize = "SLOT 5")]
+    Slot5,
+    #[strum(serialize = "SLOT 6")]
+    Slot6,
+    #[strum(serialize = "SLOT 7")]
+    Slot7,
+    #[strum(serialize = "SLOT 8")]
+    Slot8,
 }
 #[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]
-pub enum RouteQuantize { #[strum(serialize="OFF")] Off, #[default] #[strum(serialize="SCALE")] Scale }
+pub enum RouteQuantize {
+    #[strum(serialize = "OFF")]
+    Off,
+    #[default]
+    #[strum(serialize = "SCALE")]
+    Scale,
+}
 
 #[derive(OptionPage, Clone)]
 pub struct QuantizerOpts {
@@ -220,10 +292,13 @@ pub struct QuantizerOpts {
     pub routes: ButtonOption<OneShotButtonParams>,
 }
 
-#[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default,
-         Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]
 #[strum(serialize_all = "SCREAMING-KEBAB-CASE")]
-pub enum QuantizeMode { #[default] Off, Chromatic }
+pub enum QuantizeMode {
+    #[default]
+    Off,
+    Chromatic,
+}
 
 #[derive(OptionPage, Clone)]
 pub struct VerifyOpts {

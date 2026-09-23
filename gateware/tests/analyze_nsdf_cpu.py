@@ -31,7 +31,7 @@ def validate(cpu,io,block):
         raise ValueError('CPU read bound exceeded')
     if int(cpu['cycles'])<=0 or int(io['cycles'])<=0:
         raise ValueError('invalid elapsed timing')
-    gated=report['rms_counts']<=2 or bool(report['clipped'])
+    gated=report['rms_counts']<=2 or (bool(report['clipped']) and report['bank']!='low')
     low=report['low']=='true'
     # Unversioned archived exports used range-first key-maxima selection.
     # New exports explicitly identify range-after-peak selection; never silently

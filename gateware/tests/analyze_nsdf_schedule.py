@@ -49,13 +49,18 @@ def analyze_schedule(text):
         if line.startswith('NSDF ERROR'):raise ValueError('device diagnostic error')
         if not line.startswith('NSDF RUN '):continue
         fields=dict(p.split('=') for p in line.split()[2:])
-        keys={'ch','low','count','seq','mhz','raw','guard','ok','age','dt','cycles','work','faults','ms'}
+        # `first` was added to live diagnostics after the recorded qualification
+        # fixtures. Treat an absent value as the resolved candidate so old logs
+        # remain reproducible without weakening validation of new captures.
+        fields.setdefault('first', fields.get('mhz', '0'))
+        keys={'ch','low','count','seq','mhz','first','raw','guard','ok','age','dt','cycles','work','faults','ms'}
         if fields.keys()!=keys:raise ValueError('unexpected scheduler fields')
         for key in ('low','raw','guard','ok'):
             if fields[key] not in ('true','false'):raise ValueError('bad scheduler boolean')
         r={k:(v=='true' if k in ('low','raw','guard','ok') else int(v)) for k,v in fields.items()}
         if any(not 0<=r[k]<2**32 for k in keys-{'low','raw','guard','ok'}):raise ValueError('bad scheduler integer')
-        if r['ch']>3 or r['mhz']>20000000:raise ValueError('bad channel or pitch')
+        if r['ch']>3 or r['mhz']>20000000 or r['first']>20000000:
+            raise ValueError('bad channel or pitch')
         slot=r['ch']*2+int(r['low'])
         if previous_slot is not None and slot!=(previous_slot+1)%8:raise ValueError('skipped report slot')
         previous_slot=slot
