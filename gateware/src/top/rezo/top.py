@@ -5138,7 +5138,9 @@ class RezoBeamTop(Elaboratable):
                 i=ui.output_routes[n], o=display.output_routes[n], o_domain="dvi")
 
         if sim.is_hw(platform):
-            m.submodules.dvi_gen = dvi_gen = dvi.DVIPHY()
+            # Preserve REZOMO's qualified zero-fill serializer. Its timing
+            # placement is sensitive to the circular-shift feedback path.
+            m.submodules.dvi_gen = dvi_gen = dvi.DVIPHY(circular_shift=False)
             display_de0 = Signal()
             display_hsync0 = Signal()
             display_vsync0 = Signal()

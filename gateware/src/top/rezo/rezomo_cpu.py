@@ -14,7 +14,7 @@ class RezomoCpuTop(RezoBeamTop):
     """REZOMO DSP/renderer plus the minimal REZO-family control CPU."""
 
     nextpnr_opts = (
-        "--timing-allow-fail "
+        "--timing-allow-fail --placer-heap-timingweight 30 "
         f"--seed {family_seed('TILIQUA_REZOMO_CPU_SEED', '3')}")
     minimum_timing_headroom_percent = 3.0
 
