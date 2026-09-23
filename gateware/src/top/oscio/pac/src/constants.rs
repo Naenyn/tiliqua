@@ -1,0 +1,100 @@
+pub const UI_NAME: &str = "OSCIO";
+pub const UI_TAG: &str = "2ed89680";
+pub const HW_REV_MAJOR: u32 = 5;
+pub const USE_EXTERNAL_PLL: bool = true;
+pub const CLOCK_SYNC_HZ: u32 = 60000000;
+pub const CLOCK_AUDIO_HZ: u32 = 49152000;
+pub const CLOCK_DVI_HZ: u32 = 74250000;
+pub const FIXED_MODELINE: Option<(u16, u16)> = None;
+pub const PSRAM_BASE: usize = 0x20000000;
+pub const PSRAM_SZ_BYTES: usize = 0x1000000;
+pub const PSRAM_SZ_WORDS: usize = PSRAM_SZ_BYTES / 4;
+pub const SPIFLASH_BASE: usize = 0x10000000;
+pub const SPIFLASH_SZ_BYTES: usize = 0x1000000;
+pub const PSRAM_FB_BASE: usize = 0x20000000;
+pub const N_BITSTREAMS: usize = 8;
+pub const BOOTINFO_BASE: usize = 0x20fff000;
+pub const TOUCH_SENSOR_ORDER: [u8; 8] = [5, 7, 8, 9, 10, 11, 12, 13];
+pub const PMOD_DEFAULT_CAL: [f32; 4] = [-1.248, -0.03, 0.9, 0.0];
+pub const BLIT_MEM_BASE: usize = 0xc0000000;
+pub const AUDIO_FS: u32 = 192000;
+// Extra constants specified by an SoC subclass:
+pub const MODULE_DOCSTRING: &str = r###"
+OSCIO is a four-channel digital oscilloscope for Eurorack signals.
+
+All four analog inputs are displayed together. A CV/LFO view presents
+each input in its own history lane with level, low/high, peak-to-peak, period,
+and frequency measurements. Each input is also passed straight through to the
+matching output with no USB or delay-line processing.
+
+    .. code-block:: text
+
+        in0 ───────────────────────► out0
+        in1 ───────────────────────► out1
+        in2 ───────────────────────► out2
+        in3 ───────────────────────► out3
+
+        trigger source: selectable from in0, in1, in2, or in3
+
+Turn the encoder to move through the menu. Press it to select a page or
+parameter, then turn to edit. The menu hides automatically; turning resumes
+the current edit, while pressing reopens it in navigation mode.
+
+On the HELP page, turn the encoder to scroll. Select the HELP page title to
+return to the preceding menu pages.
+
+OSCIO is the first menu page, with mode as its first option. In scope mode it
+also provides time/div and acquire. CHANNEL 0-1 and CHANNEL 2-3 then set each
+trace's vertical offset, volts per division, and visibility. The TRIGGER page
+contains trigger type, source, level, and filter. These channel and trigger
+pages are omitted from menu navigation in CV/LFO mode.
+
+In CV/LFO mode the OSCIO page provides time/div and max freq. The channels
+option selects CH 0-1 or CH 2-3 on circular displays and on rectangular displays
+too short for four lanes. Taller rectangular displays show all four channels.
+The RANGES page gives each channel an independent full-window voltage range:
+-5..+5 V, -10..+10 V, 0..+10 V, or 0..+5 V.
+
+CV/LFO is intended for control voltages, gates, envelopes, and LFOs. Its max
+freq defaults to 20 Hz and may be set from 0.25 Hz through 20 Hz. CV/LFO runs
+continuously without waiting for a trigger, clips each trace to its selected
+lane range, and measures the calibrated input before display interpolation or
+cleanup. Faster repeating signals are identified in the
+statistics panel and replaced by an indicator in the history lanes, while
+their voltage and frequency statistics remain visible. A trace must stay below
+max freq for three seconds before it appears. Once visible, it tolerates brief
+excursions above max freq, but is hidden after one second above the limit or
+immediately at 1.5 times the limit (30 Hz when max freq is 20 Hz).
+Frequency and period describe the latest measured rising-crossing interval.
+Static or very small signals show --; irregular signals may give changing values.
+Low/high and peak-to-peak capture native-rate extrema with a slowly released
+peak hold. The level readout uses a 1 kHz voltage average.
+
+Rising and falling are strict trigger modes: each sweep waits for the selected
+channel to cross trig lvl in the chosen direction. If no crossing arrives, the
+completed display is held. Auto rise and auto fall prefer the same locked edge,
+but start an untriggered refresh after 50 ms if the edge is lost. Free starts a
+new sweep immediately and does not lock to the signal.
+
+Trig filter low-passes trigger detection without filtering any displayed trace.
+Start with off or 5kHz and use the highest cutoff that gives stable lock. Lower
+cutoffs (1.2kHz, 300Hz, and 75Hz) reject progressively more harmonics, but may
+attenuate the trigger waveform or make its crossing arrive later.
+
+Acquire clean reduces local spikes near detected edges using nearby samples.
+Rounded transitions are preserved, not sharpened into guessed square edges.
+Cleanup can also reduce genuine one-sample peaks. Use acquire raw to inspect
+the calibrated samples without this cleanup. Both modes share the display
+resampler; neither can recover detail beyond the input's sampling bandwidth.
+
+DISPLAY sets trace intensity, trace hue, and graph palette. Scope mode also
+shows grid style and grid intensity; those unused controls are omitted in
+CV/LFO mode. SYSTEM contains overlay hue, automatic hide behavior, rotation,
+and settings save/reset actions. HELP is the final menu page.
+"###;
+pub const OVERLAY_UI_SCRATCH_BASE: usize = 0x20f00000;
+pub const OVERLAY_UI_MEM_BASE: usize = 0xc1000000;
+pub const OVERLAY_UI_MENU_W: usize = 250;
+pub const OVERLAY_UI_MENU_H: usize = 160;
+pub const OVERLAY_UI_MENU_WORDS: usize = 1250;
+pub const HELP_SCROLL_MAX: u8 = 44;

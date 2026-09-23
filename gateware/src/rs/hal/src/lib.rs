@@ -82,6 +82,46 @@ macro_rules! impl_tiliqua_soc_pac {
     };
 }
 
+// Common SoC peripherals for applications that deliberately omit the UART
+// logger and persistence DMA from gateware. Keep this separate from the
+// default macro so existing bitstreams retain their PAC surface unchanged.
+#[macro_export]
+macro_rules! impl_tiliqua_soc_pac_without_diagnostics {
+    () => {
+        tiliqua_hal::impl_timer! {
+            Timer0: tiliqua_pac::TIMER0,
+        }
+
+        tiliqua_hal::impl_i2c! {
+            I2c0: tiliqua_pac::I2C0,
+        }
+
+        tiliqua_hal::impl_i2c! {
+            I2c1: tiliqua_pac::I2C1,
+        }
+
+        tiliqua_hal::impl_encoder! {
+            Encoder0: tiliqua_pac::ENCODER0,
+        }
+
+        tiliqua_hal::impl_eurorack_pmod! {
+            EurorackPmod0: tiliqua_pac::PMOD0_PERIPH,
+        }
+
+        tiliqua_hal::impl_dma_framebuffer! {
+            DMAFramebuffer0: tiliqua_pac::FRAMEBUFFER_PERIPH,
+            Palette0: tiliqua_pac::PALETTE_PERIPH,
+            Blit0: tiliqua_pac::BLIT,
+            PixelPlot0: tiliqua_pac::PIXEL_PLOT,
+            Line0: tiliqua_pac::LINE,
+        }
+
+        tiliqua_hal::impl_spiflash! {
+            SPIFlash0: tiliqua_pac::SPIFLASH_CTRL,
+        }
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

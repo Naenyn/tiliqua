@@ -1,0 +1,244 @@
+# Copyright (c) 2024 Seb Holzapfel <me@sebholzapfel.com>
+#
+# SPDX-License-Identifier: CERN-OHL-S-2.0
+
+"""
+OSCIO is a four-channel digital oscilloscope for Eurorack signals.
+
+All four analog inputs are displayed together. A CV/LFO view presents
+each input in its own history lane with level, low/high, peak-to-peak, period,
+and frequency measurements. Each input is also passed straight through to the
+matching output with no USB or delay-line processing.
+
+    .. code-block:: text
+
+        in0 ───────────────────────► out0
+        in1 ───────────────────────► out1
+        in2 ───────────────────────► out2
+        in3 ───────────────────────► out3
+
+        trigger source: selectable from in0, in1, in2, or in3
+
+Turn the encoder to move through the menu. Press it to select a page or
+parameter, then turn to edit. The menu hides automatically; turning resumes
+the current edit, while pressing reopens it in navigation mode.
+
+On the HELP page, turn the encoder to scroll. Select the HELP page title to
+return to the preceding menu pages.
+
+OSCIO is the first menu page, with mode as its first option. In scope mode it
+also provides time/div and acquire. CHANNEL 0-1 and CHANNEL 2-3 then set each
+trace's vertical offset, volts per division, and visibility. The TRIGGER page
+contains trigger type, source, level, and filter. These channel and trigger
+pages are omitted from menu navigation in CV/LFO mode.
+
+In CV/LFO mode the OSCIO page provides time/div and max freq. The channels
+option selects CH 0-1 or CH 2-3 on circular displays and on rectangular displays
+too short for four lanes. Taller rectangular displays show all four channels.
+The RANGES page gives each channel an independent full-window voltage range:
+-5..+5 V, -10..+10 V, 0..+10 V, or 0..+5 V.
+
+CV/LFO is intended for control voltages, gates, envelopes, and LFOs. Its max
+freq defaults to 20 Hz and may be set from 0.25 Hz through 20 Hz. CV/LFO runs
+continuously without waiting for a trigger, clips each trace to its selected
+lane range, and measures the calibrated input before display interpolation or
+cleanup. Faster repeating signals are identified in the
+statistics panel and replaced by an indicator in the history lanes, while
+their voltage and frequency statistics remain visible. A trace must stay below
+max freq for three seconds before it appears. Once visible, it tolerates brief
+excursions above max freq, but is hidden after one second above the limit or
+immediately at 1.5 times the limit (30 Hz when max freq is 20 Hz).
+Frequency and period describe the latest measured rising-crossing interval.
+Static or very small signals show --; irregular signals may give changing values.
+Low/high and peak-to-peak capture native-rate extrema with a slowly released
+peak hold. The level readout uses a 1 kHz voltage average.
+
+Rising and falling are strict trigger modes: each sweep waits for the selected
+channel to cross trig lvl in the chosen direction. If no crossing arrives, the
+completed display is held. Auto rise and auto fall prefer the same locked edge,
+but start an untriggered refresh after 50 ms if the edge is lost. Free starts a
+new sweep immediately and does not lock to the signal.
+
+Trig filter low-passes trigger detection without filtering any displayed trace.
+Start with off or 5kHz and use the highest cutoff that gives stable lock. Lower
+cutoffs (1.2kHz, 300Hz, and 75Hz) reject progressively more harmonics, but may
+attenuate the trigger waveform or make its crossing arrive later.
+
+Acquire clean reduces local spikes near detected edges using nearby samples.
+Rounded transitions are preserved, not sharpened into guessed square edges.
+Cleanup can also reduce genuine one-sample peaks. Use acquire raw to inspect
+the calibrated samples without this cleanup. Both modes share the display
+resampler; neither can recover detail beyond the input's sampling bandwidth.
+
+DISPLAY sets trace intensity, trace hue, and graph palette. Scope mode also
+shows grid style and grid intensity; those unused controls are omitted in
+CV/LFO mode. SYSTEM contains overlay hue, automatic hide behavior, rotation,
+and settings save/reset actions. HELP is the final menu page.
+"""
+
+import os
+import sys
+
+from amaranth import *
+from amaranth.lib import data, wiring
+
+from tiliqua import dsp
+from tiliqua.build.cli import top_level_cli
+from tiliqua.build.types import BitstreamHelp
+from tiliqua.periph import overlay
+from tiliqua.periph import ui_overlay
+from tiliqua.raster import PSQ
+from tiliqua.raster.digital_scope import DigitalScopePeripheral
+from tiliqua.raster.scope_overlay import ScopeTraceOverlay
+from tiliqua.tiliqua_soc import TiliquaSoc
+
+
+class ScopeSoc(TiliquaSoc):
+
+    module_docstring = sys.modules[__name__].__doc__
+    help_visible_lines = 28
+
+    bitstream_help = BitstreamHelp(
+        brief="Four-channel oscilloscope and CV/LFO view with audio thru.",
+        io_left=['CH0 in', 'CH1 in', 'CH2 in', 'CH3 in',
+                 'CH0 thru', 'CH1 thru', 'CH2 thru', 'CH3 thru'],
+        io_right=['menu / adjust', '', 'video out', '', '', '']
+    )
+
+    def __init__(self, **kwargs):
+
+        self.scope_trace = ScopeTraceOverlay()
+        self.overlay_periph = overlay.Peripheral(
+            enable_ui=True, trace=self.scope_trace)
+        self.overlay_ui_mem_base = 0xc1000000
+
+        super().__init__(finalize_csr_bridge=False,
+                         fb_overlay=self.overlay_periph.overlay,
+                         enable_persist=False,
+                         enable_uart=False,
+                         enable_dtr=False,
+                         **kwargs)
+
+        # Firmware bitmap scratch in PSRAM (blockram is only 16 KiB).
+        self.overlay_ui_scratch_base = self.psram_base + 0x00F0_0000
+
+        self.scope_periph_base  = 0x00001100
+        self.overlay_periph_base = 0x00001300
+
+        self.wb_decoder.add(
+            self.overlay_periph.ui_mem.bus,
+            addr=self.overlay_ui_mem_base,
+            name="overlay_ui")
+
+        self.add_rust_constant(
+            f"pub const OVERLAY_UI_SCRATCH_BASE: usize = 0x{self.overlay_ui_scratch_base:x};")
+        self.add_rust_constant(
+            f"pub const OVERLAY_UI_MEM_BASE: usize = 0x{self.overlay_ui_mem_base:x};")
+        self.add_rust_constant(
+            f"pub const OVERLAY_UI_MENU_W: usize = {ui_overlay.MENU_W};")
+        self.add_rust_constant(
+            f"pub const OVERLAY_UI_MENU_H: usize = {ui_overlay.MENU_H};")
+        self.add_rust_constant(
+            f"pub const OVERLAY_UI_MENU_WORDS: usize = {ui_overlay.MENU_WORDS};")
+        help_scroll_max = max(
+            0,
+            len(self.module_docstring.splitlines()) - self.help_visible_lines,
+        )
+        self.add_rust_constant(
+            f"pub const HELP_SCROLL_MAX: u8 = {help_scroll_max};")
+
+        self.n_upsample = 8 if self.clock_settings.audio_clock.is_192khz() else 32
+
+        self.scope_periph = DigitalScopePeripheral(
+            fs=self.clock_settings.audio_clock.fs() * self.n_upsample,
+            native_fs=self.clock_settings.audio_clock.fs(),
+        )
+        self.csr_decoder.add(self.scope_periph.bus, addr=self.scope_periph_base, name="scope_periph")
+
+        self.csr_decoder.add(self.overlay_periph.bus, addr=self.overlay_periph_base, name="overlay_periph")
+
+        self.finalize_csr_bridge()
+
+    def elaborate(self, platform):
+
+        m = Module()
+
+        m.submodules.scope_periph = self.scope_periph
+        m.submodules.overlay_periph = self.overlay_periph
+
+        m.d.comb += [
+            self.scope_trace.enable.eq(self.scope_periph.soc_en),
+            self.scope_trace.invalidate.eq(self.scope_periph.trace_reset_o),
+            self.scope_trace.flush_valid.eq(self.scope_periph.flush_valid),
+            self.scope_trace.flush_col.eq(self.scope_periph.flush_col),
+            self.scope_trace.flush_word.eq(self.scope_periph.flush_word),
+            self.scope_trace.sweep_done.eq(self.scope_periph.sweep_done),
+            self.scope_trace.progressive.eq(self.scope_periph.progressive_o),
+            self.scope_trace.capture_max_col.eq(
+                self.scope_periph.capture_max_col_o),
+            self.scope_trace.capture_progress_valid.eq(
+                self.scope_periph.capture_progress_valid_o),
+            self.scope_periph.capture_active.eq(self.scope_trace.capture_active),
+            self.scope_periph.capture_clear.eq(self.scope_trace.capture_clear),
+            self.scope_periph.swap_done.eq(self.scope_trace.swap_done),
+            self.scope_trace.plot_x_lo.eq(self.scope_periph.plot_x_lo_o),
+            self.scope_trace.h_active.eq(self.fb.fbp.timings.h_active),
+            self.scope_trace.v_active.eq(self.fb.fbp.timings.v_active),
+            self.scope_trace.rotation.eq(self.fb.fbp.rotation),
+        ]
+        for ch in range(4):
+            m.d.comb += [
+                self.scope_trace.hue[ch].eq(self.scope_periph.hue_o[ch]),
+                self.scope_trace.intensity[ch].eq(
+                    self.scope_periph.intensity_o[ch]),
+            ]
+
+        m.submodules += super().elaborate(platform)
+
+        pmod0 = self.pmod0_periph.pmod
+
+        wiring.connect(m, pmod0.o_cal, pmod0.i_cal)
+        dsp.connect_peek(m, pmod0.o_cal, self.scope_periph.native_i)
+
+        # The audio-domain crossing can expose at most its four-frame FIFO as
+        # a burst, while this display chain completes each frame well before
+        # the next 192 kHz sample arrives.  Sixteen entries retain a 4x burst
+        # cushion and map to compact LUT RAM; the former 256-entry FIFO spent
+        # two DP16KD blocks without providing useful additional elasticity.
+        m.submodules.plot_fifo = plot_fifo = dsp.SyncFIFOBuffered(
+            shape=data.ArrayLayout(dsp.ASQ, 4), depth=16)
+
+        dsp.connect_peek(m, pmod0.o_cal, plot_fifo.i)
+        # The four input channels share reconstruction/interpolation arithmetic.
+        # Their history and interpolation state remain independent, and both
+        # blocks emit channel-aligned bundles. At 192 kHz there are ~312 sync
+        # clocks per input frame; the serialized path needs fewer than 50.
+        m.submodules.edge_reconstruct = edge = \
+            dsp.MultichannelDiscontinuityReconstruct(
+                n_channels=4, shape=dsp.ASQ)
+        m.submodules.resample = resample = \
+            dsp.MultichannelEdgeAwareResample(
+                n_channels=4, n_up=self.n_upsample, shape=dsp.ASQ)
+        m.submodules.plot_convert = plot_convert = \
+            dsp.MultichannelFixedPointConvert(
+                n_channels=4, input_shape=dsp.ASQ, output_shape=PSQ)
+        m.d.comb += edge.enable.eq(self.scope_periph.clean_o)
+        wiring.connect(m, plot_fifo.o, edge.i)
+        wiring.connect(m, edge.o, resample.i)
+        wiring.connect(m, resample.o, plot_convert.i)
+        wiring.connect(m, plot_convert.o, self.scope_periph.i)
+
+        return m
+
+
+if __name__ == "__main__":
+    this_path = os.path.dirname(os.path.realpath(__file__))
+    top_level_cli(
+        ScopeSoc,
+        path=this_path,
+        argparse_callback=lambda parser: parser.set_defaults(
+            seed=2,
+            timing_strict=True,
+        ),
+        archiver_callback=lambda archiver: archiver.with_option_storage(),
+    )

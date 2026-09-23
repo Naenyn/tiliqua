@@ -162,7 +162,13 @@ const fn gen_inferno() -> [(u8, u8, u8); PALETTE_LEN] {
     while i < PX_INTENSITY_MAX {
         let mut h = 0;
         while h < PX_HUE_MAX {
-            lut[i * PX_HUE_MAX + h] = INFERNO_16[i];
+            // Intensity zero is the framebuffer background and must remain
+            // true black, independent of the selected heat-map palette.
+            lut[i * PX_HUE_MAX + h] = if i == 0 {
+                (0, 0, 0)
+            } else {
+                INFERNO_16[i]
+            };
             h += 1;
         }
         i += 1;

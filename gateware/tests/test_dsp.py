@@ -8,7 +8,8 @@ import sys
 import unittest
 
 from amaranth import *
-from amaranth.lib import wiring
+from amaranth.lib import data, stream as amaranth_stream, wiring
+from amaranth.lib.wiring import In, Out
 from amaranth.sim import *
 from parameterized import parameterized
 from scipy import signal
@@ -165,6 +166,643 @@ class DSPTests(unittest.TestCase):
         with sim.write_vcd(vcd_file=open(f"test_resample_{name}.vcd", "w")):
             sim.run()
 
+    def test_linear_resample_is_monotonic_across_discontinuities(self):
+        m = Module()
+        m.submodules.dut = dut = dsp.LinearResample(n_up=8, shape=ASQ)
+        outputs = []
+
+        async def stimulus(ctx):
+            for sample in (-0.75, 0.75, -0.5):
+                await stream.put(ctx, dut.i, fixed.Const(sample, shape=ASQ))
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            while len(outputs) < 16:
+                if ctx.get(dut.o.valid & dut.o.ready):
+                    outputs.append(ctx.get(dut.o.payload).as_float())
+                await ctx.tick()
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        rising = outputs[:8]
+        falling = outputs[8:]
+        self.assertTrue(all(a <= b for a, b in zip(rising, rising[1:])), rising)
+        self.assertTrue(all(a >= b for a, b in zip(falling, falling[1:])), falling)
+        self.assertGreaterEqual(min(outputs), -0.75)
+        self.assertLessEqual(max(outputs), 0.75)
+        self.assertAlmostEqual(rising[-1], 0.75, places=3)
+        self.assertAlmostEqual(falling[-1], -0.5, places=3)
+
+    def test_hold_resample_preserves_discontinuities(self):
+        m = Module()
+        m.submodules.dut = dut = dsp.HoldResample(n_up=8, shape=ASQ)
+        outputs = []
+
+        async def stimulus(ctx):
+            for sample in (-0.75, 0.75):
+                await stream.put(ctx, dut.i, fixed.Const(sample, shape=ASQ))
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            while len(outputs) < 16:
+                if ctx.get(dut.o.valid & dut.o.ready):
+                    outputs.append(ctx.get(dut.o.payload).as_float())
+                await ctx.tick()
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        self.assertEqual(outputs[:8], [-0.75] * 8)
+        self.assertEqual(outputs[8:], [0.75] * 8)
+
+    def test_edge_aware_resample_interpolates_smooth_slopes(self):
+        m = Module()
+        m.submodules.dut = dut = dsp.EdgeAwareResample(n_up=8, shape=ASQ)
+        outputs = []
+
+        async def stimulus(ctx):
+            for sample in (-0.4, -0.3, -0.2):
+                await stream.put(ctx, dut.i, fixed.Const(sample, shape=ASQ))
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            while len(outputs) < 16:
+                if ctx.get(dut.o.valid & dut.o.ready):
+                    outputs.append(ctx.get(dut.o.payload).as_float())
+                await ctx.tick()
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        self.assertTrue(all(a <= b for a, b in zip(outputs, outputs[1:])), outputs)
+        self.assertGreater(len(set(outputs[:8])), 2)
+        self.assertGreater(len(set(outputs[8:])), 2)
+        self.assertAlmostEqual(outputs[7], -0.3, places=3)
+        self.assertAlmostEqual(outputs[15], -0.2, places=3)
+
+    def test_edge_aware_resample_holds_hard_edges(self):
+        m = Module()
+        m.submodules.dut = dut = dsp.EdgeAwareResample(n_up=8, shape=ASQ)
+        outputs = []
+
+        async def stimulus(ctx):
+            for sample in (-0.5, -0.5, -0.5, 0.5, 0.5):
+                await stream.put(ctx, dut.i, fixed.Const(sample, shape=ASQ))
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            while len(outputs) < 32:
+                if ctx.get(dut.o.valid & dut.o.ready):
+                    outputs.append(ctx.get(dut.o.payload).as_float())
+                await ctx.tick()
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        edge = outputs[16:24]
+        self.assertEqual(edge[:7], [-0.5] * 7)
+        self.assertEqual(edge[7], 0.5)
+
+    def test_discontinuity_reconstruct_limits_local_overshoot(self):
+        m = Module()
+        m.submodules.dut = dut = dsp.DiscontinuityReconstruct(shape=ASQ)
+        samples = ([-0.5] * 20 +
+                   [-0.25, 0.10, 0.40, 0.60, 0.45] +
+                   [0.5] * 20)
+        outputs = []
+
+        async def stimulus(ctx):
+            for sample in samples:
+                await stream.put(ctx, dut.i, fixed.Const(sample, shape=ASQ))
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            while len(outputs) < len(samples) - 16:
+                if ctx.get(dut.o.valid & dut.o.ready):
+                    outputs.append(ctx.get(dut.o.payload).as_float())
+                await ctx.tick()
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        expected = samples[8:-8]
+        expected[23 - 8] = 0.45
+        expected[24 - 8] = 0.5
+        self.assertEqual(outputs, [fixed.Const(v, shape=ASQ).as_float()
+                                   for v in expected])
+
+    def test_reconstruct_preserves_rounded_edges_and_backpressure(self):
+        # The old endpoint snap fabricated a backward hook on a monotonic
+        # exponential when the moving-window detector stopped qualifying it.
+        # Exercise both implementations, both polarities, offsets, different
+        # settling times, hard edges, raw bypass, and stalled consumers.
+        for multichannel in (False, True):
+            for tau in (0, 1, 3, 6, 12, 24):
+                with self.subTest(multichannel=multichannel, tau=tau):
+                    samples = [0.0 if n < 24 else
+                               (0.6 if tau == 0 else
+                                0.6 * (1 - math.exp(-(n - 24) / tau)))
+                               for n in range(128)]
+                    samples += list(reversed(samples))
+                    frames = [[v, -v, v - 0.3, 0.2] for v in samples]
+                    dut = (dsp.MultichannelDiscontinuityReconstruct(
+                        n_channels=4, shape=ASQ) if multichannel else
+                        dsp.DiscontinuityReconstruct(shape=ASQ))
+                    outputs = []
+                    expected = [[fixed.Const(v, shape=ASQ).as_value().value
+                                 for v in (frame if multichannel else frame[:1])]
+                                for frame in frames[8:-8]]
+
+                    async def stimulus(ctx):
+                        for n, frame in enumerate(frames):
+                            if multichannel:
+                                ctx.set(dut.enable, (n // 11) % 2)
+                            values = [fixed.Const(v, shape=ASQ) for v in frame]
+                            await stream.put(ctx, dut.i,
+                                             values if multichannel else values[0])
+
+                    async def testbench(ctx):
+                        for cycle in range(10000):
+                            ctx.set(dut.o.ready, cycle % 7 >= 3)
+                            if ctx.get(dut.o.valid & dut.o.ready):
+                                outputs.append([
+                                    ctx.get(dut.o.payload[ch]).as_value().value
+                                    for ch in range(4)] if multichannel else
+                                    [ctx.get(dut.o.payload).as_value().value])
+                            await ctx.tick()
+                            if len(outputs) == len(expected):
+                                break
+                        self.assertEqual(outputs, expected)
+
+                    sim = Simulator(dut)
+                    sim.add_clock(1e-6)
+                    sim.add_process(stimulus)
+                    sim.add_testbench(testbench)
+                    sim.run()
+
+    def test_discontinuity_reconstruct_preserves_smooth_signal(self):
+        m = Module()
+        m.submodules.dut = dut = dsp.DiscontinuityReconstruct(shape=ASQ)
+        samples = [0.6 * math.sin(2 * math.pi * n / 48) for n in range(96)]
+        expected = [fixed.Const(v, shape=ASQ).as_value().value
+                    for v in samples[8:-8]]
+        outputs = []
+
+        async def stimulus(ctx):
+            for sample in samples:
+                await stream.put(ctx, dut.i, fixed.Const(sample, shape=ASQ))
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            while len(outputs) < len(expected):
+                if ctx.get(dut.o.valid & dut.o.ready):
+                    outputs.append(ctx.get(dut.o.payload).as_value().value)
+                await ctx.tick()
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        self.assertEqual(outputs, expected)
+
+    def test_multichannel_reconstruct_preserves_aligned_smooth_signals(self):
+        m = Module()
+        m.submodules.dut = dut = dsp.MultichannelDiscontinuityReconstruct(
+            n_channels=4, shape=ASQ)
+        frames = [
+            [0.5 * math.sin(2 * math.pi * n / period)
+             for period in (48, 56, 64, 72)]
+            for n in range(80)
+        ]
+        expected = [
+            [fixed.Const(frame[ch], shape=ASQ).as_value().value
+             for ch in range(4)]
+            for frame in frames[8:-8]
+        ]
+        outputs = []
+
+        async def stimulus(ctx):
+            for frame in frames:
+                await stream.put(
+                    ctx,
+                    dut.i,
+                    [fixed.Const(value, shape=ASQ) for value in frame],
+                )
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            while len(outputs) < len(expected):
+                if ctx.get(dut.o.valid & dut.o.ready):
+                    outputs.append([
+                        ctx.get(dut.o.payload[ch]).as_value().value
+                        for ch in range(4)
+                    ])
+                await ctx.tick()
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        self.assertEqual(outputs, expected)
+
+    def test_multichannel_reconstruct_raw_mode_preserves_every_sample(self):
+        m = Module()
+        m.submodules.dut = dut = dsp.MultichannelDiscontinuityReconstruct(
+            n_channels=4, shape=ASQ)
+        samples = ([-0.5] * 20 +
+                   [-0.25, 0.10, 0.40, 0.60, 0.45] +
+                   [0.5] * 20)
+        frames = [[value, -value, value / 2, 0.0] for value in samples]
+        expected = [
+            [fixed.Const(value, shape=ASQ).as_value().value for value in frame]
+            for frame in frames[8:-8]
+        ]
+        outputs = []
+
+        async def stimulus(ctx):
+            ctx.set(dut.enable, 0)
+            for frame in frames:
+                await stream.put(ctx, dut.i,
+                                 [fixed.Const(value, shape=ASQ) for value in frame])
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            while len(outputs) < len(expected):
+                if ctx.get(dut.o.valid & dut.o.ready):
+                    outputs.append([
+                        ctx.get(dut.o.payload[ch]).as_value().value
+                        for ch in range(4)
+                    ])
+                await ctx.tick()
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        self.assertEqual(outputs, expected)
+
+    def test_multichannel_reconstruct_matches_local_cleanup_reference(self):
+        dut = dsp.MultichannelDiscontinuityReconstruct(n_channels=4, shape=ASQ)
+        samples = ([-0.5] * 24 + [-0.25, 0.10, 0.40, 0.60, 0.45] +
+                   [0.5] * 24 + [0.25, -0.10, -0.40, -0.60, -0.45] +
+                   [-0.5] * 24)
+        # Different sign, amplitude, and DC offset for each channel.
+        frames = [[fixed.Const(v, shape=ASQ).as_value().value
+                   for v in (sample, -sample, sample / 2, sample + 0.7)]
+                  for sample in samples]
+        expected = []
+        for n in range(8, len(frames) - 8):
+            result = []
+            for ch in range(4):
+                left, right = frames[n - 8][ch], frames[n + 8][ch]
+                step = abs(right - left)
+                qualifies = (step >= dut.min_step and
+                             abs(frames[n - 7][ch] - left) * 32 < step and
+                             abs(right - frames[n + 7][ch]) * 32 < step)
+                result.append(sorted(frames[k][ch] for k in (n - 1, n, n + 1))[1]
+                              if qualifies else frames[n][ch])
+            expected.append(result)
+        self.assertNotEqual(expected, frames[8:-8])
+
+        async def stimulus(ctx):
+            for frame in frames:
+                await stream.put(ctx, dut.i, [fixed.Const(v / (1 << ASQ.f_bits), shape=ASQ)
+                                             for v in frame])
+
+        async def testbench(ctx):
+            outputs = []
+            held = None
+            for cycle in range(3000):
+                ctx.set(dut.o.ready, cycle % 9 >= 4)
+                valid = ctx.get(dut.o.valid)
+                payload = [ctx.get(dut.o.payload[ch]).as_value().value
+                           for ch in range(4)]
+                if held is not None:
+                    self.assertTrue(valid)
+                    self.assertEqual(payload, held)
+                held = payload if valid and not ctx.get(dut.o.ready) else None
+                if valid and ctx.get(dut.o.ready):
+                    outputs.append(payload)
+                await ctx.tick()
+                if len(outputs) == len(expected):
+                    break
+            self.assertEqual(outputs, expected)
+
+        sim = Simulator(dut)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+    def test_multichannel_fixed_point_convert_rounds_symmetrically(self):
+        from tiliqua.raster import PSQ
+
+        m = Module()
+        m.domains.sync = ClockDomain()
+        m.submodules.dut = dut = dsp.MultichannelFixedPointConvert(
+            n_channels=4, input_shape=ASQ, output_shape=PSQ)
+        shift = ASQ.f_bits - PSQ.f_bits
+        half = 1 << (shift - 1)
+        just_below_one_and_a_half = (1 << shift) + half - 1
+        input_counts = [half, -half,
+                        just_below_one_and_a_half, -just_below_one_and_a_half]
+        scale = 1 << ASQ.f_bits
+        output = []
+
+        async def stimulus(ctx):
+            await stream.put(ctx, dut.i, [
+                fixed.Const(value / scale, shape=ASQ)
+                for value in input_counts
+            ])
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            while not ctx.get(dut.o.valid):
+                await ctx.tick()
+            output.extend(ctx.get(dut.o.payload[ch]).as_value().value
+                          for ch in range(4))
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        self.assertEqual(output, [1, -1, 1, -1])
+
+    @parameterized.expand([(False,), (True,)])
+    def test_oscio_display_chain_emits_continuous_sample_bundles(self, with_capture):
+        """The exact OSCIO DSP chain must survive downstream backpressure."""
+        from tiliqua.raster import PSQ
+
+        m = Module()
+        m.submodules.input_fifo = input_fifo = stream_util.SyncFIFOBuffered(
+            shape=data.ArrayLayout(ASQ, 4), depth=16)
+        m.submodules.reconstruct = reconstruct = \
+            dsp.MultichannelDiscontinuityReconstruct(
+                n_channels=4, shape=ASQ)
+        m.submodules.resample = resample = \
+            dsp.MultichannelEdgeAwareResample(
+                n_channels=4, n_up=8, shape=ASQ)
+        m.submodules.convert = convert = \
+            dsp.MultichannelFixedPointConvert(
+                n_channels=4, input_shape=ASQ, output_shape=PSQ)
+        wiring.connect(m, input_fifo.o, reconstruct.i)
+        wiring.connect(m, reconstruct.o, resample.i)
+        wiring.connect(m, resample.o, convert.i)
+        if with_capture:
+            from tiliqua.raster.digital_scope import DigitalScopePeripheral
+            from amaranth_soc import csr
+            from amaranth_soc.csr import wishbone as csr_wishbone
+            from tiliqua.test import csr as csr_util
+            m.submodules.scope = scope = DigitalScopePeripheral(
+                fs=1_536_000, native_fs=192_000)
+            wiring.connect(m, convert.o, scope.i)
+            decoder = csr.Decoder(addr_width=28, data_width=8)
+            decoder.add(scope.bus, addr=0, name="scope")
+            bridge = csr_wishbone.WishboneCSRBridge(decoder.bus, data_width=32)
+            m.submodules += [decoder, bridge]
+        configured = Signal(init=not with_capture)
+
+        n_frames = 40
+        frames = [
+            [0.5 * math.sin(2 * math.pi * n / period)
+             for period in (17, 23, 31, 37)]
+            for n in range(n_frames)
+        ]
+        outputs = []
+        stage_counts = [0, 0]
+
+        async def stimulus(ctx):
+            await ctx.tick().until(configured)
+            for frame in frames:
+                await stream.put(
+                    ctx,
+                    input_fifo.i,
+                    [fixed.Const(value, shape=ASQ) for value in frame],
+                )
+
+        async def testbench(ctx):
+            if with_capture:
+                await csr_util.wb_csr_w_dict(
+                    ctx, scope.bus, bridge.wb_bus, "flags", {"enable": 1})
+                ctx.set(configured, 1)
+            expected_count = (n_frames - 17) * 8
+            cycle = 0
+            while len(outputs) < expected_count:
+                # Exercise replacement of a consumed converter word as well as
+                # a short periodic stall like the capture-side stream fanout.
+                if not with_capture:
+                    ctx.set(convert.o.ready, (cycle % 11) not in (8, 9))
+                if ctx.get(reconstruct.o.valid & reconstruct.o.ready):
+                    stage_counts[0] += 1
+                if ctx.get(resample.o.valid & resample.o.ready):
+                    stage_counts[1] += 1
+                if ctx.get(convert.o.valid & convert.o.ready):
+                    outputs.append([
+                        ctx.get(convert.o.payload[ch]).as_value().value
+                        for ch in range(4)
+                    ])
+                await ctx.tick()
+                cycle += 1
+                self.assertLess(
+                    cycle, n_frames * 312,
+                    f"OSCIO display chain stalled: reconstruct={stage_counts[0]}, "
+                    f"resample={stage_counts[1]}, convert={len(outputs)}",
+                )
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        self.assertEqual(len(outputs), (n_frames - 17) * 8)
+        self.assertTrue(any(any(value != 0 for value in frame)
+                            for frame in outputs))
+
+    def test_oscio_q28_ramp_duration_matches_one_ms_per_div(self):
+        """A landscape acquisition should take about 10 divisions of samples."""
+        from tiliqua.raster import PSQ
+        from tiliqua.raster.digital_scope import SCOPE_TIMEBASE_SQ
+
+        m = Module()
+        m.submodules.dut = dut = dsp.Ramp(
+            shape=PSQ, timebase_shape=SCOPE_TIMEBASE_SQ)
+        m.d.comb += dut.end.eq(
+            fixed.Const(1920 / (1 << PSQ.f_bits), shape=PSQ))
+
+        # Firmware result for 1 ms/div, 125 px/div, xscale 5, 1.536 MHz.
+        increment = 1_365_333
+        outputs = []
+        wrap_indices = []
+
+        async def testbench(ctx):
+            ctx.set(dut.i.valid, 1)
+            ctx.set(dut.o.ready, 1)
+            ctx.set(dut.i.payload.td.as_value(), increment)
+            ctx.set(dut.i.payload.trigger, 1)
+            for _ in range(25_000):
+                outputs.append(ctx.get(dut.o.payload).as_value().value)
+                await ctx.tick()
+                if len(outputs) >= 2 and outputs[-1] < outputs[-2]:
+                    wrap_indices.append(len(outputs) - 1)
+                    if len(wrap_indices) == 2:
+                        break
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        # Capture at 1.536 MHz should need roughly 15,500 samples, not wrap in
+        # only a handful of samples.
+        self.assertEqual(len(wrap_indices), 2)
+        sweep_samples = wrap_indices[1] - wrap_indices[0]
+        self.assertGreater(sweep_samples, 14_000)
+        self.assertLess(sweep_samples, 17_000)
+
+    def test_multichannel_edge_aware_resample_keeps_channels_aligned(self):
+        m = Module()
+        m.submodules.dut = dut = dsp.MultichannelEdgeAwareResample(
+            n_channels=4, n_up=8, shape=ASQ)
+        frames = [
+            [-0.4, -0.5, 0.2, 0.0],
+            [-0.3, -0.5, 0.1, 0.1],
+            [-0.2, -0.5, 0.0, 0.2],
+            [-0.1,  0.5, -0.1, 0.3],
+            [ 0.0,  0.5, -0.2, 0.4],
+        ]
+        outputs = []
+
+        async def stimulus(ctx):
+            for frame in frames:
+                await stream.put(
+                    ctx,
+                    dut.i,
+                    [fixed.Const(value, shape=ASQ) for value in frame],
+                )
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            while len(outputs) < 32:
+                if ctx.get(dut.o.valid & dut.o.ready):
+                    outputs.append([
+                        ctx.get(dut.o.payload[ch]).as_float()
+                        for ch in range(4)
+                    ])
+                await ctx.tick()
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        self.assertEqual(len(outputs), 32)
+        self.assertTrue(all(a[0] <= b[0]
+                            for a, b in zip(outputs, outputs[1:])), outputs)
+        hard_edge = [frame[1] for frame in outputs[16:24]]
+        self.assertEqual(hard_edge[:7], [-0.5] * 7)
+        self.assertEqual(hard_edge[7], 0.5)
+
+    def test_edge_aware_resample_does_not_overshoot_negative_substeps(self):
+        """Interpolation must retain signed remainders instead of accumulating them."""
+        m = Module()
+        m.submodules.dut = dut = dsp.EdgeAwareResample(n_up=8, shape=ASQ)
+        start = 100
+        stop = 99
+        scale = 1 << ASQ.f_bits
+        outputs = []
+
+        async def stimulus(ctx):
+            await stream.put(ctx, dut.i, fixed.Const(start / scale, shape=ASQ))
+            await stream.put(ctx, dut.i, fixed.Const(stop / scale, shape=ASQ))
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            while len(outputs) < 8:
+                if ctx.get(dut.o.valid & dut.o.ready):
+                    outputs.append(ctx.get(dut.o.payload).as_value().value)
+                await ctx.tick()
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        expected = [start + ((stop - start) * phase // 8)
+                    for phase in range(1, 9)]
+        self.assertEqual(outputs, expected)
+        self.assertTrue(all(stop <= value <= start for value in outputs))
+
+    def test_multichannel_edge_aware_resample_is_exact_and_bounded(self):
+        m = Module()
+        m.submodules.dut = dut = dsp.MultichannelEdgeAwareResample(
+            n_channels=4, n_up=8, shape=ASQ)
+        starts = [100, -100, 17, -17]
+        stops = [99, -103, 24, -10]
+        scale = 1 << ASQ.f_bits
+        outputs = []
+
+        async def stimulus(ctx):
+            await stream.put(
+                ctx, dut.i,
+                [fixed.Const(value / scale, shape=ASQ) for value in starts])
+            await stream.put(
+                ctx, dut.i,
+                [fixed.Const(value / scale, shape=ASQ) for value in stops])
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            while len(outputs) < 8:
+                if ctx.get(dut.o.valid & dut.o.ready):
+                    outputs.append([
+                        ctx.get(dut.o.payload[ch]).as_value().value
+                        for ch in range(4)
+                    ])
+                await ctx.tick()
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        expected = [
+            [starts[ch] + ((stops[ch] - starts[ch]) * phase // 8)
+             for ch in range(4)]
+            for phase in range(1, 9)
+        ]
+        self.assertEqual(outputs, expected)
+        for frame in outputs:
+            for ch, value in enumerate(frame):
+                self.assertGreaterEqual(value, min(starts[ch], stops[ch]))
+                self.assertLessEqual(value, max(starts[ch], stops[ch]))
+
     @parameterized.expand([
         ["mux_mac", mac.MuxMAC],
         ["ring_mac", mac.RingMAC],
@@ -277,8 +915,9 @@ class DSPTests(unittest.TestCase):
             result = await stream.get(ctx, matrix.o)
             self.assertAlmostEqual(result[0].as_float(),  0.3, places=4)
             self.assertAlmostEqual(result[1].as_float(), -0.4, places=4)
-            # 1.1 -> saturates to 1
-            self.assertAlmostEqual(result[2].as_float(),  1.0, places=4)
+            # Saturation depends on the configured ASQ integer width.
+            expected = fixed.Const(1.1, shape=ASQ, clamp=True).as_float()
+            self.assertAlmostEqual(result[2].as_float(), expected, places=4)
             self.assertAlmostEqual(result[3].as_float(), -0.8, places=4)
 
         sim = Simulator(matrix)
@@ -438,6 +1077,152 @@ class DSPTests(unittest.TestCase):
         with sim.write_vcd(vcd_file=open("test_onepole.vcd", "w")):
             sim.run()
 
+    def test_trigger_lowpass_bypass_is_exact(self):
+
+        dut = dsp.TriggerLowPass(shape=ASQ)
+        samples = [-0.75, -0.2, 0.0, 0.125, 0.8]
+        outputs = []
+
+        async def stimulus(ctx):
+            ctx.set(dut.mode, 0)
+            for value in samples:
+                await stream.put(ctx, dut.i, fixed.Const(value, shape=ASQ))
+
+        async def testbench(ctx):
+            for _ in samples:
+                outputs.append((await stream.get(ctx, dut.o)).as_value().value)
+
+        sim = Simulator(dut)
+        sim.add_clock(1e-6)
+        sim.add_testbench(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        expected = [fixed.Const(v, shape=ASQ).as_value().value for v in samples]
+        self.assertEqual(outputs, expected)
+
+    def test_trigger_lowpass_rejects_high_harmonics(self):
+
+        dut = dsp.TriggerLowPass(shape=ASQ)
+        outputs = []
+        n_samples = 3072
+
+        async def stimulus(ctx):
+            # Mode 1 is approximately 5 kHz at OSCIO's 1.536 MHz trigger rate.
+            ctx.set(dut.mode, 1)
+            for n in range(n_samples):
+                low = 0.3 * math.sin(2 * math.pi * n / 512)
+                high = 0.3 * math.sin(2 * math.pi * n / 16)
+                await stream.put(ctx, dut.i, fixed.Const(low + high, shape=ASQ))
+
+        async def testbench(ctx):
+            for _ in range(n_samples):
+                outputs.append((await stream.get(ctx, dut.o)).as_float())
+
+        sim = Simulator(dut)
+        sim.add_clock(1e-6)
+        sim.add_testbench(stimulus)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        # Ignore startup settling, then estimate each component by correlation.
+        settled = outputs[1024:]
+        low_amp = abs(sum(
+            y * math.sin(2 * math.pi * (n + 1024) / 512)
+            for n, y in enumerate(settled)
+        ))
+        high_amp = abs(sum(
+            y * math.sin(2 * math.pi * (n + 1024) / 16)
+            for n, y in enumerate(settled)
+        ))
+        self.assertGreater(low_amp, 20 * high_amp)
+
+    def test_trigger_lowpass_modes_have_ordered_step_response(self):
+        """Every fixed coefficient path must select a progressively lower cutoff."""
+        settled = []
+        n_samples = 512
+
+        for mode in range(1, 5):
+            dut = dsp.TriggerLowPass(shape=ASQ)
+            outputs = []
+
+            async def stimulus(ctx, *, selected_mode=mode):
+                ctx.set(dut.mode, selected_mode)
+                for _ in range(n_samples):
+                    await stream.put(ctx, dut.i, fixed.Const(0.5, shape=ASQ))
+
+            async def testbench(ctx):
+                for _ in range(n_samples):
+                    outputs.append((await stream.get(ctx, dut.o)).as_float())
+
+            sim = Simulator(dut)
+            sim.add_clock(1e-6)
+            sim.add_testbench(stimulus)
+            sim.add_testbench(testbench)
+            sim.run()
+            settled.append(outputs[-1])
+
+        self.assertTrue(
+            all(faster > slower
+                for faster, slower in zip(settled, settled[1:])),
+            settled,
+        )
+        self.assertGreater(settled[0], 0.49)
+        self.assertLess(settled[-1], 0.05)
+
+    def test_auto_trigger_times_out_only_while_waiting(self):
+
+        dut = dsp.AutoTrigger(timeout_ticks=5)
+
+        async def testbench(ctx):
+            ctx.set(dut.enable, 1)
+            ctx.set(dut.tick, 0)
+            ctx.set(dut.waiting, 0)
+            for _ in range(8):
+                self.assertEqual(ctx.get(dut.o), 0)
+                await ctx.tick()
+
+            ctx.set(dut.waiting, 1)
+            # System clocks without accepted samples must not consume the
+            # sample-rate-based timeout.
+            for _ in range(8):
+                self.assertEqual(ctx.get(dut.o), 0)
+                await ctx.tick()
+
+            ctx.set(dut.tick, 1)
+            for _ in range(4):
+                self.assertEqual(ctx.get(dut.o), 0)
+                await ctx.tick()
+            self.assertEqual(ctx.get(dut.o), 1)
+            await ctx.tick()
+            self.assertEqual(ctx.get(dut.o), 0)
+
+        sim = Simulator(dut)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()
+
+    def test_auto_trigger_passes_real_edges_without_auto_mode(self):
+
+        dut = dsp.AutoTrigger(timeout_ticks=5)
+
+        async def testbench(ctx):
+            ctx.set(dut.enable, 0)
+            ctx.set(dut.tick, 0)
+            ctx.set(dut.waiting, 1)
+            ctx.set(dut.edge, 0)
+            self.assertEqual(ctx.get(dut.o), 0)
+            ctx.set(dut.edge, 1)
+            self.assertEqual(ctx.get(dut.o), 1)
+            await ctx.tick()
+            ctx.set(dut.edge, 0)
+            self.assertEqual(ctx.get(dut.o), 0)
+
+        sim = Simulator(dut)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()
+
     def test_stream_arbiter(self):
 
         n_channels = 3
@@ -464,3 +1249,394 @@ class DSPTests(unittest.TestCase):
         sim.add_testbench(testbench)
         with sim.write_vcd(vcd_file=open("test_stream_arbiter.vcd", "w")):
             sim.run()
+
+
+class _NormScopeTrigger(wiring.Component):
+    """Trigger + ramp path mirroring ``digital_scope`` NORM / FREE logic."""
+
+    def __init__(self, *, shape=ASQ, td_scale=0.5, hysteresis=0,
+                 auto_timeout_ticks=16):
+        self._shape = shape
+        self._td_scale = td_scale
+        self._hysteresis = hysteresis
+        self._auto_timeout_ticks = auto_timeout_ticks
+        super().__init__({
+            "i": In(amaranth_stream.Signature(data.StructLayout({
+                "sample": shape,
+                "threshold": shape,
+            }))),
+            "trigger_always": In(1),
+            "trigger_auto": In(1),
+            "falling": In(1),
+            "capture_active": In(1, init=1),
+            "o": Out(amaranth_stream.Signature(shape)),
+            "dbg_restarts": Out(unsigned(16)),
+            "dbg_norm_fire": Out(1),
+            "dbg_auto_fire": Out(1),
+            "dbg_ramp_at_top": Out(1),
+            "dbg_norm_fire_count": Out(unsigned(16)),
+            "dbg_auto_fire_count": Out(unsigned(16)),
+        })
+
+    def elaborate(self, platform):
+        m = Module()
+        m.submodules.trig = trig = dsp.Trigger(
+            shape=self._shape, hysteresis=self._hysteresis)
+        m.d.comb += trig.falling.eq(self.falling)
+        m.submodules.ramp = ramp = dsp.Ramp(shape=self._shape)
+        td = fixed.Const(self._td_scale, shape=dsp.Ramp.TIMEBASE_SQ)
+        m.d.comb += ramp.end.eq(fixed.Const(0.985, shape=self._shape))
+
+        ramp_at_top = Signal()
+        prev_ramp_at_top = Signal()
+        ramp_restarted = Signal()
+        trig_seen = Signal()
+        norm_fire = Signal()
+        auto_fire = Signal()
+        free_rearm_ready = Signal(init=1)
+        free_fire = Signal()
+        ramp_fire = Signal()
+        restarts = Signal(16)
+        norm_fire_count = Signal(16)
+        auto_fire_count = Signal(16)
+        m.submodules.auto_trigger = auto_trigger = dsp.AutoTrigger(
+            timeout_ticks=self._auto_timeout_ticks)
+
+        m.d.comb += [
+            ramp_at_top.eq(ramp.o.payload > fixed.Const(0.985, shape=self._shape)),
+            ramp_restarted.eq(prev_ramp_at_top & ~ramp_at_top),
+            trig_seen.eq(trig.o.payload & trig.i.valid & trig.o.ready),
+            norm_fire.eq(trig_seen & ramp_at_top & ~self.trigger_always),
+            auto_trigger.edge.eq(norm_fire),
+            auto_trigger.tick.eq(trig.i.valid & trig.o.ready),
+            auto_trigger.enable.eq(self.trigger_auto & ~self.trigger_always),
+            auto_trigger.waiting.eq(ramp_at_top & self.capture_active),
+            auto_fire.eq(auto_trigger.o & ~self.trigger_always),
+            free_fire.eq(self.trigger_always & free_rearm_ready),
+            ramp_fire.eq((free_fire | auto_fire) &
+                         self.capture_active),
+            self.dbg_norm_fire.eq(norm_fire),
+            self.dbg_auto_fire.eq(auto_fire),
+            self.dbg_ramp_at_top.eq(ramp_at_top),
+        ]
+        m.d.sync += prev_ramp_at_top.eq(ramp_at_top)
+
+        with m.If(norm_fire):
+            m.d.sync += norm_fire_count.eq(norm_fire_count + 1)
+        with m.If(auto_fire):
+            m.d.sync += auto_fire_count.eq(auto_fire_count + 1)
+        with m.If(ramp_restarted):
+            m.d.sync += restarts.eq(restarts + 1)
+
+        dsp.connect_remap(m, self.i, trig.i, lambda o, i: [
+            i.payload.sample.eq(o.payload.sample),
+            i.payload.threshold.eq(o.payload.threshold),
+        ])
+        dsp.connect_remap(m, trig.o, ramp.i, lambda o, i: [
+            i.payload.trigger.eq(ramp_fire),
+            i.payload.td.eq(td),
+        ])
+        with m.If(~self.capture_active):
+            m.d.sync += free_rearm_ready.eq(1)
+        with m.Elif(ramp.i.valid & ramp.i.ready & ramp_at_top & free_fire):
+            m.d.sync += free_rearm_ready.eq(0)
+        m.d.comb += [
+            self.o.payload.eq(ramp.o.payload),
+            self.o.valid.eq(ramp.o.valid),
+            ramp.o.ready.eq(self.o.ready),
+            self.dbg_restarts.eq(restarts),
+            self.dbg_norm_fire_count.eq(norm_fire_count),
+            self.dbg_auto_fire_count.eq(auto_fire_count),
+        ]
+        return m
+
+
+class NormTriggerTests(unittest.TestCase):
+
+    def _make_dut(self, *, trigger_always=False, trigger_auto=False,
+                  falling=False, hysteresis=0, td_scale=0.5,
+                  auto_timeout_ticks=16):
+        m = Module()
+        dut = _NormScopeTrigger(
+            td_scale=td_scale,
+            hysteresis=hysteresis,
+            auto_timeout_ticks=auto_timeout_ticks,
+        )
+        m.submodules.dut = dut
+        m.d.comb += [
+            dut.trigger_always.eq(trigger_always),
+            dut.trigger_auto.eq(trigger_auto),
+            dut.falling.eq(falling),
+        ]
+        return m, dut
+
+    async def _put(self, ctx, dut, sample, threshold=0.0):
+        await stream.put(ctx, dut.i, {
+            "sample": fixed.Const(sample, shape=ASQ),
+            "threshold": fixed.Const(threshold, shape=ASQ),
+        })
+
+    def test_mid_sweep_crossing_not_replayed_at_top(self):
+        """A crossing during the sweep must not restart when the ramp later idles at top."""
+        m, dut = self._make_dut()
+        state = {"saw_mid_crossing": False}
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            threshold = 0.0
+            await self._put(ctx, dut, -0.5, threshold)
+            for sample in (-0.2, 0.2):
+                await self._put(ctx, dut, sample, threshold)
+                if not ctx.get(dut.dbg_ramp_at_top) and ctx.get(dut.dbg_norm_fire) == 0:
+                    state["saw_mid_crossing"] = True
+            restarts_before_top = ctx.get(dut.dbg_restarts)
+            for _ in range(500):
+                await self._put(ctx, dut, 0.9, threshold)
+                if ctx.get(dut.dbg_ramp_at_top):
+                    break
+            self.assertTrue(ctx.get(dut.dbg_ramp_at_top))
+            for _ in range(40):
+                await self._put(ctx, dut, 0.9, threshold)
+            self.assertEqual(ctx.get(dut.dbg_restarts), restarts_before_top)
+            await self._put(ctx, dut, -0.5, threshold)
+            await self._put(ctx, dut, 0.2, threshold)
+            self.assertGreater(ctx.get(dut.dbg_norm_fire_count), 0)
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()
+        self.assertTrue(state["saw_mid_crossing"])
+
+    def test_restart_preceded_by_norm_fire(self):
+        m, dut = self._make_dut()
+        saw_norm_before_restart = []
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            prev_restarts = 0
+            prev_norm_count = 0
+            for n in range(4000):
+                y = 0.9 * math.sin(2 * math.pi * 0.11 * n)
+                await self._put(ctx, dut, y)
+                restarts = ctx.get(dut.dbg_restarts)
+                norm_count = ctx.get(dut.dbg_norm_fire_count)
+                if restarts != prev_restarts:
+                    saw_norm_before_restart.append(norm_count > prev_norm_count)
+                    prev_restarts = restarts
+                    prev_norm_count = norm_count
+            self.assertGreater(len(saw_norm_before_restart), 3)
+            self.assertTrue(all(saw_norm_before_restart), saw_norm_before_restart)
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()
+
+    def test_consecutive_restarts_keep_input_phase(self):
+        """Awkward sweep/input ratio should not alternate by 180 degrees."""
+        m, dut = self._make_dut()
+        restart_samples = []
+        freq = 0.11
+        period = 1.0 / freq
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            prev_restarts = 0
+            for n in range(6000):
+                y = 0.9 * math.sin(2 * math.pi * freq * n)
+                await self._put(ctx, dut, y)
+                restarts = ctx.get(dut.dbg_restarts)
+                if restarts != prev_restarts:
+                    restart_samples.append(n)
+                    prev_restarts = restarts
+            self.assertGreaterEqual(len(restart_samples), 4)
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()
+
+        ref = restart_samples[0] % period
+        for sample in restart_samples[1:]:
+            phase = sample % period
+            delta = min((phase - ref) % period, (ref - phase) % period)
+            self.assertLess(
+                delta, 1.5,
+                f"restart phase drift: ref={ref} got={phase} samples={restart_samples}",
+            )
+
+    def test_free_mode_restarts_without_crossing(self):
+        m, dut = self._make_dut(trigger_always=True)
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            previous_restarts = 0
+            for n in range(2000):
+                await self._put(ctx, dut, 0.9)
+                restarts = ctx.get(dut.dbg_restarts)
+                if restarts != previous_restarts:
+                    previous_restarts = restarts
+                    # Model the buffer swap/clear generation boundary.
+                    ctx.set(dut.capture_active, 0)
+                    await self._put(ctx, dut, 0.9)
+                    ctx.set(dut.capture_active, 1)
+            self.assertGreater(ctx.get(dut.dbg_restarts), 2)
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()
+
+    def test_free_mode_waits_for_buffer_cycle_before_next_restart(self):
+        """A delayed sweep_done must not let FREE wrap before capture clears."""
+        m, dut = self._make_dut(trigger_always=True)
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+
+            while ctx.get(dut.dbg_restarts) == 0:
+                await self._put(ctx, dut, 0.0)
+            first_restart = ctx.get(dut.dbg_restarts)
+
+            while not ctx.get(dut.dbg_ramp_at_top):
+                await self._put(ctx, dut, 0.0)
+            for _ in range(20):
+                await self._put(ctx, dut, 0.0)
+            self.assertEqual(ctx.get(dut.dbg_restarts), first_restart)
+
+            ctx.set(dut.capture_active, 0)
+            await self._put(ctx, dut, 0.0)
+            ctx.set(dut.capture_active, 1)
+            await self._put(ctx, dut, 0.0)
+            await self._put(ctx, dut, 0.0)
+            self.assertGreater(ctx.get(dut.dbg_restarts), first_restart)
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()
+
+    def test_auto_mode_restarts_after_sample_timeout(self):
+        """AUTO must keep an edge-free input moving without becoming FREE."""
+        timeout = 17
+        m, dut = self._make_dut(
+            trigger_auto=True, auto_timeout_ticks=timeout)
+        auto_fire_samples = []
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            previous_count = 0
+            for n in range(2400):
+                await self._put(ctx, dut, 0.25)
+                count = ctx.get(dut.dbg_auto_fire_count)
+                if count != previous_count:
+                    auto_fire_samples.append(n)
+                    previous_count = count
+            self.assertGreater(len(auto_fire_samples), 2)
+            for a, b in zip(auto_fire_samples, auto_fire_samples[1:]):
+                # Each timeout begins only after the preceding ramp reaches
+                # the top; it cannot fire more frequently than the timeout.
+                self.assertGreaterEqual(b - a, timeout)
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()
+
+    def test_auto_timeout_pauses_while_capture_is_inactive(self):
+        m, dut = self._make_dut(
+            trigger_auto=True, auto_timeout_ticks=9)
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            while not ctx.get(dut.dbg_ramp_at_top):
+                await self._put(ctx, dut, 0.25)
+
+            ctx.set(dut.capture_active, 0)
+            for _ in range(30):
+                await self._put(ctx, dut, 0.25)
+                self.assertEqual(ctx.get(dut.dbg_auto_fire_count), 0)
+
+            ctx.set(dut.capture_active, 1)
+            for _ in range(8):
+                await self._put(ctx, dut, 0.25)
+                self.assertEqual(ctx.get(dut.dbg_auto_fire_count), 0)
+            await self._put(ctx, dut, 0.25)
+            self.assertEqual(ctx.get(dut.dbg_auto_fire_count), 1)
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()
+
+    def test_ramp_waits_at_top_while_capture_is_inactive(self):
+        """A bank swap must not consume a whole unseen ramp sweep."""
+        m, dut = self._make_dut(trigger_always=True)
+
+        async def testbench(ctx):
+            ctx.set(dut.o.ready, 1)
+            ctx.set(dut.capture_active, 0)
+
+            for _ in range(500):
+                await self._put(ctx, dut, 0.0)
+                if ctx.get(dut.dbg_ramp_at_top):
+                    break
+            self.assertTrue(ctx.get(dut.dbg_ramp_at_top))
+
+            for _ in range(40):
+                await self._put(ctx, dut, 0.0)
+            self.assertEqual(ctx.get(dut.dbg_restarts), 0)
+            self.assertTrue(ctx.get(dut.dbg_ramp_at_top))
+
+            ctx.set(dut.capture_active, 1)
+            await self._put(ctx, dut, 0.0)
+            await self._put(ctx, dut, 0.0)
+            self.assertGreater(ctx.get(dut.dbg_restarts), 0)
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()
+
+    def test_hysteresis_rejects_opposite_edge_recrossing(self):
+        """Rising mode must not fire on chatter around the falling crossing."""
+        hysteresis = 0.002
+        m = Module()
+        m.submodules.dut = dut = dsp.Trigger(shape=ASQ, hysteresis=hysteresis)
+        pulse_count = Signal(8)
+        m.d.comb += [dut.falling.eq(0), dut.o.ready.eq(1)]
+        with m.If(dut.o.valid & dut.o.ready & dut.o.payload):
+            m.d.sync += pulse_count.eq(pulse_count + 1)
+
+        async def testbench(ctx):
+            async def put(sample):
+                await stream.put(ctx, dut.i, {
+                    "sample": fixed.Const(sample, shape=ASQ),
+                    "threshold": fixed.Const(0, shape=ASQ),
+                })
+
+            # Launch one legitimate rising trigger. This leaves Trigger
+            # disarmed until the input passes the lower Schmitt threshold.
+            await put(-0.02)
+            await put(0.02)
+            first_count = ctx.get(pulse_count)
+            self.assertEqual(first_count, 1)
+
+            # A tiny below/above-zero recrossing at the falling edge must not
+            # launch an inverted sweep.
+            await put(0.001)
+            await put(-0.0005)
+            await put(0.0005)
+            self.assertEqual(ctx.get(pulse_count), first_count)
+
+            # Once the signal moves beyond the Schmitt re-arm margin, the next
+            # genuine rising crossing must trigger normally.
+            await put(-0.01)
+            await put(0.01)
+            self.assertEqual(ctx.get(pulse_count), first_count + 1)
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_testbench(testbench)
+        sim.run()

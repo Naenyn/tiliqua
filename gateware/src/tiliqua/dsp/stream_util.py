@@ -209,6 +209,41 @@ class SyncFIFOBuffered(wiring.Component):
 
         return m
 
+
+class StreamBuffer(wiring.Component):
+    """One-entry elastic register stage for a ready/valid stream.
+
+    Unlike a fall-through FIFO, both the valid flag and payload are registered,
+    making this useful as an explicit timing boundary while retaining one item
+    per clock throughput.
+    """
+
+    def __init__(self, *, shape):
+        self.shape = shape
+        super().__init__({
+            "i": In(stream.Signature(shape)),
+            "o": Out(stream.Signature(shape)),
+        })
+
+    def elaborate(self, platform):
+        m = Module()
+
+        valid = Signal()
+        payload = Signal(self.shape)
+
+        m.d.comb += [
+            self.i.ready.eq(~valid | self.o.ready),
+            self.o.valid.eq(valid),
+            self.o.payload.eq(payload),
+        ]
+
+        with m.If(self.i.ready):
+            m.d.sync += valid.eq(self.i.valid)
+            with m.If(self.i.valid):
+                m.d.sync += payload.eq(self.i.payload)
+
+        return m
+
 def connect_remap(m, stream_o, stream_i, mapping):
     """
     Connect 2 streams, bypassing normal wiring.connect() checks

@@ -105,7 +105,7 @@ where
         } else {
             false
         };
-        
+
         if !handled {
             self.modify_mut(!self.modify());
         }
@@ -132,9 +132,7 @@ where
             } else if n_selected != 0 {
                 self.set_selected(Some(n_selected - 1));
             } else {
-                if self.page().n_unique_values() > 1 {
-                    self.set_selected(None);
-                }
+                self.set_selected(None);
             }
         } else if self.modify() {
             self.page_mut().tick_down();

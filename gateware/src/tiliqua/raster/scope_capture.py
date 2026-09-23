@@ -1,0 +1,506 @@
+# Copyright (c) 2024 Seb Holzapfel <me@sebholzapfel.com>
+#
+# SPDX-License-Identifier: CERN-OHL-S-2.0
+
+from amaranth import *
+from amaranth.lib import wiring
+from amaranth.lib.wiring import In, Out
+from amaranth_future import fixed
+
+from . import PSQ, PSQ_BASE_FBITS
+
+# Must be >= the widest plot we render (display h_active - margins).  720p is
+# 1280 wide (~1264 plottable columns); round up so the full screen is covered.
+MAX_CAPTURE_COLS = 1280
+RAMP_END = fixed.Const(0.985, shape=PSQ)
+
+# A displayed trace coordinate never needs the full signed 16-bit range used by
+# the capture arithmetic.  The widest supported rotated display spans only
+# +/-640 logical pixels, so 12 signed bits leave ample headroom while allowing
+# each four-channel envelope column to fit in 100 bits instead of 128.  On ECP5
+# this reduces each 1280-column sweep bank from 12 to 9 DP16KD blocks.
+ENVELOPE_COORD_BITS = 12
+ENVELOPE_CHANNEL_BITS = 1 + 2 * ENVELOPE_COORD_BITS
+ENVELOPE_WORD_BITS = 4 * ENVELOPE_CHANNEL_BITS
+
+# Eurorack-friendly V/div LUT for ``yscale_idx``. Entries 0-5 must match
+# ``ScopeVScale`` in OSCIO firmware. Entries 6-9 are the monitor's full-window
+# mappings: bipolar 10 V, bipolar 20 V, unipolar 10 V, and unipolar 5 V. The
+# latter two share the same gain as their equal-span bipolar counterpart but
+# carry distinct indices so capture can apply the correct lane clipping.
+# Maps sample deflection: in_y = ((-av * mul) >> rshift) + y_offset, where ``av`` is
+# the reshaped PSQ sample (~4000 counts per volt).  One 1 V grid step is ppv>>6 = 62 px.
+YSCALE_LUT = (
+    (159, 10),  # 0: 0.1 V/div
+    (127, 11),  # 1: 0.25 V/div
+    (127, 12),  # 2: 0.5 V/div
+    (127, 13),  # 3: 1.0 V/div
+    (203, 15),  # 4: 2.5 V/div
+    (203, 16),  # 5: 5.0 V/div
+    (262, 16),  # 6: -5..+5 V monitor window (16 px/V)
+    (131, 16),  # 7: -10..+10 V monitor window (8 px/V)
+    (262, 16),  # 8: 0..+10 V monitor window (16 px/V)
+    (524, 16),  # 9: 0..+5 V monitor window (32 px/V)
+)
+
+# The table above documents the original ratio directly, but the serialized
+# scaler uses one common Q16 denominator.  Every LUT denominator is a power of
+# two no larger than 2**16, so this conversion is exact.  Besides simplifying
+# rounding, a fixed shift removes the variable barrel shifter from the path
+# following the shared DSP multiplier.
+YSCALE_COEFF_Q16 = tuple(
+    mul << (16 - rshift) for mul, rshift in YSCALE_LUT
+)
+
+
+def envelope_word(ch_ymin, ch_ymax):
+    coord_min = -(1 << (ENVELOPE_COORD_BITS - 1))
+    coord_max = (1 << (ENVELOPE_COORD_BITS - 1)) - 1
+
+    def packed_coord(value):
+        # Slice the result explicitly: mixing signed bounds with an unsigned
+        # value slice otherwise makes Amaranth widen this Mux by one bit.
+        return Mux(
+            value < coord_min,
+            Const(coord_min, signed(ENVELOPE_COORD_BITS)),
+            Mux(
+                value > coord_max,
+                Const(coord_max, signed(ENVELOPE_COORD_BITS)),
+                value[:ENVELOPE_COORD_BITS],
+            ),
+        )[:ENVELOPE_COORD_BITS]
+
+    # Each channel is {valid, ymin[11:0], ymax[11:0]}.  An explicit valid bit
+    # avoids spending coordinate encodings on the old 16-bit sentinel.
+    chunks = []
+    for ch in range(4):
+        chunks.append(Cat(
+            ch_ymax[ch] >= ch_ymin[ch],
+            packed_coord(ch_ymin[ch]),
+            packed_coord(ch_ymax[ch]),
+        ))
+    packed = Cat(*chunks)
+    assert len(packed) == ENVELOPE_WORD_BITS
+    return packed
+
+
+# Per-column "no data captured" sentinel: all per-channel valid bits are clear.
+ENVELOPE_SENTINEL = 0
+
+
+class ColumnCapture(wiring.Component):
+
+    """
+    Accumulate per-column min/max envelopes while ``active`` and stream each
+    finished column out as soon as it completes (progressive / live rendering).
+
+    ``ramp`` supplies the horizontal position; ``audio`` supplies one PSQ per
+    channel.  Accumulation is gated (``armed``) to a single clean ramp sweep at
+    a time, and per-channel min/max updates are skipped for channels with
+    ``visible`` de-asserted (hidden channels stay at the envelope sentinel).
+
+    Samples use a valid/ready handshake; the upstream bundle must remain stable
+    while stalled. Each finished column is emitted on ``flush_*`` as a one-cycle
+    pulse to the trace RAM, which accepts one write per clock.
+    """
+
+    def __init__(self, *, n_channels=4):
+        assert n_channels == 4
+        self.n_channels = n_channels
+        super().__init__({
+            "active": In(1),
+            "clear": In(1),
+            "plot_x_lo": In(signed(16)),
+            "plot_x_hi": In(signed(16)),
+            "scale_x": In(unsigned(4)),
+            "x_offset": In(signed(16)),
+            "scale_y": In(unsigned(4)).array(n_channels),
+            "y_offset": In(signed(16)).array(n_channels),
+            "sample_valid": In(1),
+            "sample_ready": Out(1),
+            "ramp": In(PSQ),
+            "ramp_end": In(PSQ, init=0.985),
+            "audio": In(PSQ).array(n_channels),
+            "visible": In(1).array(n_channels),
+            "sweep_done": Out(1),
+            # Finished-column stream (1-cycle pulse, not back-pressured).
+            "flush_valid": Out(1),
+            "flush_col": Out(range(MAX_CAPTURE_COLS)),
+            "flush_word": Out(unsigned(ENVELOPE_WORD_BITS)),
+            "max_col": Out(range(MAX_CAPTURE_COLS)),
+        })
+
+    def elaborate(self, platform):
+        m = Module()
+
+        raw_x = Signal(signed(16))
+        scaled_x = Signal(signed(16))
+        in_x = Signal(signed(16))
+        in_y = Array(Signal(signed(16), name=f"in_y{i}") for i in range(self.n_channels))
+        scaled_active = Signal()
+        scaled_at_end = Signal()
+        sample_valid = Signal()
+        sample_active = Signal()
+        sample_at_end = Signal()
+        audio_base_width = PSQ.i_bits + PSQ_BASE_FBITS
+        # One extra sample bit safely represents ``-PSQ_MIN``.  Q16 scale
+        # coefficients require at most 15 signed bits (max 10176), keeping the
+        # shared multiplication within one ECP5 18x18 DSP block.
+        negated_width = audio_base_width + 1
+        coefficient_width = 15
+        product_width = negated_width + coefficient_width
+        latched_audio = Array(Signal(signed(audio_base_width), name=f"latched_audio{i}")
+                              for i in range(self.n_channels))
+        latched_scale_y = Array(Signal(unsigned(4), name=f"latched_scale_y{i}")
+                                for i in range(self.n_channels))
+        latched_y_offset = Array(Signal(signed(16), name=f"latched_y_offset{i}")
+                                 for i in range(self.n_channels))
+        latched_clip_enable = Array(Signal(name=f"latched_clip_enable{i}")
+                                    for i in range(self.n_channels))
+        latched_clip_lo = Array(Signal(signed(16), name=f"latched_clip_lo{i}")
+                                for i in range(self.n_channels))
+        latched_clip_hi = Array(Signal(signed(16), name=f"latched_clip_hi{i}")
+                                for i in range(self.n_channels))
+        scale_channel = Signal(range(self.n_channels))
+        product_channel = Signal(range(self.n_channels))
+        scaling = Signal()
+        product_valid = Signal()
+        y_coefficient = Signal(signed(coefficient_width))
+        negated_audio = Signal(signed(negated_width))
+        yprod = Signal(signed(product_width))
+        product_pipe = Signal(signed(product_width))
+        offset_pipe = Signal(signed(16))
+        rounded_product = Signal(signed(product_width - 16 + 1))
+        scaled_y = Signal(signed(16))
+        coordinate_pipe = Signal(signed(16))
+        coordinate_channel = Signal(range(self.n_channels))
+        coordinate_clip_enable = Signal()
+        coordinate_clip_lo = Signal(signed(16))
+        coordinate_clip_hi = Signal(signed(16))
+        coordinate_valid = Signal()
+        clipped_y = Signal(signed(16))
+
+        m.d.comb += raw_x.eq(
+            (self.ramp.reshape(PSQ_BASE_FBITS).as_value() >> self.scale_x) +
+            self.x_offset
+        )
+        with m.Switch(latched_scale_y[scale_channel]):
+            # Keep the six normal scope choices explicit, then merge monitor
+            # ranges with equal gain. Unknown indices safely use 0..+5 V gain.
+            for idx, coefficient in enumerate(YSCALE_COEFF_Q16[:6]):
+                with m.Case(idx):
+                    m.d.comb += y_coefficient.eq(coefficient)
+            with m.Case(6, 8):
+                m.d.comb += y_coefficient.eq(YSCALE_COEFF_Q16[6])
+            with m.Case(7):
+                m.d.comb += y_coefficient.eq(YSCALE_COEFF_Q16[7])
+            with m.Default():
+                m.d.comb += y_coefficient.eq(YSCALE_COEFF_Q16[9])
+        m.d.comb += [
+            negated_audio.eq(-latched_audio[scale_channel]),
+            yprod.eq(negated_audio * y_coefficient),
+            # (product + 0x8000) >> 16, expressed as an upper-word
+            # increment so synthesis does not build a full-width adder.
+            rounded_product.eq(
+                (product_pipe >> 16) + product_pipe[15]),
+            scaled_y.eq(rounded_product + offset_pipe),
+            clipped_y.eq(
+                Mux(coordinate_clip_enable & (coordinate_pipe < coordinate_clip_lo),
+                    coordinate_clip_lo,
+                    Mux(coordinate_clip_enable & (coordinate_pipe > coordinate_clip_hi),
+                        coordinate_clip_hi,
+                        coordinate_pipe))
+            ),
+        ]
+
+        # Average plotting cadence is ~39 clocks, but resampling emits bursts.
+        # Keep the bundle (including X and clipping metadata) locked until every
+        # coordinate has been consumed. This still accepts a bundle every eight
+        # clocks, well above the 1.536 MHz average plotting rate at 60 MHz.
+        m.d.comb += self.sample_ready.eq(
+            ~scaling & ~product_valid & ~coordinate_valid & ~sample_valid & ~self.clear)
+        m.d.sync += [
+            sample_valid.eq(0),
+            product_valid.eq(0),
+            coordinate_valid.eq(0),
+        ]
+        with m.If(self.sample_valid & self.sample_ready):
+            m.d.sync += [
+                scaled_x.eq(raw_x),
+                scaled_active.eq(self.active),
+                scaled_at_end.eq(self.ramp >= self.ramp_end),
+                scale_channel.eq(0),
+                scaling.eq(1),
+            ]
+            for ch in range(self.n_channels):
+                m.d.sync += [
+                    latched_audio[ch].eq(
+                        self.audio[ch].reshape(PSQ_BASE_FBITS).as_value()),
+                    latched_scale_y[ch].eq(self.scale_y[ch]),
+                    latched_y_offset[ch].eq(self.y_offset[ch]),
+                    latched_clip_enable[ch].eq(self.scale_y[ch] >= 6),
+                    latched_clip_lo[ch].eq(
+                        self.y_offset[ch] - Mux(self.scale_y[ch] >= 8, 160, 80)),
+                    latched_clip_hi[ch].eq(
+                        self.y_offset[ch] + Mux(self.scale_y[ch] >= 8, 0, 80)),
+                ]
+        with m.Elif(scaling):
+            # Register the DSP output before rounding and offset addition.  The
+            # old single-cycle path missed 60 MHz after routing because it
+            # combined channel muxing, negation, multiplication, a variable
+            # shift, and both additions.
+            m.d.sync += [
+                product_pipe.eq(yprod),
+                offset_pipe.eq(latched_y_offset[scale_channel]),
+                product_channel.eq(scale_channel),
+                product_valid.eq(1),
+            ]
+            with m.If(scale_channel == self.n_channels - 1):
+                m.d.sync += scaling.eq(0)
+            with m.Else():
+                m.d.sync += scale_channel.eq(scale_channel + 1)
+
+        with m.If(product_valid):
+            m.d.sync += [
+                coordinate_pipe.eq(scaled_y),
+                coordinate_channel.eq(product_channel),
+                coordinate_clip_enable.eq(latched_clip_enable[product_channel]),
+                coordinate_clip_lo.eq(latched_clip_lo[product_channel]),
+                coordinate_clip_hi.eq(latched_clip_hi[product_channel]),
+                coordinate_valid.eq(1),
+            ]
+
+        # Lane clipping gets its own stage rather than extending the shared
+        # multiplier/round/offset timing path on the 60 MHz sync domain.
+        with m.If(coordinate_valid):
+            m.d.sync += in_y[coordinate_channel].eq(clipped_y)
+            with m.If(coordinate_channel == self.n_channels - 1):
+                m.d.sync += [
+                    in_x.eq(scaled_x),
+                    sample_active.eq(scaled_active),
+                    sample_at_end.eq(scaled_at_end),
+                    sample_valid.eq(1),
+                ]
+
+        latched_col = Signal(range(MAX_CAPTURE_COLS))
+        max_col = Signal(range(MAX_CAPTURE_COLS))
+        has_col = Signal()
+        prev_x = Signal(signed(16))
+        has_prev_x = Signal()
+        col_ymin = Array(Signal(signed(16)) for _ in range(self.n_channels))
+        col_ymax = Array(Signal(signed(16)) for _ in range(self.n_channels))
+        prev_in_y = Array(Signal(signed(16)) for _ in range(self.n_channels))
+        flush_ymin = Array(Signal(signed(16)) for _ in range(self.n_channels))
+        flush_ymax = Array(Signal(signed(16)) for _ in range(self.n_channels))
+        col_changing = Signal()
+
+        prev_at_end = Signal()
+
+        # ``armed`` restricts accumulation to an in-progress sweep. It is set
+        # on a ramp restart and also when capture resumes after its backing
+        # bank has been invalidated. The latter permits a mid-sweep UI change
+        # to begin progressively redrawing immediately instead of waiting up
+        # to an entire slow monitor pass for the next ramp wrap.
+        armed = Signal()
+
+        col_index = Signal(range(MAX_CAPTURE_COLS))
+        pen_lift = Signal()
+        m.d.comb += pen_lift.eq(
+            sample_valid &
+            sample_active &
+            has_prev_x &
+            has_col &
+            (in_x < prev_x)
+        )
+
+        in_plot = Signal()
+        m.d.comb += [
+            col_index.eq(in_x - self.plot_x_lo),
+            in_plot.eq(
+                sample_valid &
+                sample_active &
+                armed &
+                ~pen_lift &
+                (in_x >= self.plot_x_lo) &
+                (in_x < self.plot_x_hi) &
+                (col_index < MAX_CAPTURE_COLS)
+            ),
+        ]
+
+        m.d.comb += col_changing.eq(
+            in_plot & has_col & (col_index != latched_col)
+        )
+        connect_column = Signal()
+        # col_changing already excludes pen lifts and out-of-plot samples.
+        m.d.comb += connect_column.eq(col_changing & has_prev_x)
+        bridge_lo = Array(Signal(signed(16), name=f"bridge_lo{ch}") for ch in range(self.n_channels))
+        bridge_hi = Array(Signal(signed(16), name=f"bridge_hi{ch}") for ch in range(self.n_channels))
+        boundary_y = Array(Signal(signed(16), name=f"boundary_y{ch}") for ch in range(self.n_channels))
+        for ch in range(self.n_channels):
+            m.d.comb += [
+                # Meet halfway between adjacent columns. Extending both all the
+                # way to the next sample thickens edges; extending neither
+                # leaves holes whenever a small slope crosses a column boundary.
+                boundary_y[ch].eq((in_y[ch] + prev_in_y[ch]) >> 1),
+                bridge_lo[ch].eq(Mux(boundary_y[ch] < in_y[ch], boundary_y[ch], in_y[ch])),
+                bridge_hi[ch].eq(Mux(boundary_y[ch] > in_y[ch], boundary_y[ch], in_y[ch])),
+                flush_ymin[ch].eq(
+                    Mux(self.visible[ch] & connect_column,
+                        Mux(boundary_y[ch] < col_ymin[ch], boundary_y[ch], col_ymin[ch]),
+                        col_ymin[ch])
+                ),
+                flush_ymax[ch].eq(
+                    Mux(self.visible[ch] & connect_column,
+                        Mux(boundary_y[ch] > col_ymax[ch], boundary_y[ch], col_ymax[ch]),
+                        col_ymax[ch])
+                ),
+            ]
+
+        flush_col = Signal(range(MAX_CAPTURE_COLS))
+        do_flush = Signal()
+
+        active_prev = Signal()
+        active_rise = Signal()
+        sweeping = Signal()
+        m.d.sync += active_prev.eq(self.active)
+        m.d.comb += active_rise.eq(self.active & ~active_prev)
+
+        end_reached = Signal()
+        m.d.comb += end_reached.eq(
+            sample_active &
+            sample_valid &
+            sample_at_end &
+            ~prev_at_end &
+            sweeping &
+            has_col
+        )
+
+        sweep_end = Signal()
+        m.d.comb += sweep_end.eq(pen_lift | end_reached)
+        # Ramp restart (top -> low): start of a fresh sweep.
+        sweep_restart = Signal()
+        m.d.comb += sweep_restart.eq(
+            sample_active &
+            sample_valid &
+            prev_at_end &
+            ~sample_at_end
+        )
+
+        with m.If(self.clear | active_rise):
+            m.d.sync += [
+                has_col.eq(0),
+                has_prev_x.eq(0),
+                prev_at_end.eq(0),
+                sweeping.eq(0),
+                max_col.eq(0),
+                armed.eq(active_rise),
+            ]
+            for ch in range(self.n_channels):
+                m.d.sync += [
+                    col_ymin[ch].eq(0),
+                    col_ymax[ch].eq(-1),
+                    prev_in_y[ch].eq(0),
+                ]
+        with m.Elif(sample_active & sample_valid):
+            m.d.sync += [
+                prev_x.eq(in_x),
+                prev_at_end.eq(sample_at_end),
+            ]
+            for ch in range(self.n_channels):
+                m.d.sync += prev_in_y[ch].eq(in_y[ch])
+            with m.If(~sample_at_end):
+                m.d.sync += sweeping.eq(1)
+
+        # Disarm at sweep end, (re)arm on restart.  sweep_restart is applied
+        # last so a wrap that is simultaneously an end and a restart keeps us
+        # armed for the new sweep.
+        with m.If(sweep_end):
+            m.d.sync += [
+                has_col.eq(0),
+                has_prev_x.eq(0),
+                armed.eq(0),
+            ]
+        with m.If(sweep_restart):
+            m.d.sync += armed.eq(1)
+
+        with m.If(in_plot):
+            with m.If(~has_col):
+                m.d.sync += [
+                    has_col.eq(1),
+                    has_prev_x.eq(1),
+                    latched_col.eq(col_index),
+                ]
+                for ch in range(self.n_channels):
+                    with m.If(self.visible[ch]):
+                        m.d.sync += [
+                            col_ymin[ch].eq(in_y[ch]),
+                            col_ymax[ch].eq(in_y[ch]),
+                        ]
+                    with m.Else():
+                        m.d.sync += [
+                            col_ymin[ch].eq(0),
+                            col_ymax[ch].eq(-1),
+                        ]
+            with m.If(col_changing):
+                m.d.comb += [
+                    do_flush.eq(1),
+                    flush_col.eq(latched_col),
+                ]
+                m.d.sync += latched_col.eq(col_index)
+                for ch in range(self.n_channels):
+                    with m.If(self.visible[ch]):
+                        m.d.sync += [
+                            col_ymin[ch].eq(Mux(connect_column, bridge_lo[ch], in_y[ch])),
+                            col_ymax[ch].eq(Mux(connect_column, bridge_hi[ch], in_y[ch])),
+                        ]
+                    with m.Else():
+                        m.d.sync += [
+                            col_ymin[ch].eq(0),
+                            col_ymax[ch].eq(-1),
+                        ]
+            with m.Elif(has_col & ~col_changing):
+                for ch in range(self.n_channels):
+                    with m.If(self.visible[ch]):
+                        with m.If(in_y[ch] < col_ymin[ch]):
+                            m.d.sync += col_ymin[ch].eq(in_y[ch])
+                        with m.If(in_y[ch] > col_ymax[ch]):
+                            m.d.sync += col_ymax[ch].eq(in_y[ch])
+
+        with m.If(sweep_end & has_col):
+            m.d.comb += [
+                do_flush.eq(1),
+                flush_col.eq(latched_col),
+            ]
+
+        # Register the full-width envelope before compacting it.  This keeps
+        # the bridge/min-max selection and the signed saturation comparisons
+        # in separate cycles; both stages can still accept one column per
+        # clock. Keep sweep_done in the same pipeline as the final column so
+        # the last write and bank-swap request remain aligned.
+        packed_ymin = Array(Signal(signed(16)) for _ in range(self.n_channels))
+        packed_ymax = Array(Signal(signed(16)) for _ in range(self.n_channels))
+        flush_pending = Signal()
+        flush_col_pending = Signal(range(MAX_CAPTURE_COLS))
+        sweep_done_pending = Signal()
+        m.d.sync += [
+            flush_pending.eq(do_flush),
+            flush_col_pending.eq(flush_col),
+            sweep_done_pending.eq(sweep_end),
+            self.flush_valid.eq(flush_pending),
+            self.flush_col.eq(flush_col_pending),
+            self.flush_word.eq(envelope_word(packed_ymin, packed_ymax)),
+            self.sweep_done.eq(sweep_done_pending),
+        ]
+        with m.If(do_flush):
+            for ch in range(self.n_channels):
+                m.d.sync += [
+                    packed_ymin[ch].eq(flush_ymin[ch]),
+                    packed_ymax[ch].eq(flush_ymax[ch]),
+                ]
+        # Update progress from the registered column rather than extending the
+        # plot-bound/column-selection path through another comparison and mux.
+        with m.If(flush_pending & (flush_col_pending > max_col)):
+            m.d.sync += max_col.eq(flush_col_pending)
+        m.d.comb += self.max_col.eq(max_col)
+
+        return m

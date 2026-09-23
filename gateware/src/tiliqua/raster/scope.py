@@ -77,7 +77,6 @@ class VectorPeripheral(wiring.Component):
 
         wiring.connect(m, wiring.flipped(self.i), self.stroke.i)
         wiring.connect(m, wiring.flipped(self.bus), self._bridge.bus)
-
         m.d.comb += self._pixels_per_volt.f.pixels_per_volt.r_data.eq(
             psq_from_volts(1).reshape(PSQ_BASE_FBITS))
 
@@ -212,8 +211,10 @@ class ScopePeripheral(wiring.Component):
 
         # Send one copy to trigger => ramp => X
         m.submodules.trig = trig = dsp.Trigger(shape=PSQ)
+        m.d.comb += trig.falling.eq(0)
         m.submodules.ramp = ramp = dsp.Ramp(shape=PSQ)
         timebase = Signal(shape=dsp.Ramp.TIMEBASE_SQ)
+        m.d.comb += ramp.end.eq(fixed.Const(0.985, shape=PSQ))
         # Audio => Trigger
         dsp.connect_remap(m, irep2.o[0], trig.i, lambda o, i: [
             i.payload.sample.eq(o.payload),
