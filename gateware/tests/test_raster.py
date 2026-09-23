@@ -156,6 +156,7 @@ class RasterTests(unittest.TestCase):
 
         async def testbench(ctx):
             ctx.set(fb.fbp.enable, 1)
+            ctx.set(fb.fbp.draw_base, 0x100)
             # Absolute positioning with replacement
             await stream.put(ctx, dut.i, {
                 'x': 1,
@@ -167,8 +168,11 @@ class RasterTests(unittest.TestCase):
                 'blend': plot.BlendMode.REPLACE,
                 'offset': plot.OffsetMode.ABSOLUTE,
             })
+            # Once accepted, a pixel must retain its original buffer even if
+            # firmware redirects future drawing before this write completes.
+            ctx.set(fb.fbp.draw_base, 0x200)
             result = await wishbone.classic_ack(ctx, dut.bus)
-            self.assertEqual(result.adr, 0x0)
+            self.assertEqual(result.adr, 0x100)
             self.assertEqual(result.dat_w, 0xbabababa)
             self.assertEqual(result.sel, 0b0010)
 
@@ -186,7 +190,7 @@ class RasterTests(unittest.TestCase):
             result = await wishbone.classic_ack(ctx, dut.bus)
             self.assertEqual(
                 result.adr,
-                int(self.MODELINE.h_active/4*(self.MODELINE.v_active/2 + 1/2)))
+                0x200 + int(self.MODELINE.h_active/4*(self.MODELINE.v_active/2 + 1/2)))
             self.assertEqual(result.dat_w, 0xbabababa)
             self.assertEqual(result.sel, 0b0010)
 
@@ -204,11 +208,11 @@ class RasterTests(unittest.TestCase):
             # Read cycle (get current pixel value)
             ctx.set(dut.bus.dat_r, 0x00009100)
             result = await wishbone.classic_ack(ctx, dut.bus)
-            self.assertEqual(result.adr, 0x0)
+            self.assertEqual(result.adr, 0x200)
             self.assertEqual(result.sel, 0b0010)
             # Write cycle (put newly calculated pixel value)
             result = await wishbone.classic_ack(ctx, dut.bus)
-            self.assertEqual(result.adr, 0x0)
+            self.assertEqual(result.adr, 0x200)
             self.assertEqual(result.sel, 0b0010)
             self.assertEqual(result.dat_w, 0xfafafafa)
 

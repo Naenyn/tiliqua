@@ -1,0 +1,274 @@
+# FFT / spectral experiment checkpoint
+
+Branch `codex/tuner-fft-experiment`, branched independently from working
+`ebdf7a28`. No production files changed; no replacement detector flashed.
+YIN remains at `2865ac0b`; NSDF comparison code at `5e9b81ff`.
+
+## Implemented
+
+- `tests/spectral_reference.py`: independent spectral harmonic-fit experiment.
+  Hann window, 4x-or-greater power-of-two padding, log-magnitude quadratic peaks,
+  up to 24 peaks, candidate fundamentals from peak/1..8, harmonic assignments
+  through 64, weighted frequency fit, coprime harmonic check, energy-coverage
+  qualification. These are fixed engineering heuristics, not a probability.
+- `tests/compare_detectors.py`: the same 254 signed-16-bit 192-kHz signals passed
+  to spectral, NSDF, and full-rate YIN steps 2–5; exact shared corpus from YIN
+  branch above. This excludes YIN's multirate improvements and the production
+  firmware qualification chain: it must NOT be called a full system ranking.
+- `tests/detector_transition_probe.py`: 100 identical phase-continuous step
+  frames. Every candidate reacquires within 10 cents after full window replacement.
+- `tests/fft_precision_probe.py`: actual existing FFT RTL, not a quantized ideal
+  model; 12 cases including quiet signals, optional block normalization and
+  output backpressure. It verifies complex output error <4 LSB and records cycles.
+- `tests/synthesize_fft_candidate.py`: existing `tiliqua.dsp.fft.FFT`, unchanged,
+  measured standalone. Two new live recordings retained as repeatable fixtures.
+
+Sources for the spectral ideas (not a claim to reproduce their full algorithms):
+Julius O. Smith, *Spectral Audio Signal Processing*, quadratic spectral peak
+interpolation and fundamental estimation from spectral peaks:
+https://www.dsprelated.com/freebooks/sasp/Quadratic_Interpolation_Spectral_Peaks.html
+https://www.dsprelated.com/freebooks/sasp/Fundamental_Frequency_Estimation_Spectral.html
+
+## Numerical results, not general accuracy guarantees
+
+Worst absolute cents among qualified cases in each category:
+
+| Category | Spectral | NSDF | Full-rate YIN |
+|---|---:|---:|---:|
+| Sine (153 cases) | 9.791 | 1.080 | 1.082 |
+| Strong second (9) | 5.617 | 4.286 | 4.289 |
+| Missing fundamental (9) | 5.957 | 8.228 | 8.230 |
+| Noisy sine (9) | 3.367 | 2.464 | 84.369 |
+| Bandlimited saw (9) | 0.135 | 2.710 | 2.712 |
+| Bandlimited square (9) | 0.079 | 1.069 | 1.070 |
+| Bandlimited 1% pulse (9) | 0.019 | 3.878 | 3.874 |
+
+All reject the single noise and silence cases. Directly sampled unbandlimited
+waveforms produce four spectral and five NSDF >50-cent failures; full-rate YIN
+has those five plus one noisy-sine failure. In particular, the 997.1-Hz 1% pulse
+produces an octave error in both time-domain references but not this spectral
+candidate. Physical narrow-pulse recordings are needed before concluding that
+this represents a useful improvement with the real ADC/oscillator chain.
+
+With a 100.02-ms identical frame, stable <10-cent step recovery (sampled every
+5 ms) was:
+
+| Step Hz | Spectral ms | NSDF ms | YIN ms |
+|---|---:|---:|---:|
+| 110.7 -> 440.3 | 70 | 85 | 100 |
+| 440.3 -> 110.7 | 55 | 20 | 100 |
+| 997.1 -> 7678.1 | 75 | 75 | 90 |
+| 7678.1 -> 997.1 | 75 | 100 | 100 |
+
+This is an offline observation, not a scheduling/latency guarantee. Refusals and
+intermediate estimates remain in the JSONL output. Neither acquisition time nor
+windows were tuned independently per candidate.
+
+Three real captures (sine, saw-like rich wave, previous alternating-cycle failure)
+produce spectral estimates 1064.226, 1063.976 and 7675.967 Hz. All qualify, as do
+the corresponding NSDF and YIN estimates. They have no independent ground truth.
+The 2048-sample native captures support the restricted 200–20kHz search only.
+
+## Actual FPGA cost and precision
+
+Existing FFT, SQ(1,15), synthesized with Yosys 0.68+48:
+
+| Transform | LUT4 | FF | DSP | EBR |
+|---|---:|---:|---:|---:|
+| 1024 | 665 | 578 | 4 | 8 |
+| 2048 | 678 | 602 | 4 | 16 |
+
+1024 routed on 25k ECP5 speed 6 with final reported 79.83 MHz, passing 60 MHz.
+These are isolated numbers. Current baseline synthesis has 33/56 EBR blocks;
+adding a 1024 transform leaves 15, a 2048 transform leaves seven, BEFORE adding
+filters, histories, spectra or scheduling. Replacements could reclaim some
+baseline memory, but that has not been designed or counted. Larger spectral
+analysis needs either multirate analysis, external-memory architecture, or a
+different precision/refinement strategy, not just a bigger on-chip FFT.
+
+Important mismatch: the desktop full-range spectral reference zero-pads 19204
+samples to 131072 points. Its results are NOT achievable by simply installing
+the 1024-point core. The latter is only a reusable kernel feasibility measurement.
+
+RTL probe used 65886 clocks per 1024 transform including load, output and stalls,
+about 1.10 ms at 60 MHz. Two bands x four channels x 20 updates/s would consume
+10.54 million such clocks for forward transforms alone. Autocorrelation also
+needs inverse transforms; filtering and all other work remain additional.
+
+At 20.37 Hz / 6 kHz sample rate and amplitude 72 ADC codes, unscaled FFT peak
+measurement adds 18.62 cents of fixed-point error. Scaling the quantized block
+left by seven bits before windowing reduces that contribution to 0.069 cents.
+This is inexpensive in concept but requires block peak detection/storage.
+The remaining total 1.636-cent error is largely the short spectrum's interpolation
+bias. Across the four tested quiet frequencies normalization kept additional
+fixed-point error below 0.07 cents. This does not test inverse-transform or
+power-spectrum precision, clipping robustness, filtering, or a complete detector.
+
+## Next hardware evidence
+
+Local Parks pulse follow-up (attenuated square, then narrowed pulse) supplies a
+more interpretable disagreement than modulated Blade. Retained as
+`tuner-local-parks-square-1001.json` and `tuner-local-parks-narrow-pulse-1001.json`.
+Neither frame hits either sample rail. Mid-level interpolated median widths give
+48.49% duty / 484.44 us for square, 2.628% / 26.27 us for narrow pulse. Width is
+measured in the captured signal, not an independent scope measurement.
+
+| Method | Square Hz | Narrow pulse Hz |
+|---|---:|---:|
+| Spectral | 1001.240 | 1000.897 |
+| NSDF | 1001.081 | 1000.813 |
+| YIN steps 2–5 | 1001.100 | 1000.747 |
+| Recorded raw baseline | 1000.993 | 1241.791 |
+
+All references qualify both at the same 200–20000 Hz bounds. The alternatives
+agree closely with the square reference, unlike the raw narrow-pulse header.
+This is useful real evidence without demanding a 1% pulse. Still distinguish
+the raw header's measurement window from the captured frame and the complete
+firmware qualification chain; there is no independent absolute frequency truth.
+No further waveform hunt is needed before continuing algorithm/cost comparisons.
+
+Attenuated modulated Blade follow-up: user kept internal modulation unchanged
+(believed internal LFO; exact rate unknown) and reduced amplitude. Retained as
+`tuner-local-parks-modulated-blade-attenuated.json`. All 2048 samples are inside
+the signed range, minimum -11905 / maximum 20268; zero samples hit either rail.
+The raw header reports 1514.889 Hz (factor 1). Spectral gives 500.880 Hz, NSDF
+500.567 Hz, YIN 500.652 Hz at the same 200–20000 Hz bounds, all qualified.
+Integer NSDF near 1 ms is -0.0056 versus 0.9893 near 2 ms. Half-frame NSDF
+estimates are 500.668 / 500.486 Hz. Capture rail clipping is therefore not
+necessary for this detector disagreement. This does not exclude distortion
+upstream of attenuation or prove the oscillator's intended pitch is 501 Hz.
+The snapshots occur at different modulation phases and are not a synchronized
+before/after amplitude experiment. These two modulated captures provide useful
+real data for subsequent periodicity/qualification improvements without needing
+to keep asking the user for increasingly artificial pulse widths.
+
+Modulated Blade follow-up is retained as `tuner-local-parks-modulated-blade.json`.
+User reports waveform modulation with fixed tuning controls. Modulation source,
+rate and depth were not yet supplied. Native frame: 2048 samples / 10.67 ms.
+Recorded raw baseline is 1320.092 Hz (factor 1); independent offline estimates
+are spectral 501.093 Hz, NSDF 500.864 Hz, YIN 500.830 Hz at the standard
+200–20000 Hz bounds. All three qualify. Around a 1-ms delay the best integer
+NSDF value is only 0.0013; around 2 ms it is 0.9887. Separate 1024-sample halves
+(400-Hz lower search limit) also give NSDF 500.862/500.976 Hz. This is evidence
+for approximately 2-ms waveform repetition, NOT proof that the oscillator's
+intended/base pitch changed to 501 Hz or that a full firmware replacement works.
+
+66 of the 2048 samples equal +32767; none equal -32768. The positive rail must
+be treated as possible clipping in the capture/signal chain. Request the same
+modulated signal at lower amplitude to distinguish waveform behavior from
+clipping effects. The retained frequency interval is a reproducibility check,
+not independently measured ground truth. Do not force the result to the earlier
+sine's approximately 1001 Hz just because its tuning controls were unchanged.
+
+Local Parks follow-up: user identified capture 3 as sine and capture 4 as Blade.
+Both are retained as fixtures. With the same 200–20000 Hz search bounds:
+
+| Method | Local Parks sine Hz | Blade Hz |
+|---|---:|---:|
+| Spectral | 1000.818 | 1000.300 |
+| NSDF | 1000.885 | 1000.218 |
+| YIN steps 2–5 | 1000.914 | 1000.044 |
+| Recorded raw baseline | 1001.242 | 1000.248 |
+
+All three references qualify both. This Blade setting does not reproduce a
+wrong-octave/refusal failure; it is not evidence that every Blade setting works.
+Blade can intentionally change its octave content. Do not use the sine's pitch
+as mandatory truth for every setting. Raw header agreement also does not verify
+the production firmware's continuous qualification/display behavior.
+
+September 11 narrow-pulse follow-up completed: two further 2048-sample native
+captures retained as `tuner-live-pulse-pair-sine-1063.json` and
+`tuner-live-narrow-pulse-1063.json`. Captured pulse width is approximately 71.6 us,
+7.61% duty, measured at the midpoint of the 1st/99th-percentile signal levels and
+using median interpolated edge intervals. This includes the acquisition chain's
+bandwidth effects; it is not an independent oscilloscope measurement.
+
+At identical 200–20000 Hz search bounds, sine/pulse estimates respectively:
+
+| Method | Sine Hz | Pulse Hz |
+|---|---:|---:|
+| Spectral | 1063.345 | 1063.481 |
+| NSDF | 1063.382 | 1063.676 |
+| YIN steps 2–5 | 1063.439 | 1063.285 |
+| Recorded raw baseline | 1062.909 | 1063.712 |
+
+All candidates qualify both recordings with no octave error. The baseline header
+records factor 1 on both. This is a useful passing real-waveform case, not proof
+of absolute accuracy or continuous tracking stability. The pulse is narrower
+than the earlier saw-like capture but not the 1% synthetic failure case; it does
+not establish a winner. Spectral processing identifies 22 matched peaks on it.
+
+Use existing TUNER -> FOCUS 0 -> CAPTURE; no new firmware required. Record a
+narrow pulse near 1 kHz, ideally alongside the same oscillator's sine/basic
+waveform without moving its pitch controls. Keep output settings untouched.
+The goal is to test real small-duty-cycle behavior, not obtain a different
+calibration curve. Serial captures are sufficient; no photographs needed.
+
+Do not choose or deploy a winner yet. A small FFT remains plausible as an
+optional shared spectral feature, not an earned replacement for the working
+tuner. Tuner/calibrator/independent multichannel quantizer capacity takes priority.
+
+## Short-window comparison on the real recordings
+
+Follow-up: see `NSDF_HARDWARE_EXPERIMENT.md` for actual FFT/IFFT precision tests,
+the implemented direct NSDF score engine, and explicitly separated integration
+budget estimates. Those results favor direct NSDF over FFT-based NSDF for now.
+
+`capture_window_probe.py` replays all 11 recordings at 2048, 1024, and 512
+samples. The lower search bounds are explicitly 200, 400, and 800 Hz,
+respectively. There are 473 observations (overlapping windows at a 64-sample
+hop), NOT 473 independent recordings. Native 192-kHz durations are 10.67,
+5.33, and 2.67 ms. These recordings cannot validate 20-Hz operation.
+
+Selected 1024-sample results below are peak-to-peak variation in cents across
+17 windows, not absolute error against an independent frequency reference:
+
+| Recording | Spectral, 1024 FFT | Spectral, 4096 FFT | NSDF | YIN |
+|---|---:|---:|---:|---:|
+| Local Parks narrow pulse (~1001 Hz) | 0.73 | 0.62 | 0.34 | 0.56 |
+| Local Parks square (~1001 Hz) | 1.10 | 0.91 | 0.46 | 1.14 |
+| Attenuated modulated Blade (~501 Hz repetition) | 5.01 | 3.12 | 1.09 | 1.00 |
+| Historical alternating-cycle capture (~7676 Hz) | 0.18 | 0.12 | 0.35 | 2.03 |
+
+All methods qualify these 1024-sample windows. The narrow pulse remains
+promising without a large FFT: even unpadded spectral processing reproduces it
+well. NSDF is the strongest balanced short-window candidate here, while the
+spectral estimate is particularly steady on the high-frequency recording.
+
+However, at 512 samples and an 800-Hz lower bound, the attenuated Blade's
+approximately 501-Hz repetition is out of range. NSDF and YIN qualify none of
+the 25 windows. The spectral method incorrectly qualifies 16/25 unpadded windows
+(989–1326 Hz) and 10/25 padded windows (976–1271 Hz). Its selected-peak coverage
+is not an adequate range/confidence guard. This is retained as a strict expected
+failure for both padding settings; do not deploy bank selection based only on
+that qualification bit. At 512 samples the square also worsens to 7.78 cents
+variation for the unpadded spectrum, versus 1.83 cents for NSDF.
+
+Next hardware feasibility work should prioritize shared NSDF processing and
+explicit bank/range rejection, while retaining the FFT experiment as a possible
+shared building block or optional display source. A forward FFT's measured
+resource usage does not establish the cost/precision of FFT-based NSDF: inverse
+transform, power spectrum, energy normalization, histories and filtering still
+need accounting. Neither these figures nor agreement between references justify
+replacing the production detector yet. No production firmware changed for this
+comparison.
+
+## Reproduction commands
+
+Use the project's Python environment (NumPy/SciPy/Amaranth/pytest) and `PYTHONPATH=src`
+for RTL probes. Commands below run from this branch's `gateware` directory.
+
+```
+python -m pytest -q tests/test_spectral_reference.py
+python tests/compare_detectors.py --yin-tests YIN_GATEWARE/tests --nsdf-tests NSDF_GATEWARE/tests
+python tests/detector_transition_probe.py --yin-tests YIN_GATEWARE/tests --nsdf-tests NSDF_GATEWARE/tests
+python tests/capture_window_probe.py --yin-tests YIN_GATEWARE/tests --nsdf-tests NSDF_GATEWARE/tests
+python tests/fft_precision_probe.py
+python tests/synthesize_fft_candidate.py /tmp/fft-check --size 1024 --yosys /path/to/yosys
+```
+
+Development reports are `/tmp/tuner-all-detectors.jsonl`,
+`/tmp/tuner-detector-transitions.jsonl`, `/tmp/tuner-fft-precision-normalized.jsonl`,
+`/tmp/tuner-fft-1024-synth.log`, `/tmp/tuner-fft-1024-timing.log`, and
+`/tmp/tuner-fft-2048-synth.log`. Sources and fixtures are committed; reports can
+be regenerated. Known low-sine and aliasing failures are strict expected failures.

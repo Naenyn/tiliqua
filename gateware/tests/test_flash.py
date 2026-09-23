@@ -155,6 +155,24 @@ class TestFlashCommandGenerator(unittest.TestCase):
             # Last command should not have --skip-reset
             self.assertNotIn("--skip-reset", commands[2])
 
+    def test_tuner_expanded_journal_fits_slot_and_is_not_erased_on_flash(self):
+        archiver = ArchiveBuilder(
+            build_path=str(self.build_path), name="TUNER", tag="test",
+            hw_rev=TiliquaRevision.R5,
+        ).with_bitstream().with_firmware(
+            str(self.firmware_path), FirmwareLocation.PSRAM, 0x200000,
+        ).with_option_storage(size=24576)
+        archiver.create()
+        with ArchiveLoader(archiver.archive_path) as loader:
+            manifest, regions = compute_concrete_regions_to_flash(loader.manifest, slot=1)
+            window = next(r for r in regions if r.addr == 0x2e0000)
+            self.assertEqual(window.addr + window.size, 0x2e6000)
+            # Flash planner rounds reservations to 64 KiB erase sectors.
+            self.assertEqual(window.end_addr, 0x2f0000)
+            commands = OpenFPGALoaderCommandSequence.from_flashable_regions(regions).commands
+            self.assertEqual(len(commands), 3)
+            self.assertTrue(all("0x2e0000" not in command for command in commands))
+
     def test_manifest_rust_compatibility(self):
         """Test that a Python-generated manifest can be read by Rust lib.rs."""
 

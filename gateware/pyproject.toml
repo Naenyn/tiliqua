@@ -67,6 +67,8 @@ rezomo_round       = "src/top/rezo/rezomo_round.py"
 strezo             = "src/top/rezo/strezo.py"
 strezo_cpu         = "src/top/rezo/strezo_cpu.py"
 strezo_round       = "src/top/rezo/strezo_round.py"
+tuner              = "src/top/tuner/top.py"
+tuner_round        = "src/top/tuner/tuner_round.py"
 # (Non-SoC bitstreams)
 dsp                = "src/top/dsp/top.py"
 beamrace           = "src/top/beamrace/top.py"

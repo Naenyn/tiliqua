@@ -61,14 +61,22 @@ from .video import framebuffer, palette
 
 
 class TiliquaSoc(Component):
+    UART_PERIPHERAL = uart.Peripheral
     def __init__(self, *, firmware_bin_path, ui_name, ui_tag, platform_class, clock_settings,
                  touch=False, finalize_csr_bridge=True, poke_outputs=False, mainram_size=0x4000,
                  fw_location=None, fw_offset=None, cpu_variant="tiliqua_rv32im",
                  extra_cpu_regions=[], fb_overlay=None, enable_persist=True,
                  enable_uart=True, enable_dtr=True, extra_plot_ports=0,
-                 with_persist=True, attach_framebuffer_masters=True):
+                 with_persist=True, attach_framebuffer_masters=True,
+                 pipeline_palette_output=False, with_persistence=True,
+                 with_raster_engines=True, isolate_cpu_peripherals=False):
 
         super().__init__({})
+        # Opt-in for lean instruments with no uncached sprite-memory window.
+        # Keep the historical unified map for software introspection.
+        self.isolate_cpu_peripherals = isolate_cpu_peripherals
+        if isolate_cpu_peripherals:
+            assert not with_raster_engines and not extra_cpu_regions
 
         self.ui_name = ui_name
         self.ui_tag  = ui_tag
@@ -84,6 +92,8 @@ class TiliquaSoc(Component):
         self.platform_class = platform_class
         self.with_persist = with_persist
         self.attach_framebuffer_masters = attach_framebuffer_masters
+        self.with_persistence = with_persistence
+        self.with_raster_engines = with_raster_engines
 
         # Memory map of CPU
         self.mainram_base         = 0x00000000
@@ -136,11 +146,22 @@ class TiliquaSoc(Component):
         self.cpu = VexiiRiscv(
             # Writing outside these regions will cause CPU traps.
             regions = [
-                VexiiRiscv.MemoryRegion(base=self.mainram_base, size=self.mainram_size, cacheable=True, executable=False),
+                # Keep a stable 16 KiB PMA window so lean applications can use
+                # less physical BRAM without requiring another generated CPU
+                # netlist. The Wishbone decoder still rejects addresses beyond
+                # the application's actual mainram_size.
+                VexiiRiscv.MemoryRegion(base=self.mainram_base,
+                                        size=max(self.mainram_size, 0x4000),
+                                        cacheable=True, executable=False),
                 VexiiRiscv.MemoryRegion(base=self.spiflash_base, size=self.spiflash_size, cacheable=True, executable=True),
                 VexiiRiscv.MemoryRegion(base=self.psram_base, size=self.psram_size, cacheable=True, executable=True),
                 VexiiRiscv.MemoryRegion(base=self.csr_base, size=0x10000, cacheable=False, executable=False),
-                VexiiRiscv.MemoryRegion(base=self.blit_mem_base, size=0x2000, cacheable=False, executable=False),
+                # Keep the historical non-cacheable sprite window in the CPU's
+                # PMA map even when a lean application omits the blitter. This
+                # preserves the shared CPU netlist; the unmapped window costs no
+                # SoC resources and any accidental access still traps on Wishbone.
+                VexiiRiscv.MemoryRegion(base=self.blit_mem_base, size=0x2000,
+                                        cacheable=False, executable=False),
             ] + extra_cpu_regions,
             variant=cpu_variant,
             reset_addr=self.reset_addr,
@@ -174,7 +195,7 @@ class TiliquaSoc(Component):
         if self.enable_uart:
             uart_baud_rate = 115200
             divisor = int(self.clock_settings.frequencies.sync // uart_baud_rate)
-            self.uart0 = uart.Peripheral(divisor=divisor)
+            self.uart0 = self.UART_PERIPHERAL(divisor=divisor)
             self.csr_decoder.add(self.uart0.bus, addr=self.uart0_base, name="uart0")
 
         # timer0
@@ -231,7 +252,8 @@ class TiliquaSoc(Component):
         self.fb = framebuffer.DMAFramebuffer(
                 palette=self.palette_periph.palette,
                 fixed_modeline=self.clock_settings.modeline,
-                overlay=fb_overlay)
+                overlay=fb_overlay,
+                pipeline_palette_output=pipeline_palette_output)
         if self.attach_framebuffer_masters:
             self.psram_periph.add_master(self.fb.bus)
 
@@ -240,10 +262,9 @@ class TiliquaSoc(Component):
         self.csr_decoder.add(
                 self.framebuffer_periph.bus, addr=self.fb_periph_base, name="framebuffer_periph")
 
-        # Video persistence DMA effect. Designs that bypass persistence omit
-        # the peripheral entirely rather than leaving a disabled DMA engine and
-        # CSR bank for synthesis to partially prune.
-        if self.enable_persist:
+        # Video persistence DMA effect. Designs may omit the peripheral or
+        # retain only its CSR shell without the DMA engine.
+        if self.enable_persist and self.with_persistence:
             self.persist_periph = persist.Peripheral(
                 bus_dma=self.psram_periph if self.with_persist else None)
             self.csr_decoder.add(
@@ -253,24 +274,25 @@ class TiliquaSoc(Component):
             )
 
         # Pixel plotting, blending, rotation backend (no CSR interface)
-        self.framebuffer_plotter = plot.FramebufferPlotter(
-            bus_signature=self.psram_periph.bus.signature.flip(),
-            n_ports=3 + extra_plot_ports)
-        if self.attach_framebuffer_masters:
-            self.psram_periph.add_master(self.framebuffer_plotter.bus)
+        if self.with_raster_engines:
+            self.framebuffer_plotter = plot.FramebufferPlotter(
+                bus_signature=self.psram_periph.bus.signature.flip(),
+                n_ports=3 + extra_plot_ports)
+            if self.attach_framebuffer_masters:
+                self.psram_periph.add_master(self.framebuffer_plotter.bus)
 
-        # Pixel plotter CSR interface
-        self.pixel_plot = plot.Peripheral()
-        self.csr_decoder.add(self.pixel_plot.csr_bus, addr=self.pixel_plot_csr_base, name="pixel_plot")
+            # Pixel plotter CSR interface
+            self.pixel_plot = plot.Peripheral()
+            self.csr_decoder.add(self.pixel_plot.csr_bus, addr=self.pixel_plot_csr_base, name="pixel_plot")
 
-        # Blitter peripheral
-        self.blit = blit.Peripheral()
-        self.csr_decoder.add(self.blit.csr_bus, addr=self.blit_csr_base, name="blit")
-        self.wb_decoder.add(self.blit.sprite_mem_bus, addr=self.blit_mem_base, name="blit")
+            # Blitter peripheral
+            self.blit = blit.Peripheral()
+            self.csr_decoder.add(self.blit.csr_bus, addr=self.blit_csr_base, name="blit")
+            self.wb_decoder.add(self.blit.sprite_mem_bus, addr=self.blit_mem_base, name="blit")
 
-        # Line plotter peripheral
-        self.line = line.Peripheral()
-        self.csr_decoder.add(self.line.csr_bus, addr=self.line_csr_base, name="line")
+            # Line plotter peripheral
+            self.line = line.Peripheral()
+            self.csr_decoder.add(self.line.csr_bus, addr=self.line_csr_base, name="line")
 
         self.extra_rust_constants = []
 
@@ -285,6 +307,20 @@ class TiliquaSoc(Component):
 
         self.wb_to_csr = WishboneCSRBridge(self.csr_decoder.bus, data_width=32)
         self.wb_decoder.add(self.wb_to_csr.wb_bus, addr=self.csr_base, sparse=False, name="wb_to_csr")
+        if self.isolate_cpu_peripherals:
+            self.memory_decoder = wishbone.Decoder(
+                addr_width=30, data_width=32, granularity=8, alignment=0,
+                features={"cti", "bte", "err"})
+            self.peripheral_decoder = wishbone.Decoder(
+                addr_width=30, data_width=32, granularity=8, alignment=0,
+                features={"cti", "bte", "err"})
+            for bus, address, name in [
+                    (self.mainram.bus, self.mainram_base, "blockram"),
+                    (self.spiflash_periph.bus, self.spiflash_base, "spiflash"),
+                    (self.psram_periph.bus, self.psram_base, "psram")]:
+                self.memory_decoder.add(bus, addr=address, name=name)
+            self.peripheral_decoder.add(self.wb_to_csr.wb_bus, addr=self.csr_base,
+                                        sparse=False, name="wb_to_csr")
 
     def add_rust_constant(self, line):
         self.extra_rust_constants.append(line)
@@ -300,14 +336,19 @@ class TiliquaSoc(Component):
 
         # bus
         m.submodules.wb_arbiter = self.wb_arbiter
-        m.submodules.wb_decoder = self.wb_decoder
-        wiring.connect(m, self.wb_arbiter.bus, self.wb_decoder.bus)
+        memory_decoder = self.memory_decoder if self.isolate_cpu_peripherals else self.wb_decoder
+        m.submodules.wb_decoder = memory_decoder
+        wiring.connect(m, self.wb_arbiter.bus, memory_decoder.bus)
 
         # cpu
         m.submodules.cpu = self.cpu
         self.wb_arbiter.add(self.cpu.ibus)
         self.wb_arbiter.add(self.cpu.dbus)
-        self.wb_arbiter.add(self.cpu.pbus) # TODO: isolate pbus from ibus/dbus
+        if self.isolate_cpu_peripherals:
+            m.submodules.peripheral_decoder = self.peripheral_decoder
+            wiring.connect(m, self.cpu.pbus, self.peripheral_decoder.bus)
+        else:
+            self.wb_arbiter.add(self.cpu.pbus)
 
         # interrupt controller
         m.submodules.interrupt_controller = self.interrupt_controller
@@ -367,19 +408,20 @@ class TiliquaSoc(Component):
         m.submodules.framebuffer_periph = self.framebuffer_periph
 
         # video periph / persist
-        if self.enable_persist:
+        if self.enable_persist and self.with_persistence:
             m.submodules.persist_periph = self.persist_periph
 
         # hardware-accelerated pixel plotting
-        m.submodules.pixel_plot = self.pixel_plot
-        m.submodules.framebuffer_plotter = self.framebuffer_plotter
-        m.submodules.blit = self.blit
-        m.submodules.line = self.line
+        if self.with_raster_engines:
+            m.submodules.pixel_plot = self.pixel_plot
+            m.submodules.framebuffer_plotter = self.framebuffer_plotter
+            m.submodules.blit = self.blit
+            m.submodules.line = self.line
 
-        # Connect peripherals to plotter ports
-        wiring.connect(m, self.pixel_plot.o, self.framebuffer_plotter.i[0])
-        wiring.connect(m, self.blit.o, self.framebuffer_plotter.i[1])
-        wiring.connect(m, self.line.o, self.framebuffer_plotter.i[2])
+            # Connect peripherals to plotter ports
+            wiring.connect(m, self.pixel_plot.o, self.framebuffer_plotter.i[0])
+            wiring.connect(m, self.blit.o, self.framebuffer_plotter.i[1])
+            wiring.connect(m, self.line.o, self.framebuffer_plotter.i[2])
 
         # Connect static/dynamic framebuffer properties to components that need them
         if self.clock_settings.modeline:
@@ -389,18 +431,19 @@ class TiliquaSoc(Component):
                 self.fb.fbp.enable.eq(self.framebuffer_periph.fbp.enable),
                 self.fb.fbp.rotation.eq(self.framebuffer_periph.fbp.rotation),
                 self.fb.fbp.base.eq(self.framebuffer_periph.fbp.base),
+                self.fb.fbp.draw_base.eq(self.framebuffer_periph.fbp.draw_base),
             ]
-            wiring.connect(m, wiring.flipped(self.fb.fbp), self.framebuffer_plotter.fbp)
-            if self.enable_persist and self.with_persist:
-                wiring.connect(
-                    m, wiring.flipped(self.fb.fbp), self.persist_periph.fbp)
+            if self.with_raster_engines:
+                wiring.connect(m, wiring.flipped(self.fb.fbp), self.framebuffer_plotter.fbp)
+            if self.enable_persist and self.with_persistence and self.with_persist:
+                wiring.connect(m, wiring.flipped(self.fb.fbp), self.persist_periph.fbp)
         else:
             # Modeline is dynamic and comes from framebuffer peripheral CSRs
             wiring.connect(m, self.framebuffer_periph.fbp, self.fb.fbp)
-            wiring.connect(m, self.framebuffer_periph.fbp, self.framebuffer_plotter.fbp)
-            if self.enable_persist and self.with_persist:
-                wiring.connect(
-                    m, self.framebuffer_periph.fbp, self.persist_periph.fbp)
+            if self.with_raster_engines:
+                wiring.connect(m, self.framebuffer_periph.fbp, self.framebuffer_plotter.fbp)
+            if self.enable_persist and self.with_persistence and self.with_persist:
+                wiring.connect(m, self.framebuffer_periph.fbp, self.persist_periph.fbp)
 
         # audio interface
         m.submodules.pmod0 = self.pmod0

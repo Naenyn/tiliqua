@@ -128,8 +128,10 @@ class DVIPHY(wiring.Component):
     i: In(DVIPixel)
 
     def __init__(self, *, split_load_strobes=False,
-                 local_phase_rings=False, serializer_lane_x=None):
+                 local_phase_rings=False, serializer_lane_x=None,
+                 circular_shift=True):
         super().__init__()
+        self.circular_shift = circular_shift
         self.split_load_strobes = split_load_strobes
         self.local_phase_rings = local_phase_rings
         self.serializer_lane_x = serializer_lane_x
@@ -318,7 +320,8 @@ class DVIPHY(wiring.Component):
                     # A full word reloads every five DDR transfers. Rotating
                     # avoids a zero-fill path on the high-speed shift register.
                     m.d.dvi5x += shift.eq(Cat(
-                        shift[2:10], shift[0:2]))
+                        shift[2:10],
+                        shift[0:2] if self.circular_shift else Const(0, 2)))
                 return
             with m.If(load_lo):
                 m.d.dvi5x += shift[:5].eq(word[:5])

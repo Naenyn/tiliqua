@@ -83,8 +83,120 @@ impl Default for DVIModeline {
 
 pub trait DMAFramebuffer {
     fn update_fb_base(&mut self, fb_base: u32);
+    /// Select the raster-engine target using a PSRAM Wishbone word offset.
+    fn update_draw_base_words(&mut self, draw_base_words: u32);
+    /// Select the next scanout buffer using a PSRAM Wishbone word offset.
+    fn present_base_words(&mut self, scan_base_words: u32);
     fn set_palette_rgb(&mut self, intensity: u8, hue: u8, r: u8, g: u8, b: u8);
     fn get_hpd(&mut self) -> bool;
+}
+
+/// Implement the scanout and palette controls without instantiating the generic
+/// pixel, line, blitter, or persistence engines. Applications using this type
+/// own framebuffer contents directly (or provide a single dedicated overlay).
+#[macro_export]
+macro_rules! impl_lean_dma_framebuffer {
+    ($(
+        $DMA_FRAMEBUFFERX:ident: $PACFRAMEBUFFERX:ty,
+        $PALETTEX:ident: $PACPALETTEX:ty,
+    )+) => {
+        $(
+            use tiliqua_hal::dma_framebuffer::{DVIModeline, Rotate};
+
+            pub struct $DMA_FRAMEBUFFERX {
+                registers_fb: $PACFRAMEBUFFERX,
+                registers_palette: $PACPALETTEX,
+                mode: DVIModeline,
+                framebuffer_base: *mut u32,
+            }
+
+            impl $DMA_FRAMEBUFFERX {
+                pub fn new(registers_fb: $PACFRAMEBUFFERX, registers_palette: $PACPALETTEX,
+                           fb_base: usize, mode: DVIModeline) -> Self {
+                    registers_fb.flags().write(|w| unsafe { w.enable().bit(false) });
+                    registers_fb.fb_base().write(|w| unsafe { w.fb_base().bits(fb_base as u32) });
+                    registers_fb.draw_base().write(|w| unsafe { w.draw_base().bits(fb_base as u32) });
+                    registers_fb.h_timing().write(|w| unsafe {
+                        w.h_active().bits(mode.h_active);
+                        w.h_sync_start().bits(mode.h_sync_start)
+                    });
+                    registers_fb.h_timing2().write(|w| unsafe {
+                        w.h_sync_end().bits(mode.h_sync_end);
+                        w.h_total().bits(mode.h_total)
+                    });
+                    registers_fb.v_timing().write(|w| unsafe {
+                        w.v_active().bits(mode.v_active);
+                        w.v_sync_start().bits(mode.v_sync_start)
+                    });
+                    registers_fb.v_timing2().write(|w| unsafe {
+                        w.v_sync_end().bits(mode.v_sync_end);
+                        w.v_total().bits(mode.v_total)
+                    });
+                    registers_fb.hv_timing().write(|w| unsafe {
+                        w.h_sync_invert().bit(mode.h_sync_invert);
+                        w.v_sync_invert().bit(mode.v_sync_invert);
+                        w.active_pixels().bits(mode.h_active as u32 * mode.v_active as u32)
+                    });
+                    Self {
+                        registers_fb,
+                        registers_palette,
+                        mode,
+                        framebuffer_base: fb_base as *mut u32,
+                    }
+                }
+
+                pub fn enable(&mut self) {
+                    self.registers_fb.flags().write(|w| unsafe {
+                        w.enable().bit(true);
+                        w.rotation().bits(self.mode.rotate as u8)
+                    });
+                }
+
+                pub fn disable(&mut self) {
+                    self.registers_fb.flags().write(|w| unsafe {
+                        w.enable().bit(false);
+                        w.rotation().bits(self.mode.rotate as u8)
+                    });
+                }
+
+                pub fn rotate(&mut self, rotation: Rotate) {
+                    self.registers_fb.flags().write(|w| unsafe {
+                        w.enable().bit(true);
+                        w.rotation().bits(rotation as u8)
+                    });
+                    self.mode.rotate = rotation;
+                }
+
+                pub fn mode(&self) -> &DVIModeline { &self.mode }
+                pub fn framebuffer_base(&self) -> *mut u32 { self.framebuffer_base }
+            }
+
+            impl tiliqua_hal::dma_framebuffer::DMAFramebuffer for $DMA_FRAMEBUFFERX {
+                fn update_fb_base(&mut self, fb_base: u32) {
+                    self.registers_fb.fb_base().write(|w| unsafe { w.fb_base().bits(fb_base) });
+                    self.framebuffer_base = fb_base as *mut u32;
+                }
+                fn update_draw_base_words(&mut self, draw_base_words: u32) {
+                    self.registers_fb.draw_base().write(|w| unsafe { w.draw_base().bits(draw_base_words) });
+                }
+                fn present_base_words(&mut self, scan_base_words: u32) {
+                    self.registers_fb.fb_base().write(|w| unsafe { w.fb_base().bits(scan_base_words) });
+                }
+                fn set_palette_rgb(&mut self, intensity: u8, hue: u8, r: u8, g: u8, b: u8) {
+                    while self.registers_palette.palette_busy().read().bits() == 1 { }
+                    self.registers_palette.palette().write(|w| unsafe {
+                        w.position().bits(((intensity & 0xF) << 4) | (hue & 0xF));
+                        w.red().bits(r);
+                        w.green().bits(g);
+                        w.blue().bits(b)
+                    });
+                }
+                fn get_hpd(&mut self) -> bool {
+                    self.registers_fb.hpd().read().hpd().bit()
+                }
+            }
+        )+
+    };
 }
 
 #[macro_export]
@@ -123,6 +235,10 @@ macro_rules! impl_dma_framebuffer {
                         // CPU framebuffer pointers are byte-addressed, while
                         // the 32-bit Wishbone DMA master addresses words.
                         w.fb_base().bits((fb_base as u32) >> 2)
+                    });
+                    // Existing applications draw and scan the same buffer.
+                    registers_fb.draw_base().write(|w| unsafe {
+                        w.draw_base().bits(fb_base as u32)
                     });
                     registers_fb.h_timing().write(|w| unsafe {
                         w.h_active().bits(mode.h_active);
@@ -171,6 +287,19 @@ macro_rules! impl_dma_framebuffer {
                     self.mode.rotate = rotation.clone();
                 }
 
+                /// Drain raster frontend commands before changing their target.
+                /// The settling margin covers the last primitive already accepted
+                /// by the shared backend.
+                pub fn wait_drawing_idle(&mut self) {
+                    while self.registers_pixel_plot.status().read().fifo_level().bits() != 0
+                        || !self.registers_blitter.status().read().empty().bit()
+                        || !self.registers_line.status().read().empty().bit()
+                    {
+                        riscv::asm::nop();
+                    }
+                    unsafe { riscv::asm::delay(120_000); }
+                }
+
             }
 
 
@@ -180,6 +309,18 @@ macro_rules! impl_dma_framebuffer {
                         w.fb_base().bits(fb_base >> 2)
                     });
                     self.framebuffer_base = fb_base as *mut u32
+                }
+
+                fn update_draw_base_words(&mut self, draw_base_words: u32) {
+                    self.registers_fb.draw_base().write(|w| unsafe {
+                        w.draw_base().bits(draw_base_words)
+                    });
+                }
+
+                fn present_base_words(&mut self, scan_base_words: u32) {
+                    self.registers_fb.fb_base().write(|w| unsafe {
+                        w.fb_base().bits(scan_base_words)
+                    });
                 }
 
                 fn set_palette_rgb(&mut self, intensity: u8, hue: u8, r: u8, g: u8, b: u8)  {

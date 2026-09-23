@@ -15,7 +15,7 @@ from amaranth_soc import csr, wishbone
 
 from ..build import sim
 from . import dvi
-from .types import Pixel, Rotation, ScanPixel
+from .types import DVIPixel, Pixel, Rotation, ScanPixel
 
 
 class DMAFramebuffer(wiring.Component):
@@ -37,6 +37,9 @@ class DMAFramebuffer(wiring.Component):
             super().__init__({
                 # Base address of framebuffer in PSRAM
                 "base": Out(22),
+                # Independent target for raster engines. Existing users set
+                # this to `base`; double-buffered users draw elsewhere.
+                "draw_base": Out(22),
                 # Must be updated on timing changes
                 "timings": Out(dvi.DVITimingGen.TimingProperties()),
                 # Not directly used by this core but shared between every core that uses DMAFramebuffer.
@@ -59,7 +62,8 @@ class DMAFramebuffer(wiring.Component):
             })
 
     def __init__(self, *, palette, addr_width=22, fifo_depth=512,
-                 burst_threshold_words=128, fixed_modeline=None, overlay=None):
+                 burst_threshold_words=128, fixed_modeline=None, overlay=None,
+                 pipeline_palette_output=False, frame_exchange=None):
 
         self.fifo_depth = fifo_depth
         assert (Pixel.as_shape().size % 8) == 0
@@ -68,6 +72,12 @@ class DMAFramebuffer(wiring.Component):
         self.fixed_modeline = fixed_modeline
         self.palette = palette
         self._overlay = overlay
+        self.pipeline_palette_output = pipeline_palette_output
+        # Opt-in reader-owned background acquisition. Existing bitstreams keep
+        # their original path until coordinated scene publication is integrated.
+        self.frame_exchange = frame_exchange
+        if frame_exchange is not None:
+            assert 0 < burst_threshold_words < fifo_depth
 
         super().__init__({
             # Backing store
@@ -120,8 +130,14 @@ class DMAFramebuffer(wiring.Component):
 
         # Current offset into the framebuffer
         dma_addr = Signal(32)
-        frame_base = Signal.like(self.fbp.base)
+        scan_base = Signal.like(self.fbp.base)
         burst_cnt = Signal(16, init=0)
+
+        if self.frame_exchange is not None:
+            m.submodules.frame_exchange = self.frame_exchange
+            previous_vsync = Signal()
+            m.d.sync += previous_vsync.eq(phy_vsync_sync)
+            frame_start = phy_vsync_sync & ~previous_vsync
 
         # DMA bus master -> FIFO state machine
         # Burst until FIFO is full, then wait until half empty.
@@ -131,14 +147,14 @@ class DMAFramebuffer(wiring.Component):
         # Read to FIFO in sync domain
         with m.FSM() as fsm:
             with m.State('WAIT-VSYNC'):
-                with m.If(phy_vsync_sync):
-                    m.d.sync += [
-                        dma_addr.eq(0),
-                        # Apply framebuffer swaps only at frame boundaries;
-                        # changing the live base during a DMA pass tears one
-                        # frame across the old and new buffers.
-                        frame_base.eq(self.fbp.base),
-                    ]
+                with m.If(phy_vsync_sync if self.frame_exchange is None else frame_start):
+                    m.d.sync += dma_addr.eq(0)
+                    if self.frame_exchange is None:
+                        # Latch the base for the entire scan to avoid tearing.
+                        m.d.sync += scan_base.eq(self.fbp.base)
+                    else:
+                        m.d.comb += self.frame_exchange.acquire.eq(1)
+                        m.d.sync += scan_base.eq(self.frame_exchange.next_base)
                     m.next = 'WAIT'
             with m.State('BURST'):
                 m.d.comb += [
@@ -146,7 +162,7 @@ class DMAFramebuffer(wiring.Component):
                     bus.cyc.eq(1),
                     bus.we.eq(0),
                     bus.sel.eq(2**(bus.data_width//8)-1),
-                    bus.adr.eq(frame_base + dma_addr),
+                    bus.adr.eq(scan_base + dma_addr),
                     fifo.w_en.eq(bus.ack),
                     fifo.w_data.eq(bus.dat_r),
                     bus.cti.eq(
@@ -159,16 +175,27 @@ class DMAFramebuffer(wiring.Component):
                         dma_addr.eq(dma_addr+1),
                     ]
 
-                with m.If((fifo.w_level == (self.fifo_depth-1)) |
-                          (burst_cnt == self.burst_threshold_words)):
-                    m.d.comb += bus.cti.eq(
-                            wishbone.CycleType.END_OF_BURST)
-                    m.next = 'WAIT'
-
-                with m.If(dma_addr == (fb_size_words-1)):
-                    m.d.comb += bus.cti.eq(
-                            wishbone.CycleType.END_OF_BURST)
-                    m.next = 'WAIT-VSYNC'
+                if self.frame_exchange is None:
+                    with m.If((fifo.w_level == (self.fifo_depth-1)) |
+                              (burst_cnt == self.burst_threshold_words)):
+                        m.d.comb += bus.cti.eq(wishbone.CycleType.END_OF_BURST)
+                        m.next = 'WAIT'
+                    with m.If(dma_addr == (fb_size_words-1)):
+                        m.d.comb += bus.cti.eq(wishbone.CycleType.END_OF_BURST)
+                        m.next = 'WAIT-VSYNC'
+                else:
+                    # WAIT reserves a whole burst's FIFO capacity. Termination
+                    # depends on counters, not a changing FIFO level, so CTI and
+                    # address stay stable during arbitrarily delayed bus ACKs.
+                    last_word = dma_addr == (fb_size_words - 1)
+                    end_burst = burst_cnt == (self.burst_threshold_words - 1)
+                    with m.If(last_word | end_burst):
+                        m.d.comb += bus.cti.eq(wishbone.CycleType.END_OF_BURST)
+                        with m.If(bus.ack):
+                            with m.If(last_word):
+                                m.next = 'WAIT-VSYNC'
+                            with m.Else():
+                                m.next = 'WAIT'
 
             with m.State('WAIT'):
                 with m.If(fifo.w_level < self.fifo_depth-self.burst_threshold_words):
@@ -183,7 +210,8 @@ class DMAFramebuffer(wiring.Component):
         last_word   = Signal(32)
         with m.If(phy_vsync_dvi):
             m.d.dvi += bytecounter.eq(0)
-        with m.Elif(dvi_tgen.ctrl.de & fifo.r_rdy):
+        word_available = fifo.r_rdy if self.frame_exchange is None else (fifo.r_rdy | (bytecounter != 0))
+        with m.Elif(dvi_tgen.ctrl.de & word_available):
             m.d.comb += fifo.r_en.eq(bytecounter == 0),
             m.d.dvi += bytecounter.eq(bytecounter+1)
             with m.If(bytecounter == 0):
@@ -212,11 +240,26 @@ class DMAFramebuffer(wiring.Component):
             first_input.hsync.eq(dvi_tgen.ctrl_phy.hsync),
             first_input.vsync.eq(dvi_tgen.ctrl_phy.vsync),
         ]
+        if self.frame_exchange is not None:
+            # Align active/sync flags with the registered pixel and coordinates.
+            de, hs, vs = Signal(), Signal(), Signal()
+            m.d.dvi += [de.eq(dvi_tgen.ctrl_phy.de), hs.eq(dvi_tgen.ctrl_phy.hsync),
+                        vs.eq(dvi_tgen.ctrl_phy.vsync)]
+            m.d.comb += [first_input.de.eq(de), first_input.hsync.eq(hs),
+                        first_input.vsync.eq(vs)]
 
         # Stage 2/3: Palette and DVI PHY / simulation output
         if sim.is_hw(platform):
-            m.submodules.dvi_gen = dvi_gen = dvi.DVIPHY()
-            m.d.comb += dvi_gen.i.eq(self.palette.o)
+            m.submodules.dvi_gen = dvi_gen = dvi.DVIPHY(
+                circular_shift=getattr(self, "serializer_circular_shift", False))
+            if self.pipeline_palette_output:
+                # Opt-in timing stage for dense designs: keep RGB and control
+                # aligned while breaking the palette RAM -> TMDS critical path.
+                phy_pixel = Signal(DVIPixel)
+                m.d.dvi += phy_pixel.eq(self.palette.o)
+                m.d.comb += dvi_gen.i.eq(phy_pixel)
+            else:
+                m.d.comb += dvi_gen.i.eq(self.palette.o)
         else:
             m.d.comb += [
                 self.simif.de.eq(self.palette.o.de),
@@ -265,6 +308,9 @@ class Peripheral(wiring.Component):
     class FBBaseReg(csr.Register, access="w"):
         fb_base: csr.Field(csr.action.W, unsigned(32))
 
+    class DrawBaseReg(csr.Register, access="w"):
+        draw_base: csr.Field(csr.action.W, unsigned(32))
+
     class HpdReg(csr.Register, access="r"):
         # DVI hot plug detect
         hpd: csr.Field(csr.action.R, unsigned(1))
@@ -280,6 +326,7 @@ class Peripheral(wiring.Component):
         self._flags        = regs.add("flags",        self.FlagsReg(),       offset=0x14)
         self._fb_base      = regs.add("fb_base",      self.FBBaseReg(),      offset=0x18)
         self._hpd          = regs.add("hpd",          self.HpdReg(),         offset=0x1C)
+        self._draw_base    = regs.add("draw_base",    self.DrawBaseReg(),    offset=0x20)
 
         self._bridge = csr.Bridge(regs.as_memory_map())
 
@@ -294,6 +341,7 @@ class Peripheral(wiring.Component):
         m = Module()
 
         m.submodules.bridge = self._bridge
+        draw_base_explicit = Signal()
 
         wiring.connect(m, wiring.flipped(self.bus), self._bridge.bus)
 
@@ -319,6 +367,13 @@ class Peripheral(wiring.Component):
             m.d.sync += self.fbp.rotation.eq(self._flags.f.rotation.w_data)
         with m.If(self._fb_base.f.fb_base.w_stb):
             m.d.sync += self.fbp.base.eq(self._fb_base.f.fb_base.w_data)
+            with m.If(~draw_base_explicit):
+                m.d.sync += self.fbp.draw_base.eq(self._fb_base.f.fb_base.w_data)
+        with m.If(self._draw_base.f.draw_base.w_stb):
+            m.d.sync += [
+                self.fbp.draw_base.eq(self._draw_base.f.draw_base.w_data),
+                draw_base_explicit.eq(1),
+            ]
 
         if sim.is_hw(platform):
             m.d.comb += self._hpd.f.hpd.r_data.eq(platform.request("dvi_hpd").i)

@@ -1,0 +1,59 @@
+#[path="../src/top/tuner/fw/src/nsdf_publish.rs"] mod publish;
+use publish::{Frame,Pitch,publish};
+fn f(hz:u32,time:u64,count:u32)->Frame {Frame {mhz:hz,count,completed:time,request_ms:4,qualified:true}}
+fn main() {
+    let empty=Frame {qualified:false,..f(0,0,0)};
+    assert_eq!(publish(empty,empty,100),Pitch::NONE);
+    let n=f(880000,100,1);let l=f(880000,110,1);
+    let p=publish(n,l,120);
+    assert_eq!((p.mhz,p.source,p.generation,p.end_age_ms,p.window_age_ms),(880000,1,1,16,139));
+    assert_eq!(publish::display(n,l,120).window_age_ms,136);
+    assert_eq!(publish::display(empty,l,120).window_age_ms,129);
+    assert_eq!(publish(n,l,357).source,0); // request age makes both stale
+    assert_eq!(publish(n,l,109).source,2); // future low timestamp is rejected
+    assert_eq!(publish(n,f(440000,120,2),121).source,3); // real step conflicts with old bank
+    assert_eq!(publish(Frame{qualified:false,..n},f(440000,120,2),122).source,1);
+    assert_eq!(publish(f(1200000,130,3),f(1200000,140,3),150).source,2);
+    // Identical pitch refreshed: new generation, not a repeated old measurement.
+    assert_eq!(publish(n,f(880000,130,2),140).generation,2);
+    // Missing/invalid current frame must not retain an earlier successful result.
+    assert_eq!(publish(empty,Frame{qualified:false,..l},120),Pitch::NONE);
+    assert_eq!(publish(empty,Frame{count:0,..l},120),Pitch::NONE);
+    assert_eq!(publish(empty,Frame{request_ms:u32::MAX,..l},120),Pitch::NONE);
+    assert_eq!(publish(empty,l,u64::MAX),Pitch::NONE);
+    // Freshness boundary is inclusive, with conservative observation rounding.
+    assert_eq!(publish(empty,l,356).end_age_ms,252);
+    // No cross-channel state: a call for another channel cannot alter an outcome.
+    let first=publish(n,l,120);let _=publish(f(2000000,10,1),empty,30);
+    assert_eq!(publish(n,l,120),first);
+    // Moving pitch: display follows the native window without requiring the
+    // older/longer window to agree. Strict diagnostic publication is unchanged.
+    let moving=f(930490,110,2);let current=f(889312,115,3);
+    assert_eq!(publish(current,moving,120).source,3);
+    assert_eq!(publish::display(current,moving,120).mhz,889312);
+    // CAL prefers strict agreement, but a transient disagreement must not be
+    // converted into total signal loss. Its downstream averager decides
+    // whether successive independently qualified frames are stable.
+    let recovered=publish::calibration(current,moving,120);
+    assert_eq!((recovered.mhz,recovered.source),(889312,2));
+    assert_eq!(publish::calibration(n,l,120),publish(n,l,120));
+    assert_eq!(publish::calibration(empty,empty,120),Pitch::NONE);
+    assert_eq!(publish::display(n,l,120).source,2);
+    assert_eq!(publish::display(empty,l,120).source,1);
+    assert_eq!(publish::display(n,l,357),Pitch::NONE);
+    assert_eq!(publish::display(empty,empty,120),Pitch::NONE);
+    assert_eq!(publish::display(Frame{qualified:false,..n},l,120).source,1);
+    assert_eq!(publish::display(Frame{count:0,..n},l,120).source,1);
+    assert_eq!(publish::display(f(599999,110,2),l,120).source,1);
+    assert_eq!(publish::display(f(20000001,110,2),l,120).source,1);
+    // Generate3's +2.33325V failure on 2026-09-19: native estimates in
+    // the overlap jitter, while the low-rate estimate is repeatable.
+    // The display remains responsive; calibration must use the settled bank.
+    for native in [600030,601420,600985,602862,604197,603276] {
+        let n=f(native,100,5);let l=f(602006,110,6);
+        let settled=publish(n,l,120);
+        assert_eq!((settled.mhz,settled.source,settled.generation),(602006,1,6));
+        assert_eq!(publish::display(n,l,120).mhz,native);
+        assert!(settled.window_age_ms>=settled.end_age_ms+110);
+    }
+}

@@ -239,7 +239,9 @@ class Peripheral(wiring.Component):
         skip: csr.Field(csr.action.W, unsigned(8))
 
     def __init__(self, bus_dma=None):
-        self.en = Signal()
+        # Retained-mode designs may suspend persistence at runtime. Keep the
+        # default enabled for existing raster designs.
+        self.en = Signal(init=1)
         self.persist = None
         if bus_dma is not None:
             self.persist = Persistance(
@@ -266,10 +268,9 @@ class Peripheral(wiring.Component):
     def elaborate(self, platform):
         m = Module()
         m.submodules.bridge = self._bridge
-
         wiring.connect(m, wiring.flipped(self.bus), self._bridge.bus)
         if self.persist is not None:
-            m.submodules.persist = self.persist
+            m.submodules.persist = ResetInserter({'sync': ~self.en})(self.persist)
             wiring.connect(m, wiring.flipped(self.fbp), self.persist.fbp)
 
             with m.If(self._persist.f.persist.w_stb):

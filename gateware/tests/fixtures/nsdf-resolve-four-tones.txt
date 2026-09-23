@@ -1,0 +1,300 @@
+NSDF RUN ch=0 low=true count=894 seq=499221 mhz=24995 raw=true guard=true ok=true age=23 dt=3 cycles=49041 work=43593030 faults=0 ms=81702
+NSDF PICK ch=0 ms=81702 n=0 na=32 nq=false l=24995 la=23 lq=true mhz=24995 src=1
+NSDF RUN ch=1 low=false count=894 seq=15978178 mhz=776580 raw=true guard=true ok=true age=63 dt=4 cycles=50698 work=45370007 faults=0 ms=81755
+NSDF RUN ch=1 low=true count=895 seq=499887 mhz=776455 raw=true guard=true ok=true age=15 dt=3 cycles=48697 work=43955911 faults=0 ms=81805
+NSDF PICK ch=1 ms=81805 n=776284 na=24 nq=true l=776455 la=15 lq=true mhz=776455 src=1
+NSDF RUN ch=2 low=false count=895 seq=15999492 mhz=0 raw=false guard=true ok=false age=52 dt=4 cycles=27928 work=24750268 faults=0 ms=81855
+NSDF RUN ch=2 low=true count=896 seq=500547 mhz=175322 raw=true guard=true ok=true age=9 dt=3 cycles=37869 work=33633272 faults=0 ms=81909
+NSDF PICK ch=2 ms=81909 n=0 na=18 nq=false l=175322 la=9 lq=true mhz=175322 src=1
+NSDF RUN ch=3 low=false count=896 seq=16020613 mhz=0 raw=false guard=true ok=false age=46 dt=4 cycles=27854 work=24775027 faults=0 ms=81959
+NSDF RUN ch=3 low=true count=896 seq=500679 mhz=138451 raw=true guard=true ok=true age=87 dt=3 cycles=36519 work=33518791 faults=0 ms=82009
+NSDF PICK ch=3 ms=82009 n=0 na=7 nq=false l=138451 la=87 lq=true mhz=138451 src=1
+NSDF RUN ch=0 low=false count=898 seq=16041937 mhz=0 raw=false guard=true ok=false age=40 dt=4 cycles=28079 work=24878447 faults=0 ms=82064
+NSDF RUN ch=0 low=true count=898 seq=501346 mhz=24995 raw=true guard=true ok=true age=81 dt=3 cycles=48917 work=43788261 faults=0 ms=82114
+NSDF PICK ch=0 ms=82114 n=0 na=2 nq=false l=24995 la=81 lq=true mhz=24995 src=1
+NSDF RUN ch=1 low=false count=899 seq=16063058 mhz=776223 raw=true guard=true ok=true age=30 dt=4 cycles=50748 work=45624380 faults=0 ms=82164
+NSDF RUN ch=1 low=true count=899 seq=502006 mhz=776406 raw=true guard=true ok=true age=75 dt=3 cycles=49444 work=44153293 faults=0 ms=82218
+NSDF PICK ch=1 ms=82218 n=776223 na=84 nq=true l=776406 la=75 lq=true mhz=776406 src=1
+NSDF RUN ch=2 low=false count=900 seq=16084180 mhz=0 raw=false guard=true ok=false age=24 dt=4 cycles=27303 work=24887771 faults=0 ms=82268
+NSDF RUN ch=2 low=true count=900 seq=502666 mhz=175343 raw=true guard=true ok=true age=65 dt=3 cycles=37484 work=33781935 faults=0 ms=82318
+NSDF PICK ch=2 ms=82318 n=0 na=74 nq=false l=175343 la=65 lq=true mhz=175343 src=1
+NSDF RUN ch=3 low=false count=901 seq=16105298 mhz=0 raw=false guard=true ok=false age=18 dt=4 cycles=27637 work=24912842 faults=0 ms=82372
+NSDF RUN ch=3 low=true count=901 seq=503326 mhz=138448 raw=true guard=true ok=true age=59 dt=3 cycles=37405 work=33706400 faults=0 ms=82422
+NSDF PICK ch=3 ms=82422 n=0 na=68 nq=false l=138448 la=59 lq=true mhz=138448 src=1
+NSDF RUN ch=0 low=false count=903 seq=16126417 mhz=0 raw=false guard=true ok=false age=8 dt=4 cycles=27784 work=25017411 faults=0 ms=82472
+NSDF RUN ch=0 low=true count=903 seq=503986 mhz=24997 raw=true guard=true ok=true age=52 dt=3 cycles=47851 work=44031682 faults=0 ms=82525
+NSDF PICK ch=0 ms=82525 n=0 na=61 nq=false l=24997 la=52 lq=true mhz=24997 src=1
+NSDF RUN ch=1 low=false count=904 seq=16147340 mhz=776324 raw=true guard=true ok=true age=2 dt=4 cycles=50447 work=45877060 faults=0 ms=82575
+NSDF RUN ch=1 low=true count=904 seq=504640 mhz=776304 raw=true guard=true ok=true age=43 dt=3 cycles=48969 work=44398899 faults=0 ms=82625
+NSDF PICK ch=1 ms=82625 n=776324 na=52 nq=true l=776304 la=43 lq=true mhz=776304 src=1
+NSDF RUN ch=2 low=false count=904 seq=16151568 mhz=0 raw=false guard=true ok=false age=80 dt=4 cycles=28140 work=24999782 faults=0 ms=82675
+NSDF RUN ch=2 low=true count=905 seq=505288 mhz=175278 raw=true guard=true ok=true age=35 dt=3 cycles=37482 work=33970725 faults=0 ms=82725
+NSDF PICK ch=2 ms=82725 n=0 na=44 nq=false l=175278 la=35 lq=true mhz=175278 src=1
+NSDF RUN ch=3 low=false count=905 seq=16172301 mhz=0 raw=false guard=true ok=false age=72 dt=4 cycles=27596 work=25023534 faults=0 ms=82775
+NSDF RUN ch=3 low=true count=906 seq=505954 mhz=138456 raw=true guard=true ok=true age=24 dt=3 cycles=38024 work=33895044 faults=0 ms=82825
+NSDF PICK ch=3 ms=82825 n=0 na=33 nq=false l=138456 la=24 lq=true mhz=138456 src=1
+NSDF RUN ch=0 low=false count=907 seq=16193622 mhz=0 raw=false guard=true ok=false age=63 dt=4 cycles=27466 work=25127982 faults=0 ms=82877
+NSDF RUN ch=0 low=true count=908 seq=506620 mhz=24990 raw=true guard=true ok=true age=15 dt=3 cycles=48531 work=44275265 faults=0 ms=82927
+NSDF PICK ch=0 ms=82927 n=0 na=24 nq=false l=24990 la=15 lq=true mhz=24990 src=1
+NSDF RUN ch=1 low=false count=908 seq=16214929 mhz=776210 raw=true guard=true ok=true age=52 dt=4 cycles=51164 work=46080541 faults=0 ms=82977
+NSDF RUN ch=1 low=true count=909 seq=507280 mhz=776379 raw=true guard=true ok=true age=9 dt=3 cycles=47612 work=44643671 faults=0 ms=83031
+NSDF PICK ch=1 ms=83031 n=776166 na=18 nq=true l=776379 la=9 lq=true mhz=776379 src=1
+NSDF RUN ch=2 low=false count=909 seq=16236050 mhz=0 raw=false guard=true ok=false age=46 dt=4 cycles=27381 work=25137789 faults=0 ms=83081
+NSDF RUN ch=2 low=true count=910 seq=507934 mhz=175298 raw=true guard=true ok=true age=0 dt=3 cycles=37445 work=34157046 faults=0 ms=83131
+NSDF PICK ch=2 ms=83131 n=0 na=9 nq=false l=175298 la=0 lq=true mhz=175298 src=1
+NSDF RUN ch=3 low=false count=910 seq=16256989 mhz=0 raw=false guard=true ok=false age=38 dt=4 cycles=27805 work=25161680 faults=0 ms=83182
+NSDF RUN ch=3 low=true count=910 seq=508066 mhz=138462 raw=true guard=true ok=true age=79 dt=3 cycles=37385 work=34044688 faults=0 ms=83232
+NSDF PICK ch=3 ms=83232 n=0 na=2 nq=false l=138462 la=79 lq=true mhz=138462 src=1
+NSDF RUN ch=0 low=false count=912 seq=16277721 mhz=0 raw=false guard=false ok=false age=30 dt=4 cycles=27439 work=25266771 faults=0 ms=83282
+NSDF RUN ch=0 low=true count=912 seq=508714 mhz=24994 raw=true guard=true ok=true age=75 dt=3 cycles=49157 work=44470552 faults=0 ms=83336
+NSDF PICK ch=0 ms=83336 n=0 na=84 nq=false l=24994 la=75 lq=true mhz=24994 src=1
+NSDF RUN ch=1 low=false count=913 seq=16298649 mhz=776391 raw=true guard=true ok=true age=25 dt=4 cycles=50672 work=46335106 faults=0 ms=83386
+NSDF RUN ch=1 low=true count=913 seq=509368 mhz=776521 raw=true guard=true ok=true age=66 dt=3 cycles=49157 work=44839794 faults=0 ms=83436
+NSDF PICK ch=1 ms=83436 n=776391 na=75 nq=true l=776521 la=66 lq=true mhz=776521 src=1
+NSDF RUN ch=2 low=false count=914 seq=16319577 mhz=0 raw=false guard=true ok=false age=18 dt=4 cycles=27563 work=25275397 faults=0 ms=83488
+NSDF RUN ch=2 low=true count=914 seq=510022 mhz=175322 raw=true guard=true ok=true age=59 dt=3 cycles=37357 work=34307200 faults=0 ms=83538
+NSDF PICK ch=2 ms=83538 n=0 na=68 nq=false l=175322 la=59 lq=true mhz=175322 src=1
+NSDF RUN ch=3 low=false count=915 seq=16340696 mhz=0 raw=false guard=true ok=false age=8 dt=4 cycles=27320 work=25300322 faults=0 ms=83588
+NSDF RUN ch=3 low=true count=915 seq=510682 mhz=138447 raw=true guard=true ok=true age=52 dt=3 cycles=36101 work=34229585 faults=0 ms=83641
+NSDF PICK ch=3 ms=83641 n=0 na=61 nq=false l=138447 la=52 lq=true mhz=138447 src=1
+NSDF RUN ch=0 low=false count=917 seq=16361632 mhz=0 raw=false guard=false ok=false age=2 dt=4 cycles=27453 work=25404719 faults=0 ms=83691
+NSDF RUN ch=0 low=true count=917 seq=511336 mhz=24998 raw=true guard=true ok=true age=43 dt=3 cycles=49261 work=44714133 faults=0 ms=83741
+NSDF PICK ch=0 ms=83741 n=0 na=52 nq=false l=24998 la=43 lq=true mhz=24998 src=1
+NSDF RUN ch=1 low=false count=917 seq=16365853 mhz=776348 raw=true guard=true ok=true age=82 dt=4 cycles=50745 work=46538444 faults=0 ms=83793
+NSDF RUN ch=1 low=true count=918 seq=511984 mhz=776391 raw=true guard=true ok=true age=37 dt=3 cycles=48068 work=45085161 faults=0 ms=83843
+NSDF PICK ch=1 ms=83843 n=776413 na=46 nq=true l=776391 la=37 lq=true mhz=776391 src=1
+NSDF RUN ch=2 low=false count=918 seq=16386779 mhz=0 raw=false guard=true ok=false age=73 dt=4 cycles=27845 work=25385642 faults=0 ms=83893
+NSDF RUN ch=2 low=true count=919 seq=512650 mhz=175313 raw=true guard=true ok=true age=31 dt=3 cycles=37240 work=34495088 faults=0 ms=83948
+NSDF PICK ch=2 ms=83948 n=0 na=40 nq=false l=175313 la=31 lq=true mhz=175313 src=1
+NSDF RUN ch=3 low=false count=919 seq=16407900 mhz=0 raw=false guard=true ok=false age=68 dt=4 cycles=27342 work=25410557 faults=0 ms=83998
+NSDF RUN ch=3 low=true count=920 seq=513310 mhz=138452 raw=true guard=true ok=true age=21 dt=3 cycles=37547 work=34415918 faults=0 ms=84048
+NSDF PICK ch=3 ms=84048 n=0 na=30 nq=false l=138452 la=21 lq=true mhz=138452 src=1
+NSDF RUN ch=0 low=false count=921 seq=16429021 mhz=0 raw=false guard=true ok=false age=63 dt=4 cycles=27713 work=25515211 faults=0 ms=84103
+NSDF RUN ch=0 low=true count=922 seq=513976 mhz=25165 raw=true guard=true ok=true age=15 dt=3 cycles=48788 work=44957349 faults=0 ms=84153
+NSDF PICK ch=0 ms=84153 n=0 na=24 nq=false l=25165 la=15 lq=true mhz=25165 src=1
+NSDF RUN ch=1 low=false count=922 seq=16450335 mhz=776484 raw=true guard=true ok=true age=52 dt=4 cycles=50649 work=46792622 faults=0 ms=84203
+NSDF RUN ch=1 low=true count=923 seq=514618 mhz=776368 raw=true guard=true ok=true age=9 dt=3 cycles=49197 work=45331079 faults=0 ms=84254
+NSDF PICK ch=1 ms=84254 n=776831 na=18 nq=true l=776368 la=9 lq=true mhz=776368 src=1
+NSDF RUN ch=2 low=false count=923 seq=16470879 mhz=0 raw=false guard=true ok=false age=46 dt=4 cycles=27555 work=25523524 faults=0 ms=84304
+NSDF RUN ch=2 low=true count=923 seq=514750 mhz=175300 raw=true guard=true ok=true age=87 dt=3 cycles=37900 work=34646515 faults=0 ms=84354
+NSDF PICK ch=2 ms=84354 n=0 na=8 nq=false l=175300 la=87 lq=true mhz=175300 src=1
+NSDF RUN ch=3 low=false count=924 seq=16492005 mhz=0 raw=false guard=true ok=false age=40 dt=4 cycles=27704 work=25549196 faults=0 ms=84408
+NSDF RUN ch=3 low=true count=924 seq=515410 mhz=138453 raw=true guard=true ok=true age=81 dt=3 cycles=37388 work=34564801 faults=0 ms=84458
+NSDF PICK ch=3 ms=84458 n=0 na=2 nq=false l=138453 la=81 lq=true mhz=138453 src=1
+NSDF RUN ch=0 low=false count=926 seq=16513125 mhz=0 raw=false guard=true ok=false age=30 dt=4 cycles=27835 work=25654478 faults=0 ms=84508
+NSDF RUN ch=0 low=true count=926 seq=516070 mhz=24999 raw=true guard=true ok=true age=71 dt=3 cycles=48802 work=45152000 faults=0 ms=84558
+NSDF PICK ch=0 ms=84558 n=0 na=80 nq=false l=24999 la=71 lq=true mhz=24999 src=1
+NSDF RUN ch=1 low=false count=927 seq=16533863 mhz=776677 raw=true guard=true ok=true age=22 dt=4 cycles=50444 work=47046572 faults=0 ms=84608
+NSDF RUN ch=1 low=true count=927 seq=516718 mhz=776329 raw=true guard=true ok=true age=63 dt=3 cycles=49393 work=45527965 faults=0 ms=84658
+NSDF PICK ch=1 ms=84658 n=776677 na=72 nq=true l=776329 la=63 lq=true mhz=776329 src=1
+NSDF RUN ch=2 low=false count=928 seq=16555365 mhz=0 raw=false guard=true ok=false age=10 dt=4 cycles=27822 work=25661851 faults=0 ms=84708
+NSDF RUN ch=2 low=true count=928 seq=517390 mhz=175292 raw=true guard=true ok=true age=53 dt=3 cycles=37595 work=34834275 faults=0 ms=84760
+NSDF PICK ch=2 ms=84760 n=0 na=62 nq=false l=175292 la=53 lq=true mhz=175292 src=1
+NSDF RUN ch=3 low=false count=929 seq=16576486 mhz=0 raw=false guard=true ok=false age=2 dt=4 cycles=27468 work=25685888 faults=0 ms=84810
+NSDF RUN ch=3 low=true count=929 seq=518050 mhz=138442 raw=true guard=true ok=true age=43 dt=3 cycles=37643 work=34752130 faults=0 ms=84860
+NSDF PICK ch=3 ms=84860 n=0 na=52 nq=false l=138442 la=43 lq=true mhz=138442 src=1
+NSDF RUN ch=0 low=false count=930 seq=16580714 mhz=0 raw=false guard=false ok=false age=85 dt=4 cycles=27853 work=25765859 faults=0 ms=84915
+NSDF RUN ch=0 low=true count=931 seq=518717 mhz=25026 raw=true guard=true ok=true age=37 dt=3 cycles=48662 work=45394469 faults=0 ms=84965
+NSDF PICK ch=0 ms=84965 n=0 na=46 nq=false l=25026 la=37 lq=true mhz=25026 src=1
+NSDF RUN ch=1 low=false count=931 seq=16602023 mhz=777454 raw=true guard=true ok=true age=74 dt=4 cycles=50914 work=47249998 faults=0 ms=85015
+NSDF RUN ch=1 low=true count=932 seq=519377 mhz=776371 raw=true guard=true ok=true age=31 dt=3 cycles=49508 work=45773735 faults=0 ms=85069
+NSDF PICK ch=1 ms=85069 n=776174 na=40 nq=true l=776371 la=31 lq=true mhz=776371 src=1
+NSDF RUN ch=2 low=false count=932 seq=16623145 mhz=0 raw=false guard=true ok=false age=68 dt=4 cycles=27892 work=25772257 faults=0 ms=85119
+NSDF RUN ch=2 low=true count=933 seq=520037 mhz=175341 raw=true guard=true ok=true age=21 dt=3 cycles=37880 work=35021501 faults=0 ms=85169
+NSDF PICK ch=2 ms=85169 n=0 na=30 nq=false l=175341 la=21 lq=true mhz=175341 src=1
+NSDF RUN ch=3 low=false count=933 seq=16644266 mhz=0 raw=false guard=true ok=false age=60 dt=4 cycles=27581 work=25796153 faults=0 ms=85221
+NSDF RUN ch=3 low=true count=934 seq=520685 mhz=138448 raw=true guard=true ok=true age=15 dt=3 cycles=36888 work=34938874 faults=0 ms=85271
+NSDF PICK ch=3 ms=85271 n=0 na=24 nq=false l=138448 la=15 lq=true mhz=138448 src=1
+NSDF RUN ch=0 low=false count=935 seq=16665011 mhz=0 raw=false guard=false ok=false age=52 dt=4 cycles=27501 work=25905143 faults=0 ms=85321
+NSDF RUN ch=0 low=true count=936 seq=521345 mhz=25001 raw=true guard=true ok=true age=9 dt=3 cycles=49068 work=45639468 faults=0 ms=85375
+NSDF PICK ch=0 ms=85375 n=0 na=18 nq=false l=25001 la=9 lq=true mhz=25001 src=1
+NSDF RUN ch=1 low=false count=936 seq=16686131 mhz=775861 raw=true guard=true ok=true age=46 dt=4 cycles=50604 work=47503771 faults=0 ms=85425
+NSDF RUN ch=1 low=true count=936 seq=521477 mhz=776357 raw=true guard=true ok=true age=87 dt=3 cycles=49012 work=45970968 faults=0 ms=85475
+NSDF PICK ch=1 ms=85475 n=776589 na=6 nq=true l=776357 la=87 lq=true mhz=776357 src=1
+NSDF RUN ch=2 low=false count=937 seq=16707633 mhz=0 raw=false guard=true ok=false age=40 dt=4 cycles=28044 work=25909463 faults=0 ms=85531
+NSDF RUN ch=2 low=true count=937 seq=522149 mhz=175275 raw=true guard=true ok=true age=81 dt=3 cycles=37600 work=35170491 faults=0 ms=85581
+NSDF PICK ch=2 ms=85581 n=0 na=2 nq=false l=175275 la=81 lq=true mhz=175275 src=1
+NSDF RUN ch=3 low=false count=938 seq=16728754 mhz=0 raw=false guard=true ok=false age=30 dt=4 cycles=27890 work=25934136 faults=0 ms=85631
+NSDF RUN ch=3 low=true count=938 seq=522809 mhz=138448 raw=true guard=true ok=true age=75 dt=3 cycles=37711 work=35087625 faults=0 ms=85685
+NSDF PICK ch=3 ms=85685 n=0 na=84 nq=false l=138448 la=75 lq=true mhz=138448 src=1
+NSDF RUN ch=0 low=false count=940 seq=16749876 mhz=0 raw=false guard=false ok=false age=24 dt=4 cycles=27780 work=26044339 faults=0 ms=85735
+NSDF RUN ch=0 low=true count=940 seq=523469 mhz=24991 raw=true guard=true ok=true age=65 dt=3 cycles=48854 work=45833899 faults=0 ms=85785
+NSDF PICK ch=0 ms=85785 n=0 na=74 nq=false l=24991 la=65 lq=true mhz=24991 src=1
+NSDF RUN ch=1 low=false count=941 seq=16770805 mhz=776473 raw=true guard=true ok=true age=18 dt=4 cycles=51184 work=47758269 faults=0 ms=85838
+NSDF RUN ch=1 low=true count=941 seq=524123 mhz=776396 raw=true guard=true ok=true age=59 dt=3 cycles=49156 work=46217462 faults=0 ms=85888
+NSDF PICK ch=1 ms=85888 n=776473 na=68 nq=true l=776396 la=59 lq=true mhz=776396 src=1
+NSDF RUN ch=2 low=false count=942 seq=16791923 mhz=0 raw=false guard=true ok=false age=8 dt=4 cycles=27925 work=26048791 faults=0 ms=85938
+NSDF RUN ch=2 low=true count=942 seq=524783 mhz=175311 raw=true guard=true ok=true age=53 dt=3 cycles=35674 work=35357234 faults=0 ms=85992
+NSDF PICK ch=2 ms=85992 n=0 na=62 nq=false l=175311 la=53 lq=true mhz=175311 src=1
+NSDF RUN ch=3 low=false count=943 seq=16813044 mhz=0 raw=false guard=true ok=false age=2 dt=4 cycles=27404 work=26071854 faults=0 ms=86042
+NSDF RUN ch=3 low=true count=943 seq=525443 mhz=138448 raw=true guard=true ok=true age=43 dt=3 cycles=37397 work=35274645 faults=0 ms=86092
+NSDF PICK ch=3 ms=86092 n=0 na=52 nq=false l=138448 la=43 lq=true mhz=138448 src=1
+NSDF RUN ch=0 low=false count=944 seq=16817272 mhz=0 raw=false guard=true ok=false age=80 dt=4 cycles=28101 work=26155209 faults=0 ms=86142
+NSDF RUN ch=0 low=true count=945 seq=526085 mhz=24990 raw=true guard=true ok=true age=36 dt=3 cycles=48394 work=46077051 faults=0 ms=86192
+NSDF PICK ch=0 ms=86192 n=0 na=45 nq=false l=24990 la=36 lq=true mhz=24990 src=1
+NSDF RUN ch=1 low=false count=945 seq=16837821 mhz=776556 raw=true guard=true ok=true age=73 dt=4 cycles=50979 work=47961656 faults=0 ms=86242
+NSDF RUN ch=1 low=true count=946 seq=526751 mhz=776258 raw=true guard=true ok=true age=30 dt=3 cycles=48933 work=46463077 faults=0 ms=86297
+NSDF PICK ch=1 ms=86297 n=776091 na=39 nq=true l=776258 la=30 lq=true mhz=776258 src=1
+NSDF RUN ch=2 low=false count=946 seq=16858942 mhz=0 raw=false guard=true ok=false age=68 dt=4 cycles=27595 work=26158665 faults=0 ms=86347
+NSDF RUN ch=2 low=true count=947 seq=527405 mhz=175353 raw=true guard=true ok=true age=21 dt=3 cycles=37447 work=35545722 faults=0 ms=86397
+NSDF PICK ch=2 ms=86397 n=0 na=30 nq=false l=175353 la=21 lq=true mhz=175353 src=1
+NSDF RUN ch=3 low=false count=947 seq=16880064 mhz=0 raw=false guard=true ok=false age=60 dt=4 cycles=26680 work=26182209 faults=0 ms=86449
+NSDF RUN ch=3 low=true count=948 seq=528053 mhz=138451 raw=true guard=true ok=true age=15 dt=3 cycles=37671 work=35460870 faults=0 ms=86499
+NSDF PICK ch=3 ms=86499 n=0 na=24 nq=false l=138451 la=15 lq=true mhz=138451 src=1
+NSDF RUN ch=0 low=false count=949 seq=16900793 mhz=0 raw=false guard=true ok=false age=52 dt=4 cycles=27823 work=26293881 faults=0 ms=86549
+NSDF RUN ch=0 low=true count=950 seq=528707 mhz=24994 raw=true guard=true ok=true age=9 dt=3 cycles=48686 work=46320053 faults=0 ms=86602
+NSDF PICK ch=0 ms=86602 n=0 na=18 nq=false l=24994 la=9 lq=true mhz=24994 src=1
+NSDF RUN ch=1 low=false count=950 seq=16921722 mhz=776560 raw=true guard=true ok=true age=46 dt=4 cycles=50097 work=48215052 faults=0 ms=86652
+NSDF RUN ch=1 low=true count=951 seq=529361 mhz=776248 raw=true guard=true ok=true age=0 dt=3 cycles=49443 work=46709432 faults=0 ms=86702
+NSDF PICK ch=1 ms=86702 n=776378 na=9 nq=true l=776248 la=0 lq=true mhz=776248 src=1
+NSDF RUN ch=2 low=false count=951 seq=16942847 mhz=0 raw=false guard=true ok=false age=40 dt=4 cycles=27798 work=26296783 faults=0 ms=86756
+NSDF RUN ch=2 low=true count=951 seq=529499 mhz=175295 raw=true guard=true ok=true age=81 dt=3 cycles=37864 work=35696145 faults=0 ms=86806
+NSDF PICK ch=2 ms=86806 n=0 na=2 nq=false l=175295 la=81 lq=true mhz=175295 src=1
+NSDF RUN ch=3 low=false count=952 seq=16963969 mhz=0 raw=false guard=true ok=false age=30 dt=4 cycles=27261 work=26320268 faults=0 ms=86856
+NSDF RUN ch=3 low=true count=952 seq=530159 mhz=138454 raw=true guard=true ok=true age=75 dt=3 cycles=37397 work=35611059 faults=0 ms=86910
+NSDF PICK ch=3 ms=86910 n=0 na=84 nq=false l=138454 la=75 lq=true mhz=138454 src=1
+NSDF RUN ch=0 low=false count=954 seq=16985090 mhz=0 raw=false guard=true ok=false age=24 dt=4 cycles=27538 work=26432542 faults=0 ms=86960
+NSDF RUN ch=0 low=true count=954 seq=530819 mhz=24996 raw=true guard=true ok=true age=65 dt=3 cycles=48718 work=46515644 faults=0 ms=87010
+NSDF PICK ch=0 ms=87010 n=0 na=74 nq=false l=24996 la=65 lq=true mhz=24996 src=1
+NSDF RUN ch=1 low=false count=955 seq=17006400 mhz=775995 raw=true guard=true ok=true age=18 dt=4 cycles=50356 work=48469019 faults=0 ms=87065
+NSDF RUN ch=1 low=true count=955 seq=531485 mhz=776387 raw=true guard=true ok=true age=59 dt=3 cycles=48223 work=46906144 faults=0 ms=87115
+NSDF PICK ch=1 ms=87115 n=775995 na=68 nq=true l=776387 la=59 lq=true mhz=776387 src=1
+NSDF RUN ch=2 low=false count=956 seq=17027521 mhz=0 raw=false guard=true ok=false age=8 dt=4 cycles=28046 work=26436356 faults=0 ms=87165
+NSDF RUN ch=2 low=true count=956 seq=532145 mhz=175349 raw=true guard=true ok=true age=52 dt=3 cycles=37745 work=35882885 faults=0 ms=87218
+NSDF PICK ch=2 ms=87218 n=0 na=61 nq=false l=175349 la=52 lq=true mhz=175349 src=1
+NSDF RUN ch=3 low=false count=957 seq=17048074 mhz=0 raw=false guard=true ok=false age=4 dt=4 cycles=27757 work=26458223 faults=0 ms=87268
+NSDF RUN ch=3 low=true count=957 seq=532788 mhz=138441 raw=true guard=true ok=true age=45 dt=3 cycles=37693 work=35798939 faults=0 ms=87318
+NSDF PICK ch=3 ms=87318 n=0 na=54 nq=false l=138441 la=45 lq=true mhz=138441 src=1
+NSDF RUN ch=0 low=false count=958 seq=17052294 mhz=0 raw=false guard=true ok=false age=85 dt=4 cycles=27693 work=26542922 faults=0 ms=87371
+NSDF RUN ch=0 low=true count=959 seq=533453 mhz=25020 raw=true guard=true ok=true age=37 dt=3 cycles=49061 work=46759088 faults=0 ms=87421
+NSDF PICK ch=0 ms=87421 n=0 na=46 nq=false l=25020 la=37 lq=true mhz=25020 src=1
+NSDF RUN ch=1 low=false count=959 seq=17073603 mhz=776281 raw=true guard=true ok=true age=74 dt=4 cycles=50666 work=48670941 faults=0 ms=87471
+NSDF RUN ch=1 low=true count=960 seq=534108 mhz=776366 raw=true guard=true ok=true age=31 dt=3 cycles=49520 work=47151510 faults=0 ms=87524
+NSDF PICK ch=1 ms=87524 n=776452 na=40 nq=true l=776366 la=31 lq=true mhz=776366 src=1
+NSDF RUN ch=2 low=false count=960 seq=17094533 mhz=0 raw=false guard=true ok=false age=68 dt=4 cycles=27141 work=26546637 faults=0 ms=87574
+NSDF RUN ch=2 low=true count=961 seq=534768 mhz=175327 raw=true guard=true ok=true age=21 dt=3 cycles=37629 work=36070155 faults=0 ms=87624
+NSDF PICK ch=2 ms=87624 n=0 na=30 nq=false l=175327 la=21 lq=true mhz=175327 src=1
+NSDF RUN ch=3 low=false count=961 seq=17115277 mhz=0 raw=false guard=true ok=false age=63 dt=4 cycles=27685 work=26568661 faults=0 ms=87677
+NSDF RUN ch=3 low=true count=962 seq=535421 mhz=138448 raw=true guard=true ok=true age=15 dt=3 cycles=37636 work=35986611 faults=0 ms=87727
+NSDF PICK ch=3 ms=87727 n=0 na=24 nq=false l=138448 la=15 lq=true mhz=138448 src=1
+NSDF RUN ch=0 low=false count=963 seq=17136583 mhz=0 raw=false guard=true ok=false age=52 dt=4 cycles=27846 work=26681733 faults=0 ms=87777
+NSDF RUN ch=0 low=true count=964 seq=536081 mhz=24997 raw=true guard=true ok=true age=9 dt=3 cycles=47413 work=47001775 faults=0 ms=87831
+NSDF PICK ch=0 ms=87831 n=0 na=18 nq=false l=24997 la=9 lq=true mhz=24997 src=1
+NSDF RUN ch=1 low=false count=964 seq=17157705 mhz=776767 raw=true guard=true ok=true age=46 dt=4 cycles=51088 work=48924078 faults=0 ms=87881
+NSDF RUN ch=1 low=true count=964 seq=536214 mhz=776447 raw=true guard=true ok=true age=87 dt=3 cycles=49911 work=47348221 faults=0 ms=87931
+NSDF PICK ch=1 ms=87931 n=776434 na=7 nq=true l=776447 la=87 lq=true mhz=776447 src=1
+NSDF RUN ch=2 low=false count=965 seq=17179022 mhz=0 raw=false guard=true ok=false age=40 dt=4 cycles=27213 work=26685165 faults=0 ms=87986
+NSDF RUN ch=2 low=true count=965 seq=536880 mhz=175299 raw=true guard=true ok=true age=81 dt=3 cycles=36362 work=36219174 faults=0 ms=88036
+NSDF PICK ch=2 ms=88036 n=0 na=3 nq=false l=175299 la=81 lq=true mhz=175299 src=1
+NSDF RUN ch=3 low=false count=966 seq=17200143 mhz=0 raw=false guard=true ok=false age=30 dt=4 cycles=27333 work=26706009 faults=0 ms=88086
+NSDF RUN ch=3 low=true count=966 seq=537540 mhz=138448 raw=true guard=true ok=true age=77 dt=3 cycles=37693 work=36135632 faults=0 ms=88142
+NSDF PICK ch=3 ms=88142 n=0 na=86 nq=false l=138448 la=77 lq=true mhz=138448 src=1
+NSDF RUN ch=0 low=false count=968 seq=17221648 mhz=0 raw=false guard=false ok=false age=24 dt=4 cycles=27799 work=26820850 faults=0 ms=88192
+NSDF RUN ch=0 low=true count=968 seq=538212 mhz=24993 raw=true guard=true ok=true age=65 dt=3 cycles=48825 work=47197431 faults=0 ms=88242
+NSDF PICK ch=0 ms=88242 n=0 na=74 nq=false l=24993 la=65 lq=true mhz=24993 src=1
+NSDF RUN ch=1 low=false count=969 seq=17242574 mhz=775994 raw=true guard=true ok=true age=15 dt=4 cycles=50912 work=49178166 faults=0 ms=88292
+NSDF RUN ch=1 low=true count=969 seq=538866 mhz=776388 raw=true guard=true ok=true age=56 dt=3 cycles=49610 work=47595256 faults=0 ms=88342
+NSDF PICK ch=1 ms=88342 n=775994 na=65 nq=true l=776388 la=56 lq=true mhz=776388 src=1
+NSDF RUN ch=2 low=false count=970 seq=17263310 mhz=0 raw=false guard=true ok=false age=7 dt=4 cycles=28077 work=26824494 faults=0 ms=88392
+NSDF RUN ch=2 low=true count=970 seq=539514 mhz=175336 raw=true guard=true ok=true age=53 dt=3 cycles=38275 work=36406674 faults=0 ms=88447
+NSDF PICK ch=2 ms=88447 n=0 na=62 nq=false l=175336 la=53 lq=true mhz=175336 src=1
+NSDF RUN ch=3 low=false count=971 seq=17284431 mhz=0 raw=false guard=true ok=false age=2 dt=4 cycles=27321 work=26844589 faults=0 ms=88497
+NSDF RUN ch=3 low=true count=971 seq=540174 mhz=138438 raw=true guard=true ok=true age=43 dt=3 cycles=37411 work=36322909 faults=0 ms=88547
+NSDF PICK ch=3 ms=88547 n=0 na=52 nq=false l=138438 la=43 lq=true mhz=138438 src=1
+NSDF RUN ch=0 low=false count=972 seq=17288660 mhz=0 raw=false guard=true ok=false age=84 dt=4 cycles=27906 work=26931537 faults=0 ms=88601
+NSDF RUN ch=0 low=true count=973 seq=540834 mhz=25008 raw=true guard=true ok=true age=37 dt=3 cycles=49002 work=47440694 faults=0 ms=88651
+NSDF PICK ch=0 ms=88651 n=0 na=46 nq=false l=25008 la=37 lq=true mhz=25008 src=1
+NSDF RUN ch=1 low=false count=973 seq=17309777 mhz=775963 raw=true guard=true ok=true age=74 dt=4 cycles=50765 work=49380521 faults=0 ms=88701
+NSDF RUN ch=1 low=true count=974 seq=541482 mhz=776352 raw=true guard=true ok=true age=31 dt=3 cycles=47318 work=47838250 faults=0 ms=88753
+NSDF PICK ch=1 ms=88753 n=776641 na=40 nq=true l=776352 la=31 lq=true mhz=776352 src=1
+NSDF RUN ch=2 low=false count=974 seq=17330515 mhz=0 raw=false guard=true ok=false age=68 dt=4 cycles=27851 work=26935304 faults=0 ms=88803
+NSDF RUN ch=2 low=true count=975 seq=542142 mhz=175293 raw=true guard=true ok=true age=21 dt=3 cycles=37342 work=36593913 faults=0 ms=88853
+NSDF PICK ch=2 ms=88853 n=0 na=30 nq=false l=175293 la=21 lq=true mhz=175293 src=1
+NSDF RUN ch=3 low=false count=975 seq=17351636 mhz=0 raw=false guard=true ok=false age=62 dt=4 cycles=27466 work=26955616 faults=0 ms=88907
+NSDF RUN ch=3 low=true count=976 seq=542802 mhz=138449 raw=true guard=true ok=true age=15 dt=3 cycles=37805 work=36509891 faults=0 ms=88957
+NSDF PICK ch=3 ms=88957 n=0 na=24 nq=false l=138449 la=15 lq=true mhz=138449 src=1
+NSDF RUN ch=0 low=false count=977 seq=17372757 mhz=0 raw=false guard=true ok=false age=52 dt=4 cycles=27188 work=27069545 faults=0 ms=89007
+NSDF RUN ch=0 low=true count=978 seq=543462 mhz=24997 raw=true guard=true ok=true age=8 dt=3 cycles=48947 work=47684874 faults=0 ms=89060
+NSDF PICK ch=0 ms=89060 n=0 na=17 nq=false l=24997 la=8 lq=true mhz=24997 src=1
+NSDF RUN ch=1 low=false count=978 seq=17393694 mhz=776260 raw=true guard=true ok=true age=46 dt=4 cycles=50948 work=49634038 faults=0 ms=89110
+NSDF RUN ch=1 low=true count=978 seq=543588 mhz=776411 raw=true guard=true ok=true age=87 dt=3 cycles=49298 work=48035714 faults=0 ms=89160
+NSDF PICK ch=1 ms=89160 n=776579 na=8 nq=true l=776411 la=87 lq=true mhz=776411 src=1
+NSDF RUN ch=2 low=false count=979 seq=17415003 mhz=0 raw=false guard=true ok=false age=41 dt=4 cycles=28098 work=27073891 faults=0 ms=89216
+NSDF RUN ch=2 low=true count=979 seq=544254 mhz=175319 raw=true guard=true ok=true age=82 dt=3 cycles=37987 work=36744876 faults=0 ms=89266
+NSDF PICK ch=2 ms=89266 n=0 na=2 nq=false l=175319 la=82 lq=true mhz=175319 src=1
+NSDF RUN ch=3 low=false count=980 seq=17436509 mhz=0 raw=false guard=true ok=false age=29 dt=4 cycles=27308 work=27093411 faults=0 ms=89316
+NSDF RUN ch=3 low=true count=980 seq=544926 mhz=138446 raw=true guard=true ok=true age=75 dt=3 cycles=37406 work=36659464 faults=0 ms=89371
+NSDF PICK ch=3 ms=89371 n=0 na=84 nq=false l=138446 la=75 lq=true mhz=138446 src=1
+NSDF RUN ch=0 low=false count=982 seq=17457630 mhz=0 raw=false guard=true ok=false age=24 dt=4 cycles=27547 work=27208066 faults=0 ms=89421
+NSDF RUN ch=0 low=true count=982 seq=545586 mhz=24991 raw=true guard=true ok=true age=65 dt=3 cycles=48047 work=47878270 faults=0 ms=89471
+NSDF PICK ch=0 ms=89471 n=0 na=74 nq=false l=24991 la=65 lq=true mhz=24991 src=1
+NSDF RUN ch=1 low=false count=983 seq=17478748 mhz=776787 raw=true guard=true ok=true age=18 dt=4 cycles=50861 work=49887968 faults=0 ms=89525
+NSDF RUN ch=1 low=true count=983 seq=546246 mhz=776413 raw=true guard=true ok=true age=59 dt=3 cycles=49220 work=48282289 faults=0 ms=89575
+NSDF PICK ch=1 ms=89575 n=776787 na=68 nq=true l=776413 la=59 lq=true mhz=776413 src=1
+NSDF RUN ch=2 low=false count=984 seq=17500061 mhz=0 raw=false guard=true ok=false age=7 dt=4 cycles=28033 work=27213373 faults=0 ms=89625
+NSDF RUN ch=2 low=true count=984 seq=546912 mhz=175326 raw=true guard=true ok=true age=53 dt=3 cycles=37778 work=36933453 faults=0 ms=89680
+NSDF PICK ch=2 ms=89680 n=0 na=62 nq=false l=175326 la=53 lq=true mhz=175326 src=1
+NSDF RUN ch=3 low=false count=985 seq=17520990 mhz=0 raw=false guard=true ok=false age=3 dt=4 cycles=27778 work=27231215 faults=0 ms=89730
+NSDF RUN ch=3 low=true count=985 seq=547566 mhz=138441 raw=true guard=true ok=true age=44 dt=3 cycles=37246 work=36846757 faults=0 ms=89780
+NSDF PICK ch=3 ms=89780 n=0 na=53 nq=false l=138441 la=44 lq=true mhz=138441 src=1
+NSDF RUN ch=0 low=false count=986 seq=17524831 mhz=0 raw=false guard=true ok=false age=85 dt=4 cycles=27760 work=27318658 faults=0 ms=89832
+NSDF RUN ch=0 low=true count=987 seq=548220 mhz=24994 raw=true guard=true ok=true age=37 dt=3 cycles=49180 work=48122425 faults=0 ms=89882
+NSDF PICK ch=0 ms=89882 n=0 na=46 nq=false l=24994 la=37 lq=true mhz=24994 src=1
+NSDF RUN ch=1 low=false count=987 seq=17546143 mhz=776078 raw=true guard=true ok=true age=74 dt=4 cycles=50860 work=50090857 faults=0 ms=89932
+NSDF RUN ch=1 low=true count=988 seq=548886 mhz=776394 raw=true guard=true ok=true age=31 dt=3 cycles=48595 work=48526139 faults=0 ms=89987
+NSDF PICK ch=1 ms=89987 n=776131 na=40 nq=true l=776394 la=31 lq=true mhz=776394 src=1
+NSDF RUN ch=2 low=false count=988 seq=17567465 mhz=0 raw=false guard=true ok=false age=68 dt=4 cycles=27760 work=27324029 faults=0 ms=90037
+NSDF RUN ch=2 low=true count=989 seq=549540 mhz=175278 raw=true guard=true ok=true age=22 dt=3 cycles=37159 work=37119868 faults=0 ms=90087
+NSDF PICK ch=2 ms=90087 n=0 na=31 nq=false l=175278 la=22 lq=true mhz=175278 src=1
+NSDF RUN ch=3 low=false count=989 seq=17588386 mhz=0 raw=false guard=true ok=false age=62 dt=4 cycles=27777 work=27341793 faults=0 ms=90140
+NSDF RUN ch=3 low=true count=990 seq=550189 mhz=138442 raw=true guard=true ok=true age=17 dt=3 cycles=37596 work=37034942 faults=0 ms=90190
+NSDF PICK ch=3 ms=90190 n=0 na=26 nq=false l=138442 la=17 lq=true mhz=138442 src=1
+NSDF RUN ch=0 low=false count=991 seq=17609123 mhz=0 raw=false guard=true ok=false age=54 dt=4 cycles=27713 work=27457360 faults=0 ms=90240
+NSDF RUN ch=0 low=true count=992 seq=550849 mhz=24996 raw=true guard=true ok=true age=8 dt=3 cycles=48866 work=48367379 faults=0 ms=90291
+NSDF PICK ch=0 ms=90291 n=0 na=17 nq=false l=24996 la=8 lq=true mhz=24996 src=1
+NSDF RUN ch=1 low=false count=992 seq=17630052 mhz=776071 raw=true guard=true ok=true age=46 dt=4 cycles=51079 work=50345070 faults=0 ms=90341
+NSDF RUN ch=1 low=true count=992 seq=550974 mhz=776336 raw=true guard=true ok=true age=87 dt=3 cycles=49023 work=48722677 faults=0 ms=90391
+NSDF PICK ch=1 ms=90391 n=776301 na=8 nq=true l=776336 la=87 lq=true mhz=776336 src=1
+NSDF RUN ch=2 low=false count=993 seq=17651178 mhz=0 raw=false guard=true ok=false age=36 dt=4 cycles=27452 work=27462369 faults=0 ms=90441
+NSDF RUN ch=2 low=true count=993 seq=551634 mhz=175296 raw=true guard=true ok=true age=77 dt=3 cycles=37556 work=37269526 faults=0 ms=90491
+NSDF PICK ch=2 ms=90491 n=0 na=0 nq=false l=175296 la=77 lq=true mhz=175296 src=1
+NSDF RUN ch=3 low=false count=994 seq=17672114 mhz=0 raw=false guard=true ok=false age=27 dt=4 cycles=27753 work=27479785 faults=0 ms=90541
+NSDF RUN ch=3 low=true count=994 seq=552289 mhz=138444 raw=true guard=true ok=true age=74 dt=3 cycles=37249 work=37185380 faults=0 ms=90597
+NSDF PICK ch=3 ms=90597 n=0 na=83 nq=false l=138444 la=74 lq=true mhz=138444 src=1
+NSDF RUN ch=0 low=false count=996 seq=17693036 mhz=0 raw=false guard=true ok=false age=24 dt=4 cycles=28097 work=27596338 faults=0 ms=90647
+NSDF RUN ch=0 low=true count=996 seq=552942 mhz=24996 raw=true guard=true ok=true age=65 dt=3 cycles=48673 work=48561263 faults=0 ms=90697
+NSDF PICK ch=0 ms=90697 n=0 na=74 nq=false l=24996 la=65 lq=true mhz=24996 src=1
+NSDF RUN ch=1 low=false count=997 seq=17714154 mhz=776654 raw=true guard=true ok=true age=18 dt=4 cycles=50665 work=50598619 faults=0 ms=90751
+NSDF RUN ch=1 low=true count=997 seq=553602 mhz=776374 raw=true guard=true ok=true age=59 dt=3 cycles=49540 work=48969191 faults=0 ms=90801
+NSDF PICK ch=1 ms=90801 n=776654 na=68 nq=true l=776374 la=59 lq=true mhz=776374 src=1
+NSDF RUN ch=2 low=false count=998 seq=17734891 mhz=0 raw=false guard=true ok=false age=10 dt=4 cycles=27564 work=27600675 faults=0 ms=90851
+NSDF RUN ch=2 low=true count=998 seq=554251 mhz=175279 raw=true guard=true ok=true age=53 dt=3 cycles=37794 work=37456975 faults=0 ms=90903
+NSDF PICK ch=2 ms=90903 n=0 na=62 nq=false l=175279 la=53 lq=true mhz=175279 src=1
+NSDF RUN ch=3 low=false count=999 seq=17756011 mhz=0 raw=false guard=true ok=false age=2 dt=4 cycles=27559 work=27618255 faults=0 ms=90953
+NSDF RUN ch=3 low=true count=999 seq=554911 mhz=138446 raw=true guard=true ok=true age=43 dt=3 cycles=37401 work=37371043 faults=0 ms=91003
+NSDF PICK ch=3 ms=91003 n=0 na=52 nq=false l=138446 la=43 lq=true mhz=138446 src=1
+NSDF RUN ch=0 low=false count=1000 seq=17760240 mhz=0 raw=false guard=false ok=false age=84 dt=4 cycles=27630 work=27707259 faults=0 ms=91057
+NSDF RUN ch=0 low=true count=1001 seq=555571 mhz=24998 raw=true guard=true ok=true age=37 dt=3 cycles=48421 work=48805346 faults=0 ms=91107
+NSDF PICK ch=0 ms=91107 n=0 na=46 nq=false l=24998 la=37 lq=true mhz=24998 src=1
+NSDF RUN ch=1 low=false count=1001 seq=17781358 mhz=776303 raw=true guard=true ok=true age=74 dt=4 cycles=51115 work=50802665 faults=0 ms=91157
+NSDF RUN ch=1 low=true count=1002 seq=556219 mhz=776306 raw=true guard=true ok=true age=31 dt=3 cycles=49403 work=49215795 faults=0 ms=91209
+NSDF PICK ch=1 ms=91209 n=776537 na=40 nq=true l=776306 la=31 lq=true mhz=776306 src=1
+NSDF RUN ch=2 low=false count=1002 seq=17802095 mhz=0 raw=false guard=true ok=false age=68 dt=4 cycles=27693 work=27710971 faults=0 ms=91259
+NSDF RUN ch=2 low=true count=1003 seq=556873 mhz=175291 raw=true guard=true ok=true age=22 dt=3 cycles=37862 work=37645543 faults=0 ms=91309
+NSDF PICK ch=2 ms=91309 n=0 na=31 nq=false l=175291 la=22 lq=true mhz=175291 src=1
+NSDF RUN ch=3 low=false count=1003 seq=17823023 mhz=0 raw=false guard=true ok=false age=59 dt=4 cycles=27652 work=27728790 faults=0 ms=91359
+NSDF RUN ch=3 low=true count=1004 seq=557521 mhz=138447 raw=true guard=true ok=true age=14 dt=3 cycles=37962 work=37557182 faults=0 ms=91409
+NSDF PICK ch=3 ms=91409 n=0 na=23 nq=false l=138447 la=14 lq=true mhz=138447 src=1
+NSDF RUN ch=0 low=false count=1005 seq=17843762 mhz=0 raw=false guard=false ok=false age=51 dt=4 cycles=27924 work=27844946 faults=0 ms=91459
+NSDF RUN ch=0 low=true count=1006 seq=558181 mhz=25046 raw=true guard=true ok=true age=9 dt=3 cycles=47568 work=49048333 faults=0 ms=91514
+NSDF PICK ch=0 ms=91514 n=0 na=18 nq=false l=25046 la=9 lq=true mhz=25046 src=1
+NSDF RUN ch=1 low=false count=1006 seq=17864883 mhz=776394 raw=true guard=true ok=true age=46 dt=4 cycles=51044 work=51057149 faults=0 ms=91564
+NSDF RUN ch=1 low=true count=1006 seq=558313 mhz=776405 raw=true guard=true ok=true age=87 dt=3 cycles=49588 work=49412347 faults=0 ms=91614
+NSDF PICK ch=1 ms=91614 n=776433 na=7 nq=true l=776405 la=87 lq=true mhz=776405 src=1
+NSDF RUN ch=2 low=false count=1007 seq=17886206 mhz=0 raw=false guard=true ok=false age=40 dt=4 cycles=27836 work=27849817 faults=0 ms=91669
+NSDF RUN ch=2 low=true count=1007 seq=558979 mhz=175327 raw=true guard=true ok=true age=81 dt=3 cycles=37285 work=37795649 faults=0 ms=91719
+NSDF PICK ch=2 ms=91719 n=0 na=2 nq=false l=175327 la=81 lq=true mhz=175327 src=1
+NSDF RUN ch=3 low=false count=1008 seq=17907327 mhz=0 raw=false guard=true ok=false age=30 dt=4 cycles=26888 work=27865693 faults=0 ms=91769
+NSDF RUN ch=3 low=true count=1008 seq=559639 mhz=138447 raw=true guard=true ok=true age=75 dt=3 cycles=37586 work=37707228 faults=0 ms=91823
+NSDF PICK ch=3 ms=91823 n=0 na=84 nq=false l=138447 la=75 lq=true mhz=138447 src=1
+NSDF RUN ch=0 low=false count=1010 seq=17928057 mhz=0 raw=false guard=true ok=false age=26 dt=4 cycles=27849 work=27984251 faults=0 ms=91873

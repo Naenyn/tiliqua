@@ -187,6 +187,7 @@ class _FramebufferBackend(wiring.Component):
 
         # Current request being processed
         current_req = Signal(PlotRequest)
+        current_base = Signal.like(self.fbp.draw_base)
 
         # Pixel position calculations
         abs_x = Signal(signed(16))
@@ -257,15 +258,10 @@ class _FramebufferBackend(wiring.Component):
         ]
         fb_hwords = ((self.fbp.timings.h_active * self.pixel_bytes)
                      // self.pixels_per_word)
-        # SONORO keeps two 1 MiB framebuffer regions. Most producers address
-        # the displayed buffer normally; its 3D renderer selects the other
-        # region without needing another cache, multiplier, or PSRAM master.
-        framebuffer_base = Signal.like(self.fbp.base)
-        m.d.comb += [
-            framebuffer_base.eq(
-                self.fbp.base ^ Mux(current_req.alternate, 0x40000, 0)),
-            pixel_addr.eq(framebuffer_base + y_offs*fb_hwords + x_offs),
-        ]
+        # SONORO selects its alternate region relative to the draw target.
+        m.d.comb += pixel_addr.eq(
+            (current_base ^ Mux(current_req.alternate, 0x40000, 0))
+            + y_offs*fb_hwords + x_offs)
 
         # Pixel data latched during read-modify-write / blending
         pixel_read = Signal(Pixel)
@@ -279,7 +275,12 @@ class _FramebufferBackend(wiring.Component):
                 # all incoming points and don't draw them anywhere.
                 m.d.comb += self.i.ready.eq(1)
                 with m.If(self.i.valid):
-                    m.d.sync += current_req.eq(self.i.payload)
+                    # Keep an accepted pixel tied to its original target even
+                    # if firmware retargets later drawing to another buffer.
+                    m.d.sync += [
+                        current_req.eq(self.i.payload),
+                        current_base.eq(self.fbp.draw_base),
+                    ]
                     m.next = 'TRANSFORM'
 
             with m.State('TRANSFORM'):
