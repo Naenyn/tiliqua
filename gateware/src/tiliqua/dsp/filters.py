@@ -164,7 +164,8 @@ class DCBlock(wiring.Component):
         x     = Signal(self.sq)
         y     = Signal(self.sq)
 
-        acc   = Signal(mac.SQRNative)
+        acc     = Signal(mac.SQRNative)
+        product = Signal(mac.SQRNative)
 
         m.d.comb += self.o.payload.eq(acc)
 
@@ -181,8 +182,16 @@ class DCBlock(wiring.Component):
 
             with m.State('MAC0'):
                 with mp.Multiply(m, a=y, b=kA):
-                    m.d.sync += acc.eq((acc - mp.result.z) + x)
-                    m.next = 'WAIT-READY'
+                    # Keep the multiplier and the wide accumulator arithmetic in
+                    # separate cycles. At audio rates there is ample time between
+                    # samples, and this avoids making the DSP output feed a full
+                    # carry chain in one system-clock period.
+                    m.d.sync += product.eq(mp.result.z)
+                    m.next = 'ACCUMULATE'
+
+            with m.State('ACCUMULATE'):
+                m.d.sync += acc.eq((acc - product) + x)
+                m.next = 'WAIT-READY'
 
             with m.State('WAIT-READY'):
                 m.d.comb += self.o.valid.eq(1)
@@ -275,7 +284,8 @@ class FIR(wiring.Component):
                  prescale:         float=1,
                  stride_i:         int=1,
                  stride_o:         int=1,
-                 shape=ASQ):
+                 shape=ASQ,
+                 round_products: bool=False):
         """
         fs : int
             Sample rate of the filter, used for calculating FIR coefficients.
@@ -309,6 +319,10 @@ class FIR(wiring.Component):
             MACs to produce samples that will be discarded.
         shape : fixed.Shape
             Fixed-point shape for input/output samples. Defaults to ASQ.
+        round_products : bool
+            Round each signed product symmetrically before accumulation rather
+            than truncating it. The default retains the original datapath for
+            existing users.
         """
         self.shape = shape
         taps = signal.firwin(numtaps=filter_order, cutoff=filter_cutoff_hz,
@@ -318,6 +332,7 @@ class FIR(wiring.Component):
         self.prescale   = prescale
         self.stride_i   = stride_i
         self.stride_o   = stride_o
+        self.round_products = round_products
         super().__init__({
             "i": In(stream.Signature(shape)),
             "o": Out(stream.Signature(shape)),
@@ -375,10 +390,28 @@ class FIR(wiring.Component):
         ix_tap = Signal(range(n))
         ix_rd  = Signal(range(n))
 
-        # MAC variables: y = a * b
+        # MAC variables: y = sum(a * b). Assigning a full-precision signed
+        # product directly to y rounds toward negative infinity. Repeating that
+        # for every tap creates a measurable negative DC bias. SONORO opts into
+        # symmetric round-to-nearest before accumulation; the compact legacy
+        # behavior remains available to existing users.
         a  = Signal(self.ctype)
         b  = Signal(self.ctype)
         y  = Signal(self.ctype)
+        product = a.as_value() * b.as_value()
+        product_reg = Signal(product.shape())
+        product_rounded = Signal(self.ctype)
+        rounded_reg = Signal(self.ctype)
+        if self.round_products:
+            # For a two's-complement value, adding half an output LSB and
+            # subtracting one raw LSB for negative values produces symmetric
+            # round-to-nearest (ties away from zero) under arithmetic shift.
+            # Register the full product first so the multiplier, correction
+            # adder and accumulator are three short paths rather than one
+            # system-clock critical path.
+            m.d.comb += product_rounded.as_value().eq(
+                (product_reg + (1 << (self.ctype.f_bits - 1))
+                 - (product_reg < 0)) >> self.ctype.f_bits)
 
         m.d.comb += taps_rport.en.eq(1)
         m.d.comb += taps_rport.addr.eq(ix_tap)
@@ -415,25 +448,65 @@ class FIR(wiring.Component):
                     with m.Else():
                         m.next = "WAIT-READY"
 
-            with m.State("MAC"):
-                m.d.comb += [
-                    a.eq(x_rport.data),
-                    b.eq(taps_rport.data),
-                ]
-                m.d.sync += [
-                    y.eq(y + (a * b)),
-                    macs.eq(macs+1),
-                ]
-                # next tap read position
-                m.d.sync += ix_tap.eq(ix_tap + self.stride_i),
-                # next sample read position
-                with m.If(ix_rd == 0):
-                    m.d.sync += ix_rd.eq((n//self.stride_i - 1))
-                with m.Else():
-                    m.d.sync += ix_rd.eq(ix_rd - 1),
-                # done?
-                with m.If(macs == (n//self.stride_i - 1)):
+            if self.round_products:
+                with m.State("MAC"):
+                    m.d.comb += [
+                        a.eq(x_rport.data),
+                        b.eq(taps_rport.data),
+                    ]
+                    # Launch one product every cycle while rounding and
+                    # accumulating the two preceding products. This preserves
+                    # the original one-tap-per-clock throughput.
+                    m.d.sync += [
+                        product_reg.eq(product),
+                        rounded_reg.eq(product_rounded),
+                    ]
+                    with m.If(macs >= 2):
+                        m.d.sync += y.eq(y + rounded_reg)
+                    with m.If(macs == (n//self.stride_i - 1)):
+                        m.next = "MAC-FLUSH-ROUND"
+                    with m.Else():
+                        # Advance the synchronous memories while the current
+                        # outputs are captured by product_reg.
+                        m.d.sync += ix_tap.eq(ix_tap + self.stride_i)
+                        with m.If(ix_rd == 0):
+                            m.d.sync += ix_rd.eq((n//self.stride_i - 1))
+                        with m.Else():
+                            m.d.sync += ix_rd.eq(ix_rd - 1)
+                        m.d.sync += macs.eq(macs + 1)
+
+                with m.State("MAC-FLUSH-ROUND"):
+                    # Accumulate the penultimate term while rounding the final
+                    # registered product.
+                    m.d.sync += [
+                        y.eq(y + rounded_reg),
+                        rounded_reg.eq(product_rounded),
+                    ]
+                    m.next = "MAC-FLUSH-ACCUMULATE"
+
+                with m.State("MAC-FLUSH-ACCUMULATE"):
+                    m.d.sync += y.eq(y + rounded_reg)
                     m.next = "WAIT-READY"
+            else:
+                with m.State("MAC"):
+                    m.d.comb += [
+                        a.eq(x_rport.data),
+                        b.eq(taps_rport.data),
+                    ]
+                    m.d.sync += [
+                        y.eq(y + (a * b)),
+                        macs.eq(macs+1),
+                    ]
+                    # next tap read position
+                    m.d.sync += ix_tap.eq(ix_tap + self.stride_i),
+                    # next sample read position
+                    with m.If(ix_rd == 0):
+                        m.d.sync += ix_rd.eq((n//self.stride_i - 1))
+                    with m.Else():
+                        m.d.sync += ix_rd.eq(ix_rd - 1),
+                    # done?
+                    with m.If(macs == (n//self.stride_i - 1)):
+                        m.next = "WAIT-READY"
 
             with m.State('WAIT-READY'):
 
@@ -443,7 +516,7 @@ class FIR(wiring.Component):
 
                 m.d.comb += [
                     self.o.valid.eq(stride_o_pos == 0),
-                    self.o.payload.eq(y)
+                    self.o.payload.eq(y),
                 ]
 
                 with m.If(self.o.ready | (stride_o_pos != 0)):

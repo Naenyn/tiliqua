@@ -73,6 +73,9 @@ class DMAFramebuffer(wiring.Component):
             # Backing store
             "bus":  Out(wishbone.Signature(addr_width=addr_width, data_width=32, granularity=8,
                                            features={"cti", "bte"})),
+            # Assert while scanout is consuming its reserve and the PSRAM DMA
+            # should take precedence over non-real-time framebuffer writers.
+            "scanout_urgent": Out(1),
             # Dynamic timing / modeline information shared with other cores.
             "fbp": In(self.Properties()),
             # Enough information to plot the output of this core to images
@@ -88,22 +91,36 @@ class DMAFramebuffer(wiring.Component):
 
         m.submodules.fifo = fifo = AsyncFIFOBuffered(
                 width=32, depth=self.fifo_depth, r_domain='dvi', w_domain='sync')
+        m.d.comb += self.scanout_urgent.eq(
+            fifo.w_level < self.fifo_depth - self.burst_threshold_words)
 
         m.submodules.dvi_tgen = dvi_tgen = dvi.DVITimingGen()
 
         # TODO: FFSync needed? (sync -> dvi crossing, but should always be in reset when changed).
         wiring.connect(m, wiring.flipped(self.fbp.timings), dvi_tgen.timings)
 
+        # Register VSync before it controls the scanout FIFO. The timing
+        # generator derives VSync combinationally from the current X/Y
+        # counters; using that expression directly for the byte counter made
+        # one DVI-clock path continue through FIFO readiness, its Gray-code
+        # read-pointer increment, and finally the block-RAM address. VSync is
+        # asserted for many pixel clocks, so this one-cycle internal delay
+        # does not change frame alignment while giving the FIFO path a clean
+        # register boundary.
+        phy_vsync_dvi = Signal()
+        m.d.dvi += phy_vsync_dvi.eq(dvi_tgen.ctrl.vsync)
+
         # Create a VSync signal in the 'sync' domain. Decoupled from display VSync inversion!
         phy_vsync_sync = Signal()
         m.submodules.vsync_ff = FFSynchronizer(
-                i=dvi_tgen.ctrl.vsync, o=phy_vsync_sync, o_domain="sync")
+                i=phy_vsync_dvi, o=phy_vsync_sync, o_domain="sync")
 
         # DMA master bus
         bus = self.bus
 
         # Current offset into the framebuffer
         dma_addr = Signal(32)
+        frame_base = Signal.like(self.fbp.base)
         burst_cnt = Signal(16, init=0)
 
         # DMA bus master -> FIFO state machine
@@ -115,7 +132,13 @@ class DMAFramebuffer(wiring.Component):
         with m.FSM() as fsm:
             with m.State('WAIT-VSYNC'):
                 with m.If(phy_vsync_sync):
-                    m.d.sync += dma_addr.eq(0)
+                    m.d.sync += [
+                        dma_addr.eq(0),
+                        # Apply framebuffer swaps only at frame boundaries;
+                        # changing the live base during a DMA pass tears one
+                        # frame across the old and new buffers.
+                        frame_base.eq(self.fbp.base),
+                    ]
                     m.next = 'WAIT'
             with m.State('BURST'):
                 m.d.comb += [
@@ -123,7 +146,7 @@ class DMAFramebuffer(wiring.Component):
                     bus.cyc.eq(1),
                     bus.we.eq(0),
                     bus.sel.eq(2**(bus.data_width//8)-1),
-                    bus.adr.eq(self.fbp.base + dma_addr),
+                    bus.adr.eq(frame_base + dma_addr),
                     fifo.w_en.eq(bus.ack),
                     fifo.w_data.eq(bus.dat_r),
                     bus.cti.eq(
@@ -158,7 +181,7 @@ class DMAFramebuffer(wiring.Component):
         # (1 FIFO word is N pixels, extracted byte-by-byte)
         bytecounter = Signal(exact_log2(4//self.bytes_per_pixel))
         last_word   = Signal(32)
-        with m.If(dvi_tgen.ctrl.vsync):
+        with m.If(phy_vsync_dvi):
             m.d.dvi += bytecounter.eq(0)
         with m.Elif(dvi_tgen.ctrl.de & fifo.r_rdy):
             m.d.comb += fifo.r_en.eq(bytecounter == 0),
@@ -304,4 +327,3 @@ class Peripheral(wiring.Component):
             m.d.comb += self._hpd.f.hpd.r_data.eq(1)
 
         return m
-

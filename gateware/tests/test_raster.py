@@ -24,7 +24,57 @@ class RasterTests(unittest.TestCase):
 
     MODELINE = modeline.DVIModeline.all_timings()["1280x720p60"]
 
+    def test_line_core_preserves_twelve_bit_y_coordinates(self):
+        """Internal line commands must not wrap rotated portrait positions."""
+        m = Module()
+        dut = line._LinePlotter()
+        m.submodules.dut = dut
+        points = []
+
+        async def stimulus(ctx):
+            ctx.set(dut.o.ready, 1)
+            await stream.put(ctx, dut.i, {
+                "x": 10,
+                "y": 1200,
+                "pixel": {"color": 0xf, "intensity": 0xf},
+                "cmd": line.LineStripCmd.CONTINUE,
+            })
+            await stream.put(ctx, dut.i, {
+                "x": 12,
+                "y": 1200,
+                "pixel": {"color": 0xf, "intensity": 0xf},
+                "cmd": line.LineStripCmd.END,
+            })
+
+        async def response(ctx):
+            ctx.set(dut.o.ready, 1)
+            for _ in range(40):
+                if ctx.get(dut.o.valid):
+                    points.append((
+                        ctx.get(dut.o.payload.x),
+                        ctx.get(dut.o.payload.y),
+                    ))
+                    if points[-1] == (12, 1200):
+                        return
+                await ctx.tick()
+            raise AssertionError("line plotter did not finish")
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_testbench(stimulus)
+        sim.add_testbench(response)
+        sim.run()
+
+        self.assertEqual(points, [(10, 1200), (10, 1200),
+                                  (11, 1200), (12, 1200)])
+
     def test_persist(self):
+        self._check_persist(decay=1)
+
+    def test_persist_frozen(self):
+        self._check_persist(decay=0)
+
+    def _check_persist(self, decay):
 
         m = Module()
         fb = framebuffer.DMAFramebuffer(
@@ -38,6 +88,7 @@ class RasterTests(unittest.TestCase):
 
         async def testbench(ctx):
             ctx.set(fb.fbp.enable, 1)
+            ctx.set(dut.decay, decay)
             # Simulate N burst accesses
             for _ in range(4):
                 ix = 0
@@ -53,7 +104,7 @@ class RasterTests(unittest.TestCase):
                         # for all burst reads, verify intensity of every
                         # pixel is reduced as expected
                         self.assertEqual(ctx.get(dut.bus.dat_w),
-                                         0xefefef00 | (ix&0xf))
+                                         ((0xff - (decay << 4)) * 0x01010100) | (ix&0xf))
                     await ctx.tick()
                     ix = ix + 1
                 ctx.set(dut.bus.ack, 0)
@@ -61,7 +112,7 @@ class RasterTests(unittest.TestCase):
         sim = Simulator(m)
         sim.add_clock(1e-6)
         sim.add_testbench(testbench)
-        with sim.write_vcd(vcd_file=open("test_persist.vcd", "w")):
+        with sim.write_vcd(vcd_file=open(f"test_persist_decay{decay}.vcd", "w")):
             sim.run()
 
     def test_stroke(self):

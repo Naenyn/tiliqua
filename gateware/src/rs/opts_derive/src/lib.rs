@@ -1,10 +1,10 @@
 use proc_macro::TokenStream;
-use quote::quote;
+use quote::{format_ident, quote};
 use syn::{parse_macro_input, DeriveInput, Data, Fields, Type, Expr, Meta};
 use hash32::{FnvHasher, Hasher as _};
 use core::hash::Hash;
 
-#[proc_macro_derive(OptionPage, attributes(option))]
+#[proc_macro_derive(OptionPage, attributes(option, option_if, option_name))]
 pub fn derive_option(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
@@ -48,13 +48,20 @@ pub fn derive_option(input: TokenStream) -> TokenStream {
         };
 
         let page_str: &str = &input.ident.to_string();
-        let field_name_str: &str = &field_name.as_ref().unwrap().to_string().replace("_","-");
+        let field_key_name =
+            field_name.as_ref().unwrap().to_string().replace("_", "-");
+        let field_name_str = field.attrs.iter()
+            .find(|attr| attr.path().is_ident("option_name"))
+            .map(|attr| attr.parse_args::<syn::LitStr>()
+                .expect("option_name requires a string literal")
+                .value())
+            .unwrap_or_else(|| field_key_name.clone());
         let type_name_str: &str = &quote!(#field_type).to_string();
 
         // Generate a unique key used for identifying the option when it is stored.
         let mut fnv: FnvHasher = Default::default();
         page_str.hash(&mut fnv);
-        field_name_str.hash(&mut fnv);
+        field_key_name.hash(&mut fnv);
         type_name_str.hash(&mut fnv);
         let field_key = fnv.finish32();
 
@@ -68,6 +75,21 @@ pub fn derive_option(input: TokenStream) -> TokenStream {
         .map(|field| field.ident.as_ref().unwrap())
         .collect();
 
+    let option_conditions: Vec<Expr> = fields.iter()
+        .filter(|field| is_option_type(&field.ty))
+        .map(|field| {
+            field.attrs.iter()
+                .find(|attr| attr.path().is_ident("option_if"))
+                .map(|attr| attr.parse_args::<Expr>()
+                    .expect("Failed to parse option_if argument as an expression"))
+                .unwrap_or_else(|| syn::parse_quote! { true })
+        })
+        .collect();
+
+    let visibility_names: Vec<_> = option_fields.iter()
+        .map(|field_name| format_ident!("show_{}", field_name))
+        .collect();
+
     let expanded = quote! {
         impl Default for #name {
             fn default() -> Self {
@@ -79,12 +101,26 @@ pub fn derive_option(input: TokenStream) -> TokenStream {
 
         impl OptionPage for #name {
             fn options(&self) -> OptionVec {
+                let mut r = OptionVec::new();
+                #(if #option_conditions { r.push(&self.#option_fields).ok(); })*
+                r
+            }
+
+            fn options_mut(&mut self) -> OptionVecMut {
+                // Evaluate visibility before collecting mutable field borrows.
+                #(let #visibility_names = #option_conditions;)*
+                let mut r = OptionVecMut::new();
+                #(if #visibility_names { r.push(&mut self.#option_fields).ok(); })*
+                r
+            }
+
+            fn all_options(&self) -> OptionVec {
                 OptionVec::from_slice(&[
                     #(&self.#option_fields),*
                 ]).unwrap()
             }
 
-            fn options_mut(&mut self) -> OptionVecMut {
+            fn all_options_mut(&mut self) -> OptionVecMut {
                 let mut r = OptionVecMut::new();
                 #(r.push(&mut self.#option_fields).ok();)*
                 r
@@ -250,13 +286,13 @@ pub fn page_derive(input: TokenStream) -> TokenStream {
 
             fn all(&self) -> impl Iterator<Item = &dyn OptionTrait> {
                 [
-                    #(self.#page_field_names.options()),*
+                    #(self.#page_field_names.all_options()),*
                 ].into_iter().flatten()
             }
 
             fn all_mut(&mut self) -> impl Iterator<Item = &mut dyn OptionTrait> {
                 [
-                    #(self.#page_field_names.options_mut()),*
+                    #(self.#page_field_names.all_options_mut()),*
                 ].into_iter().flatten()
             }
 

@@ -20,8 +20,30 @@ where
     D: DrawTarget<Color = HI8>,
     O: Options
 {
-    let font_small_white = MonoTextStyle::new(&FONT_9X15_BOLD, HI8::new(hue, 15));
-    let font_small_grey = MonoTextStyle::new(&FONT_9X15, HI8::new(hue, 10));
+    draw_options_with_intensity(d, opts, pos_x, pos_y, hue, 15, 10)
+}
+
+/// Erase precisely the pixels occupied by a previously rendered options menu.
+/// Text and lines still use the hardware-accelerated drawing paths, avoiding a
+/// large filled rectangle and its thousands of individual pixel requests.
+pub fn erase_options<D, O>(d: &mut D, opts: &O,
+                        pos_x: u32, pos_y: u32) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = HI8>,
+    O: Options
+{
+    draw_options_with_intensity(d, opts, pos_x, pos_y, 0, 0, 0)
+}
+
+fn draw_options_with_intensity<D, O>(d: &mut D, opts: &O,
+                                  pos_x: u32, pos_y: u32, hue: u8,
+                                  bright: u8, dim: u8) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = HI8>,
+    O: Options
+{
+    let font_small_white = MonoTextStyle::new(&FONT_9X15_BOLD, HI8::new(hue, bright));
+    let font_small_grey = MonoTextStyle::new(&FONT_9X15, HI8::new(hue, dim));
 
     let opts_view = opts.view().options();
 
@@ -83,7 +105,7 @@ where
     }
 
     let stroke = PrimitiveStyleBuilder::new()
-        .stroke_color(HI8::new(hue, 10))
+        .stroke_color(HI8::new(hue, dim))
         .stroke_width(1)
         .build();
     Line::new(Point::new(vx-3, vy as i32 - 10),
@@ -1316,6 +1338,29 @@ line 24\nline 25\nline 26\nline 27\nline 28\nline 29";
 
         erase_help(&mut disp, 40, 40, 1, help_text).unwrap();
         assert!(disp.img.pixels().all(|pixel| pixel.0 == [0, 0, 0]));
+    }
+
+    #[test]
+    fn test_help_scroll_matches_fresh_view() {
+        let help_text = (0..40)
+            .map(|i| if i % 3 == 0 {
+                format!("        ┌─ diagram {i} ─┐\n")
+            } else {
+                format!("Normal help line {i}\n")
+            })
+            .collect::<std::string::String>();
+        let mut actual = setup_display();
+        draw_help(&mut actual, 40, 40, 0, &help_text, 3).unwrap();
+        let mut previous_scroll = 0;
+        // Both directions, changing arrow visibility and mixed font spacing.
+        for scroll in [1, 12, 25, 39, 0] {
+            erase_help(&mut actual, 40, 40, previous_scroll, &help_text).unwrap();
+            draw_help(&mut actual, 40, 40, scroll, &help_text, 3).unwrap();
+            let mut expected = setup_display();
+            draw_help(&mut expected, 40, 40, scroll, &help_text, 3).unwrap();
+            assert_eq!(actual.img, expected.img);
+            previous_scroll = scroll;
+        }
     }
 
     #[test]

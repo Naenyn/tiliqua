@@ -1,0 +1,661 @@
+import sys
+import unittest
+from math import pi, sin
+from pathlib import Path
+
+import numpy as np
+from amaranth import Module, Signal
+from amaranth.lib import wiring
+from amaranth.sim import Simulator
+from amaranth_future import fixed
+from tiliqua import dsp
+from tiliqua.test import stream as test_stream
+
+
+SONORO_SRC = Path(__file__).parents[1] / "src" / "top" / "sonoro"
+sys.path.insert(0, str(SONORO_SRC))
+
+from spectrogram import (  # noqa: E402
+    ASQ,
+    AnalyzerSampleBuffer,
+    DbfsLevelSmoother,
+    MagnitudeToDbfs,
+    SPECTRUM_CORDIC_GAIN,
+    SPECTRUM_BIN_LOG_COLUMN_LUTS,
+    SPECTRUM_RANGE_ANALYSIS,
+    SpectrumLogFrameHandoff,
+    SpectrumReadRequestAligner,
+    _dbfs_level_q4_to_height,
+    _logical_scan_coordinates,
+    _magnitude_raw_to_dbfs_level,
+    _approximate_magnitude_raw_to_dbfs_level,
+)
+
+
+class SonoroMagnitudeTests(unittest.TestCase):
+
+    def test_375_hz_maps_inside_every_log_range(self):
+        expected_columns = (119, 130, 144, 162)
+        for index, ((_, bin_hz), expected) in enumerate(zip(
+                SPECTRUM_RANGE_ANALYSIS, expected_columns)):
+            tone_bin = round(375 / bin_hz)
+            self.assertEqual(
+                SPECTRUM_BIN_LOG_COLUMN_LUTS[index][tone_bin], expected)
+            self.assertLess(expected, 255)
+
+    def test_log_read_request_does_not_wrap_at_right_edge(self):
+        dut = SpectrumReadRequestAligner()
+        sim = Simulator(dut)
+        sim.add_clock(1e-6, domain="dvi")
+
+        async def bench(ctx):
+            # The final in-plot pixel is immediately followed by an outside
+            # pixel whose truncated log column wraps from 256 to zero. Plot
+            # validity and address must cross the pipeline boundary together.
+            ctx.set(dut.i_plot, 1)
+            ctx.set(dut.i_log_addr, 255)
+            ctx.set(dut.i_log_frac, 0x80)
+            ctx.set(dut.i_color, 15)
+            await ctx.tick(domain="dvi")
+            self.assertEqual(ctx.get(dut.o_plot), 1)
+            self.assertEqual(ctx.get(dut.o_log_addr), 255)
+            self.assertEqual(ctx.get(dut.o_log_frac), 0x80)
+            self.assertEqual(ctx.get(dut.o_color), 15)
+
+            ctx.set(dut.i_plot, 0)
+            ctx.set(dut.i_log_addr, 0)
+            ctx.set(dut.i_log_frac, 0)
+            ctx.set(dut.i_color, 0)
+            # Before the next edge, the active transaction must remain the
+            # final column rather than combining old plot=1 with new addr=0.
+            self.assertEqual(ctx.get(dut.o_plot), 1)
+            self.assertEqual(ctx.get(dut.o_log_addr), 255)
+            await ctx.tick(domain="dvi")
+            self.assertEqual(ctx.get(dut.o_plot), 0)
+            self.assertEqual(ctx.get(dut.o_log_addr), 0)
+
+        sim.add_testbench(bench)
+        sim.run()
+
+    def test_log_frame_publish_waits_for_delayed_final_bucket(self):
+        dut = SpectrumLogFrameHandoff()
+        sim = Simulator(dut)
+        sim.add_clock(1e-6)
+
+        async def bench(ctx):
+            # Submit the final bin into bank 0. The combinational next-bank
+            # selector may change immediately afterward, but the delayed ROM
+            # transaction must retain bank 0 until it is written/published.
+            ctx.set(dut.i_valid, 1)
+            ctx.set(dut.i_first, 0)
+            ctx.set(dut.i_write, 1)
+            ctx.set(dut.i_frame_write, 1)
+            ctx.set(dut.i_bin, 255)
+            ctx.set(dut.i_bank, 0)
+            self.assertEqual(ctx.get(dut.o_publish), 0)
+            await ctx.tick()
+
+            ctx.set(dut.i_valid, 0)
+            ctx.set(dut.i_bank, 1)
+            self.assertEqual(ctx.get(dut.o_publish), 0)
+            await ctx.tick()
+
+            self.assertEqual(ctx.get(dut.o_valid), 1)
+            self.assertEqual(ctx.get(dut.o_bin), 255)
+            self.assertEqual(ctx.get(dut.o_bank), 0)
+            self.assertEqual(ctx.get(dut.o_publish), 1)
+            await ctx.tick()
+            self.assertEqual(ctx.get(dut.o_publish), 0)
+
+        sim.add_testbench(bench)
+        sim.run()
+
+    def test_log_handoff_rejects_mirrored_fft_bins(self):
+        dut = SpectrumLogFrameHandoff()
+        sim = Simulator(dut)
+        sim.add_clock(1e-6)
+
+        async def bench(ctx):
+            # The spectral envelope emits all 512 FFT bins.  The upper half
+            # is the mirrored negative-frequency spectrum and must be
+            # rejected by the positive-frequency display. Truncating this
+            # index to eight bits folds (for example) bin 480 onto bin 224
+            # and draws a false tone near the right edge.
+            ctx.set(dut.i_valid, 1)
+            ctx.set(dut.i_first, 0)
+            ctx.set(dut.i_write, 1)
+            ctx.set(dut.i_frame_write, 1)
+            ctx.set(dut.i_bin, 480)
+            await ctx.tick()
+
+            ctx.set(dut.i_valid, 0)
+            await ctx.tick()
+
+            self.assertEqual(ctx.get(dut.o_valid), 0)
+            self.assertEqual(ctx.get(dut.o_publish), 0)
+
+            # Bin 511 must likewise not masquerade as positive bin 255 and
+            # publish a second, corrupted display bank.
+            ctx.set(dut.i_valid, 1)
+            ctx.set(dut.i_bin, 511)
+            await ctx.tick()
+            ctx.set(dut.i_valid, 0)
+            await ctx.tick()
+            self.assertEqual(ctx.get(dut.o_valid), 0)
+            self.assertEqual(ctx.get(dut.o_publish), 0)
+
+        sim.add_testbench(bench)
+        sim.run()
+
+    def test_dbfs_levels_span_plot_height(self):
+        m = Module()
+        level_q4 = Signal(10)
+        tall = Signal()
+        height = Signal(12)
+        m.d.comb += height.eq(_dbfs_level_q4_to_height(level_q4, tall))
+
+        async def bench(ctx):
+            for is_tall, plot_height in ((0, 256), (1, 512)):
+                previous = -1
+                for level in range(64):
+                    ctx.set(tall, is_tall)
+                    ctx.set(level_q4, level << 4)
+                    await ctx.delay(1e-9)
+                    actual = ctx.get(height)
+                    expected = round(level * (plot_height - 1) / 63)
+                    self.assertLessEqual(abs(actual - expected), 1)
+                    self.assertGreater(actual, previous)
+                    previous = actual
+                self.assertEqual(previous, plot_height - 1)
+
+        sim = Simulator(m)
+        sim.add_testbench(bench)
+        sim.run()
+
+    def test_analyzer_buffer_preserves_live_samples_during_fft_stall(self):
+        shape = fixed.SQ(2, 16)
+        dut = AnalyzerSampleBuffer(shape=shape, depth=64)
+        sim = Simulator(dut)
+        sim.add_clock(1e-6)
+
+        async def bench(ctx):
+            sent = 0
+            received = []
+            total = 180
+
+            # Scale the real 48kHz/60MHz timing down by the same factor: the
+            # iterative FFT stalls for roughly 32 incoming samples at worst,
+            # then has ample time to drain before its next frame.
+            for cycle in range(2500):
+                source_pulse = (cycle % 10 == 0) and (sent < total)
+                sink_ready = not (300 <= cycle < 620)
+                ctx.set(dut.i.valid, source_pulse)
+                ctx.set(dut.i.payload.as_value(), sent)
+                ctx.set(dut.o.ready, sink_ready)
+
+                if source_pulse:
+                    self.assertTrue(ctx.get(dut.i.ready))
+                    sent += 1
+                if sink_ready and ctx.get(dut.o.valid):
+                    received.append(ctx.get(dut.o.payload.as_value()))
+                await ctx.tick()
+
+            self.assertEqual(sent, total)
+            self.assertEqual(received, list(range(total)))
+            self.assertEqual(ctx.get(dut.overflow), 0)
+
+        sim.add_testbench(bench)
+        sim.run()
+
+    def test_physical_scan_coordinates_follow_display_rotation(self):
+        m = Module()
+        physical_x = Signal(12)
+        physical_y = Signal(12)
+        logical_width = Signal(12)
+        logical_height = Signal(12)
+        rotation = Signal(2)
+        logical_x = Signal(12)
+        logical_y = Signal(12)
+        mapped = _logical_scan_coordinates(
+            physical_x, physical_y,
+            logical_width, logical_height, rotation)
+        m.d.comb += [
+            logical_x.eq(mapped[0]),
+            logical_y.eq(mapped[1]),
+        ]
+
+        async def bench(ctx):
+            # (rotation, logical dimensions, physical position, logical
+            # position). Non-square cases prove that left/right use the
+            # correct physical axis; square cases cover the official display.
+            cases = [
+                (0, (1280, 720), (100, 200), (100, 200)),
+                (1, (720, 1280), (1079, 100), (100, 200)),
+                (2, (1280, 720), (1179, 519), (100, 200)),
+                (3, (720, 1280), (200, 619), (100, 200)),
+                (1, (720, 720), (519, 100), (100, 200)),
+                (3, (720, 720), (200, 619), (100, 200)),
+            ]
+            for mode, dimensions, physical, expected in cases:
+                ctx.set(rotation, mode)
+                ctx.set(logical_width, dimensions[0])
+                ctx.set(logical_height, dimensions[1])
+                ctx.set(physical_x, physical[0])
+                ctx.set(physical_y, physical[1])
+                await ctx.delay(1e-9)
+                self.assertEqual(
+                    (ctx.get(logical_x), ctx.get(logical_y)), expected)
+
+        sim = Simulator(m)
+        sim.add_testbench(bench)
+        sim.run()
+
+    def raw_for_dbfs(self, dbfs):
+        amplitude = 10 ** (dbfs / 20)
+        magnitude = amplitude * SPECTRUM_CORDIC_GAIN / 4
+        return round(magnitude * (1 << ASQ.f_bits))
+
+    def expected_level(self, dbfs):
+        return max(0, min(63, round((dbfs + 96) * 63 / 96)))
+
+    def test_calibrated_reference_levels(self):
+        for dbfs in (0, -6, -12, -24, -48, -72):
+            with self.subTest(dbfs=dbfs):
+                actual = _magnitude_raw_to_dbfs_level(
+                    self.raw_for_dbfs(dbfs))
+                self.assertLessEqual(
+                    abs(actual - self.expected_level(dbfs)), 1)
+
+    def test_mapping_is_monotonic(self):
+        previous = 0
+        for raw in range(1, 1 << ASQ.f_bits, 37):
+            level = _magnitude_raw_to_dbfs_level(raw)
+            self.assertGreaterEqual(level, previous)
+            previous = level
+
+    def test_hardware_log_approximation(self):
+        dut = MagnitudeToDbfs(ASQ)
+        sim = Simulator(dut)
+        sim.add_clock(1e-6)
+
+        async def bench(ctx):
+            ctx.set(dut.o.ready, 1)
+            for dbfs in (0, -6, -12, -24, -48, -72):
+                raw = self.raw_for_dbfs(dbfs)
+                ctx.set(dut.i.payload.sample.as_value(), raw)
+                ctx.set(dut.i.valid, 1)
+                while not ctx.get(dut.i.ready):
+                    await ctx.tick()
+                await ctx.tick()
+                ctx.set(dut.i.valid, 0)
+                while not ctx.get(dut.o.valid):
+                    await ctx.tick()
+                actual = ctx.get(dut.o.payload.sample)
+                self.assertLessEqual(
+                    abs(actual - self.expected_level(dbfs)), 1,
+                    f"hardware approximation at {dbfs}dBFS")
+                await ctx.tick()
+
+        sim.add_testbench(bench)
+        sim.run()
+
+    def test_hardware_log_exponent_boundaries_are_monotonic(self):
+        dut = MagnitudeToDbfs(ASQ)
+        sim = Simulator(dut)
+        sim.add_clock(1e-6)
+
+        async def bench(ctx):
+            ctx.set(dut.o.ready, 1)
+            previous = 0
+            raw_values = [1]
+            for exponent in range(1, ASQ.as_shape().width):
+                raw_values.extend(((1 << exponent) - 1, 1 << exponent))
+            for raw in raw_values:
+                ctx.set(dut.i.payload.sample.as_value(), raw)
+                ctx.set(dut.i.valid, 1)
+                while not ctx.get(dut.i.ready):
+                    await ctx.tick()
+                await ctx.tick()
+                ctx.set(dut.i.valid, 0)
+                while not ctx.get(dut.o.valid):
+                    await ctx.tick()
+                actual = ctx.get(dut.o.payload.sample)
+                self.assertGreaterEqual(actual, previous, f"raw={raw}")
+                self.assertEqual(actual, _approximate_magnitude_raw_to_dbfs_level(raw))
+                self.assertLessEqual(abs(actual - _magnitude_raw_to_dbfs_level(raw)), 1)
+                previous = actual
+                await ctx.tick()
+
+        sim.add_testbench(bench)
+        sim.run()
+
+    def test_smoother_state_stays_aligned_with_bins(self):
+        dut = DbfsLevelSmoother(sz=2)
+        sim = Simulator(dut)
+        sim.add_clock(1e-6)
+
+        async def bench(ctx):
+            ctx.set(dut.attack_shift, 0)
+            ctx.set(dut.release_shift, 1)
+            ctx.set(dut.o.ready, 1)
+
+            async def transfer(sample, first):
+                ctx.set(dut.i.payload.sample, sample)
+                ctx.set(dut.i.payload.first, first)
+                ctx.set(dut.i.valid, 1)
+                while not ctx.get(dut.i.ready):
+                    await ctx.tick()
+                await ctx.tick()
+                ctx.set(dut.i.valid, 0)
+                while not ctx.get(dut.o.valid):
+                    await ctx.tick()
+                result = ctx.get(dut.o.payload.sample)
+                await ctx.tick()
+                return result
+
+            self.assertEqual(await transfer(20, True), 20)
+            self.assertEqual(await transfer(40, False), 40)
+            self.assertEqual(await transfer(0, True), 10)
+            self.assertEqual(await transfer(0, False), 20)
+
+        sim.add_testbench(bench)
+        sim.run()
+
+    def test_fixed_point_analyzer_pure_tone_floor(self):
+        fft_size = 512
+        tone_bin = 32
+        shape = fixed.SQ(2, 16)
+        m = Module()
+        m.submodules.analyzer = analyzer = dsp.fft.STFTAnalyzer(
+            shape=shape, sz=fft_size)
+        m.submodules.envelope = envelope = dsp.spectral.SpectralEnvelope(
+            shape=shape, sz=fft_size, smooth=False)
+        wiring.connect(m, analyzer.o, envelope.i)
+        m.d.comb += envelope.o.ready.eq(1)
+
+        async def stimulus(ctx):
+            sample = 0
+            while True:
+                value = 0.5 * sin(2 * pi * tone_bin * sample / fft_size)
+                await test_stream.put(ctx, analyzer.i,
+                                      fixed.Const(value, shape=shape))
+                sample += 1
+                await ctx.tick()
+
+        async def bench(ctx):
+            magnitudes = []
+            while len(magnitudes) < fft_size:
+                if ctx.get(envelope.o.valid & envelope.o.ready):
+                    magnitudes.append(
+                        ctx.get(envelope.o.payload.sample).as_float())
+                await ctx.tick()
+
+            magnitudes = np.abs(np.asarray(magnitudes))
+            peak = magnitudes[tone_bin]
+            expected_peak = 0.5 * SPECTRUM_CORDIC_GAIN / 4
+            off_tone = np.delete(
+                magnitudes[:fft_size // 2],
+                [tone_bin - 1, tone_bin, tone_bin + 1])
+            self.assertLess(abs(peak - expected_peak), expected_peak * 0.03)
+            self.assertLess(np.max(off_tone), peak * 10 ** (-55 / 20))
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(bench)
+        sim.run()
+
+    def test_rounded_fir_products_preserve_low_level_dc_gain(self):
+        shape = fixed.SQ(2, 16)
+        amplitude = 0.001
+        m = Module()
+        m.submodules.dut = dut = dsp.FIR(
+            fs=192_000,
+            filter_cutoff_hz=22_000,
+            filter_order=160,
+            stride_o=4,
+            round_products=True,
+            shape=shape,
+        )
+
+        async def stimulus(ctx):
+            while True:
+                await test_stream.put(
+                    ctx, dut.i, fixed.Const(amplitude, shape=shape))
+
+        async def bench(ctx):
+            outputs = []
+            ctx.set(dut.o.ready, 1)
+            while len(outputs) < 100:
+                if ctx.get(dut.o.valid & dut.o.ready):
+                    outputs.append(ctx.get(dut.o.payload).as_float())
+                await ctx.tick()
+
+            steady = np.asarray(outputs[-20:])
+            # This low level is deliberately chosen because reducing every
+            # signed product before accumulation formerly turned +0.001 into
+            # a small negative value in this 160-tap filter.
+            self.assertGreater(np.min(steady), 0)
+            self.assertLess(
+                abs(np.mean(steady) - amplitude), 5 / (1 << shape.f_bits))
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(bench)
+        sim.run()
+
+    def test_all_range_resamplers_preserve_passband_amplitude(self):
+        input_fs = 192_000
+        tone_hz = 375
+        amplitude = 0.25
+        shape = fixed.SQ(2, 16)
+        m = Module()
+        m.submodules.dc_block = dc_block = dsp.filters.DCBlock(
+            pole=0.9999, sq=shape)
+        m.submodules.wide = wide = dsp.Resample(
+            fs_in=input_fs, n_up=1, m_down=4,
+            bw=11 / 24, order_mult=40,
+            round_products=True, shape=shape)
+        m.submodules.fine = fine = dsp.Resample(
+            fs_in=48_000, n_up=1, m_down=2,
+            bw=11 / 24, order_mult=40,
+            round_products=True, shape=shape)
+        m.submodules.mid = mid = dsp.Resample(
+            fs_in=24_000, n_up=1, m_down=2,
+            bw=11 / 24, order_mult=24,
+            round_products=True, shape=shape)
+        m.submodules.low = low = dsp.Resample(
+            fs_in=12_000, n_up=1, m_down=2,
+            bw=11 / 24, order_mult=24,
+            round_products=True, shape=shape)
+        wiring.connect(m, dc_block.o, wide.i)
+        wiring.connect(m, wide.o, fine.i)
+        wiring.connect(m, fine.o, mid.i)
+        wiring.connect(m, mid.o, low.i)
+
+        async def stimulus(ctx):
+            sample = 0
+            while True:
+                value = amplitude * sin(2 * pi * tone_hz * sample / input_fs)
+                await test_stream.put(ctx, dc_block.i,
+                                      fixed.Const(value, shape=shape))
+                sample += 1
+
+        async def bench(ctx):
+            streams = (
+                (wide.o, 48_000),
+                (fine.o, 24_000),
+                (mid.o, 12_000),
+                (low.o, 6_000),
+            )
+            samples = [[] for _ in streams]
+            ctx.set(low.o.ready, 1)
+            while len(samples[-1]) < 1024:
+                for captured, (endpoint, _) in zip(samples, streams):
+                    if ctx.get(endpoint.valid & endpoint.ready):
+                        captured.append(ctx.get(endpoint.payload).as_float())
+                await ctx.tick()
+
+            for captured, (_, sample_rate) in zip(samples, streams):
+                tail = np.asarray(captured[-512:])
+                phase = np.exp(
+                    -2j * pi * tone_hz * np.arange(len(tail)) / sample_rate)
+                measured = 2 * abs(np.sum(tail * phase)) / len(tail)
+                self.assertLess(
+                    abs(measured - amplitude), amplitude * 0.01,
+                    f"{sample_rate / 2:g}Hz range passband gain")
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(bench)
+        sim.run()
+
+    def test_wide_resampler_pure_tone_floor(self):
+        fft_size = 512
+        input_fs = 192_000
+        analysis_fs = 48_000
+        tone_hz = 261.625565
+        tone_bin = round(tone_hz * fft_size / analysis_fs)
+        shape = fixed.SQ(2, 16)
+        m = Module()
+        m.submodules.dc_block = dc_block = dsp.filters.DCBlock(
+            pole=0.9999, sq=shape)
+        m.submodules.resample = resample = dsp.Resample(
+            fs_in=input_fs, n_up=1, m_down=input_fs // analysis_fs,
+            bw=11 / 24, order_mult=40,
+            round_products=True, shape=shape)
+        m.submodules.analyzer = analyzer = dsp.fft.STFTAnalyzer(
+            shape=shape, sz=fft_size)
+        m.submodules.envelope = envelope = dsp.spectral.SpectralEnvelope(
+            shape=shape, sz=fft_size, smooth=False)
+        wiring.connect(m, dc_block.o, resample.i)
+        wiring.connect(m, resample.o, analyzer.i)
+        wiring.connect(m, analyzer.o, envelope.i)
+        m.d.comb += envelope.o.ready.eq(1)
+
+        async def stimulus(ctx):
+            sample = 0
+            while True:
+                value = 0.5 * sin(2 * pi * tone_hz * sample / input_fs)
+                await test_stream.put(ctx, dc_block.i,
+                                      fixed.Const(value, shape=shape))
+                sample += 1
+                await ctx.tick()
+
+        async def bench(ctx):
+            magnitudes = []
+            while len(magnitudes) < 4 * fft_size:
+                if ctx.get(envelope.o.valid & envelope.o.ready):
+                    magnitudes.append(
+                        ctx.get(envelope.o.payload.sample).as_float())
+                await ctx.tick()
+
+            magnitudes = np.abs(np.asarray(magnitudes[-fft_size:]))
+            peak = magnitudes[tone_bin]
+            far_bins = magnitudes[4 * (tone_bin + 1):fft_size // 2]
+            self.assertGreater(peak, 0.15)
+            # The 18-bit decimator's worst distant spur is about -57dBc;
+            # retain margin for coefficient and simulator quantization.
+            self.assertLess(np.max(far_bins), peak * 10 ** (-55 / 20))
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(bench)
+        sim.run()
+
+    def test_dc_block_rejects_static_offset(self):
+        shape = fixed.SQ(2, 16)
+        dut = dsp.filters.DCBlock(pole=0.9999, sq=shape)
+        sim = Simulator(dut)
+        sim.add_clock(1e-6)
+
+        async def bench(ctx):
+            ctx.set(dut.o.ready, 1)
+            output = 0.0
+            for _ in range(20_000):
+                ctx.set(dut.i.payload, fixed.Const(0.1, shape=shape))
+                ctx.set(dut.i.valid, 1)
+                while not ctx.get(dut.i.ready):
+                    await ctx.tick()
+                await ctx.tick()
+                ctx.set(dut.i.valid, 0)
+                while not ctx.get(dut.o.valid):
+                    await ctx.tick()
+                output = ctx.get(dut.o.payload).as_float()
+                await ctx.tick()
+            # Fixed-point error feedback settles a little more slowly than
+            # the ideal pole, but must remove at least 80% of static offset
+            # over this interval.
+            self.assertLess(abs(output), 0.02)
+
+        sim.add_testbench(bench)
+        sim.run()
+
+    def test_six_khz_resampler_pure_tone_floor(self):
+        fft_size = 512
+        input_fs = 192_000
+        analysis_fs = 12_000
+        tone_hz = 261.625565
+        tone_bin = round(tone_hz * fft_size / analysis_fs)
+        shape = fixed.SQ(2, 16)
+        m = Module()
+        m.submodules.dc_block = dc_block = dsp.filters.DCBlock(
+            pole=0.9999, sq=shape)
+        m.submodules.wide = wide = dsp.Resample(
+            fs_in=input_fs, n_up=1, m_down=4,
+            bw=11 / 24, order_mult=40,
+            round_products=True, shape=shape)
+        m.submodules.fine = fine = dsp.Resample(
+            fs_in=48_000, n_up=1, m_down=2,
+            bw=11 / 24, order_mult=40,
+            round_products=True, shape=shape)
+        m.submodules.mid = mid = dsp.Resample(
+            fs_in=24_000, n_up=1, m_down=2,
+            bw=11 / 24, order_mult=24,
+            round_products=True, shape=shape)
+        m.submodules.analyzer = analyzer = dsp.fft.STFTAnalyzer(
+            shape=shape, sz=fft_size)
+        m.submodules.envelope = envelope = dsp.spectral.SpectralEnvelope(
+            shape=shape, sz=fft_size, smooth=False)
+        wiring.connect(m, dc_block.o, wide.i)
+        wiring.connect(m, wide.o, fine.i)
+        wiring.connect(m, fine.o, mid.i)
+        wiring.connect(m, mid.o, analyzer.i)
+        wiring.connect(m, analyzer.o, envelope.i)
+        m.d.comb += envelope.o.ready.eq(1)
+
+        async def stimulus(ctx):
+            sample = 0
+            while True:
+                value = 0.5 * sin(2 * pi * tone_hz * sample / input_fs)
+                await test_stream.put(ctx, dc_block.i,
+                                      fixed.Const(value, shape=shape))
+                sample += 1
+                await ctx.tick()
+
+        async def bench(ctx):
+            magnitudes = []
+            while len(magnitudes) < 4 * fft_size:
+                if ctx.get(envelope.o.valid & envelope.o.ready):
+                    magnitudes.append(
+                        ctx.get(envelope.o.payload.sample).as_float())
+                await ctx.tick()
+
+            magnitudes = np.abs(np.asarray(magnitudes[-fft_size:]))
+            peak = magnitudes[tone_bin]
+            far_bins = magnitudes[4 * (tone_bin + 1):fft_size // 2]
+            self.assertGreater(peak, 0.15)
+            self.assertLess(np.max(far_bins), peak * 10 ** (-50 / 20))
+
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+        sim.add_process(stimulus)
+        sim.add_testbench(bench)
+        sim.run()
+
+
+if __name__ == "__main__":
+    unittest.main()

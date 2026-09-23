@@ -65,7 +65,8 @@ class TiliquaSoc(Component):
                  touch=False, finalize_csr_bridge=True, poke_outputs=False, mainram_size=0x4000,
                  fw_location=None, fw_offset=None, cpu_variant="tiliqua_rv32im",
                  extra_cpu_regions=[], fb_overlay=None, enable_persist=True,
-                 enable_uart=True, enable_dtr=True):
+                 enable_uart=True, enable_dtr=True, extra_plot_ports=0,
+                 with_persist=True, attach_framebuffer_masters=True):
 
         super().__init__({})
 
@@ -80,8 +81,9 @@ class TiliquaSoc(Component):
         self.enable_persist = enable_persist
         self.enable_uart = enable_uart
         self.enable_dtr = enable_dtr
-
         self.platform_class = platform_class
+        self.with_persist = with_persist
+        self.attach_framebuffer_masters = attach_framebuffer_masters
 
         # Memory map of CPU
         self.mainram_base         = 0x00000000
@@ -161,7 +163,6 @@ class TiliquaSoc(Component):
             alignment=0,
             features={"cti", "bte", "err"}
         )
-
         # mainram
         self.mainram = blockram.Peripheral(size=self.mainram_size)
         self.wb_decoder.add(self.mainram.bus, addr=self.mainram_base, name="blockram")
@@ -231,7 +232,8 @@ class TiliquaSoc(Component):
                 palette=self.palette_periph.palette,
                 fixed_modeline=self.clock_settings.modeline,
                 overlay=fb_overlay)
-        self.psram_periph.add_master(self.fb.bus)
+        if self.attach_framebuffer_masters:
+            self.psram_periph.add_master(self.fb.bus)
 
         # Timing CSRs for video PHY
         self.framebuffer_periph = framebuffer.Peripheral()
@@ -243,7 +245,7 @@ class TiliquaSoc(Component):
         # CSR bank for synthesis to partially prune.
         if self.enable_persist:
             self.persist_periph = persist.Peripheral(
-                bus_dma=self.psram_periph)
+                bus_dma=self.psram_periph if self.with_persist else None)
             self.csr_decoder.add(
                 self.persist_periph.bus,
                 addr=self.persist_periph_base,
@@ -252,8 +254,10 @@ class TiliquaSoc(Component):
 
         # Pixel plotting, blending, rotation backend (no CSR interface)
         self.framebuffer_plotter = plot.FramebufferPlotter(
-            bus_signature=self.psram_periph.bus.signature.flip(), n_ports=3)
-        self.psram_periph.add_master(self.framebuffer_plotter.bus)
+            bus_signature=self.psram_periph.bus.signature.flip(),
+            n_ports=3 + extra_plot_ports)
+        if self.attach_framebuffer_masters:
+            self.psram_periph.add_master(self.framebuffer_plotter.bus)
 
         # Pixel plotter CSR interface
         self.pixel_plot = plot.Peripheral()
@@ -345,7 +349,6 @@ class TiliquaSoc(Component):
 
         # psram
         m.submodules.psram_periph = self.psram_periph
-
         # spiflash
         if sim.is_hw(platform):
             spi0_provider = spiflash.ECP5ConfigurationFlashProvider()
@@ -388,14 +391,16 @@ class TiliquaSoc(Component):
                 self.fb.fbp.base.eq(self.framebuffer_periph.fbp.base),
             ]
             wiring.connect(m, wiring.flipped(self.fb.fbp), self.framebuffer_plotter.fbp)
-            if self.enable_persist:
-                wiring.connect(m, wiring.flipped(self.fb.fbp), self.persist_periph.fbp)
+            if self.enable_persist and self.with_persist:
+                wiring.connect(
+                    m, wiring.flipped(self.fb.fbp), self.persist_periph.fbp)
         else:
             # Modeline is dynamic and comes from framebuffer peripheral CSRs
             wiring.connect(m, self.framebuffer_periph.fbp, self.fb.fbp)
             wiring.connect(m, self.framebuffer_periph.fbp, self.framebuffer_plotter.fbp)
-            if self.enable_persist:
-                wiring.connect(m, self.framebuffer_periph.fbp, self.persist_periph.fbp)
+            if self.enable_persist and self.with_persist:
+                wiring.connect(
+                    m, self.framebuffer_periph.fbp, self.persist_periph.fbp)
 
         # audio interface
         m.submodules.pmod0 = self.pmod0

@@ -38,7 +38,8 @@ def top_level_cli(
     sim_harness=None,       # project has a .cpp simulation harness at this path
     argparse_callback=None, # project needs extra CLI flags before argparse.parse()
     argparse_fragment=None, # project needs to check args.<custom_flag> after argparse.parse()
-    archiver_callback=None  # project can customize the archiver (called with archiver instance)
+    archiver_callback=None, # project can customize the archiver (called with archiver instance)
+    nextpnr_opts=None,      # project-specific place-and-route options
     ):
 
     # Get some repository properties
@@ -72,6 +73,10 @@ def top_level_cli(
                                   "For SoC bitstreams, on HW R4+ it is not required, as the video mode "
                                   "is dynamically inferred by the bootloader and passed to bitstreams.")
                             )
+        parser.add_argument('--spread-spectrum', type=float, default=0.0025,
+                            choices=[0.0, 0.0025],
+                            help=("External video PLL spread-spectrum fraction "
+                                  "(default: 0.0025; use 0.0 to disable)."))
 
     if sim_ports or issubclass(fragment, TiliquaSoc):
         simulation_supported = True
@@ -128,9 +133,6 @@ def top_level_cli(
                         help="nextpnr: deterministic placement seed (default: tool default).")
     parser.add_argument('--timing-strict', action='store_true',
                         help="nextpnr: fail the build when routed timing is not met.")
-    parser.add_argument('--spread-spectrum', type=float, default=0.0025,
-                        choices=[0.0, 0.0025],
-                        help="External PLL spread spectrum (0.0 disables it; default: 0.0025).")
     if ila_supported:
         parser.add_argument('--ila', action='store_true',
                             help="debug: add ila to design, program bitstream after build, poll UART for data.")
@@ -303,16 +305,17 @@ def top_level_cli(
 
     if args.action == CliAction.Build:
 
-        nextpnr_opts = "" if args.timing_strict else "--timing-allow-fail"
+        build_nextpnr_opts = (nextpnr_opts if nextpnr_opts is not None else
+                              ("" if args.timing_strict else "--timing-allow-fail"))
         if args.seed is not None:
-            nextpnr_opts += f" --seed {args.seed}"
-        nextpnr_opts = nextpnr_opts.strip()
+            build_nextpnr_opts += f" --seed {args.seed}"
+        build_nextpnr_opts = build_nextpnr_opts.strip()
 
         build_flags = {
             "build_dir": build_path,
             "verbose": args.verbose,
             "debug_verilog": args.debug_verilog,
-            "nextpnr_opts": nextpnr_opts,
+            "nextpnr_opts": build_nextpnr_opts,
             "ecppack_opts": f"--freq 38.8 --compress --bootaddr {args.bootaddr}"
         }
 

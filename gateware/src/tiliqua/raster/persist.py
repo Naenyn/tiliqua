@@ -33,6 +33,20 @@ class Persistance(wiring.Component):
             "holdoff": In(16, init=holdoff_default),
             "decay": In(4, init=1),
             "skip": In(8, init=0),
+            # Let real-time scanout postpone the next cleanup burst. An active
+            # burst still completes normally, keeping Wishbone transactions
+            # well formed and bounding the remaining contention.
+            "pause": In(1, init=0),
+            # Optional protection for two tagged framebuffer generations.
+            # SONORO uses color[3] as the tag marker and color[:3] as the
+            # generation, allowing old surfaces to decay while the visible and
+            # in-progress surfaces remain unchanged.
+            "protect_enable": In(1, init=0),
+            # In tagged-surface cleanup mode, leave ordinary framebuffer UI
+            # pixels untouched and decay only obsolete tagged generations.
+            "tagged_only": In(1, init=0),
+            "protect_color_a": In(3, init=0),
+            "protect_color_b": In(3, init=0),
             # DMA bus / fb
             "bus":  Out(bus_signature),
             "fbp": In(DMAFramebuffer.Properties()),
@@ -90,15 +104,23 @@ class Persistance(wiring.Component):
 
         m.d.comb += self.fifo.w_data.eq(bus.dat_r)
 
-        # Used for fastpath when all pixels are zero
+        # Used for the no-write fastpath when every pixel is either zero or a
+        # protected SONORO generation. Avoiding writes of unchanged protected
+        # pixels materially reduces 3D PSRAM traffic.
         any_nonzero_reads = Signal()
         pixels_peek = Signal(data.ArrayLayout(Pixel, 4))
         m.d.comb += pixels_peek.eq(self.fifo.w_data)
         with m.If(self.fifo.w_en):
-            with m.If((pixels_peek[0].intensity != 0) |
-                      (pixels_peek[1].intensity != 0) |
-                      (pixels_peek[2].intensity != 0) |
-                      (pixels_peek[3].intensity != 0)):
+            decay_candidates = []
+            for n in range(4):
+                protected = (
+                    (self.tagged_only & ~pixels_peek[n].color[3]) |
+                    (self.protect_enable & pixels_peek[n].color[3] &
+                     ((pixels_peek[n].color[:3] == self.protect_color_a) |
+                      (pixels_peek[n].color[:3] == self.protect_color_b))))
+                decay_candidates.append(
+                    (pixels_peek[n].intensity != 0) & ~protected)
+            with m.If(Cat(*decay_candidates).any()):
                 m.d.sync += any_nonzero_reads.eq(1)
 
         with m.FSM() as fsm:
@@ -157,9 +179,15 @@ class Persistance(wiring.Component):
                 pixels_w = Signal(data.ArrayLayout(Pixel, 4))
                 for n in range(4):
                     skip_this = Signal(name=f"skip_{n}")
+                    protect_this = Signal(name=f"protect_{n}")
                     m.d.comb += skip_this.eq(lfsr_beat[n*8:(n*8)+8] < skip_latch)
+                    m.d.comb += protect_this.eq(
+                        (self.tagged_only & ~pixels_r[n].color[3]) |
+                        (self.protect_enable & pixels_r[n].color[3] &
+                         ((pixels_r[n].color[:3] == self.protect_color_a) |
+                          (pixels_r[n].color[:3] == self.protect_color_b))))
                     m.d.comb += pixels_w[n].color.eq(pixels_r[n].color)
-                    with m.If(skip_this):
+                    with m.If(protect_this | skip_this):
                         m.d.comb += pixels_w[n].intensity.eq(pixels_r[n].intensity)
                     with m.Elif(pixels_r[n].intensity >= decay_latch):
                         m.d.comb += pixels_w[n].intensity.eq(pixels_r[n].intensity - decay_latch)
@@ -194,7 +222,7 @@ class Persistance(wiring.Component):
             with m.State('HOLDOFF'):
                 m.d.sync += any_nonzero_reads.eq(0)
                 m.d.sync += holdoff_count.eq(holdoff_count + 1)
-                with m.If(holdoff_count > self.holdoff):
+                with m.If((holdoff_count > self.holdoff) & ~self.pause):
                     m.next = 'BURST-IN'
 
         return ResetInserter({'sync': ~self.fbp.enable})(m)
@@ -210,10 +238,13 @@ class Peripheral(wiring.Component):
     class SkipReg(csr.Register, access="w"):
         skip: csr.Field(csr.action.W, unsigned(8))
 
-    def __init__(self, bus_dma):
+    def __init__(self, bus_dma=None):
         self.en = Signal()
-        self.persist = Persistance(bus_signature=bus_dma.bus.signature.flip())
-        bus_dma.add_master(self.persist.bus)
+        self.persist = None
+        if bus_dma is not None:
+            self.persist = Persistance(
+                bus_signature=bus_dma.bus.signature.flip())
+            bus_dma.add_master(self.persist.bus)
 
         regs = csr.Builder(addr_width=5, data_width=8)
 
@@ -223,27 +254,34 @@ class Peripheral(wiring.Component):
 
         self._bridge = csr.Bridge(regs.as_memory_map())
 
-        super().__init__({
-            "bus": In(csr.Signature(addr_width=regs.addr_width, data_width=regs.data_width)),
-            "fbp": In(DMAFramebuffer.Properties()),
-        })
+        signature = {
+            "bus": In(csr.Signature(
+                addr_width=regs.addr_width, data_width=regs.data_width)),
+        }
+        if self.persist is not None:
+            signature["fbp"] = In(DMAFramebuffer.Properties())
+        super().__init__(signature)
         self.bus.memory_map = self._bridge.bus.memory_map
 
     def elaborate(self, platform):
         m = Module()
         m.submodules.bridge = self._bridge
-        m.submodules.persist = self.persist
 
         wiring.connect(m, wiring.flipped(self.bus), self._bridge.bus)
-        wiring.connect(m, wiring.flipped(self.fbp), self.persist.fbp)
+        if self.persist is not None:
+            m.submodules.persist = self.persist
+            wiring.connect(m, wiring.flipped(self.fbp), self.persist.fbp)
 
-        with m.If(self._persist.f.persist.w_stb):
-            m.d.sync += self.persist.holdoff.eq(self._persist.f.persist.w_data)
+            with m.If(self._persist.f.persist.w_stb):
+                m.d.sync += self.persist.holdoff.eq(
+                    self._persist.f.persist.w_data)
 
-        with m.If(self._decay.f.decay.w_stb):
-            m.d.sync += self.persist.decay.eq(self._decay.f.decay.w_data)
+            with m.If(self._decay.f.decay.w_stb):
+                m.d.sync += self.persist.decay.eq(
+                    self._decay.f.decay.w_data)
 
-        with m.If(self._skip.f.skip.w_stb):
-            m.d.sync += self.persist.skip.eq(self._skip.f.skip.w_data)
+            with m.If(self._skip.f.skip.w_stb):
+                m.d.sync += self.persist.skip.eq(
+                    self._skip.f.skip.w_data)
 
         return m

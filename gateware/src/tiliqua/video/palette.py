@@ -85,14 +85,35 @@ class ColorPalette(wiring.Component):
             rd_port_b.addr.eq(pixel_in),
         ]
 
-        # Pass through sync signals, replace pixel with RGB
+        # Register the palette result and matching control signals before the
+        # TMDS encoder. ECP5 block-RAM clock-to-Q plus the encoder's XOR chain
+        # is otherwise one long DVI-clock path whose margin depends heavily on
+        # placement in dense designs. Delaying the complete pixel stream by
+        # one clock preserves color/control alignment and video geometry.
+        palette_r_dvi = Signal(8)
+        palette_g_dvi = Signal(8)
+        palette_b_dvi = Signal(8)
+        de_dvi = Signal()
+        hsync_dvi = Signal()
+        vsync_dvi = Signal()
+        m.d.dvi += [
+            palette_r_dvi.eq(rd_port_r.data),
+            palette_g_dvi.eq(rd_port_g.data),
+            palette_b_dvi.eq(rd_port_b.data),
+            de_dvi.eq(self.i.de),
+            hsync_dvi.eq(self.i.hsync),
+            vsync_dvi.eq(self.i.vsync),
+        ]
+
+        # Pass through the registered sync signals and replace the indexed
+        # pixel with its registered RGB lookup result.
         m.d.comb += [
-            self.o.r.eq(rd_port_r.data),
-            self.o.g.eq(rd_port_g.data),
-            self.o.b.eq(rd_port_b.data),
-            self.o.de.eq(self.i.de),
-            self.o.hsync.eq(self.i.hsync),
-            self.o.vsync.eq(self.i.vsync),
+            self.o.r.eq(palette_r_dvi),
+            self.o.g.eq(palette_g_dvi),
+            self.o.b.eq(palette_b_dvi),
+            self.o.de.eq(de_dvi),
+            self.o.hsync.eq(hsync_dvi),
+            self.o.vsync.eq(vsync_dvi),
         ]
 
         # Write ports for palette updates

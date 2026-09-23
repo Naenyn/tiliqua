@@ -72,6 +72,7 @@ class PlotRequest(data.Struct):
     pixel:     Pixel      # Pixel color and intensity
     blend:     BlendMode  # Blending mode (replace/additive)
     offset:    OffsetMode # Coordinate system (absolute/center-relative)
+    alternate: unsigned(1) # Plot relative to the inactive framebuffer
 
 
 class Peripheral(wiring.Component):
@@ -131,6 +132,7 @@ class Peripheral(wiring.Component):
             cmd_fifo.i.payload.pixel.eq(self._plot.f.pixel.w_data),
             cmd_fifo.i.payload.blend.eq(BlendMode.REPLACE),
             cmd_fifo.i.payload.offset.eq(OffsetMode.ABSOLUTE),
+            cmd_fifo.i.payload.alternate.eq(0),
         ]
         with m.If(self._plot.element.w_stb & cmd_fifo.i.ready):
             m.d.comb += cmd_fifo.i.valid.eq(1)
@@ -175,6 +177,7 @@ class _FramebufferBackend(wiring.Component):
             "fbp": In(DMAFramebuffer.Properties()),
             # Debug: backend FSM state (see elaborate for encoding).
             "dbg_state": Out(unsigned(3)),
+            "busy": Out(1),
         })
 
     def elaborate(self, platform) -> Module:
@@ -254,8 +257,15 @@ class _FramebufferBackend(wiring.Component):
         ]
         fb_hwords = ((self.fbp.timings.h_active * self.pixel_bytes)
                      // self.pixels_per_word)
-        m.d.comb += pixel_addr.eq(
-                self.fbp.base + y_offs*fb_hwords + x_offs)
+        # SONORO keeps two 1 MiB framebuffer regions. Most producers address
+        # the displayed buffer normally; its 3D renderer selects the other
+        # region without needing another cache, multiplier, or PSRAM master.
+        framebuffer_base = Signal.like(self.fbp.base)
+        m.d.comb += [
+            framebuffer_base.eq(
+                self.fbp.base ^ Mux(current_req.alternate, 0x40000, 0)),
+            pixel_addr.eq(framebuffer_base + y_offs*fb_hwords + x_offs),
+        ]
 
         # Pixel data latched during read-modify-write / blending
         pixel_read = Signal(Pixel)
@@ -334,6 +344,8 @@ class _FramebufferBackend(wiring.Component):
                 with m.If(bus.stb & bus.ack):
                     m.next = 'IDLE'
 
+        m.d.comb += self.busy.eq(~fsm.ongoing('IDLE'))
+
         return ResetInserter({'sync': ~self.fbp.enable})(m)
 
 
@@ -354,6 +366,10 @@ class FramebufferPlotter(wiring.Component):
             "fbp": In(DMAFramebuffer.Properties()),
             # Debug word: backend state + master/slave bus handshakes.
             "dbg": Out(unsigned(16)),
+            # Explicit write-back fence. ``flush_done`` remains asserted until
+            # ``flush`` is released, making the handshake safe across domains.
+            "flush": In(1),
+            "flush_done": Out(1),
         })
 
     def elaborate(self, platform) -> Module:
@@ -375,10 +391,23 @@ class FramebufferPlotter(wiring.Component):
         # Plot requests -> arbiter
         for n in range(self.n_ports):
             wiring.connect(m, wiring.flipped(self.i[n]), arbiter.i[n])
-        # Arbiter -> plotting backend
-        wiring.connect(m, arbiter.o, backend.i)
+        # Arbiter -> plotting backend. Once a fence is requested, stop
+        # accepting new requests and let the one already in the backend drain;
+        # this gives the cache a precise ordering boundary even when firmware
+        # is concurrently drawing menu pixels into the displayed buffer.
+        m.d.comb += [
+            backend.i.payload.eq(arbiter.o.payload),
+            backend.i.valid.eq(arbiter.o.valid & ~self.flush),
+            arbiter.o.ready.eq(backend.i.ready & ~self.flush),
+        ]
         # Backend -> cache
         wiring.connect(m, backend.bus, cache.master)
+        m.d.comb += [
+            # Do not begin the fence while the backend is still translating or
+            # issuing the final accepted pixel request.
+            cache.flush.eq(self.flush & ~backend.busy),
+            self.flush_done.eq(cache.flush_done),
+        ]
         # Cache -> exposed for connecting to PSRAM DMA
         wiring.connect(m, cache.slave, wiring.flipped(self.bus))
 
@@ -398,5 +427,3 @@ class FramebufferPlotter(wiring.Component):
         ))
 
         return m
-
-

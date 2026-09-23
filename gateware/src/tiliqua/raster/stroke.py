@@ -64,8 +64,9 @@ class Stroke(wiring.Component):
             self.o.payload.y.eq(sample_y),
             self.o.payload.pixel.color.eq(new_color),
             self.o.payload.pixel.intensity.eq(sample_intensity),
-            self.o.payload.blend.eq(BlendMode.ADDITIVE),
-            self.o.payload.offset.eq(OffsetMode.CENTER),
+            self.o.payload.blend.eq(BlendMode.ADDITIVE),  # CRT sim uses additive blending
+            self.o.payload.offset.eq(OffsetMode.CENTER),  # Scope plots are centered
+            self.o.payload.alternate.eq(0),
         ]
 
         with m.FSM() as fsm:

@@ -1,0 +1,1045 @@
+#![no_std]
+#![no_main]
+
+use core::{cell::RefCell, fmt::Write};
+use critical_section::Mutex;
+use heapless::String;
+use irq::handler;
+use log::{info, warn};
+use riscv_rt::entry;
+
+use opts::persistence::{FlashOptionsPersistence, OptionsPersistence};
+use opts::Options;
+use tiliqua_fw::*;
+use tiliqua_hal::dma_framebuffer::DMAFramebuffer;
+use tiliqua_hal::embedded_graphics::prelude::*;
+use tiliqua_hal::embedded_graphics::primitives::{
+    Line, PrimitiveStyle, PrimitiveStyleBuilder, Rectangle,
+};
+use tiliqua_hal::embedded_graphics::{
+    mono_font::{
+        ascii::{FONT_6X10, FONT_9X15_BOLD},
+        MonoTextStyle,
+    },
+    text::{Alignment, Text},
+};
+use tiliqua_lib::calibration::*;
+use tiliqua_lib::color::HI8;
+use tiliqua_lib::palette::ColorPalette;
+use tiliqua_lib::*;
+
+use options::*;
+use pac::constants::*;
+
+pub const TIMER0_ISR_PERIOD_MS: u32 = 5;
+const FRAMEBUFFER_REGION_BYTES: usize = 0x0010_0000;
+// This matches the gateware's protected menu region. Keep the normal panel
+// fixed to the largest menu so its border and black analyzer cutout never
+// jump as conditional options appear or disappear.
+const MENU_PANEL_WIDTH: u32 = 264;
+const MENU_PANEL_HEIGHT: u32 = 138;
+const MENU_PANEL_X_OFFSET: i32 = -92;
+const MENU_PANEL_Y_OFFSET: i32 = -18;
+
+fn clear_framebuffer_region(base: usize) {
+    let framebuffer_words = base as *mut u32;
+    for offset in 0..(FRAMEBUFFER_REGION_BYTES / core::mem::size_of::<u32>()) {
+        unsafe {
+            core::ptr::write_volatile(framebuffer_words.add(offset), 0);
+        }
+    }
+    riscv::asm::fence();
+}
+
+fn clear_3d_framebuffers() {
+    clear_framebuffer_region(PSRAM_FB_BASE);
+    clear_framebuffer_region(PSRAM_FB_BASE + FRAMEBUFFER_REGION_BYTES);
+}
+
+fn menu_panel_rect(pos_x: u32, pos_y: u32) -> Rectangle {
+    Rectangle::new(
+        Point::new(
+            pos_x as i32 + MENU_PANEL_X_OFFSET,
+            pos_y as i32 + MENU_PANEL_Y_OFFSET,
+        ),
+        Size::new(MENU_PANEL_WIDTH, MENU_PANEL_HEIGHT),
+    )
+}
+
+fn draw_menu<D>(
+    display: &mut D,
+    opts: &Opts,
+    pos_x: u32,
+    pos_y: u32,
+    hue: u8,
+) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = HI8>,
+{
+    if opts.tracker.page.value == Page::Help {
+        return draw::draw_options(display, opts, pos_x, pos_y, hue);
+    }
+    let border = PrimitiveStyleBuilder::new()
+        .stroke_color(HI8::new(hue, 10))
+        .stroke_width(1)
+        .build();
+    menu_panel_rect(pos_x, pos_y)
+        .into_styled(border)
+        .draw(display)?;
+    draw::draw_options(display, opts, pos_x, pos_y, hue)
+}
+
+fn erase_menu<D>(display: &mut D, opts: &Opts, pos_x: u32, pos_y: u32) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = HI8>,
+{
+    draw::erase_options(display, opts, pos_x, pos_y)?;
+    if opts.tracker.page.value == Page::Help {
+        return Ok(());
+    }
+    menu_panel_rect(pos_x, pos_y)
+        .into_styled(PrimitiveStyle::with_stroke(HI8::BLACK, 1))
+        .draw(display)
+}
+
+fn draw_fps<D>(
+    display: &mut D,
+    fps_tenths: u32,
+    hue: u8,
+    center_x: u32,
+    baseline_y: u32,
+) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = HI8>,
+{
+    let mut label: String<16> = String::new();
+    write!(label, "{}.{:01} FPS", fps_tenths / 10, fps_tenths % 10).ok();
+    Text::with_alignment(
+        &label,
+        Point::new(center_x as i32, baseline_y as i32),
+        MonoTextStyle::new(&FONT_9X15_BOLD, HI8::new(hue, 15)),
+        Alignment::Center,
+    )
+    .draw(display)
+    .map(|_| ())
+}
+
+fn hash_menu_bytes(mut hash: u32, bytes: &[u8]) -> u32 {
+    for byte in bytes {
+        hash ^= *byte as u32;
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    hash
+}
+
+/// Compact identity for exactly what draw_options renders. This avoids
+/// flooding the shared framebuffer plotter with identical menu redraws while
+/// the encoder visibility timer remains active.
+fn menu_fingerprint(opts: &Opts) -> u32 {
+    let mut hash = 0x811c_9dc5;
+    hash = hash_menu_bytes(hash, opts.page().value().as_bytes());
+    hash = hash_menu_bytes(hash, &[opts.modify() as u8]);
+    hash = hash_menu_bytes(
+        hash,
+        &[opts.selected().map(|index| index as u8).unwrap_or(0xff)],
+    );
+    for option in opts.view().options() {
+        hash = hash_menu_bytes(hash, option.name().as_bytes());
+        hash = hash_menu_bytes(hash, option.value().as_bytes());
+    }
+    hash
+}
+
+/// Rotate an RGB color around the HSV hue wheel in one of sixteen steps.
+fn rotate_rgb_hue((r, g, b): (u8, u8, u8), shift: u8) -> (u8, u8, u8) {
+    let r = r as i32;
+    let g = g as i32;
+    let b = b as i32;
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let delta = max - min;
+    if delta == 0 {
+        return (r as u8, g as u8, b as u8);
+    }
+
+    // Hue is represented as six 256-step sectors.
+    let mut hue = if max == r {
+        256 * (g - b) / delta
+    } else if max == g {
+        512 + 256 * (b - r) / delta
+    } else {
+        1024 + 256 * (r - g) / delta
+    };
+    if hue < 0 {
+        hue += 1536;
+    }
+    hue = (hue + (shift as i32 * 96)) % 1536;
+
+    let sector = hue / 256;
+    let fraction = hue % 256;
+    let rising = min + delta * fraction / 256;
+    let falling = max - delta * fraction / 256;
+    let (rr, gg, bb) = match sector {
+        0 => (max, rising, min),
+        1 => (falling, max, min),
+        2 => (min, max, rising),
+        3 => (min, falling, max),
+        4 => (rising, min, max),
+        _ => (max, min, falling),
+    };
+    (rr as u8, gg as u8, bb as u8)
+}
+
+fn scale_rgb_visible((r, g, b): (u8, u8, u8), intensity: u8) -> (u8, u8, u8) {
+    let scale = if intensity == 0 {
+        0
+    } else {
+        4 + ((intensity as u16 * 11) / 15)
+    };
+    (
+        ((r as u16 * scale) / 15) as u8,
+        ((g as u16 * scale) / 15) as u8,
+        ((b as u16 * scale) / 15) as u8,
+    )
+}
+
+fn max3(a: u8, b: u8, c: u8) -> u8 {
+    let ab = if a > b { a } else { b };
+    if ab > c {
+        ab
+    } else {
+        c
+    }
+}
+
+fn scale_rgb_to_level((r, g, b): (u8, u8, u8), target_level: u8) -> (u8, u8, u8) {
+    let source_level = max3(r, g, b);
+    if target_level == 0 || source_level == 0 {
+        return (0, 0, 0);
+    }
+    (
+        ((r as u16 * target_level as u16) / source_level as u16) as u8,
+        ((g as u16 * target_level as u16) / source_level as u16) as u8,
+        ((b as u16 * target_level as u16) / source_level as u16) as u8,
+    )
+}
+
+fn scale_rgb_like_palette(palette: ColorPalette, rgb: (u8, u8, u8), intensity: u8) -> (u8, u8, u8) {
+    if let Some((r, g, b)) = palette.heatmap_color(intensity) {
+        scale_rgb_to_level(rgb, max3(r, g, b))
+    } else {
+        scale_rgb_visible(rgb, intensity)
+    }
+}
+
+/// Program CASCADO's shared palette. Physical hue zero belongs to UI and
+/// axes; terrain uses the remaining entries for level/age or frequency/level.
+fn write_cascado_palette(
+    palette: ColorPalette,
+    video: &mut impl DMAFramebuffer,
+    frequency_ramp: bool,
+    age_fade: bool,
+    hue_shift: u8,
+    ui_hue: u8,
+) {
+    // Framebuffer UI and renderer pixels share one 8-bit hardware palette.
+    // Reserve physical hue column zero for UI, axes and erase pixels. The
+    // selected UI hue is baked into that column, leaving the other fifteen
+    // columns exclusively available to the surface renderer.
+    for intensity in 0..16u8 {
+        let (r, g, b) = ColorPalette::Linear.color(intensity, ui_hue);
+        video.set_palette_rgb(intensity, 0, r, g, b);
+    }
+
+    if frequency_ramp {
+        for intensity in 0..16u8 {
+            for hue in 1..16u8 {
+                let bright_intensity = if intensity == 0 {
+                    0
+                } else {
+                    4 + ((intensity as u16 * 11) / 15) as u8
+                };
+                // Fifteen renderer columns span the complete frequency
+                // palette while column zero remains reserved for the UI.
+                let position = (((hue - 1) as u16 * 15 + 7) / 14) as u8;
+                let (r, g, b) = scale_rgb_like_palette(
+                    palette,
+                    palette.frequency_color(position),
+                    bright_intensity,
+                );
+                video.set_palette_rgb(intensity, hue, r, g, b);
+            }
+        }
+        return;
+    }
+
+    if age_fade {
+        // The 240 renderer entries provide 30 amplitude colors x 8 age-
+        // brightness steps. Age scales RGB uniformly across almost the full
+        // brightness range, so an old surface keeps the same amplitude color
+        // rather than sliding through the heat map while depth remains clear.
+        for intensity in 0..16u8 {
+            for hue in 1..16u8 {
+                let level = (intensity & 1) * 15 + (hue - 1);
+                let age = intensity >> 1;
+                let position = level as u16 * 15;
+                let lower = (position / 29) as u8;
+                let fraction = position % 29;
+                let upper = core::cmp::min(lower + 1, 15);
+                let (lo, hi, rotate) = match palette.heatmap_color(lower) {
+                    Some(lo) => (lo, palette.heatmap_color(upper).unwrap(), true),
+                    None => (
+                        palette.color(lower, hue_shift),
+                        palette.color(upper, hue_shift),
+                        false,
+                    ),
+                };
+                let interpolate = |a: u8, b: u8| -> u8 {
+                    (((a as u32 * (29 - fraction) as u32) + (b as u32 * fraction as u32) + 14) / 29)
+                        as u8
+                };
+                let rgb = (
+                    interpolate(lo.0, hi.0),
+                    interpolate(lo.1, hi.1),
+                    interpolate(lo.2, hi.2),
+                );
+                let (r, g, b) = if rotate {
+                    rotate_rgb_hue(rgb, hue_shift)
+                } else {
+                    rgb
+                };
+                let brightness = 15 - age * 2;
+                video.set_palette_rgb(
+                    intensity,
+                    hue,
+                    ((r as u16 * brightness as u16 + 7) / 15) as u8,
+                    ((g as u16 * brightness as u16 + 7) / 15) as u8,
+                    ((b as u16 * brightness as u16 + 7) / 15) as u8,
+                );
+            }
+        }
+        return;
+    }
+
+    // Without age fading, the renderer uses 60 amplitude colors. Four groups
+    // occupy intensity rows 0..3, with fifteen colors per row; physical hue
+    // column zero remains reserved for the UI.
+    for intensity in 0..16u8 {
+        for hue in 1..16u8 {
+            let group = intensity & 3;
+            let level = group * 15 + (hue - 1);
+            let position = level as u16 * 15;
+            let lower = (position / 59) as u8;
+            let fraction = position % 59;
+            let upper = core::cmp::min(lower + 1, 15);
+            let (lo, hi, rotate) = match palette.heatmap_color(lower) {
+                Some(lo) => (lo, palette.heatmap_color(upper).unwrap(), true),
+                None => (
+                    palette.color(lower, hue_shift),
+                    palette.color(upper, hue_shift),
+                    false,
+                ),
+            };
+            let interpolate = |a: u8, b: u8| -> u8 {
+                (((a as u32 * (59 - fraction) as u32) + (b as u32 * fraction as u32) + 29) / 59)
+                    as u8
+            };
+            let rgb = (
+                interpolate(lo.0, hi.0),
+                interpolate(lo.1, hi.1),
+                interpolate(lo.2, hi.2),
+            );
+            let (r, g, b) = if rotate {
+                rotate_rgb_hue(rgb, hue_shift)
+            } else {
+                rgb
+            };
+            video.set_palette_rgb(intensity, hue, r, g, b);
+        }
+    }
+}
+
+mod projection;
+use projection::{project_offset, projection_matrix};
+
+fn project_axis_point(
+    frequency: i32,
+    amplitude: i32,
+    history: i32,
+    h_active: u32,
+    v_active: u32,
+    projection_x: &[i16; 3],
+    projection_y: &[i16; 3],
+) -> Point {
+    let frequency = if h_active >= 1024 {
+        frequency * 2
+    } else {
+        frequency
+    };
+    let coordinates = [frequency, amplitude, history];
+    let x = h_active as i32 / 2 - 50 + project_offset(coordinates, projection_x);
+    let y = v_active as i32 / 2 + 185 + project_offset(coordinates, projection_y);
+    Point::new(x, y)
+}
+
+fn draw_axis_ticks<D>(
+    display: &mut D,
+    h_active: u32,
+    v_active: u32,
+    projection_x: &[i16; 3],
+    projection_y: &[i16; 3],
+    hue: u8,
+) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = HI8>,
+{
+    // Nine short projected marks cost only about 90 framebuffer pixels per
+    // completed surface. Keeping them out of the already-dense terrain FSM
+    // also leaves FPGA timing independent of this optional display detail.
+    let ticks = [
+        ((-64, 0, 0), (-64, 8, 0)),
+        ((0, 0, 0), (0, 8, 0)),
+        ((64, 0, 0), (64, 8, 0)),
+        ((-128, 64, 0), (-120, 64, 0)),
+        ((-128, 128, 0), (-120, 128, 0)),
+        ((-128, 192, 0), (-120, 192, 0)),
+        ((-128, 0, 60), (-120, 0, 60)),
+        ((-128, 0, 120), (-120, 0, 120)),
+        ((-128, 0, 180), (-120, 0, 180)),
+    ];
+    let style = PrimitiveStyle::with_stroke(HI8::new(hue, 13), 1);
+    for (start, end) in ticks {
+        let start = project_axis_point(
+            start.0,
+            start.1,
+            start.2,
+            h_active,
+            v_active,
+            projection_x,
+            projection_y,
+        );
+        let end = project_axis_point(
+            end.0,
+            end.1,
+            end.2,
+            h_active,
+            v_active,
+            projection_x,
+            projection_y,
+        );
+        Line::new(start, end).into_styled(style).draw(display)?;
+    }
+    Ok(())
+}
+
+fn draw_axis_labels<D>(
+    display: &mut D,
+    range: FrequencyRange,
+    scale: FrequencyScale,
+    h_active: u32,
+    v_active: u32,
+    projection_x: &[i16; 3],
+    projection_y: &[i16; 3],
+    hue: u8,
+) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = HI8>,
+{
+    let style = MonoTextStyle::new(&FONT_6X10, HI8::new(hue, 15));
+    let range_label = match range {
+        FrequencyRange::Range3k => "3kHz",
+        FrequencyRange::Range6k => "6kHz",
+        FrequencyRange::Range12k => "12kHz",
+        FrequencyRange::Range24k => "24kHz",
+    };
+    // The linear midpoint is half the maximum frequency. The logarithmic
+    // sweep maps its center to FFT bin 16 of 256, or exactly 1/16 of the
+    // selected maximum, independent of terrain quality.
+    let midpoint_label = match (scale, range) {
+        (FrequencyScale::Linear, FrequencyRange::Range3k) => "1.5kHz",
+        (FrequencyScale::Linear, FrequencyRange::Range6k) => "3kHz",
+        (FrequencyScale::Linear, FrequencyRange::Range12k) => "6kHz",
+        (FrequencyScale::Linear, FrequencyRange::Range24k) => "12kHz",
+        (FrequencyScale::Log, FrequencyRange::Range3k) => "188Hz",
+        (FrequencyScale::Log, FrequencyRange::Range6k) => "375Hz",
+        (FrequencyScale::Log, FrequencyRange::Range12k) => "750Hz",
+        (FrequencyScale::Log, FrequencyRange::Range24k) => "1.5kHz",
+    };
+    let labels = [
+        (127, 0, 0, 6, 10, range_label),
+        (0, 0, 0, 6, 10, midpoint_label),
+        (-128, 255, 0, 6, 0, "0dBFS"),
+        (-128, 128, 0, 6, 4, "-48"),
+        (-128, 0, 0, -8, 13, "new"),
+        (-128, 0, 240, 6, 8, "old"),
+    ];
+    for (frequency, amplitude, history, offset_x, offset_y, label) in labels {
+        let anchor = project_axis_point(
+            frequency,
+            amplitude,
+            history,
+            h_active,
+            v_active,
+            projection_x,
+            projection_y,
+        );
+        // Keep horizontal text legible at every camera angle and inside the
+        // circular-display safe area.
+        let x = (anchor.x + offset_x).clamp(8, h_active as i32 - 48);
+        let y = (anchor.y + offset_y).clamp(12, v_active as i32 - 78);
+        Text::new(label, Point::new(x, y), style).draw(display)?;
+    }
+    Ok(())
+}
+
+struct App {
+    ui: ui::UI<Encoder0, EurorackPmod0, I2c0, Opts>,
+}
+
+impl App {
+    fn new(opts: Opts) -> Self {
+        let peripherals = unsafe { pac::Peripherals::steal() };
+        let encoder = Encoder0::new(peripherals.ENCODER0);
+        let i2cdev = I2c0::new(peripherals.I2C0);
+        let pca9635 = hal::pca9635::Pca9635Driver::new(i2cdev);
+        let pmod = EurorackPmod0::new(peripherals.PMOD0_PERIPH);
+        let hide_ms = menu_hide_ms(opts.menu.hide.value);
+        let hide_while_editing = opts.menu.edit_hide.value == EditHide::On;
+        let mut ui =
+            ui::UI::new_with_fade(opts, TIMER0_ISR_PERIOD_MS, hide_ms, encoder, pca9635, pmod);
+        ui.set_hide_while_editing(hide_while_editing);
+        Self { ui }
+    }
+}
+
+fn timer0_handler(app: &Mutex<RefCell<App>>) {
+    critical_section::with(|cs| app.borrow_ref_mut(cs).ui.update());
+}
+
+#[entry]
+fn main() -> ! {
+    let peripherals = pac::Peripherals::take().unwrap();
+    let sysclk = pac::clock::sysclk();
+    let serial = Serial0::new(peripherals.UART0);
+    let mut timer = Timer0::new(peripherals.TIMER0, sysclk);
+    let spiflash = SPIFlash0::new(peripherals.SPIFLASH_CTRL, SPIFLASH_BASE, SPIFLASH_SZ_BYTES);
+
+    tiliqua_fw::handlers::logger_init(serial);
+    info!("Hello from Tiliqua CASCADO!");
+
+    let bootinfo = unsafe { bootinfo::BootInfo::from_addr(BOOTINFO_BASE) }.unwrap();
+    let modeline = bootinfo
+        .modeline
+        .maybe_override_fixed(FIXED_MODELINE, CLOCK_DVI_HZ);
+
+    // The 3D renderer alternates between two 1 MiB framebuffer regions. PSRAM
+    // is not initialized at boot. Clear both regions before enabling video so
+    // random power-on contents cannot flash as the buffers are exchanged.
+    // Firmware begins at +0x200000, immediately after these two regions.
+    // Use ordinary RV32 stores rather than the legacy VexRiscv cache-flush
+    // custom instruction: CASCADO runs on VexiiRiscv, where that instruction
+    // traps before the framebuffer/DVI peripheral can be enabled. Sequential
+    // volatile writes naturally evict the visible portions of both buffers;
+    // any final dirty cache lines lie in the unused padding after buffer 1.
+    clear_3d_framebuffers();
+
+    let mut display = DMAFramebuffer0::new(
+        peripherals.FRAMEBUFFER_PERIPH,
+        peripherals.PALETTE_PERIPH,
+        peripherals.BLIT,
+        peripherals.PIXEL_PLOT,
+        peripherals.LINE,
+        PSRAM_FB_BASE,
+        modeline.clone(),
+        BLIT_MEM_BASE,
+    );
+
+    let mut i2cdev1 = I2c1::new(peripherals.I2C1);
+    let mut pmod = EurorackPmod0::new(peripherals.PMOD0_PERIPH);
+    CalibrationConstants::load_or_default(&mut i2cdev1, &mut pmod);
+
+    let mut opts = Opts::default();
+    opts.misc.rotation.value = modeline.rotate.clone();
+    let mut flash_persist_opt =
+        if let Some(storage_window) = bootinfo.manifest.get_option_storage_window() {
+            let mut flash_persist = FlashOptionsPersistence::new(spiflash, storage_window);
+            flash_persist.load_options(&mut opts).unwrap();
+            Some(flash_persist)
+        } else {
+            warn!("No option storage region: disable persistent storage");
+            None
+        };
+    // Page selection is navigation state, not a sound/display preference.
+    // Always open CASCADO on its first page even if options were saved from
+    // another page, and never resume an in-progress edit across a reboot.
+    opts.tracker.page.value = Page::Cascado;
+    opts.tracker.selected = None;
+    opts.tracker.modify = false;
+    opts.help.scroll.value = opts.help.scroll.value.min(HELP_SCROLL_MAX);
+
+    let mut last_palette = opts.display.palette.value;
+    let mut last_color_by = opts.style.color_by.value;
+    let mut last_age_fade = opts.style.age_fade.value;
+    let mut last_plot_hue = opts.display.hue.value;
+    let mut last_ui_hue = opts.menu.ui_hue.value;
+    let mut last_hide = opts.menu.hide.value;
+    let mut last_edit_hide = opts.menu.edit_hide.value;
+    let mut last_rotation = None;
+    let app = Mutex::new(RefCell::new(App::new(opts)));
+    handler!(timer0 = || timer0_handler(&app));
+
+    irq::scope(|s| {
+        s.register(handlers::Interrupt::TIMER0, timer0);
+        timer.enable_tick_isr(TIMER0_ISR_PERIOD_MS, pac::Interrupt::TIMER0);
+
+        let spectro = peripherals.SPECTROGRAM_PERIPH;
+        let mut first = true;
+        let mut current_fb_base = PSRAM_FB_BASE as u32;
+        let mut last_on_help_page = false;
+        let mut last_help_scroll = 0;
+        let mut help_waiting_for_renderer = false;
+        // Count completed 3D surface swaps, rather than HDMI scan frames. This
+        // is the user-visible CASCADO update rate and includes the small cost
+        // of drawing this diagnostic into each newly completed framebuffer.
+        let mut fps_window_start_ms = 0u32;
+        let mut fps_window_frames = 0u32;
+        let mut fps_tenths = 0u32;
+        // Each physical framebuffer retains UI independently. Remember the
+        // exact menu last drawn into each one so changed values, selection
+        // markers, and timeout hiding can be erased without clearing a large
+        // rectangle through the pixel plotter.
+        let mut menu_fb0: Option<(Opts, u32, u32, u32)> = None;
+        let mut menu_fb1: Option<(Opts, u32, u32, u32)> = None;
+        // The firmware loop runs much faster than the surface renderer. Cache
+        // values already published to gateware so an unchanged UI does not
+        // continuously consume CPU/CSR bandwidth while PSRAM is busy drawing
+        // a dense surface.
+        let mut last_flags: Option<(bool, bool, u8, bool)> = None;
+        let mut last_gain: Option<u8> = None;
+        let mut last_range: Option<u8> = None;
+        let mut last_rate: Option<u8> = None;
+        let mut last_hue: Option<u8> = None;
+        let mut last_noise_floor: Option<u8> = None;
+        let mut last_timings: Option<(u16, u16)> = None;
+        let mut last_angles: Option<(i8, i8, i8)> = None;
+        let mut axis_projection_cache = None;
+        let mut last_config_3d: Option<(u8, bool, bool, bool, bool, bool)> = None;
+
+        loop {
+            let (opts, draw_options, save_opts, wipe_opts, uptime_ms) =
+                critical_section::with(|cs| {
+                    let mut app = app.borrow_ref_mut(cs);
+                    let save_opts = app.ui.opts.misc.save_opts.poll();
+                    let wipe_opts = app.ui.opts.misc.wipe_opts.poll();
+                    (
+                        app.ui.opts.clone(),
+                        app.ui.draw(),
+                        save_opts,
+                        wipe_opts,
+                        app.ui.uptime_ms,
+                    )
+                });
+            // Apply the selected framebuffer rotation before asking for the
+            // logical drawing dimensions. Gateware receives the same rotation
+            // below so the projected surface and software UI remain aligned.
+            if last_rotation != Some(opts.misc.rotation.value) {
+                display.rotate(&opts.misc.rotation.value);
+                last_rotation = Some(opts.misc.rotation.value);
+            }
+            let h_active = display.size().width;
+            let v_active = display.size().height;
+            let on_help_page = opts.tracker.page.value == Page::Help;
+            let help_scroll = opts.help.scroll.value;
+            let help_page_entered = on_help_page && !last_on_help_page;
+            if opts.menu.hide.value != last_hide {
+                critical_section::with(|cs| {
+                    app.borrow_ref_mut(cs)
+                        .ui
+                        .set_encoder_fade_ms(menu_hide_ms(opts.menu.hide.value));
+                });
+                last_hide = opts.menu.hide.value;
+            }
+            if opts.menu.edit_hide.value != last_edit_hide || first {
+                critical_section::with(|cs| {
+                    app.borrow_ref_mut(cs)
+                        .ui
+                        .set_hide_while_editing(opts.menu.edit_hide.value == EditHide::On);
+                });
+                last_edit_hide = opts.menu.edit_hide.value;
+            }
+            if help_page_entered {
+                help_waiting_for_renderer = true;
+            }
+            // Physical hue zero is reserved by write_cascado_palette for
+            // all software UI. The user's selected hue is baked into that
+            // palette column rather than encoded into framebuffer pixels.
+            let ui_hue = 0;
+            let surface_status = spectro.status().read();
+            // Help is a static framebuffer page. Suspend the autonomous 3D
+            // renderer before clearing or drawing it, and keep scanning the
+            // physical buffer that was visible on entry. Otherwise the 3D
+            // state machine can clear/swap underneath the freshly drawn help
+            // text even though analyzer capture itself is disabled.
+            let help_renderer_ready =
+                !help_waiting_for_renderer || surface_status.renderer_idle().bit();
+            let help_page_became_ready =
+                on_help_page && help_waiting_for_renderer && help_renderer_ready;
+            let display_buffer = if on_help_page {
+                current_fb_base != PSRAM_FB_BASE as u32
+            } else {
+                surface_status.surface_valid().bit() && surface_status.display_buffer().bit()
+            };
+            // Publish a Help stop request before touching either framebuffer.
+            // Normal 3D display acknowledgements remain below, after menu
+            // drawing, so scanout can never reveal a half-drawn menu.
+            if on_help_page {
+                let flags = (
+                    false,
+                    opts.display.axes.value == OnOff::On,
+                    opts.cascado.input.value.hw_index(),
+                    display_buffer,
+                );
+                if last_flags != Some(flags) {
+                    spectro.flags().write(|w| unsafe {
+                        w.enable().bit(flags.0);
+                        w.axes().bit(flags.1);
+                        w.input_ch().bits(flags.2);
+                        w.display_ack().bit(flags.3)
+                    });
+                    last_flags = Some(flags);
+                }
+            }
+            let desired_fb_base =
+                PSRAM_FB_BASE as u32 + if display_buffer { 0x0010_0000 } else { 0 };
+            let framebuffer_swapped = desired_fb_base != current_fb_base;
+            if framebuffer_swapped {
+                display.update_fb_base(desired_fb_base);
+                current_fb_base = desired_fb_base;
+                if !on_help_page {
+                    fps_window_frames = fps_window_frames.saturating_add(1);
+                    let elapsed_ms = uptime_ms.wrapping_sub(fps_window_start_ms);
+                    if elapsed_ms >= 1000 {
+                        fps_tenths = fps_window_frames
+                            .saturating_mul(10_000)
+                            .saturating_add(elapsed_ms / 2)
+                            / elapsed_ms;
+                        fps_window_start_ms = uptime_ms;
+                        fps_window_frames = 0;
+                    }
+                }
+            }
+
+            // Help text and the 3D view are full-screen framebuffer layers.
+            // Clear both physical buffers at mode boundaries, but do not do a
+            // full clear for help scrolling; only the text viewport changes.
+            let help_scroll_changed =
+                on_help_page && (!last_on_help_page || help_scroll != last_help_scroll);
+            let fullscreen_layer_changed = first
+                || ((on_help_page != last_on_help_page) && (!on_help_page || help_renderer_ready))
+                || help_page_became_ready;
+            if fullscreen_layer_changed {
+                clear_3d_framebuffers();
+                menu_fb0 = None;
+                menu_fb1 = None;
+                if current_fb_base != desired_fb_base {
+                    display.update_fb_base(desired_fb_base);
+                    current_fb_base = desired_fb_base;
+                }
+            }
+            last_on_help_page = on_help_page;
+            let previous_help_scroll = last_help_scroll;
+            last_help_scroll = help_scroll;
+
+            if opts.display.palette.value != last_palette
+                || opts.style.color_by.value != last_color_by
+                || opts.style.age_fade.value != last_age_fade
+                || opts.display.hue.value != last_plot_hue
+                || opts.menu.ui_hue.value != last_ui_hue
+                || first
+            {
+                write_cascado_palette(
+                    opts.display.palette.value,
+                    &mut display,
+                    opts.style.color_by.value == ColorBy::Frequency,
+                    opts.style.age_fade.value == OnOff::On,
+                    opts.display.hue.value,
+                    opts.menu.ui_hue.value,
+                );
+                last_palette = opts.display.palette.value;
+                last_color_by = opts.style.color_by.value;
+                last_age_fade = opts.style.age_fade.value;
+                last_plot_hue = opts.display.hue.value;
+                last_ui_hue = opts.menu.ui_hue.value;
+            }
+
+            let (menu_x, menu_y) = if on_help_page {
+                (h_active / 2 - 30, v_active - 100)
+            } else {
+                (h_active - 200, v_active / 2)
+            };
+            let menu_visible = draw_options || on_help_page || first;
+            critical_section::with(|cs| {
+                app.borrow_ref_mut(cs).ui.set_menu_visible(menu_visible);
+            });
+            let ui_render_ready = !on_help_page || help_renderer_ready;
+            if ui_render_ready {
+                let menu_hash = menu_fingerprint(&opts);
+                let menu_slot = if display_buffer {
+                    &mut menu_fb1
+                } else {
+                    &mut menu_fb0
+                };
+                let menu_changed = menu_slot
+                    .as_ref()
+                    .map(|(_, old_x, old_y, old_hash)| {
+                        *old_x != menu_x || *old_y != menu_y || *old_hash != menu_hash
+                    })
+                    .unwrap_or(menu_visible);
+                // In 3D, each completed surface starts by clearing the back
+                // buffer. After the swap, the current physical buffer may no
+                // longer contain the cached menu even if its fingerprint matches.
+                // Redraw visible menus on 3D swaps, but avoid the old unconditional
+                // erase/redraw loop when no menu is visible.
+                let menu_invalidated_by_3d_swap = framebuffer_swapped && menu_visible;
+                let menu_visibility_changed = menu_visible != menu_slot.is_some();
+                if framebuffer_swapped
+                    && !on_help_page
+                    && opts.display.axes.value == OnOff::On
+                    && opts.display.axis_detail.value != AxisDetail::Lines
+                {
+                    let angles = (
+                        opts.cascado.rot_x.value,
+                        opts.cascado.rot_y.value,
+                        opts.cascado.rot_z.value,
+                    );
+                    // The surface changes every frame, but its camera usually
+                    // does not. Avoid repeating the fixed-point matrix work.
+                    let (projection_x, projection_y) = match axis_projection_cache {
+                        Some((cached_angles, matrix)) if cached_angles == angles => matrix,
+                        _ => {
+                            let matrix = projection_matrix(angles.0, angles.1, angles.2);
+                            axis_projection_cache = Some((angles, matrix));
+                            matrix
+                        }
+                    };
+                    draw_axis_ticks(
+                        &mut display,
+                        h_active,
+                        v_active,
+                        &projection_x,
+                        &projection_y,
+                        ui_hue,
+                    )
+                    .ok();
+                    if opts.display.axis_detail.value == AxisDetail::Labels {
+                        draw_axis_labels(
+                            &mut display,
+                            opts.cascado.range.value,
+                            opts.style.scale.value,
+                            h_active,
+                            v_active,
+                            &projection_x,
+                            &projection_y,
+                            ui_hue,
+                        )
+                        .ok();
+                    }
+                }
+                if first || menu_changed || menu_visibility_changed || menu_invalidated_by_3d_swap {
+                    if let Some((old_opts, old_x, old_y, _)) = menu_slot.take() {
+                        // A swapped-in surface has just been rendered into a
+                        // fully cleared physical framebuffer. Erasing its old
+                        // cached menu again only duplicates every glyph and
+                        // border write before the new menu is drawn.
+                        if !framebuffer_swapped {
+                            erase_menu(&mut display, &old_opts, old_x, old_y).ok();
+                        }
+                    }
+                    if menu_visible {
+                        draw_menu(&mut display, &opts, menu_x, menu_y, ui_hue).ok();
+                        *menu_slot = Some((opts.clone(), menu_x, menu_y, menu_hash));
+                    }
+                }
+                if first
+                    || help_page_became_ready
+                    || (!on_help_page && (draw_options || framebuffer_swapped))
+                {
+                    draw::draw_name(
+                        &mut display,
+                        h_active / 2,
+                        v_active - 50,
+                        ui_hue,
+                        &bootinfo.manifest.name,
+                        &bootinfo.manifest.tag,
+                        &modeline,
+                    )
+                    .ok();
+                }
+                if framebuffer_swapped && !on_help_page && opts.display.show_fps.value == YesNo::Yes
+                {
+                    draw_fps(
+                        &mut display,
+                        fps_tenths,
+                        ui_hue,
+                        h_active / 2,
+                        v_active - 68,
+                    )
+                    .ok();
+                }
+
+                if on_help_page {
+                    if help_page_entered || help_page_became_ready || help_scroll_changed || first {
+                        // Remove only the old glyphs; the rest of Help is static.
+                        if !fullscreen_layer_changed {
+                            draw::erase_help(
+                                &mut display,
+                                h_active / 2 - 280,
+                                v_active / 2 - 150,
+                                previous_help_scroll,
+                                MODULE_DOCSTRING,
+                            )
+                            .ok();
+                        }
+                        draw::draw_help(
+                            &mut display,
+                            h_active / 2 - 280,
+                            v_active / 2 - 150,
+                            opts.help.scroll.value,
+                            MODULE_DOCSTRING,
+                            ui_hue,
+                        )
+                        .ok();
+                    }
+                    if help_page_entered || help_page_became_ready || first {
+                        if let Some(help) = bootinfo.manifest.help.as_ref() {
+                            draw::draw_tiliqua(
+                                &mut display,
+                                (h_active / 2 - 80) as i32,
+                                (v_active / 2) as i32 - 330,
+                                ui_hue,
+                                help.io_left.each_ref().map(|s| s.as_str()),
+                                help.io_right.each_ref().map(|s| s.as_str()),
+                            )
+                            .ok();
+                        }
+                    }
+                }
+            }
+            if help_page_became_ready {
+                help_waiting_for_renderer = false;
+            }
+
+            if save_opts {
+                if let Some(ref mut flash_persist) = flash_persist_opt {
+                    flash_persist.save_options(&opts).unwrap();
+                }
+            }
+            if wipe_opts {
+                critical_section::with(|cs| {
+                    let mut app = app.borrow_ref_mut(cs);
+                    app.ui.opts = Opts::default();
+                    app.ui.opts.misc.rotation.value = modeline.rotate.clone();
+                    if let Some(ref mut flash_persist) = flash_persist_opt {
+                        flash_persist.erase_all().unwrap();
+                    }
+                });
+            }
+
+            // In normal 3D operation this acknowledgement deliberately comes
+            // after menu drawing. The renderer waits for it before swapping at
+            // VSync, so the next front buffer always contains a complete menu.
+            if !on_help_page {
+                let flags = (
+                    true,
+                    opts.display.axes.value == OnOff::On,
+                    opts.cascado.input.value.hw_index(),
+                    display_buffer,
+                );
+                if last_flags != Some(flags) {
+                    spectro.flags().write(|w| unsafe {
+                        w.enable().bit(flags.0);
+                        w.axes().bit(flags.1);
+                        w.input_ch().bits(flags.2);
+                        w.display_ack().bit(flags.3)
+                    });
+                    last_flags = Some(flags);
+                }
+            }
+            let gain = opts.cascado.gain.value;
+            if last_gain != Some(gain) {
+                spectro.gain().write(|w| unsafe { w.value().bits(gain) });
+                last_gain = Some(gain);
+            }
+            let range = opts.cascado.range.value.hw_index();
+            if last_range != Some(range) {
+                spectro.range().write(|w| unsafe { w.value().bits(range) });
+                last_range = Some(range);
+            }
+            let rate = opts.cascado.rate.value.hw_index();
+            if last_rate != Some(rate) {
+                spectro.rate().write(|w| unsafe { w.value().bits(rate) });
+                last_rate = Some(rate);
+            }
+            let hue = opts.display.hue.value;
+            if last_hue != Some(hue) {
+                spectro.hue().write(|w| unsafe { w.value().bits(hue) });
+                last_hue = Some(hue);
+            }
+            let noise_floor = opts.display.noise_floor.value.hw_index();
+            if last_noise_floor != Some(noise_floor) {
+                spectro
+                    .noise_floor()
+                    .write(|w| unsafe { w.value().bits(noise_floor) });
+                last_noise_floor = Some(noise_floor);
+            }
+            let timings = (h_active as u16, v_active as u16);
+            if last_timings != Some(timings) {
+                spectro.timings().write(|w| unsafe {
+                    w.h_active().bits(timings.0);
+                    w.v_active().bits(timings.1)
+                });
+                last_timings = Some(timings);
+            }
+            let angles = (
+                opts.cascado.rot_x.value,
+                opts.cascado.rot_y.value,
+                opts.cascado.rot_z.value,
+            );
+            if last_angles != Some(angles) {
+                let (projection_x, projection_y) = projection_matrix(angles.0, angles.1, angles.2);
+                spectro.projection_x().write(|w| unsafe {
+                    w.frequency().bits(projection_x[0] as u16);
+                    w.amplitude().bits(projection_x[1] as u16);
+                    w.time().bits(projection_x[2] as u16)
+                });
+                spectro.projection_y().write(|w| unsafe {
+                    w.frequency().bits(projection_y[0] as u16);
+                    w.amplitude().bits(projection_y[1] as u16);
+                    w.time().bits(projection_y[2] as u16)
+                });
+                last_angles = Some(angles);
+            }
+            let config_3d = (
+                opts.style.quality.value.hw_index(),
+                opts.style.style.value == SurfaceStyle::Terrain,
+                opts.style.scale.value == FrequencyScale::Log,
+                opts.style.age_fade.value == OnOff::On,
+                opts.style.color_by.value == ColorBy::Frequency,
+                opts.style.ridges.value == OnOff::On,
+            );
+            if last_config_3d != Some(config_3d) {
+                spectro.config_3d().write(|w| unsafe {
+                    w.quality().bits(config_3d.0);
+                    w.style().bit(config_3d.1);
+                    w.log_scale().bit(config_3d.2);
+                    w.age_fade().bit(config_3d.3);
+                    w.frequency_color().bit(config_3d.4);
+                    w.ridges().bit(config_3d.5)
+                });
+                last_config_3d = Some(config_3d);
+            }
+
+            first = false;
+        }
+    })
+}

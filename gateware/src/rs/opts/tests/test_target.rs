@@ -31,6 +31,15 @@ mod tests {
     button_params!(ToggleParams { mode: ButtonMode::Toggle });
     button_params!(OneShotParams { mode: ButtonMode::OneShot });
 
+    #[derive(Clone)]
+    struct LabeledToggleParams;
+
+    impl ButtonOptionParams for LabeledToggleParams {
+        const MODE: ButtonMode = ButtonMode::Toggle;
+        const FALSE_LABEL: &'static str = "running";
+        const TRUE_LABEL: &'static str = "frozen";
+    }
+
     #[derive(OptionPage, Clone)]
     pub struct ScopeOpts {
         #[option]
@@ -41,6 +50,9 @@ mod tests {
         pub xscale: IntOption<ScaleParams>,
         #[option]
         pub enumo: EnumOption<TestEnum>,
+        #[option]
+        #[option_if(self.enumo.value == TestEnum::EnumValue1)]
+        pub conditional: EnumOption<TestEnum>,
         #[option("hello")]
         pub stro: StringOption,
         #[option]
@@ -71,6 +83,11 @@ mod tests {
         env_logger::init();
 
         let mut opts = Opts::default();
+        assert_eq!(opts.scope.options().len(), 7);
+        assert_eq!(opts.scope.all_options().len(), 8);
+        opts.scope.enumo.value = TestEnum::EnumValue1;
+        assert_eq!(opts.scope.options().len(), 8);
+        opts.scope.enumo.value = TestEnum::EnumValue2;
         for opt in opts.all_mut() {
             let mut buf: [u8; 8] = [0u8; 8];
             let n = opt.encode(&mut buf);
@@ -113,6 +130,14 @@ mod tests {
             }
         }
 
+    }
+
+    #[test]
+    fn test_custom_toggle_labels() {
+        let mut option = ButtonOption::<LabeledToggleParams>::new("freeze", false, 0);
+        assert_eq!(option.value().as_str(), "running");
+        assert!(option.button_press());
+        assert_eq!(option.value().as_str(), "frozen");
     }
 
 }

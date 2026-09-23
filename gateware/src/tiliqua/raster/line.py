@@ -28,7 +28,10 @@ class LineCmd(data.Struct):
     Single entry in line plotter command FIFO.
     """
     x: signed(12)
-    y: signed(11)
+    # Twelve bits are needed for a rotated 1280-pixel axis. The CSR-facing
+    # command remains eleven bits because it is packed into one 32-bit store;
+    # that value is sign-extended into this internal command.
+    y: signed(12)
     pixel: Pixel
     # Whether this is completing or continuing an existing line strip.
     cmd:   LineStripCmd
@@ -52,6 +55,8 @@ class _LinePlotter(wiring.Component):
         super().__init__({
             "i": In(stream.Signature(LineCmd)),
             "o": Out(stream.Signature(PlotRequest)),
+            "busy": Out(1),
+            "alternate": In(1),
         })
 
     def elaborate(self, platform) -> Module:
@@ -59,14 +64,14 @@ class _LinePlotter(wiring.Component):
 
         # Previous line segment
         prev_x = Signal(signed(12))
-        prev_y = Signal(signed(11))
+        prev_y = Signal(signed(12))
         has_prev_point = Signal()
 
         # Current line segmenet
         current_x = Signal(signed(12))
-        current_y = Signal(signed(11))
+        current_y = Signal(signed(12))
         target_x = Signal(signed(12))
-        target_y = Signal(signed(11))
+        target_y = Signal(signed(12))
         target_pixel = Signal(Pixel)
         current_pixel = Signal(Pixel)
         end_strip = Signal()
@@ -125,6 +130,7 @@ class _LinePlotter(wiring.Component):
                     self.o.payload.pixel.eq(current_pixel),
                     self.o.payload.blend.eq(BlendMode.REPLACE),
                     self.o.payload.offset.eq(self.offset),
+                    self.o.payload.alternate.eq(self.alternate),
                 ]
                 with m.If(self.o.ready):
                     with m.If(end_strip):
@@ -180,6 +186,7 @@ class _LinePlotter(wiring.Component):
                     self.o.payload.pixel.eq(current_pixel),
                     self.o.payload.blend.eq(BlendMode.REPLACE),
                     self.o.payload.offset.eq(self.offset),
+                    self.o.payload.alternate.eq(self.alternate),
                 ]
 
                 with m.If(self.o.ready):
@@ -218,6 +225,11 @@ class _LinePlotter(wiring.Component):
                         current_y.eq(current_y + sy),
                     ]
                 m.next = 'DRAW_LINE'
+
+        # Remain busy between points in one strip as well as while rasterizing
+        # a segment. Consumers can therefore wait for a complete END command,
+        # rather than merely observing a momentary idle state between points.
+        m.d.comb += self.busy.eq(~fsm.ongoing('IDLE') | has_prev_point)
 
         return m
 
@@ -273,6 +285,7 @@ class Peripheral(wiring.Component):
         wiring.connect(m, wiring.flipped(self.csr_bus), self._bridge.bus)
 
         m.submodules.line_plotter = line_plotter = _LinePlotter()
+        m.d.comb += line_plotter.alternate.eq(0)
 
         m.d.comb += [
             cmd_fifo.i.payload.x.eq(self._point.f.x.w_data),
