@@ -128,9 +128,9 @@ def top_level_cli(
                         help="nextpnr: deterministic placement seed (default: tool default).")
     parser.add_argument('--timing-strict', action='store_true',
                         help="nextpnr: fail the build when routed timing is not met.")
-    parser.add_argument('--spread-spectrum', type=float, default=0.01,
-                        choices=[0.0, 0.01],
-                        help="External PLL spread spectrum (0.0 disables it; default: 0.01).")
+    parser.add_argument('--spread-spectrum', type=float, default=0.0025,
+                        choices=[0.0, 0.0025],
+                        help="External PLL spread spectrum (0.0 disables it; default: 0.0025).")
     if ila_supported:
         parser.add_argument('--ila', action='store_true',
                             help="debug: add ila to design, program bitstream after build, poll UART for data.")
