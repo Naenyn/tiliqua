@@ -378,8 +378,9 @@ The GROUPS page still determines which resonators feed G1 through G4. Because
 FILTER ignores the BANK enable mask, all ten band columns are available here.
 Group changes are shared with BANK.
 
-FILTER has its own OUTPUT send levels, separate from BANK. The four group sends
-and the unfiltered DRY input mix are all available.
+FILTER has its own OUTPUT send levels, separate from BANK. Its OUTPUT page
+provides the four group sends; the BANK-only DRY column is hidden and skipped
+by navigation in FILTER mode. The individual DRY sends remain editable.
 
 ### Shared and mode-specific behavior
 
