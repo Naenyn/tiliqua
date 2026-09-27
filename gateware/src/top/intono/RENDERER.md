@@ -29,6 +29,13 @@ blanked while a replacement is prepared. VERIFY, PROFILES, PLAY and QUANTIZER
 retain their text views for now. This is a visual first pass, not a change to
 calibration acquisition, acceptance, or flash storage.
 
+The initial hardware photo exposed a text/plot overlap: the actual overlay
+uses a 12-pixel column pitch, not the generic 16-pixel canvas cell assumption.
+The plot now ends before sidebar column 31, with a bounded-layout test. The CAL
+text layout remains stable while the plot is rebuilt, and PROFILES prewarms the
+retained calibration scene after a profile is loaded so returning to CAL need
+not show the legacy text layout as an intermediate screen.
+
 ### Complete retained graphics fixtures (2026-09-09)
 
 `ui_canvas::grid_segment` and `trace_segment` expose bounded units of retained

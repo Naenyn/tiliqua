@@ -2,6 +2,12 @@
 //! These helpers emit pixels; they do not allocate, flush caches or publish frames.
 
 pub const SIZE: i32 = 720;
+pub const CALIBRATION_PLOT: Rect = Rect {
+    x: 100,
+    y: 190,
+    width: 330,
+    height: 230,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Point {
@@ -530,12 +536,17 @@ mod tests {
 
     #[test]
     fn calibration_response_uses_measured_pitch_and_clamps_safely() {
-        let rect = Rect { x: 100, y: 190, width: 350, height: 230 };
+        let rect = CALIBRATION_PLOT;
         assert!(rect.fits_circle(336));
+        // Production text starts at x=90 with a 12-pixel cell pitch. The
+        // sidebar begins at column 31 and must not touch the plot border.
+        let sidebar = Rect { x: 90 + 31 * 12, y: 176, width: 168, height: 224 };
+        assert!(sidebar.fits_circle(336));
+        assert!(rect.x + rect.width as i32 + 24 < sidebar.x);
         assert_eq!(calibration_plot_point(rect, -5_000_000, 0, -5_000_000, 0, 5_000_000, 12_000_000),
                    Some(Point { x: 100, y: 419 }));
         assert_eq!(calibration_plot_point(rect, 5_000_000, 12_000_000, -5_000_000, 0, 5_000_000, 12_000_000),
-                   Some(Point { x: 449, y: 190 }));
+                   Some(Point { x: 429, y: 190 }));
         assert!(calibration_plot_point(rect, 0, 0, 0, 0, 0, 0).is_none());
     }
 }

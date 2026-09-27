@@ -523,9 +523,7 @@ impl BackgroundCanvas {
                     self.put_panel_pixel(p.x, p.y, c)
                 });
             } else if scene == ui_scene::Scene::Calibration {
-                const PLOT: ui_canvas::Rect = ui_canvas::Rect {
-                    x: 100, y: 190, width: 350, height: 230,
-                };
+                const PLOT: ui_canvas::Rect = ui_canvas::CALIBRATION_PLOT;
                 let index = segment - 2048;
                 if index < ui_scene::CAL_GRID_SEGMENTS {
                     ui_canvas::grid_segment(PLOT, 7, 7, index, 0x29, |p, c| {
@@ -2047,7 +2045,7 @@ fn publish_calibration(
     menu_active: bool,
     plot_ready: bool,
 ) {
-    if !plot_ready {
+    if !plot_ready && cal.tracking_failure.is_some() {
         publish_calibration_text_fallback(display, text, cal, controls, value, menu_active);
         return;
     }
@@ -2061,31 +2059,34 @@ fn publish_calibration(
     write!(line, "OUT {} -> V/OCT    AUDIO -> IN {}", output, input).ok();
     write_centered(text, 9, &line, 40);
     write_text(text, 7, 27, "OUTPUT CV (V)");
-    write_text(text, 29, 11, "RESPONSE");
-    write_text(text, 29, 12, "VS 1V/OCT");
-    write_text(text, 29, 15, "PROFILE");
-    write_text(text, 29, 19, "RANGE");
-    write_text(text, 29, 23, "QUALITY");
+    write_text(text, 31, 11, "RESPONSE");
+    write_text(text, 31, 12, "VS 1V/OCT");
+    write_text(text, 31, 15, "PROFILE");
+    write_text(text, 31, 19, "RANGE");
+    write_text(text, 31, 23, "QUALITY");
     if let Some(profile) = profile {
         let points = profile.points();
-        write_text(text, 29, 16, &profile.name()[..profile.name().len().min(12)]);
+        write_text(text, 31, 16, &profile.name()[..profile.name().len().min(12)]);
         if let (Some(low), Some(high)) = (points.first(), points.last()) {
             line.clear();
             write!(line, "{:+.1}..{:+.1} V", low.microvolts as f32 / 1e6,
                 high.microvolts as f32 / 1e6).ok();
-            write_text(text, 29, 20, &line);
+            write_text(text, 31, 20, &line);
         }
         line.clear();
         write!(line, "{} PTS", points.len()).ok();
-        write_text(text, 29, 21, &line);
-        write_text(text, 29, 24, if cal.pending_profile.is_some() {
+        write_text(text, 31, 21, &line);
+        write_text(text, 31, 24, if cal.pending_profile.is_some() {
             cal.pending_quality.grade.label()
         } else {
             cal.profile_quality.grade.label()
         });
     } else {
-        write_text(text, 29, 16, "NO PROFILE");
-        write_text(text, 29, 24, "UNMEASURED");
+        write_text(text, 31, 16, "NO PROFILE");
+        write_text(text, 31, 24, "UNMEASURED");
+    }
+    if !plot_ready {
+        write_centered(text, 29, "DRAWING RESPONSE PLOT", 34);
     }
     if cal.active() {
         line.clear();
@@ -3189,7 +3190,11 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     | runtime::OperatingMode::Quantizer
             );
             let calibration_dashboard = ui_frame.controls.mode == runtime::OperatingMode::Calibrator;
-            let requested_scene = if calibration_dashboard {
+            let calibration_prepared = matches!(
+                ui_frame.controls.mode,
+                runtime::OperatingMode::Calibrator | runtime::OperatingMode::Profiles
+            );
+            let requested_scene = if calibration_prepared {
                 ui_scene::Scene::Calibration
             } else if ui_frame.controls.display_mode == DisplayMode::Linear {
                 ui_scene::Scene::Linear
@@ -3210,7 +3215,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 // the visible background or adding another startup clear.
                 let prepare_scene = if requested_scene != scene {
                     requested_scene
-                } else if calibration_dashboard {
+                } else if calibration_prepared {
                     ui_scene::Scene::Calibration
                 } else if scene == ui_scene::Scene::Spiral {
                     ui_scene::Scene::Linear
@@ -3243,7 +3248,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     }
                     ui_scene::Work::Ready => {
                         swap_background = requested_scene != scene
-                            || (calibration_dashboard && calibration_plot_dirty);
+                            || (calibration_prepared && calibration_plot_dirty);
                     }
                 }
             }
@@ -3398,7 +3403,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 }
                 if swap_background {
                     scene = requested_scene;
-                    if calibration_dashboard {
+                    if calibration_prepared {
                         calibration_plot_dirty = false;
                     }
                 }
