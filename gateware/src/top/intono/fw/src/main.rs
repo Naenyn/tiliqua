@@ -1774,268 +1774,6 @@ pub fn write_playback_status(
     Ok(())
 }
 
-fn publish_calibration_text_fallback(
-    display: &pac::TUNER_DISPLAY,
-    text: &mut TextWriter<'_>,
-    cal: &calibration_live::Live,
-    controls: RuntimeControls,
-    value: ChannelMeasurement,
-    menu_active: bool,
-) {
-    let input = if cal.active() {
-        cal.input
-    } else {
-        controls.calibration_input
-    };
-    let output = if cal.active() {
-        cal.output
-    } else {
-        controls.calibration_output
-    };
-    write_centered(text, 3, "OSCILLATOR CALIBRATION", 28);
-    let mut line: String<48> = String::new();
-    write!(line, "OUT {} -> OSC V/OCT", output).ok();
-    write_centered(text, 8, &line, 30);
-    line.clear();
-    write!(line, "OSC AUDIO -> IN {}", input).ok();
-    write_centered(text, 10, &line, 30);
-    write_centered(text, 12, "USE SINE; VCO MID RANGE", 30);
-    write_centered(text, 14, "CHARACTERIZE -5 TO +8V", 30);
-    write_centered(text, 16, "RUN AGAIN TO CANCEL", 30);
-    write_centered(text, 18, "NAVIGATION KEEPS SCAN RUNNING", 38);
-    if let Some(auto) = cal.automatic.as_ref().filter(|a| a.active()) {
-        write_centered(text, 14, "AUTO: SCAN / CHECK / IMPROVE", 34);
-        write_centered(text, 22, auto.label(), 34);
-        line.clear();
-        write!(line, "POLICY {}", auto.policy_label()).ok();
-        write_centered(text, 20, &line, 34);
-        line.clear();
-        write!(line, "REFINEMENT PASS {} / 8", auto.passes).ok();
-        write_centered(text, 24, &line, 34);
-        line.clear();
-        if let Some(scan) = cal.scan.as_ref() {
-            write!(line, "CHECK {} / {}", scan.tested, scan.total).ok();
-        } else {
-            write!(line, "SCAN {} / {}", cal.point, cal.point_count).ok();
-        }
-        write_centered(text, 26, &line, 34);
-        line.clear();
-        write!(
-            line,
-            "OUT {:+.3} V    {:.2} HZ",
-            cal.millivolts as f32 / 1000.0,
-            value.frequency_hz
-        )
-        .ok();
-        write_centered(text, 28, &line, 34);
-        write_centered(text, 32, cal.status, 34);
-        write_centered(text, 36, "PRIOR PROFILE AND SAVED SLOTS KEPT", 34);
-        write_centered(text, 38, "REVIEW BEFORE ACCEPTING OR SAVING", 34);
-        write_centered(text, 41, "ENCODER: MENU", 24);
-        publish_markers(display, Markers([None; 4]), false, menu_active);
-        return;
-    }
-    if let Some(profile) = cal.pending_profile.as_ref() {
-        let points = profile.points();
-        let low = points[0];
-        let high = points[points.len() - 1];
-        write_centered(
-            text,
-            12,
-            if !cal.pending_quality.acceptable() {
-                "UNSAFE RESULT - OUTPUT ZERO"
-            } else if cal.automatic.is_some() {
-                "GRADED RESULT - OUTPUT ZERO"
-            } else {
-                "SCAN COMPLETE - OUTPUT ZERO"
-            },
-            30,
-        );
-        write_centered(
-            text,
-            14,
-            if cal.pending_quality.acceptable() {
-                "ACCEPT: USE RESULT IN RAM"
-            } else {
-                "CANNOT ACCEPT: RESCAN OR DISCARD"
-            },
-            34,
-        );
-        write_centered(text, 16, "RUN: ADJUST AND RESCAN", 30);
-        write_centered(text, 18, "DISCARD: KEEP PRIOR PROFILE", 30);
-        line.clear();
-        write!(
-            line,
-            "{} POINTS; {:.2} OCTAVES",
-            points.len(),
-            (high.millicents - low.millicents) as f32 / 1_200_000.0
-        )
-        .ok();
-        write_centered(text, 20, &line, 32);
-        line.clear();
-        write!(
-            line,
-            "CV {:+.3} TO {:+.3} V",
-            low.microvolts as f32 / 1e6,
-            high.microvolts as f32 / 1e6
-        )
-        .ok();
-        write_centered(text, 22, &line, 32);
-        line.clear();
-        pitch_units::write_pitch(&mut line, low.millicents).ok();
-        write!(line, " TO ").ok();
-        pitch_units::write_pitch(&mut line, high.millicents).ok();
-        write_centered(text, 24, &line, 32);
-        write_centered(
-            text,
-            26,
-            oscillator_calibration::discovery::advice(profile),
-            32,
-        );
-        let warnings = cal.scan_warnings;
-        let response = oscillator_calibration::discovery::millivolts_per_octave(profile);
-        let nonstandard = oscillator_calibration::discovery::nonstandard_response(profile);
-        if warnings.any() || nonstandard {
-            line.clear();
-            if nonstandard {
-                write!(
-                    line,
-                    "WARN {:.2}V/OCT U{} M{} F{} J{}",
-                    response.unwrap_or(0) as f32 / 1000.0,
-                    warnings.unstable,
-                    warnings.missing,
-                    warnings.flat,
-                    warnings.discontinuities
-                )
-                .ok();
-            } else {
-                write!(
-                    line,
-                    "WARN MISS {} UNST {} FLAT {} JUMP {}",
-                    warnings.missing, warnings.unstable, warnings.flat, warnings.discontinuities
-                )
-                .ok();
-            }
-            write_centered(text, 28, &line, 38);
-        } else {
-            write_centered(
-                text,
-                28,
-                if cal
-                    .automatic
-                    .as_ref()
-                    .and_then(|a| a.best.as_ref())
-                    .is_some_and(|s| s.targeted_plan().is_some())
-                {
-                    "SAMPLED CHECK - NOT EVERY PITCH"
-                } else {
-                    "ADVICE IS NOT A RANGE GUARANTEE"
-                },
-                32,
-            );
-        }
-        if let Some(_scan) = cal.automatic.as_ref().and_then(|a| a.best.as_ref()) {
-            line.clear();
-            write!(
-                line,
-                "{}  WORST {:.2}C  STABLE {:.2}C",
-                cal.pending_quality.grade.label(),
-                cal.pending_quality.worst_cents(),
-                cal.pending_quality.stability_cents(),
-            )
-            .ok();
-            write_centered(text, 30, &line, 32);
-        } else {
-            write_centered(text, 30, "RETUNING REQUIRES A NEW SCAN", 32);
-        }
-        write_centered(text, 32, cal.status, 32);
-        write_centered(text, 34, "SAVED SLOTS ARE UNCHANGED", 32);
-        write_centered(text, 36, "ACCEPT DOES NOT SAVE TO FLASH", 32);
-        write_centered(text, 38, "SAVE SEPARATELY IN PROFILES", 32);
-        write_centered(text, 41, "ENCODER: MENU", 24);
-        publish_markers(display, Markers([None; 4]), false, menu_active);
-        return;
-    }
-    for row in [22, 24, 26, 28] {
-        write_centered(text, row, "", 32);
-    }
-    if let Some(uv) = cal.failure_voltage {
-        line.clear();
-        write!(line, "FAILED AT {:+.4} V", uv as f32 / 1e6).ok();
-        write_centered(text, 24, &line, 32);
-    }
-    if let Some(failure) = cal.tracking_failure {
-        if let Some(previous) = failure.neighbour {
-            line.clear();
-            write!(line, "PREV {:+.4}V ", previous.microvolts as f32 / 1e6).ok();
-            pitch_units::write_pitch(&mut line, previous.millicents).ok();
-            write_centered(text, 22, &line, 32);
-            line.clear();
-            write!(
-                line,
-                "PITCH STEP {:+.2} CENTS",
-                (failure.rejected.millicents as i64 - previous.millicents as i64) as f32 / 1000.0
-            )
-            .ok();
-            write_centered(text, 26, &line, 32);
-        }
-        line.clear();
-        write!(
-            line,
-            "FAIL {:+.4}V ",
-            failure.rejected.microvolts as f32 / 1e6
-        )
-        .ok();
-        pitch_units::write_pitch(&mut line, failure.rejected.millicents).ok();
-        write_centered(text, 24, &line, 32);
-    }
-    line.clear();
-    if cal
-        .tracking_failure
-        .as_ref()
-        .is_some_and(|f| f.octave_sized_drop())
-    {
-        write!(line, "OCTAVE-SIZED DROP: CHECK SIGNAL").ok();
-    } else if let Some(error) = cal.zero_error_cents {
-        write!(line, "ZERO CHECK {:+.2}c (LIMIT 3c)", error).ok();
-    }
-    write_centered(text, 30, &line, 32);
-    write_centered(text, 32, cal.status, 32);
-    line.clear();
-    write!(
-        line,
-        "POINT {}/{}   OUT {:.3} V",
-        cal.point,
-        cal.point_count,
-        cal.millivolts as f32 / 1000.0
-    )
-    .ok();
-    write_centered(text, 34, &line, 32);
-    line.clear();
-    if value.valid {
-        write!(line, "{:.2} Hz  {:.3} Vpp", value.frequency_hz, value.vpp).ok();
-    } else {
-        write!(line, "NO SIGNAL").ok();
-    }
-    write_centered(text, 36, &line, 32);
-    if let Some(profile) = cal.profile.as_ref() {
-        let points = profile.points();
-        line.clear();
-        write!(
-            line,
-            "RAM: {} PTS, {:.1} CENTS",
-            points.len(),
-            (points.last().unwrap().millicents - points[0].millicents) as f32 / 1000.0
-        )
-        .ok();
-        write_centered(text, 38, &line, 32);
-    } else {
-        write_centered(text, 38, "NO COMPLETED CALIBRATION PROFILE", 32);
-    }
-    write_centered(text, 41, "ENCODER: MENU", 24);
-    publish_markers(display, Markers([None; 4]), false, menu_active);
-}
-
 fn publish_calibration(
     display: &pac::TUNER_DISPLAY,
     text: &mut TextWriter<'_>,
@@ -2045,16 +1783,12 @@ fn publish_calibration(
     menu_active: bool,
     plot_ready: bool,
 ) {
-    if !plot_ready && cal.tracking_failure.is_some() {
-        publish_calibration_text_fallback(display, text, cal, controls, value, menu_active);
-        return;
-    }
     let input = if cal.active() { cal.input } else { controls.calibration_input };
     let output = if cal.active() { cal.output } else { controls.calibration_output };
     let profile = calibration_plot_profile(cal);
     let mut line: String<48> = String::new();
     write_centered(text, 3, "INTONO", 20);
-    write_centered(text, 5, "TUNER [CAL] QUANT PRESETS", 27);
+    write_centered(text, 5, "TUNER [CAL] QUANT ROUTES", 27);
     write_centered(text, 7, "OSCILLATOR CALIBRATION", 32);
     write!(line, "OUT {} -> V/OCT    AUDIO -> IN {}", output, input).ok();
     write_centered(text, 9, &line, 40);
@@ -2100,7 +1834,17 @@ fn publish_calibration(
             write!(line, "WAITING FOR QUALIFIED PITCH").ok();
         }
         write_centered(text, 32, &line, 36);
-        write_centered(text, 35, "RUN AGAIN TO CANCEL", 32);
+        let filled = if cal.point_count == 0 { 0 } else {
+            (cal.point as usize * 20 / cal.point_count as usize).min(20)
+        };
+        line.clear();
+        line.push('[').ok();
+        for index in 0..20 {
+            line.push(if index < filled { '=' } else { '.' }).ok();
+        }
+        line.push(']').ok();
+        write_centered(text, 35, &line, 26);
+        write_centered(text, 37, "RUN AGAIN TO CANCEL", 32);
     } else if cal.pending_profile.is_some() {
         write_centered(text, 30, cal.status, 39);
         write_centered(text, 32, if cal.pending_quality.acceptable() {
@@ -2113,8 +1857,22 @@ fn publish_calibration(
     } else {
         write_centered(text, 30, cal.status, 40);
         write_centered(text, 32, "MEASURE: SCAN / CHECK / IMPROVE", 40);
-        write_centered(text, 35, "CV OUT -> OSC -> AUDIO IN", 34);
-        write_centered(text, 37, "USE A STABLE WAVEFORM", 34);
+        if let Some(failure) = cal.tracking_failure {
+            line.clear();
+            write!(line, "FAILED AT {:+.3} V", failure.rejected.microvolts as f32 / 1e6).ok();
+            write_centered(text, 35, &line, 34);
+            line.clear();
+            if let Some(previous) = failure.neighbour {
+                write!(line, "PITCH STEP {:+.1} CENTS",
+                    (failure.rejected.millicents as i64 - previous.millicents as i64) as f32 / 1000.0).ok();
+            } else {
+                line.push_str("CHECK SIGNAL AND PATCH").ok();
+            }
+            write_centered(text, 37, &line, 36);
+        } else {
+            write_centered(text, 35, "CV OUT -> OSC -> AUDIO IN", 34);
+            write_centered(text, 37, "USE A STABLE WAVEFORM", 34);
+        }
     }
     write_centered(text, 39, "SAVE / LOAD IN PROFILES", 27);
     write_centered(text, 41, "ENCODER: MENU", 21);

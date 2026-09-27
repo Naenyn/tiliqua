@@ -36,6 +36,24 @@ text layout remains stable while the plot is rebuilt, and PROFILES prewarms the
 retained calibration scene after a profile is loaded so returning to CAL need
 not show the legacy text layout as an intermediate screen.
 
+A later hardware photo still showed the old text view briefly: a stale
+tracking-failure record selected its renderer whenever the background was
+rebuilding. That renderer is now removed. CAL keeps the graphical layout,
+presents a live point-count progress bar and compact failure diagnostics, and
+blanks the plot until the new response is ready. The progress bar reflects
+acquisition count; it is not yet a live measured-point plot.
+
+The intended navigation is four primary utility surfaces: TUNER, CAL, QUANT,
+and ROUTES. CAL owns scan, automatic check/improve, review, and quality display.
+Its profile browser should become a contextual library panel rather than a
+separate operating screen. QUANT similarly owns scale editing and its scale
+browser. ROUTES configures input/output pairing and optional calibration and
+quantization; it is not a generic “presets” page. Existing VERIFY, PROFILES,
+note, and setup menu pages remain functional as an intermediate implementation.
+Do not remove their storage or advanced controls until replacement navigation
+is tested. Live points on the graph need an incremental redraw policy that
+cannot stall acquisition or show a previous profile as the current run.
+
 ### Complete retained graphics fixtures (2026-09-09)
 
 `ui_canvas::grid_segment` and `trace_segment` expose bounded units of retained
