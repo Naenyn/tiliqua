@@ -25,8 +25,8 @@ axis is measured pitch. A guide starts at the first measured point and rises
 at 1 V/oct. The measured polyline uses only stored points, with no implied
 extrapolation or fabricated correction series. Profile changes invalidate the
 cached plot in both background banks; the previous graphical scene stays
-blanked while a replacement is prepared. VERIFY, PROFILES, PLAY and QUANTIZER
-retain their text views for now. This is a visual first pass, not a change to
+blanked while a replacement is prepared. PLAY and QUANTIZER retain their text
+views for now. This is a visual first pass, not a change to
 calibration acquisition, acceptance, or flash storage.
 
 The initial hardware photo exposed a text/plot overlap: the actual overlay
@@ -50,9 +50,27 @@ separate operating screen. QUANT similarly owns scale editing and its scale
 browser. ROUTES configures input/output pairing and optional calibration and
 quantization; it is not a generic “presets” page. Existing VERIFY, PROFILES,
 note, and setup menu pages remain functional as an intermediate implementation.
-Do not remove their storage or advanced controls until replacement navigation
-is tested. Live points on the graph need an incremental redraw policy that
-cannot stall acquisition or show a previous profile as the current run.
+The CAL, PROFILES, and VERIFY menu pages now share one graphical display with
+different contextual status lines; their actions remain separate while the
+menu design is being revised. Do not remove storage or advanced controls until
+replacement navigation is tested. Live points require incremental redraw without stalling acquisition
+or showing a previous profile as the current run; the first implementation is
+described below.
+
+### Provisional response trace (2026-09-27, awaiting hardware check)
+
+During a new characterization sweep, CAL now displays the empty calibration
+grid instead of a previously accepted profile. Accepted *provisional* sweep
+points extend the response line in the unused framebuffer bank, and only that
+bank is swapped into view. The scan uses fixed -5..+8 V axes anchored to the
+first qualified pitch, avoiding a curve that stretches with every new point.
+Each bank tracks its own drawn prefix; a discovery restart, reduced point
+count, or changed starting point invalidates the provisional image before it
+can be mistaken for a continuous calibrated curve. The completed candidate
+returns to the normal profile renderer and its quality grade. This changes
+only visualization, not the measured data, acceptance policy, or flash format.
+It requires a hardware scan to check redraw cadence and tearing; none was
+flashed while the rack was off.
 
 ### Complete retained graphics fixtures (2026-09-09)
 

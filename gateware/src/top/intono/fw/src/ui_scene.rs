@@ -49,6 +49,65 @@ pub enum Work {
 
 pub const CLEAR_WORDS_PER_TICK: usize = 1024;
 
+/// Tracks provisional graph strokes independently for the two framebuffer
+/// banks. Only the back bank is extended before publication. A restarted
+/// discovery segment must first clear both old traces.
+pub struct LiveTrace {
+    active: bool,
+    first: Option<(i32, i32)>,
+    last: Option<(i32, i32)>,
+    count: usize,
+    drawn: [usize; 2],
+}
+
+impl LiveTrace {
+    pub const fn new() -> Self {
+        Self { active: false, first: None, last: None, count: 0, drawn: [0; 2] }
+    }
+
+    /// Returns true when an earlier provisional trace must be erased.
+    pub fn observe(
+        &mut self,
+        active: bool,
+        first: Option<(i32, i32)>,
+        last: Option<(i32, i32)>,
+        count: usize,
+    ) -> bool {
+        if !active {
+            self.active = false;
+            self.first = None;
+            self.last = None;
+            self.count = 0;
+            self.drawn = [0; 2];
+            return false;
+        }
+        let restart = !self.active
+            || (self.first.is_some() && self.first != first)
+            || count < self.count
+            || (count == self.count && self.last != last);
+        if restart {
+            self.drawn = [0; 2];
+        }
+        self.active = true;
+        self.first = first;
+        self.last = last;
+        self.count = count;
+        restart
+    }
+
+    pub fn reset_bank(&mut self, bank: usize) {
+        self.drawn[bank] = 0;
+    }
+
+    pub fn pending(&self, bank: usize) -> core::ops::Range<usize> {
+        self.drawn[bank].max(1)..self.count
+    }
+
+    pub fn mark_drawn(&mut self, bank: usize) {
+        self.drawn[bank] = self.count;
+    }
+}
+
 pub struct Backgrounds {
     resident: [Option<Scene>; 2],
     preparing: Option<(usize, Scene, usize)>,
@@ -265,5 +324,27 @@ mod tests {
             assert_eq!(backgrounds.step(bank, Scene::Calibration, words),
                 Work::Clear { first: 0, end: words });
         }
+    }
+
+    #[test]
+    fn live_trace_advances_each_bank_and_restarts_on_discontinuity() {
+        let mut trace = LiveTrace::new();
+        assert!(trace.observe(true, None, None, 0));
+        assert!(trace.pending(0).is_empty());
+        assert!(!trace.observe(true, Some((-5, 100)), Some((-4, 200)), 2));
+        assert_eq!(trace.pending(0), 1..2);
+        trace.mark_drawn(0);
+        assert!(trace.pending(0).is_empty());
+        assert_eq!(trace.pending(1), 1..2);
+        assert!(!trace.observe(true, Some((-5, 100)), Some((-3, 300)), 3));
+        assert_eq!(trace.pending(0), 2..3);
+        assert_eq!(trace.pending(1), 1..3);
+        assert!(trace.observe(true, Some((0, 800)), Some((1, 900)), 2));
+        assert_eq!(trace.pending(0), 1..2);
+        trace.mark_drawn(0);
+        trace.reset_bank(0);
+        assert_eq!(trace.pending(0), 1..2);
+        assert!(!trace.observe(false, None, None, 0));
+        assert!(trace.observe(true, None, None, 0));
     }
 }

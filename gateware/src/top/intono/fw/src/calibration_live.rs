@@ -210,6 +210,9 @@ impl Live {
             || self.verifying
             || self.automatic.as_ref().is_some_and(|a| a.active())
     }
+    pub fn acquiring_points(&self) -> Option<&[crate::oscillator_calibration::Point]> {
+        self.sweep.as_ref().map(Sweep::progress_points)
+    }
     fn operation_profile(&self) -> Option<&Profile> {
         if self.automatic.as_ref().is_some_and(|a| a.active()) {
             self.pending_profile.as_ref()

@@ -479,6 +479,29 @@ impl BackgroundCanvas {
         }
     }
 
+    fn draw_live_calibration_segments(
+        &mut self,
+        points: &[oscillator_calibration::Point],
+        next_points: core::ops::Range<usize>,
+    ) {
+        let Some(anchor) = points.first() else { return };
+        for index in next_points {
+            if index >= points.len() { break; }
+            let location = |sample: oscillator_calibration::Point| {
+                ui_canvas::live_calibration_point(
+                    ui_canvas::CALIBRATION_PLOT,
+                    sample.microvolts,
+                    sample.millicents,
+                    anchor.microvolts,
+                    anchor.millicents,
+                )
+            };
+            if let (Some(a), Some(b)) = (location(points[index - 1]), location(points[index])) {
+                self.thick_line(a.x, a.y, b.x, b.y, 0xDB);
+            }
+        }
+    }
+
     fn draw_border(&mut self) {
         const SUBTLE: u8 = (2 << 4) | 9;
         let cx = 360;
@@ -1202,292 +1225,6 @@ fn publish_tuner(
 const CHANNEL_HUES: [u8; 4] = [1, 5, 9, 13];
 mod pitch_units;
 
-fn publish_profiles(
-    display: &pac::TUNER_DISPLAY,
-    text: &mut TextWriter<'_>,
-    cal: &calibration_live::Live,
-    editor: &oscillator_calibration::name::Editor,
-    slot: u8,
-    position: u8,
-    status: &str,
-    menu_active: bool,
-) {
-    write_centered(text, 3, "OSCILLATOR PROFILES", 28);
-    let mut line: String<48> = String::new();
-    write!(line, "STORAGE SLOT {} OF 4", slot).ok();
-    write_centered(text, 8, &line, 30);
-    write_centered(text, 10, "SAVE REPLACES SELECTED SLOT", 32);
-    write_centered(text, 12, "LOAD NEVER STARTS OUTPUT", 30);
-    write_centered(text, 15, "NAME DRAFT", 24);
-    write_centered(text, 17, editor.name(), 26);
-    line.clear();
-    write!(line, "EDIT CHARACTER {} OF 24", position).ok();
-    write_centered(text, 19, &line, 30);
-    line.clear();
-    match status {
-        "PROFILE LOADED - OUTPUT OFF" => {
-            write!(line, "LOADED SLOT {} - OUTPUT OFF", slot).ok();
-        }
-        "PROFILE SAVED" => {
-            write!(line, "SAVED SLOT {} - READBACK OK", slot).ok();
-        }
-        _ => {
-            line.push_str(status).ok();
-        }
-    }
-    write_centered(text, 34, &line, 34);
-    if let Some(profile) = cal.profile.as_ref() {
-        line.clear();
-        write!(line, "RAM: {}", profile.name()).ok();
-        write_centered(text, 36, &line, 34);
-        let route = cal.profile_route.unwrap();
-        line.clear();
-        write!(
-            line,
-            "{} POINTS  IN {} -> OUT {}",
-            profile.points().len(),
-            route.input(),
-            route.output()
-        )
-        .ok();
-        write_centered(text, 38, &line, 32);
-    } else {
-        write_centered(text, 36, "NO ACTIVE CALIBRATION", 30);
-    }
-    write_centered(text, 41, "KEEP OSCILLATOR TUNING FIXED", 30);
-    publish_markers(display, Markers([None; 4]), false, menu_active);
-}
-
-fn publish_verification(
-    display: &pac::TUNER_DISPLAY,
-    text: &mut TextWriter<'_>,
-    cal: &calibration_live::Live,
-    controls: RuntimeControls,
-    value: ChannelMeasurement,
-    menu_active: bool,
-) {
-    write_centered(text, 3, "CHECK CALIBRATION PROFILE", 28);
-    let mut line: String<48> = String::new();
-    if let Some(route) = cal.profile_route {
-        write!(
-            line,
-            "OUT {} -> V/OCT; AUDIO -> IN {}",
-            route.output(),
-            route.input()
-        )
-        .ok();
-        write_centered(text, 8, &line, 34);
-    } else {
-        write_centered(text, 8, "RUN CALIBRATION FIRST", 30);
-    }
-    write_centered(text, 10, "KEEP THE CALIBRATION PATCH", 30);
-    write_centered(text, 12, "DO NOT RETUNE THE OSCILLATOR", 32);
-    let target = if cal.verifying {
-        cal.target_millicents
-    } else if controls.verify_scan && cal.scan.is_some() {
-        cal.scan.as_ref().unwrap().target
-    } else if cal.verifying {
-        cal.target_millicents
-    } else {
-        controls.target_millicents
-    };
-    line.clear();
-    write!(line, "TARGET ").ok();
-    pitch_units::write_pitch(&mut line, target).ok();
-    write!(
-        line,
-        "  {:+.3} V",
-        pitch_units::nominal_volts(target, controls.zero_note)
-    )
-    .ok();
-    write_centered(text, 15, &line, 34);
-    line.clear();
-    write!(line, "0 V = ").ok();
-    pitch_units::write_note(&mut line, controls.zero_note as i32).ok();
-    write!(line, "; 1 V/OCT; A4 440").ok();
-    write_centered(text, 17, &line, 34);
-    if let Some(profile) = cal.profile.as_ref() {
-        let points = profile.points();
-        line.clear();
-        pitch_units::write_pitch(&mut line, points[0].millicents).ok();
-        write!(line, " TO ").ok();
-        pitch_units::write_pitch(&mut line, points[points.len() - 1].millicents).ok();
-        write_centered(text, 19, &line, 34);
-    }
-    write_centered(
-        text,
-        32,
-        if cal.verifying {
-            cal.status
-        } else if cal.profile.is_none() {
-            "NO COMPLETED CAL - VERIFY BLOCKED"
-        } else if cal.status == "DONE - PROFILE IN RAM" {
-            "READY - RUN IN MENU"
-        } else {
-            cal.status
-        },
-        32,
-    );
-    line.clear();
-    write!(
-        line,
-        "CORRECTED OUT {:.3} V",
-        cal.millivolts as f32 / 1000.0
-    )
-    .ok();
-    write_centered(text, 34, &line, 32);
-    if let Some(r) = cal.refinement.as_ref() {
-        line.clear();
-        if r.check.tested < 9 {
-            write!(line, "REFINE MEASURE {} / 9", r.check.tested).ok();
-        } else {
-            write!(line, "REFINE COMPARE {} / {}", r.tested, r.total()).ok();
-        }
-        write_centered(text, 36, &line, 32);
-        line.clear();
-        if r.total() > 0 && r.tested == r.total() {
-            write!(
-                line,
-                "WORST OLD {:.2}c NEW {:.2}c",
-                r.original_worst, r.candidate_worst
-            )
-            .ok();
-        } else {
-            write!(line, "COMPARISON NOT YET COMPLETE").ok();
-        }
-        write_centered(text, 38, &line, 34);
-        write_centered(text, 40, "ORIGINAL PROFILE PRESERVED", 32);
-        write_centered(
-            text,
-            42,
-            if r.stage == oscillator_calibration::refinement::Stage::Ready {
-                "MENU: ACCEPT OR DISCARD"
-            } else {
-                r.reason
-            },
-            34,
-        );
-        publish_markers(display, Markers([None; 4]), false, menu_active);
-        return;
-    }
-    if !controls.verify_scan || cal.scan.is_none() {
-        line.clear();
-        if cal.verifying && value.valid {
-            write!(line, "MEASURED {:.2} HZ", value.frequency_hz).ok();
-        } else if cal.verifying {
-            write!(line, "NO VALID AUDIO PITCH").ok();
-        } else {
-            write!(line, "OUTPUT STOPPED").ok();
-        }
-        write_centered(text, 36, &line, 32);
-        line.clear();
-        if let Some(error) = cal.error_cents {
-            write!(line, "DEVIATION {:+.2} CENTS", error).ok();
-        } else if !cal.verifying {
-            write!(line, "DEVIATION: --").ok();
-        } else if cal.status != "CORRECTED TARGET ACTIVE" {
-            write!(line, "WAITING FOR OUTPUT / SETTLING").ok();
-        } else if !value.valid {
-            write!(line, "CHECK AUDIO INPUT {}", cal.input).ok();
-        } else {
-            write!(line, "WAITING FOR QUALIFIED PITCH").ok();
-        }
-        write_centered(text, 38, &line, 34);
-        line.clear();
-        if let Some(summary) = cal.deviation {
-            write!(
-                line,
-                "MEAN {:+.2}c  SPAN {:.2}c",
-                summary.mean, summary.spread
-            )
-            .ok();
-        } else {
-            write!(line, "MEAN / SPAN: --").ok();
-        }
-        write_centered(text, 40, &line, 32);
-    }
-    if controls.verify_scan {
-        if let Some(scan) = cal.scan.as_ref() {
-            line.clear();
-            write!(
-                line,
-                "{} {} / {} TARGETS",
-                if scan.repeat_check().is_some() {
-                    "REPEAT"
-                } else if scan.points_mode {
-                    "POINTS"
-                } else {
-                    "SCAN"
-                },
-                scan.tested,
-                scan.total
-            )
-            .ok();
-            write_centered(text, 36, &line, 32);
-            line.clear();
-            if scan.repeat_check().is_some() {
-                write!(line, "DIAGNOSTIC ONLY - CURVE UNCHANGED").ok();
-            } else if scan.tested > 0 {
-                let (pitch, error) = scan.checked_worst();
-                write!(line, "WORST {:+.2}c AT ", error).ok();
-                if scan.points_mode {
-                    let uv = cal.profile.as_ref().unwrap().points()[scan.worst_index].microvolts;
-                    write!(line, "{:.4} V", uv as f32 / 1000000.0).ok();
-                } else {
-                    pitch_units::write_pitch(&mut line, pitch).ok();
-                }
-            } else {
-                write!(line, "WAITING FOR STABLE SAMPLES").ok();
-            }
-            write_centered(text, 38, &line, 34);
-            line.clear();
-            if scan.repeat_check().is_some() {
-                write!(line, "2 SECOND SETTLE; RESULTS ON SERIAL").ok();
-            } else if scan.points_mode {
-                for (index, error) in scan.first_errors.iter().enumerate() {
-                    if let Some(error) = error {
-                        write!(line, "P{} {:+.2}c  ", index, error).ok();
-                    } else {
-                        write!(line, "P{} --  ", index).ok();
-                    }
-                }
-            } else {
-                write!(line, "MAX SPAN {:.2}c", scan.max_spread).ok();
-            }
-            write_centered(text, 40, &line, 32);
-        }
-        if let Some(check) = cal.scan.as_ref().and_then(|s| s.local.as_ref()) {
-            line.clear();
-            if check.tested == 9 {
-                write!(line, "{}", cal.scan.as_ref().unwrap().accuracy_label()).ok();
-            } else {
-                write!(line, "LOCAL CHECK {} / 9", check.tested).ok();
-            }
-            write_centered(text, 42, &line, 30);
-        } else {
-            write_centered(
-                text,
-                42,
-                if cal
-                    .scan
-                    .as_ref()
-                    .is_some_and(|s| s.repeat_check().is_some())
-                {
-                    "REPEAT: BOTH DIRECTIONS + REFERENCE"
-                } else if controls.verify_points {
-                    "POINTS: STORED CV / PITCH"
-                } else {
-                    "SCAN: RANGE IN 50-CENT STEPS"
-                },
-                30,
-            );
-        }
-    } else {
-        write_centered(text, 42, "RUN STOPS; NAVIGATION KEEPS RUNNING", 40);
-    }
-    publish_markers(display, Markers([None; 4]), false, menu_active);
-}
-
 fn publish_quantizer(display: &pac::TUNER_DISPLAY, text: &mut TextWriter<'_>, menu: bool) {
     if with_app(|app| app.ui.opts.tracker.page.value == Page::QuantSetups) {
         let (channels, slot) =
@@ -1782,6 +1519,9 @@ fn publish_calibration(
     value: ChannelMeasurement,
     menu_active: bool,
     plot_ready: bool,
+    profile_slot: u8,
+    profile_name: &str,
+    profile_status: &str,
 ) {
     let input = if cal.active() { cal.input } else { controls.calibration_input };
     let output = if cal.active() { cal.output } else { controls.calibration_output };
@@ -1789,7 +1529,11 @@ fn publish_calibration(
     let mut line: String<48> = String::new();
     write_centered(text, 3, "INTONO", 20);
     write_centered(text, 5, "TUNER [CAL] QUANT ROUTES", 27);
-    write_centered(text, 7, "OSCILLATOR CALIBRATION", 32);
+    write_centered(text, 7, match controls.mode {
+        runtime::OperatingMode::Profiles => "OSCILLATOR PROFILES",
+        runtime::OperatingMode::Verify => "CALIBRATION CHECK",
+        _ => "OSCILLATOR CALIBRATION",
+    }, 32);
     write!(line, "OUT {} -> V/OCT    AUDIO -> IN {}", output, input).ok();
     write_centered(text, 9, &line, 40);
     write_text(text, 7, 27, "OUTPUT CV (V)");
@@ -1816,16 +1560,70 @@ fn publish_calibration(
             cal.profile_quality.grade.label()
         });
     } else {
-        write_text(text, 31, 16, "NO PROFILE");
-        write_text(text, 31, 24, "UNMEASURED");
+        write_text(text, 31, 16, if cal.acquiring_points().is_some() {
+            "SCANNING"
+        } else {
+            "NO PROFILE"
+        });
+        write_text(text, 31, 24, if cal.acquiring_points().is_some() {
+            "PROVISIONAL"
+        } else {
+            "UNMEASURED"
+        });
     }
     if !plot_ready {
         write_centered(text, 29, "DRAWING RESPONSE PLOT", 34);
     }
-    if cal.active() {
+    if controls.mode == runtime::OperatingMode::Profiles {
         line.clear();
-        write!(line, "{}  {}/{}  {:+.3} V", cal.status, cal.point,
-            cal.point_count, cal.millivolts as f32 / 1000.0).ok();
+        write!(line, "PROFILE SLOT {} OF 4", profile_slot).ok();
+        write_centered(text, 30, &line, 34);
+        write_centered(text, 32, profile_name, 30);
+        write_centered(text, 35, profile_status, 40);
+        write_centered(text, 37, "SAVE / LOAD / RENAME IN MENU", 38);
+        write_centered(text, 39, "BACK TO CAL TO MEASURE", 32);
+    } else if controls.mode == runtime::OperatingMode::Verify {
+        write_centered(text, 30, cal.status, 40);
+        line.clear();
+        if let Some(scan) = cal.scan.as_ref() {
+            write!(line, "CHECK {} / {} TARGETS", scan.tested, scan.total).ok();
+        } else {
+            write!(line, "TARGET ").ok();
+            pitch_units::write_pitch(&mut line, if cal.verifying {
+                cal.target_millicents
+            } else {
+                controls.target_millicents
+            }).ok();
+        }
+        write_centered(text, 32, &line, 38);
+        line.clear();
+        if let Some(scan) = cal.scan.as_ref().filter(|scan| scan.complete) {
+            write!(line, "WORST {:+.2}c", scan.worst_error).ok();
+        } else if let Some(error) = cal.error_cents {
+            write!(line, "ERROR {:+.2}c", error).ok();
+        } else if value.valid {
+            write!(line, "INPUT {:.2} HZ", value.frequency_hz).ok();
+        } else {
+            line.push_str("WAITING FOR QUALIFIED PITCH").ok();
+        }
+        write_centered(text, 35, &line, 36);
+        write_centered(text, 37, "ADVANCED CHECK / IMPROVE IN MENU", 40);
+        write_centered(text, 39, "KEEP OSCILLATOR TUNING FIXED", 36);
+    } else if cal.active() {
+        let (phase, completed, total) = if cal.verifying {
+            if let Some(scan) = cal.scan.as_ref() {
+                ("CHECK", scan.tested as usize, scan.total as usize)
+            } else if let Some(refinement) = cal.refinement.as_ref() {
+                ("IMPROVE", refinement.tested, refinement.total())
+            } else {
+                ("CHECK", 0, 0)
+            }
+        } else {
+            ("SCAN", cal.point as usize, cal.point_count as usize)
+        };
+        line.clear();
+        write!(line, "{} {}/{}  {:+.3} V", phase, completed,
+            total, cal.millivolts as f32 / 1000.0).ok();
         write_centered(text, 30, &line, 43);
         line.clear();
         if value.valid {
@@ -1834,8 +1632,8 @@ fn publish_calibration(
             write!(line, "WAITING FOR QUALIFIED PITCH").ok();
         }
         write_centered(text, 32, &line, 36);
-        let filled = if cal.point_count == 0 { 0 } else {
-            (cal.point as usize * 20 / cal.point_count as usize).min(20)
+        let filled = if total == 0 { 0 } else {
+            (completed * 20 / total).min(20)
         };
         line.clear();
         line.push('[').ok();
@@ -1844,7 +1642,7 @@ fn publish_calibration(
         }
         line.push(']').ok();
         write_centered(text, 35, &line, 26);
-        write_centered(text, 37, "RUN AGAIN TO CANCEL", 32);
+        write_centered(text, 37, cal.status, 40);
     } else if cal.pending_profile.is_some() {
         write_centered(text, 30, cal.status, 39);
         write_centered(text, 32, if cal.pending_quality.acceptable() {
@@ -1874,13 +1672,23 @@ fn publish_calibration(
             write_centered(text, 37, "USE A STABLE WAVEFORM", 34);
         }
     }
-    write_centered(text, 39, "SAVE / LOAD IN PROFILES", 27);
+    if controls.mode == runtime::OperatingMode::Calibrator {
+        write_centered(text, 39, if cal.active() {
+            "RUN AGAIN TO CANCEL"
+        } else {
+            "SAVE / LOAD IN PROFILES"
+        }, 30);
+    }
     write_centered(text, 41, "ENCODER: MENU", 21);
     publish_markers(display, Markers([None; 4]), false, menu_active);
 }
 
 fn calibration_plot_profile(cal: &calibration_live::Live) -> Option<&oscillator_calibration::Profile> {
-    cal.pending_profile.as_ref().or(cal.profile.as_ref())
+    if cal.acquiring_points().is_some() {
+        None
+    } else {
+        cal.pending_profile.as_ref().or(cal.profile.as_ref())
+    }
 }
 
 fn calibration_plot_revision(profile: Option<&oscillator_calibration::Profile>) -> u64 {
@@ -2679,6 +2487,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
         let mut scene = ui_scene::Scene::Spiral;
         let mut calibration_revision = 0u64;
         let mut calibration_plot_dirty = false;
+        let mut live_trace = ui_scene::LiveTrace::new();
         let mut text_scenes = [None; 2];
         // Compact occupancy only: 512 bytes total, not an 8-KiB text shadow.
         let mut text_occupied = [ui_text::Occupied::new(), ui_text::Occupied::new()];
@@ -2947,10 +2756,15 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     | runtime::OperatingMode::Play
                     | runtime::OperatingMode::Quantizer
             );
-            let calibration_dashboard = ui_frame.controls.mode == runtime::OperatingMode::Calibrator;
+            let calibration_dashboard = matches!(ui_frame.controls.mode,
+                runtime::OperatingMode::Calibrator
+                    | runtime::OperatingMode::Profiles
+                    | runtime::OperatingMode::Verify);
             let calibration_prepared = matches!(
                 ui_frame.controls.mode,
-                runtime::OperatingMode::Calibrator | runtime::OperatingMode::Profiles
+                runtime::OperatingMode::Calibrator
+                    | runtime::OperatingMode::Profiles
+                    | runtime::OperatingMode::Verify
             );
             let requested_scene = if calibration_prepared {
                 ui_scene::Scene::Calibration
@@ -2960,8 +2774,17 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 ui_scene::Scene::Spiral
             };
             let plot_profile = calibration_plot_profile(&calibration);
+            let live_points = calibration.acquiring_points();
+            let live_first = live_points.and_then(|points| points.first())
+                .map(|point| (point.microvolts, point.millicents));
+            let live_last = live_points.and_then(|points| points.last())
+                .map(|point| (point.microvolts, point.millicents));
+            let restarted_live_trace = live_trace.observe(
+                live_points.is_some(), live_first, live_last,
+                live_points.map_or(0, |points| points.len()),
+            );
             let plot_revision = calibration_plot_revision(plot_profile);
-            if plot_revision != calibration_revision {
+            if plot_revision != calibration_revision || restarted_live_trace {
                 calibration_revision = plot_revision;
                 backgrounds.invalidate_calibration();
                 calibration_plot_dirty = true;
@@ -3003,10 +2826,26 @@ fn run(resources: &mut RuntimeResources) -> ! {
                             prepare_scene,
                             video_size.0 as usize * video_size.1 as usize / 4,
                         );
+                        if prepare_scene == ui_scene::Scene::Calibration {
+                            live_trace.reset_bank(bank);
+                        }
                     }
                     ui_scene::Work::Ready => {
+                        let mut live_updated = false;
+                        if prepare_scene == ui_scene::Scene::Calibration {
+                            if let Some(points) = live_points {
+                                let pending = live_trace.pending(bank);
+                                if !pending.is_empty() {
+                                    canvas.draw_live_calibration_segments(points, pending);
+                                    canvas.finish();
+                                    live_trace.mark_drawn(bank);
+                                    live_updated = true;
+                                }
+                            }
+                        }
                         swap_background = requested_scene != scene
-                            || (calibration_prepared && calibration_plot_dirty);
+                            || (calibration_prepared && calibration_plot_dirty)
+                            || (calibration_prepared && live_updated);
                     }
                 }
             }
@@ -3189,26 +3028,6 @@ fn run(resources: &mut RuntimeResources) -> ! {
                         runtime::OperatingMode::Quantizer | runtime::OperatingMode::Play
                     ) {
                         publish_quantizer(&tuner_display, &mut text, ui_frame.menu_active);
-                    } else if controls.mode == runtime::OperatingMode::Profiles {
-                        publish_profiles(
-                            &tuner_display,
-                            &mut text,
-                            &calibration,
-                            &name_editor,
-                            ui_frame.profile_slot,
-                            ui_frame.name_position,
-                            profile_status,
-                            ui_frame.menu_active,
-                        );
-                    } else if controls.mode == runtime::OperatingMode::Verify {
-                        publish_verification(
-                            &tuner_display,
-                            &mut text,
-                            &calibration,
-                            controls,
-                            measurements.channel(calibration.input),
-                            ui_frame.menu_active,
-                        );
                     } else {
                         publish_calibration(
                             &tuner_display,
@@ -3222,6 +3041,9 @@ fn run(resources: &mut RuntimeResources) -> ! {
                             }),
                             ui_frame.menu_active,
                             scene == ui_scene::Scene::Calibration && !calibration_plot_dirty,
+                            ui_frame.profile_slot,
+                            name_editor.name(),
+                            profile_status,
                         );
                     }
                 } else {

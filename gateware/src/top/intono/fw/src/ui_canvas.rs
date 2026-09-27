@@ -206,6 +206,29 @@ pub fn calibration_plot_point(
     })
 }
 
+/// Live scan uses fixed -5..+8 V axes, so new points do not stretch earlier
+/// segments as acquisition advances. The first qualified pitch anchors an
+/// ideal 1 V/oct span; this visualization is provisional, not a profile.
+pub fn live_calibration_point(
+    rect: Rect,
+    voltage_uv: i32,
+    pitch_mc: i32,
+    anchor_uv: i32,
+    anchor_mc: i32,
+) -> Option<Point> {
+    const LOW_UV: i32 = -5_000_000;
+    const HIGH_UV: i32 = 8_000_000;
+    let low_mc = anchor_mc as i64
+        - (anchor_uv as i64 - LOW_UV as i64) * 1_200_000 / 1_000_000;
+    let high_mc = low_mc + (HIGH_UV as i64 - LOW_UV as i64) * 1_200_000 / 1_000_000;
+    calibration_plot_point(
+        rect, voltage_uv, pitch_mc, LOW_UV,
+        low_mc.clamp(i32::MIN as i64, i32::MAX as i64) as i32,
+        HIGH_UV,
+        high_mc.clamp(i32::MIN as i64, i32::MAX as i64) as i32,
+    )
+}
+
 // Map a bounded measurement onto a plot axis; descending pixel axes support
 // graph Y coordinates. Arithmetic stays wide until after normalization.
 pub fn axis(value: i32, low: i32, high: i32, first: u16, last: u16) -> Option<i32> {
@@ -548,5 +571,22 @@ mod tests {
         assert_eq!(calibration_plot_point(rect, 5_000_000, 12_000_000, -5_000_000, 0, 5_000_000, 12_000_000),
                    Some(Point { x: 429, y: 190 }));
         assert!(calibration_plot_point(rect, 0, 0, 0, 0, 0, 0).is_none());
+    }
+
+    #[test]
+    fn provisional_calibration_trace_keeps_fixed_voltage_axis() {
+        let rect = CALIBRATION_PLOT;
+        let first = live_calibration_point(rect, -3_000_000, 1_000_000, -3_000_000, 1_000_000)
+            .unwrap();
+        let next = live_calibration_point(rect, -2_000_000, 2_200_000, -3_000_000, 1_000_000)
+            .unwrap();
+        let later = live_calibration_point(rect, 1_000_000, 5_800_000, -3_000_000, 1_000_000)
+            .unwrap();
+        assert!(rect.x < first.x && first.x < next.x && next.x < later.x);
+        assert!(first.y > next.y && next.y > later.y);
+        assert_eq!(first, live_calibration_point(rect, -3_000_000, 1_000_000,
+            -3_000_000, 1_000_000).unwrap());
+        assert_eq!(live_calibration_point(rect, i32::MAX, i32::MAX,
+            -3_000_000, 1_000_000).unwrap(), Point { x: 429, y: 190 });
     }
 }

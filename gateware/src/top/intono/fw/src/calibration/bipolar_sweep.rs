@@ -203,6 +203,12 @@ pub struct Sweep {
     warnings: ScanWarnings,
 }
 impl Sweep {
+    /// Provisional ascending measurements for the UI. These are not a
+    /// completed calibration profile and may be discarded during discovery.
+    pub fn progress_points(&self) -> &[Point] {
+        self.candidate.as_ref().map_or(&[], Curve::points)
+    }
+
     pub fn acquisition_diagnostic(&self) -> AcquisitionDiagnostic {
         AcquisitionDiagnostic {
             qualified: self.qualified_count,
