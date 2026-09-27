@@ -178,6 +178,28 @@ pub fn rectangle(rect: Rect, color: u8, emit: impl FnMut(Point, u8)) -> bool {
     grid(rect, 1, 1, color, emit)
 }
 
+/// The calibration response is plotted against *measured* pitch, not against
+/// the corrected output. A 1 V/oct guide uses the first measured anchor as
+/// its origin; both series share the same axes and neither extrapolates.
+pub fn calibration_plot_point(
+    rect: Rect,
+    voltage_uv: i32,
+    pitch_mc: i32,
+    first_uv: i32,
+    first_mc: i32,
+    last_uv: i32,
+    top_mc: i32,
+) -> Option<Point> {
+    let (a, b) = rect.corners()?;
+    if first_uv >= last_uv || first_mc >= top_mc {
+        return None;
+    }
+    Some(Point {
+        x: axis(voltage_uv, first_uv, last_uv, a.x as u16, b.x as u16)?,
+        y: axis(pitch_mc, first_mc, top_mc, b.y as u16, a.y as u16)?,
+    })
+}
+
 // Map a bounded measurement onto a plot axis; descending pixel axes support
 // graph Y coordinates. Arithmetic stays wide until after normalization.
 pub fn axis(value: i32, low: i32, high: i32, first: u16, last: u16) -> Option<i32> {
@@ -504,5 +526,16 @@ mod tests {
         assert_eq!(axis(0, -50, 50, 600, 100), Some(350));
         assert_eq!(axis(100, -50, 50, 100, 600), Some(600));
         assert_eq!(axis(0, 1, 1, 100, 600), None);
+    }
+
+    #[test]
+    fn calibration_response_uses_measured_pitch_and_clamps_safely() {
+        let rect = Rect { x: 100, y: 190, width: 350, height: 230 };
+        assert!(rect.fits_circle(336));
+        assert_eq!(calibration_plot_point(rect, -5_000_000, 0, -5_000_000, 0, 5_000_000, 12_000_000),
+                   Some(Point { x: 100, y: 419 }));
+        assert_eq!(calibration_plot_point(rect, 5_000_000, 12_000_000, -5_000_000, 0, 5_000_000, 12_000_000),
+                   Some(Point { x: 449, y: 190 }));
+        assert!(calibration_plot_point(rect, 0, 0, 0, 0, 0, 0).is_none());
     }
 }

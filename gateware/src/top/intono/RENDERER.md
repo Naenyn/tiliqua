@@ -16,6 +16,19 @@ below are retained as evidence of the builds that produced them.
 
 ## Contract
 
+### Calibration dashboard (2026-09-27)
+
+The CAL view now uses the retained framebuffer for a bounded response plot,
+with text overlaid for patch routing, profile range/quality, and the existing
+scan/review actions. The horizontal axis is actual output CV; the vertical
+axis is measured pitch. A guide starts at the first measured point and rises
+at 1 V/oct. The measured polyline uses only stored points, with no implied
+extrapolation or fabricated correction series. Profile changes invalidate the
+cached plot in both background banks; the previous graphical scene stays
+blanked while a replacement is prepared. VERIFY, PROFILES, PLAY and QUANTIZER
+retain their text views for now. This is a visual first pass, not a change to
+calibration acquisition, acceptance, or flash storage.
+
 ### Complete retained graphics fixtures (2026-09-09)
 
 `ui_canvas::grid_segment` and `trace_segment` expose bounded units of retained

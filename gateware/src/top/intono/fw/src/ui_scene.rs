@@ -12,6 +12,8 @@ pub enum Scene {
 // geometry between both background drawing paths and every live marker.
 pub const SPIRAL_OCTAVES: usize = 11;
 pub const SPIRAL_STEPS: usize = 192;
+pub const CAL_GRID_SEGMENTS: usize = 16;
+pub const CAL_CURVE_SEGMENTS: usize = 128;
 pub const SPIRAL_SPACING: f32 = 176.0 / SPIRAL_OCTAVES as f32;
 pub fn spiral_radius(semitones: f32) -> f32 {
     52.0 + SPIRAL_SPACING
@@ -25,7 +27,7 @@ impl Scene {
         match self {
             Self::Spiral => 2048 + 12 + SPIRAL_OCTAVES * SPIRAL_STEPS,
             Self::Linear => 2048 + 4 * 22,
-            Self::Calibration => 2048,
+            Self::Calibration => 2048 + CAL_GRID_SEGMENTS + 1 + CAL_CURVE_SEGMENTS,
         }
     }
 }
@@ -57,6 +59,19 @@ impl Backgrounds {
         Self {
             resident: [Some(Scene::Spiral), None],
             preparing: None,
+        }
+    }
+
+    /// A newly accepted or loaded profile changes the retained calibration
+    /// plot, even though its scene identity has not changed.
+    pub fn invalidate_calibration(&mut self) {
+        for resident in &mut self.resident {
+            if *resident == Some(Scene::Calibration) {
+                *resident = None;
+            }
+        }
+        if self.preparing.is_some_and(|(_, scene, _)| scene == Scene::Calibration) {
+            self.preparing = None;
         }
     }
 
@@ -226,5 +241,29 @@ mod tests {
             }
         );
         assert!(!backgrounds.flushed(1, Scene::Linear, 1024));
+    }
+
+    #[test]
+    fn calibration_invalidation_rebuilds_both_cached_banks() {
+        let mut backgrounds = Backgrounds::new();
+        let words = 1024;
+        for bank in 0..2 {
+            loop {
+                match backgrounds.step(bank, Scene::Calibration, words) {
+                    Work::Clear { .. } | Work::Draw { .. } => {}
+                    Work::Flush => {
+                        assert!(backgrounds.flushed(bank, Scene::Calibration, words));
+                        break;
+                    }
+                    Work::Ready => panic!("calibration was not prepared"),
+                }
+            }
+            assert_eq!(backgrounds.step(bank, Scene::Calibration, words), Work::Ready);
+        }
+        backgrounds.invalidate_calibration();
+        for bank in 0..2 {
+            assert_eq!(backgrounds.step(bank, Scene::Calibration, words),
+                Work::Clear { first: 0, end: words });
+        }
     }
 }
