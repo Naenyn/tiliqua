@@ -16,6 +16,7 @@ import subprocess
 import sys
 
 from . import sim
+from .release import source_label
 from .types import *
 from .. import pll
 from ..video import modeline
@@ -46,17 +47,6 @@ def top_level_cli(
 
     # Get some repository properties
     repo = git.Repo(search_parent_directories=True)
-
-    try:
-        repo_tag = repo.git.describe('--tags', '--exact-match', '--dirty')
-    except git.exc.GitCommandError:
-        repo_tag = repo.git.describe('--always', '--dirty')
-    if repo.is_dirty():
-        print(f"WARNING: repo is dirty (tag: {repo_tag})")
-        print(repo.git.status())
-        print(repo.git.diff('--stat'))
-    # Only keep what the bootloader / bitstreams can display
-    repo_tag = repo_tag[:BitstreamManifest.BITSTREAM_TAG_LEN]
 
     # Configure logging.
     logging.getLogger().setLevel(logging.DEBUG)
@@ -155,6 +145,13 @@ def top_level_cli(
 
     # Print help if no arguments are passed.
     args = parser.parse_args(args=None if sys.argv[1:] else ["--help"])
+
+    repo_tag, release_tag = source_label(
+        repo, args.name, BitstreamManifest.BITSTREAM_TAG_LEN)
+    if repo.is_dirty():
+        print(f"WARNING: repo is dirty (tag: {repo_tag})")
+        print(repo.git.status())
+        print(repo.git.diff('--stat'))
 
     if argparse_fragment:
         kwargs = argparse_fragment(args)
@@ -391,6 +388,26 @@ def top_level_cli(
                     "post-route timing gate failed; "
                     f"{minimum_headroom:.2f}% required: {details}")
 
+        archiver.build_info = {
+            "git_commit": repo.head.commit.hexsha,
+            "git_tag": release_tag,
+            "display_tag": repo_tag,
+            "source_dirty": repo.is_dirty(),
+            "product": args.name.lower(),
+            "artifact_name": artifact_name.lower(),
+            "hw_rev": args.hw.value,
+            "build_args": sys.argv[1:],
+            "asq_width": int(os.environ.get("TILIQUA_ASQ_WIDTH", "16")),
+            "asq_integer_bits": int(os.environ.get("TILIQUA_ASQ_I_BITS", "1")),
+            "audio_clock_hz": kwargs["clock_settings"].frequencies.audio,
+            "video_mode": "<match-bootloader>" if kwargs["clock_settings"].dynamic_modeline
+                          else getattr(args, "modeline", None),
+            "spread_spectrum": (archiver.external_pll_config.spread_spectrum
+                                if archiver.external_pll_config else None),
+            "nextpnr_opts": build_nextpnr_opts,
+            "synth_opts": build_flags["synth_opts"],
+            "ecppack_opts": build_flags["ecppack_opts"],
+        }
         archiver.with_bitstream().create()
 
         if hw_platform.ila:

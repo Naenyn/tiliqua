@@ -34,6 +34,7 @@ class ArchiveBuilder:
     external_pll_config: Optional[ExternalPLLConfig] = None
     bitstream_help: Optional[BitstreamHelp] = None
     artifact_name: Optional[str] = None
+    build_info: Optional[dict] = None
 
     _regions: List[MemoryRegion] = field(default_factory=list)
     _manifest: Optional[BitstreamManifest] = None
@@ -56,6 +57,10 @@ class ArchiveBuilder:
     @property
     def manifest_path(self) -> str:
         return os.path.join(self.build_path, "manifest.json")
+
+    @property
+    def build_info_path(self) -> str:
+        return os.path.join(self.build_path, "build-info.json")
 
     @property
     def bitstream_path(self) -> str:
@@ -195,11 +200,16 @@ class ArchiveBuilder:
             return False
 
         print(f"\nCreating bitstream archive {self.archive_name}...")
+        if self.build_info is not None:
+            with open(self.build_info_path, "w") as info_file:
+                json.dump(self.build_info, info_file, indent=2)
         with tarfile.open(self.archive_path, "w:gz") as tar:
             tar.add(self.bitstream_path, arcname="top.bit")
             tar.add(self.manifest_path, arcname="manifest.json")
             if self._firmware_bin_path and os.path.exists(self._firmware_bin_path):
                 tar.add(self._firmware_bin_path, arcname="firmware.bin")
+            if os.path.exists(self.build_info_path):
+                tar.add(self.build_info_path, arcname="build-info.json")
 
         self._print_archive_info()
         print(f"\nSaved to '{self.build_path}/{self.archive_name}'")
