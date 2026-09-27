@@ -1,6 +1,6 @@
 # Thumb-drive libraries: investigation and integration plan
 
-September 18, 2026. **Not enabled in the current TUNER build.** No bootloader
+September 18, 2026. **Not enabled in the current INTONO build.** No bootloader
 change or USB gateware addition is included in the automatic-calibration build.
 
 ## Upstream support exists
@@ -10,7 +10,7 @@ describes FAT filesystem operations through `rust-fatfs` and USB MSC DMA:
 directory access, file creation/allocation, reading and writing are supported.
 `FatStream` and `FatStreamWriter` support fixed-file streaming via PSRAM. Normal
 filesystem operations block; background streaming does not update FAT metadata.
-Thus the library is **not read-only**. TUNER has no integration with it yet.
+Thus the library is **not read-only**. INTONO has no integration with it yet.
 
 The [Tiliqua UsbLoad work](https://github.com/apfaudio/tiliqua/pull/177), inspected
 at `seb/usbloadcln` commit `7808c1be379c810b32e7b1f06a721d4e39038997`, supplies a
@@ -18,7 +18,7 @@ different, lower-resource path: the bootloader reads a named root-directory
 8.3 file from FAT32 into PSRAM before launching the user bitstream. Its `wavplay`
 example uses `with_usb_load("m.wav", 0x400000, 0x100000)`. This avoids adding USB
 hardware to the instrument, but that handoff is load-only and needs a compatible
-bootloader. It does not provide runtime browsing or saving from TUNER.
+bootloader. It does not provide runtime browsing or saving from INTONO.
 
 ## Recommended implementation boundary
 
@@ -26,7 +26,7 @@ The desired feature is explicit load/save of oscillator curves and scales, not
 unbounded streaming or automatic replacement of active routes. Two approaches
 need evaluation:
 
-1. Add MSC hosting to TUNER for live import/export. Budget actual routed LUT,
+1. Add MSC hosting to INTONO for live import/export. Budget actual routed LUT,
    memory, clocks and PSRAM contention first. Current FPGA utilization is about
    78% LUT/EBR, so feasibility must not be assumed from the small file sizes.
 2. Use the bootloader for import and a separate library-management/export mode
@@ -97,7 +97,7 @@ claim current installed read-only support fulfills load/save requirements.
 
 ## Resource check and MIDI transport (September 22)
 
-The TUNER build with a small, dedicated TRS MIDI receive FIFO and nine-row
+The INTONO build with a small, dedicated TRS MIDI receive FIFO and nine-row
 menu routes on R5 at 19,270/24,288 total LUT4s (79%), 45/56 EBRs (80%), and
 14/28 DSPs (50%). Its 60-MHz main clock closes at 66.39 MHz. This receiver
 reuses the board's
@@ -109,14 +109,14 @@ running routes and no automatic flash write.
 For a reference point only, the repository's standalone, gateware-only
 `usb_host` MIDI-to-CV demo routes at 3,358/24,288 LUT4s (13%) and no EBR.
 That number includes its own codec and CV path, is **not** an incremental cost
-measurement when combined with TUNER, and says nothing about mass storage or
+measurement when combined with INTONO, and says nothing about mass storage or
 FAT. Crucially, the demo hardwires VBUS on because it has no SoC Type-C CC
 negotiation. It must never be copied into this instrument as a USB host power
 policy. USB MIDI and USB MSC also need deliberate port ownership and sharing;
 the tiny TRS receiver is not a substitute for either one.
 
 The next USB feasibility experiment should add only the host controller and
-safe CC/VBUS ownership to an isolated copy of the TUNER design, synthesize it,
+safe CC/VBUS ownership to an isolated copy of the INTONO design, synthesize it,
 and compare incremental LUT/EBR/clock utilization. Then evaluate MIDI class
 and MSC separately. The installed MSC stack is read-only, so even a successful
 fit would not yet deliver the requested thumb-drive save path. If the full

@@ -3,17 +3,16 @@
 ## Hardware testing instruction
 
 The user authorized automatically flashing successfully qualified **non-circular
-1280x720 tuner builds to slot 1** after building, until they revoke this
+1280x720 INTONO builds to slot 1** after building, until they revoke this
 instruction (2026-09-08). Check for other active flashing work and acquire
 `/tmp/tiliqua-flash.lock` for the complete flash sequence. Do not automatically
 flash circular builds, other slots, or timing-failed artifacts. Preserve option
 storage unless the user requests otherwise.
 
-Keep the bootloader name **TUNER** regardless of the feature set (user instruction,
-2026-09-08). Normal builds use the existing default name; do not override it with
-development milestone names such as TUNER-RENDERER or TUNER-ATOMIC. Identify builds
-in development records by commit and archive hash instead. Display-target build
-directories may remain distinct, but should not dictate longer bootloader labels.
+The earlier instruction to keep the bootloader name **TUNER** regardless of the
+feature set (2026-09-08) was superseded when the instrument became **INTONO**.
+Normal builds now use INTONO; historical TUNER archive names and measurements
+below are retained as evidence of the builds that produced them.
 
 ## Contract
 

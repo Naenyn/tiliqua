@@ -158,9 +158,9 @@ class TunerPeripheral(wiring.Component):
         m.d.comb += [cv.sample.eq(samples[cv_channel]), cv.accept.eq(self.i.valid),
                      cv.clear.eq((previous_cv_channel != cv_channel) | self._cv_channel.element.w_stb),
                      self._cv_sample.f.value.r_data.eq(cv.packed)]
-        # TUNER profiles may use the codec's documented asymmetric -5..+8 V
+        # INTONO profiles may use the codec's documented asymmetric -5..+8 V
         # range. Keep CalibrationOutput's conservative +/-5 V defaults for
-        # every other consumer, and widen only these guarded TUNER lanes.
+        # every other consumer, and widen only these guarded INTONO lanes.
         m.submodules.cal_output = cal = CalibrationOutput(maximum_counts=32_000)
         m.d.comb += [cal.command.eq(self._cal_command.element.w_data),
                      cal.write.eq(self._cal_command.element.w_stb),

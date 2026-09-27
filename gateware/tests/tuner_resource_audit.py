@@ -1,4 +1,4 @@
-"""Read a synthesized TUNER netlist; no board or project mutations."""
+"""Read a synthesized INTONO netlist; no board or project mutations."""
 import argparse
 from collections import Counter
 import json

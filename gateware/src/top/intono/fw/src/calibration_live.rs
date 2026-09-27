@@ -402,7 +402,7 @@ impl Live {
         };
         self.scan = if controls.verify_scan {
             self.profile.as_ref().and_then(|p| {
-                if option_env!("TILIQUA_TUNER_REPEAT_DIAGNOSTIC") == Some("1") {
+                if option_env!("TILIQUA_INTONO_REPEAT_DIAGNOSTIC") == Some("1") {
                     Scan::repeat(p, 4454000)
                 } else if controls.verify_points {
                     Scan::points(p)

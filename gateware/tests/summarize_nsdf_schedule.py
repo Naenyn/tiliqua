@@ -1,4 +1,4 @@
-"""Summarize one continuous TUNER serial session, without claiming accuracy.
+"""Summarize one continuous INTONO serial session, without claiming accuracy.
 
 Input must contain a single boot/session; concatenated boots and missing report
 slots are rejected by the existing strict parser. Use --last-seconds to inspect

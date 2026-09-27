@@ -1,7 +1,8 @@
 # Scale architecture
 
-Primary development branch: `codex/tuner`. TUNER is a working product name.
-The prior `codex/tuner-nsdf-integration` branch is retained as a checkpoint.
+The instrument is now named INTONO; this document records work originally done
+on `codex/tuner`. The prior `codex/tuner-nsdf-integration` branch is a historical
+checkpoint, not the current integration branch.
 
 ## Implemented scale engine and preset integration
 
@@ -137,7 +138,7 @@ for the outstanding physical CV timing check and current resource counts.
 
 ## Hardware checklist after power-up
 
-- Flash normal 1280x720 TUNER slot 1 only after user confirms rack is on.
+- Flash normal 1280x720 INTONO slot 1 only after user confirms rack is on.
 - Slow CV/LFO IN1, OUT1 to V/oct: test C major, D minor, both pentatonics.
 - Chromatic +12 transpose must move output up 1 V; 24 EDO gives 1/24 V steps.
 - Changing scale/root/transpose stops safely and requires RUN again.

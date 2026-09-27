@@ -1,4 +1,4 @@
-"""Offline inspection of TUNER profile/scale files and lossless Scala export.
+"""Offline inspection of INTONO profile/scale files and lossless Scala export.
 
 No USB, serial, device storage or route access. Recognizes content, not suffixes.
 Oscillator curves and relative scale intervals are deliberately separate types.
@@ -67,20 +67,20 @@ def note_name(note):
     return ('C','C#','D','D#','E','F','F#','G','G#','A','A#','B')[note%12]+str(note//12-1)
 
 
-def scala_text(record,description='TUNER exported scale'):
+def scala_text(record,description='INTONO exported scale'):
     if record['kind']!='scale':raise ValueError('An oscillator profile is not a quantization scale')
     if not description or len(description)>240 or not description.strip() or description.lstrip().startswith('!') or any(ord(c)<32 or ord(c)>126 for c in description):
         raise ValueError('Use a nonempty printable ASCII description, not a Scala comment')
     values=record['degrees_millicents'][1:]+[record['period_millicents']]
     # Decimal tokens are always cents in Scala, even for integer cent values.
-    return '! TUNER scale export; exact 0.001-cent stored resolution\n'+description+'\n'+str(len(values))+'\n'+''.join(f'{mc//1000}.{mc%1000:03d}\n' for mc in values)
+    return '! INTONO scale export; exact 0.001-cent stored resolution\n'+description+'\n'+str(len(values))+'\n'+''.join(f'{mc//1000}.{mc%1000:03d}\n' for mc in values)
 
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('source',type=Path)
     parser.add_argument('--export-scala',type=Path,help='Create a NEW .scl from a validated TSC1 scale')
-    parser.add_argument('--description',default='TUNER exported scale')
+    parser.add_argument('--description',default='INTONO exported scale')
     args=parser.parse_args()
     try:
         with args.source.open('rb') as stream:data=stream.read(MAX_FILE_BYTES+1)

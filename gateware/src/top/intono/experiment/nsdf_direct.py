@@ -1,4 +1,4 @@
-"""Experimental exact type-II NSDF frame engine, not connected to TUNER.
+"""Experimental exact type-II NSDF frame engine, not connected to INTONO.
 
 Three pipelined products per pair: correlation and both overlap energies.
 Serialized restoring divider emits signed Q20 NSDF. Input must already have

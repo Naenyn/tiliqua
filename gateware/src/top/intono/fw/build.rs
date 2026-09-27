@@ -1,10 +1,15 @@
 fn main() {
+    println!("cargo:rerun-if-env-changed=TILIQUA_INTONO_REPEAT_DIAGNOSTIC");
     println!("cargo:rerun-if-env-changed=TILIQUA_TUNER_REPEAT_DIAGNOSTIC");
-    let repeat = std::env::var("TILIQUA_TUNER_REPEAT_DIAGNOSTIC").unwrap_or_default();
+    let repeat = std::env::var("TILIQUA_INTONO_REPEAT_DIAGNOSTIC")
+        .or_else(|_| std::env::var("TILIQUA_TUNER_REPEAT_DIAGNOSTIC"))
+        .unwrap_or_default();
     assert!(matches!(repeat.as_str(), "" | "0" | "1"));
-    println!("cargo:rustc-env=TILIQUA_TUNER_REPEAT_DIAGNOSTIC={repeat}");
+    println!("cargo:rustc-env=TILIQUA_INTONO_REPEAT_DIAGNOSTIC={repeat}");
+    println!("cargo:rerun-if-env-changed=TILIQUA_INTONO_NSDF_TRACE");
     println!("cargo:rerun-if-env-changed=TILIQUA_TUNER_NSDF_TRACE");
-    let trace = std::env::var("TILIQUA_TUNER_NSDF_TRACE")
+    let trace = std::env::var("TILIQUA_INTONO_NSDF_TRACE")
+        .or_else(|_| std::env::var("TILIQUA_TUNER_NSDF_TRACE"))
         .unwrap_or_else(|_| "continuous".into());
     assert!(
         matches!(
@@ -17,5 +22,5 @@ fn main() {
     if trace == "continuous" {
         println!("cargo:rustc-cfg=tuner_nsdf_continuous");
     }
-    println!("cargo:rustc-env=TILIQUA_TUNER_NSDF_TRACE={trace}");
+    println!("cargo:rustc-env=TILIQUA_INTONO_NSDF_TRACE={trace}");
 }

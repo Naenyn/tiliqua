@@ -1,4 +1,4 @@
-"""Read a TUNER diagnostic through the apfbug USB-UART bridge.
+"""Read an INTONO diagnostic through the apfbug USB-UART bridge.
 
 Run after flashing, before the user starts CAL. Only complete 2048-sample
 captures are written; partial/backpressured exports are reported as incomplete.
@@ -38,7 +38,7 @@ def main():
                 line=raw.decode("ascii",errors="replace").strip()
                 log.write(line+"\n");log.flush()
                 if line=="CAPTURE READY":
-                    print("TUNER diagnostic link confirmed; ready for CAL.",flush=True)
+                    print("INTONO diagnostic link confirmed; ready for CAL.",flush=True)
                 elif line.startswith("CAL SOURCE "):
                     print(line,flush=True)
                 elif line.startswith("CAPTURE BEGIN "):

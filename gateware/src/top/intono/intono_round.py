@@ -1,7 +1,7 @@
 # Copyright (c) 2026
 #
 # SPDX-License-Identifier: CERN-OHL-S-2.0
-"""Official 720x720 circular-display tuner build entry point."""
+"""Official 720x720 circular-display INTONO build entry point."""
 
 import os
 from pathlib import Path

@@ -1,4 +1,4 @@
-"""Small TRS MIDI receive FIFO for the TUNER SoC.
+"""Small TRS MIDI receive FIFO for the INTONO SoC.
 
 This is deliberately separate from USB hosting. Reading a 32-bit word pops
 one decoded three-byte MIDI message; zero means that the FIFO is empty.

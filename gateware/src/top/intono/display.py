@@ -1,7 +1,7 @@
 # Copyright (c) 2026
 #
 # SPDX-License-Identifier: CERN-OHL-S-2.0
-"""Tuner compatibility adapter around the shared instrument text compositor.
+"""INTONO display adapter around the shared instrument text compositor.
 
 CPU-authored static pixels arrive from the retained PSRAM framebuffer. Live
 markers and text are composited on scanout, without phosphor/persistence engines.
@@ -84,7 +84,7 @@ FONT_INDEX = {char: index for index, char in enumerate(FONT_CHARS)}
 FONT_INIT = [row for char in FONT_CHARS for row in (*FONT[char], 0)]
 
 
-class TunerOverlay(wiring.Component):
+class IntonoOverlay(wiring.Component):
     FRAME_FIELDS = ("marker_x", "marker_y", "marker_hue", "marker_lens_base",
                     "marker_lens_bank", "marker_valid", "marker_visualizer", "menu_active",
                     "marker1", "marker2", "marker3", "blank_background")
@@ -287,7 +287,7 @@ class TunerOverlay(wiring.Component):
         return m
 
 class Peripheral(wiring.Component):
-    """CSR state and tile writer for :class:`TunerOverlay`."""
+    """CSR state and tile writer for :class:`IntonoOverlay`."""
 
     class Marker(csr.Register, access="w"):
         x: csr.Field(csr.action.W, unsigned(12))
@@ -334,12 +334,12 @@ class Peripheral(wiring.Component):
         # by draw_options for the active page or option.
         self.menu_memory = Memory(
             shape=unsigned(8), depth=512, init=[])
-        self.overlay = TunerOverlay(
+        self.overlay = IntonoOverlay(
             self.tile_memory, self.menu_memory,
             h_active=h_active, rotate_left=rotate_left, double_buffered=True,
             ascii_text=True)
         self.staging = {name: Signal.like(getattr(self.overlay, name))
-                        for name in TunerOverlay.FRAME_FIELDS}
+                        for name in IntonoOverlay.FRAME_FIELDS}
         payload_width = sum(len(field) for field in self.staging.values())
         self.exchange = (FrameExchange(payload_width) if scene_layout is None else
                          SceneExchange(scene_layout, payload_width))
@@ -388,7 +388,7 @@ class Peripheral(wiring.Component):
             exchange.boundary.eq((self.overlay.i.y == -1) &
                                  (self.overlay.i.x == 0) & ~self.overlay.i.de),
             self.overlay.front_bank.eq(exchange.front_bank),
-            Cat(*(getattr(self.overlay, name) for name in TunerOverlay.FRAME_FIELDS)).eq(exchange.published),
+            Cat(*(getattr(self.overlay, name) for name in IntonoOverlay.FRAME_FIELDS)).eq(exchange.published),
         ]
 
         tile_w = self.tile_memory.write_port(domain="sync")

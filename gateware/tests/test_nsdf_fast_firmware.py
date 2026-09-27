@@ -18,7 +18,7 @@ def test_physical_quiet_low_summaries_expose_slow_service():
 def test_real_trace_state_machine_bounded_uart_and_cadence(tmp_path,mode):
     here=Path(__file__).parent;exe=tmp_path/'trace'
     rustc=shutil.which('rustc') or str(Path.home()/'.cargo/bin/rustc')
-    env=dict(os.environ,TILIQUA_TUNER_NSDF_TRACE=mode)
+    env=dict(os.environ,TILIQUA_INTONO_NSDF_TRACE=mode)
     subprocess.run([rustc,'--edition=2021','-O',str(here/'nsdf_trace_mock.rs'),'-o',str(exe)],env=env,check=True)
     output=subprocess.check_output([exe],text=True)
     if mode!='full':

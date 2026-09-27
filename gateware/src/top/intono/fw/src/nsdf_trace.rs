@@ -3,9 +3,9 @@ use core::fmt::Write;
 use heapless::String;
 use tiliqua_pac as pac;
 
-const FAST: bool = !matches!(env!("TILIQUA_TUNER_NSDF_TRACE").as_bytes(), b"full");
-const FAST_LOW: bool = matches!(env!("TILIQUA_TUNER_NSDF_TRACE").as_bytes(), b"fast-low");
-const ALL: bool = matches!(env!("TILIQUA_TUNER_NSDF_TRACE").as_bytes(), b"fast-all");
+const FAST: bool = !matches!(env!("TILIQUA_INTONO_NSDF_TRACE").as_bytes(), b"full");
+const FAST_LOW: bool = matches!(env!("TILIQUA_INTONO_NSDF_TRACE").as_bytes(), b"fast-low");
+const ALL: bool = matches!(env!("TILIQUA_INTONO_NSDF_TRACE").as_bytes(), b"fast-all");
 #[cfg(tuner_nsdf_continuous)]
 #[path = "nsdf_schedule.rs"]
 mod schedule;

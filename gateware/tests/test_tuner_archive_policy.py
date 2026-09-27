@@ -1,4 +1,4 @@
-"""Exercise the actual TUNER archive callback without elaborating a SoC."""
+"""Exercise the actual INTONO archive callback without elaborating a SoC."""
 import ast
 from pathlib import Path
 from types import SimpleNamespace

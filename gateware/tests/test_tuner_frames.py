@@ -3,7 +3,7 @@
 import pytest
 from amaranth.sim import Simulator
 
-from top.intono.display import FONT_INDEX, Peripheral, TunerOverlay
+from top.intono.display import FONT_INDEX, Peripheral, IntonoOverlay
 from top.intono.font_9x15 import MENU_FONT_BOLD, MENU_FONT_NORMAL
 from top.intono.renderer import FrameExchange
 
@@ -136,16 +136,16 @@ def test_cpu_registers_publish_characters_marker_and_menu_atomically():
             font = MENU_FONT_BOLD if active else MENU_FONT_NORMAL
             gx, gy = next((gx, gy) for gy in range(15) for gx in range(9)
                           if font[(ord(glyph) - 32) * 15 + gy] & (1 << (8 - gx)))
-            ctx.set(dut.overlay.i.x, 280 + TunerOverlay.MAIN_TEXT_X + gx)
+            ctx.set(dut.overlay.i.x, 280 + IntonoOverlay.MAIN_TEXT_X + gx)
             ctx.set(dut.overlay.i.y, gy)
-            await ctx.tick("dvi").repeat(TunerOverlay.LATENCY + 1)
+            await ctx.tick("dvi").repeat(IntonoOverlay.LATENCY + 1)
             assert ctx.get(dut.overlay.o.pixel.intensity) == 15
             assert ctx.get(dut.overlay.o.pixel.color) == (color & 15)
             gx, gy = next((gx, gy) for gy in range(15) for gx in range(9)
                           if MENU_FONT_BOLD[menu_glyph * 15 + gy] & (1 << (8 - gx)))
-            ctx.set(dut.overlay.i.x, 280 + TunerOverlay.MENU_TEXT_X + gx)
-            ctx.set(dut.overlay.i.y, TunerOverlay.MENU_TEXT_Y + gy)
-            await ctx.tick("dvi").repeat(TunerOverlay.LATENCY + 1)
+            ctx.set(dut.overlay.i.x, 280 + IntonoOverlay.MENU_TEXT_X + gx)
+            ctx.set(dut.overlay.i.y, IntonoOverlay.MENU_TEXT_Y + gy)
+            await ctx.tick("dvi").repeat(IntonoOverlay.LATENCY + 1)
             assert ctx.get(dut.overlay.o.pixel.intensity) == (15 if active else 0)
         # Blank boundaries without a pending transaction must not swap banks.
         front = ctx.get(dut.exchange.front_bank)

@@ -2286,10 +2286,10 @@ fn reset_options() {
     });
 }
 
-type TunerPersistence = FlashOptionsPersistence<SPIFlash0, 1100>;
+type IntonoPersistence = FlashOptionsPersistence<SPIFlash0, 1100>;
 
 #[inline(never)]
-fn persist_setup(storage: &mut Option<TunerPersistence>, save: bool) -> &'static str {
+fn persist_setup(storage: &mut Option<IntonoPersistence>, save: bool) -> &'static str {
     if critical_section::with(|cs| MULTI_QUANT.borrow_ref(cs).running) {
         return "STOP OUTPUT FIRST";
     }
@@ -2341,7 +2341,7 @@ fn persist_setup(storage: &mut Option<TunerPersistence>, save: bool) -> &'static
 }
 
 #[inline(never)]
-fn persist_notes(storage: &mut Option<TunerPersistence>, save: bool) -> &'static str {
+fn persist_notes(storage: &mut Option<IntonoPersistence>, save: bool) -> &'static str {
     if critical_section::with(|cs| MULTI_QUANT.borrow_ref(cs).running) {
         return "STOP OUTPUT FIRST";
     }
@@ -2382,7 +2382,7 @@ fn persist_notes(storage: &mut Option<TunerPersistence>, save: bool) -> &'static
     }
 }
 
-fn expanded_window(storage: &TunerPersistence) -> core::ops::Range<u32> {
+fn expanded_window(storage: &IntonoPersistence) -> core::ops::Range<u32> {
     let base = storage.default_window().start;
     base + 8192..base + 24576
 }
@@ -2400,7 +2400,7 @@ fn profile_key(slot: u8) -> Option<u32> {
 // of active output service. RAM binding only copies a bounded immutable curve.
 #[inline(never)]
 fn bind_route(
-    storage: &mut Option<TunerPersistence>,
+    storage: &mut Option<IntonoPersistence>,
     cal: &calibration_live::Live,
     output: usize,
     source: u8,
@@ -2471,7 +2471,7 @@ fn install_route_curve(
 
 #[inline(never)]
 fn save_profile(
-    storage: &mut Option<TunerPersistence>,
+    storage: &mut Option<IntonoPersistence>,
     cal: &mut calibration_live::Live,
     slot: u8,
     zero_note: u8,
@@ -2528,7 +2528,7 @@ fn save_profile(
 
 #[inline(never)]
 fn load_profile(
-    storage: &mut Option<TunerPersistence>,
+    storage: &mut Option<IntonoPersistence>,
     cal: &mut calibration_live::Live,
     slot: u8,
     editor: &mut oscillator_calibration::name::Editor,
@@ -2584,7 +2584,7 @@ struct RuntimeResources {
     timer: Timer0,
     tuner: pac::TUNER_PERIPH,
     display: pac::TUNER_DISPLAY,
-    persistence: Option<TunerPersistence>,
+    persistence: Option<IntonoPersistence>,
     counts_per_v: f32,
     video_size: (u16, u16),
 }
@@ -2678,7 +2678,7 @@ fn startup() -> RuntimeResources {
     let mut opts = Opts::default();
     let persistence = if let Some(window) = bootinfo.manifest.get_option_storage_window() {
         let default = window.start..window.start.saturating_add(8192);
-        match TunerPersistence::with_reserved_buffer(spiflash, default, window) {
+        match IntonoPersistence::with_reserved_buffer(spiflash, default, window) {
             Ok(mut storage) => {
                 storage.load_options(&mut opts).ok();
                 Some(storage)
@@ -2693,7 +2693,7 @@ fn startup() -> RuntimeResources {
         None
     };
     // Recall instrument settings, not the navigation position saved alongside
-    // them. Start at the TUNER page heading on every boot, outside edit mode.
+    // them. Start at the INTONO tuning page heading on every boot, outside edit mode.
     opts.tracker.page.value = Page::Tuner;
     // Name drafts are not profiles and must not restore half-edited characters.
     opts.profiles.position.value = 1;

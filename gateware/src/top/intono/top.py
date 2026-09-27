@@ -1,11 +1,11 @@
 # Copyright (c) 2026
 #
 # SPDX-License-Identifier: CERN-OHL-S-2.0
-"""Four-channel audio tuner proof of concept.
+"""INTONO: four-channel tuner, oscillator calibrator, and quantizer.
 
 Four monophonic inputs are measured continuously in gateware. Firmware displays
 pitch, chromatic note/cents offset, octave, Vrms and Vpp. Outputs remain at
-calibrated zero unless an explicitly started calibration sweep owns one.
+calibrated zero unless an explicitly started calibration or CV route owns one.
 """
 
 import os
@@ -24,11 +24,11 @@ from tiliqua.dsp.tuner import TunerPeripheral
 from tiliqua.tiliqua_soc import TiliquaSoc
 
 try:
-    from .display import Peripheral as TunerDisplayPeripheral
+    from .display import Peripheral as IntonoDisplayPeripheral
     from .background import BackgroundLayout
     from .midi_input import Peripheral as MidiInputPeripheral
 except ImportError:
-    from display import Peripheral as TunerDisplayPeripheral
+    from display import Peripheral as IntonoDisplayPeripheral
     from background import BackgroundLayout
     from midi_input import Peripheral as MidiInputPeripheral
 
@@ -40,27 +40,27 @@ def configure_archive(archiver):
         archiver.external_pll_config.spread_spectrum = 0.0
 
 
-class TunerSoc(TiliquaSoc):
+class IntonoSoc(TiliquaSoc):
     # Keep enough CPU RAM for the retained options/UI state plus nested calls
     # and interrupt frames. See the constructor comment below.
     MAINRAM_SIZE = 0x8000
 
     module_docstring = sys.modules[__name__].__doc__
     bitstream_help = BitstreamHelp(
-        brief="Monophonic tuner proof of concept.",
-        io_left=["audio input 0", "audio input 1", "audio input 2",
-                 "audio input 3", "calibration CV", "calibration CV", "calibration CV", "calibration CV"],
+        brief="Four-channel tuner, oscillator calibrator, and quantizer.",
+        io_left=["audio/CV input 0", "audio/CV input 1", "audio/CV input 2",
+                 "audio/CV input 3", "CV output 0", "CV output 1", "CV output 2", "CV output 3"],
         io_right=["navigate / select", "", "video out", "", "", ""],
     )
 
     def __init__(self, **kwargs):
-        # TUNER deliberately uses the native 16-bit, 4-counts/mV sample
+        # INTONO deliberately uses the native 16-bit, 4-counts/mV sample
         # representation.  Its CV command protocol and production NSDF
         # detector are both signed 16-bit interfaces.  Reject an accidental
         # widened-ASQ build instead of silently halving DAC voltages or
         # truncating loud detector inputs.
         assert ASQ.width == 16 and ASQ.i_bits == 1, (
-            "TUNER requires native 16-bit ASQ (unset TILIQUA_ASQ_WIDTH and "
+            "INTONO requires native 16-bit ASQ (unset TILIQUA_ASQ_WIDTH and "
             "TILIQUA_ASQ_I_BITS)")
         try:
             from .experiment.buffered_uart import Peripheral as BufferedUART
@@ -68,9 +68,9 @@ class TunerSoc(TiliquaSoc):
             from experiment.buffered_uart import Peripheral as BufferedUART
         self.UART_PERIPHERAL = BufferedUART
         modeline = kwargs["clock_settings"].modeline
-        assert modeline is not None, "tuner display targets require a fixed modeline"
+        assert modeline is not None, "INTONO display targets require a fixed modeline"
         round_display = modeline.h_active == 720 and modeline.v_active == 720
-        self.tuner_display = TunerDisplayPeripheral(
+        self.tuner_display = IntonoDisplayPeripheral(
             h_active=modeline.h_active,
             rotate_left=round_display,
             scene_layout=BackgroundLayout(modeline.h_active, modeline.v_active))
@@ -166,7 +166,7 @@ if __name__ == "__main__":
     seed = int(os.getenv("TILIQUA_INTONO_SEED", default_seed))
     name = os.getenv("TILIQUA_INTONO_NAME", "INTONO")
     top_level_cli(
-        TunerSoc,
+        IntonoSoc,
         path=this_path,
         # Display orientation is a build-time layout decision, just as it is
         # for the REZO family.  The normal target is always the unrotated HDMI

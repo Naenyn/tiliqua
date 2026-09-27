@@ -51,14 +51,14 @@ impl Trace {
         if let Some((gain, zero, bits)) = report {
             write!(
                 trace.calibration_line,
-                "\nTUNER diagnostic link confirmed; ready for CAL.\nCAL SOURCE EEPROM OUT1 A={} B={} FBITS={} HWBITS={}\n",
+                "\nINTONO diagnostic link confirmed; ready for CAL.\nCAL SOURCE EEPROM OUT1 A={} B={} FBITS={} HWBITS={}\n",
                 gain, zero, bits, hardware_bits
             )
             .ok();
         } else {
             write!(
                 trace.calibration_line,
-                "\nTUNER diagnostic link confirmed; ready for CAL.\nCAL SOURCE DEFAULT - EEPROM UNAVAILABLE HWBITS={}\n",
+                "\nINTONO diagnostic link confirmed; ready for CAL.\nCAL SOURCE DEFAULT - EEPROM UNAVAILABLE HWBITS={}\n",
                 hardware_bits
             )
             .ok();

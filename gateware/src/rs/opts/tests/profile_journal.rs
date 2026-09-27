@@ -73,7 +73,7 @@ const KEY:u32=0x54555031;
     assert_eq!(&f.0.borrow().bytes[8192..],profiles);
 }
 
-// Proposed TUNER layout: leave the legacy 8 KiB options/profile journal
+// INTONO layout: leave the legacy 8 KiB options/profile journal
 // untouched and use a separate 16 KiB journal for expanded profiles. Tests
 // exercise real GC; production must explicitly reserve this in its manifest.
 type ExpandedJournal=FlashOptionsPersistence<Flash,1100>;

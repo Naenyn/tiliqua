@@ -6,7 +6,7 @@
 
 use crate::options::{CalibrationPolicy, DisplayMode, Opts};
 
-pub const TUNER_CHANNELS: usize = 4;
+pub const INTONO_CHANNELS: usize = 4;
 
 #[derive(Clone, Copy, PartialEq, Default)]
 pub enum OperatingMode {
@@ -88,7 +88,7 @@ pub struct ChannelMeasurement {
 /// Keeping it retained avoids growing `main()` locals as instrument views grow.
 #[derive(Clone, Copy, Default)]
 pub struct MeasurementBank {
-    channels: [ChannelMeasurement; TUNER_CHANNELS],
+    channels: [ChannelMeasurement; INTONO_CHANNELS],
 }
 
 impl MeasurementBank {
@@ -105,7 +105,7 @@ impl MeasurementBank {
             .unwrap_or_default()
     }
 
-    pub fn all(&self) -> &[ChannelMeasurement; TUNER_CHANNELS] {
+    pub fn all(&self) -> &[ChannelMeasurement; INTONO_CHANNELS] {
         &self.channels
     }
 }

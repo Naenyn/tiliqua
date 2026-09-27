@@ -1,5 +1,13 @@
 # INTONO
 
+INTONO was previously built and documented as TUNER. Historical test names,
+hardware interfaces (`TUNER_PERIPH`/`TUNER_DISPLAY`), and older experiment logs
+retain that term; it also names the tuning mode within INTONO. New builds and
+diagnostics use the INTONO instrument name.
+Diagnostic build variables now use `TILIQUA_INTONO_*`; the old
+`TILIQUA_TUNER_*` forms remain accepted as fallback aliases for archived
+commands. If both are set, the INTONO value wins.
+
 The current [oscillator compatibility qualification](OSCILLATOR_QUALIFICATION.md)
 records physical tuning/calibration coverage and its limits, including the
 Generate3 CORE/FUNDAMENTAL comparison on the latest detector build.
@@ -14,7 +22,8 @@ oscillator profile slots. PROFILES and its optional read-only CHECK sit under
 CAL. SCALES edits scales; ROUTES is the only playback RUN page and combines
 optional quantization with optional oscillator correction per output. A route
 needs at least one stage enabled. NOTES/SETUPS sit under SCALES. Child-page
-headers return to the parent. TUNER, SETTINGS and HELP remain top-level pages.
+headers return to the parent. INTONO (the tuner view), SETTINGS and HELP remain
+top-level pages.
 
 The [USB storage investigation](USB_STORAGE.md) covers upstream read/write
 support and the remaining integration/resource work; thumb-drive support is
@@ -23,7 +32,7 @@ a Generate3 FUNDAMENTAL hardware run with automatic verification. See the
 dated results in AUTO_CALIBRATION.md for the tested range and remaining checks.
 
 The selected NSDF detector is now unconditional on this branch: an ordinary
-TUNER build uses it without an experimental build flag. The old crossing
+INTONO build uses it without an experimental build flag. The old crossing
 detector and period verifier have been deleted, including their CSRs and
 firmware paths, so there is no selectable or accidental fallback. The shared
 `TunerPeripheral` now provides level/DC measurement plus calibrated CV output;
@@ -34,7 +43,7 @@ and verifier are not synthesized in this configuration. See the [pause checkpoin
 for current feature status, qualification, remaining work and build instructions, and the [detector decision](DETECTOR_DECISION.md)
 for evidence, resource tradeoffs and the boundary between those consumers.
 
-TUNER intentionally uses the native signed 16-bit ASQ representation
+INTONO intentionally uses the native signed 16-bit ASQ representation
 (4 counts/mV, nominal -8.192 to +8.19175 V). Its CV command protocol and NSDF
 frontend are both signed 16-bit interfaces. The top level rejects widened-ASQ
 builds so a copied build flag cannot silently change physical output gain or
@@ -68,10 +77,10 @@ not start output; otherwise unowned outputs remain at commanded calibrated zero.
 ## Controls
 
 Press the encoder to open the boxed menu, rotate to navigate, press to edit,
-and press again to finish. The top-level pages are TUNER, CAL, SETTINGS, HELP,
+and press again to finish. The top-level pages are INTONO, CAL, SETTINGS, HELP,
 ROUTES and SCALES. Supporting pages are reached through parent-page buttons.
 The menu hides after five seconds of inactivity. Boot restores saved settings
-but starts navigation at TUNER, with no output armed.
+but starts navigation at INTONO, with no output armed.
 
 CAL contains input, output, 0v note, run, accept, discard and profiles. RUN
 performs the automatic procedure described in [AUTO_CALIBRATION.md](AUTO_CALIBRATION.md).
@@ -232,7 +241,7 @@ verify residual error if moving a curve to a different physical DAC output.
 
 ## Oscillator profiles
 
-PROFILES provides four saved slots inside TUNER's existing settings storage.
+PROFILES provides eight saved slots inside INTONO's existing settings storage.
 After calibration, select a slot and Save. Set `name pos` (1–24) and `letter`
 to edit the name draft; a space removes trailing characters. Save replaces the
 selected slot and confirms `SAVED SLOT n - READBACK OK` beneath the menu after
@@ -241,7 +250,7 @@ required for profiles. Load validates and restores the curve, name, routing and
 nominal 0 V note, confirming `LOADED SLOT n - OUTPUT OFF`; the active RAM profile
 name, point count, and routing appear beneath that confirmation. It never starts
 output. Empty/invalid slots leave the current
-RAM profile untouched. Boot remains on TUNER without automatically loading or
+RAM profile untouched. Boot remains on INTONO without automatically loading or
 enabling a profile. Settings/Reset preserves saved profiles.
 
 To test persistence, save, reload the bitstream, select the same profile slot
@@ -342,8 +351,8 @@ production-panel target and compensates for the display's physical 90-degree
 mounting. Keeping these as explicit artifacts prevents mutable bootloader video
 state from selecting the wrong UI transform.
 
-Both TUNER targets default to 192 kHz codec sampling for the 20 Hz–20 kHz
-measurement target. This default is local to TUNER, not other bitstreams.
+Both INTONO targets default to 192 kHz codec sampling for the 20 Hz–20 kHz
+measurement target. This default is local to INTONO, not other bitstreams.
 Building does not flash the archive; flashing is a separate operation.
 
 The non-circular R5 build defaults to routing seed 18. After a gateware change,

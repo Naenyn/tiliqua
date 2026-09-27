@@ -15,7 +15,7 @@ def test_real_scheduler_keeps_acquiring_during_uart_stall(tmp_path,scenario):
     exe=tmp_path/'scheduler'
     subprocess.run([str(Path.home()/'.cargo/bin/rustc'),'--edition=2021','-O',
                     '--cfg','tuner_nsdf_continuous',str(here/'nsdf_trace_mock.rs'),
-                    '-o',str(exe)],env=dict(os.environ,TILIQUA_TUNER_NSDF_TRACE='continuous'),check=True)
+                    '-o',str(exe)],env=dict(os.environ,TILIQUA_INTONO_NSDF_TRACE='continuous'),check=True)
     text=subprocess.check_output([exe,str(scenario)],text=True)
     if scenario==3:
         status='VERIFY MOCK immutable status report\n'*28

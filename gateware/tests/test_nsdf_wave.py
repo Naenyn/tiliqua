@@ -59,7 +59,7 @@ def test_actual_firmware_wave_export_survives_uart_backpressure(tmp_path):
     exe=tmp_path/'trace'
     subprocess.run([str(Path.home()/'.cargo/bin/rustc'),'--edition=2021','-O',
                     str(Path(__file__).parent/'nsdf_trace_mock.rs'),'-o',str(exe)],
-                   env=dict(os.environ,TILIQUA_TUNER_NSDF_TRACE='full'),check=True)
+                   env=dict(os.environ,TILIQUA_INTONO_NSDF_TRACE='full'),check=True)
     text=subprocess.check_output([exe],text=True)
     frames=re.findall(r'NSDF BEGIN ([^\n]+)\n(?:[0-9a-f]{8}\n)+NSDF END\n'
                       r'NSDF WAVE ([^\n]+)\n((?:[0-9a-f]{8}\n)+)NSDF WAVE END\n',text)

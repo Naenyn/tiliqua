@@ -73,8 +73,8 @@ fn main() {
     #[cfg(tuner_nsdf_continuous)]
     let status="VERIFY MOCK immutable status report\n".repeat(28);
     assert_eq!(trace.ui_period_ms(false,5),5);
-    let all=env!("TILIQUA_TUNER_NSDF_TRACE")=="fast-all";
-    let continuous=env!("TILIQUA_TUNER_NSDF_TRACE")=="continuous";
+    let all=env!("TILIQUA_INTONO_NSDF_TRACE")=="fast-all";
+    let continuous=env!("TILIQUA_INTONO_NSDF_TRACE")=="continuous";
     assert_eq!(trace.ui_period_ms(true,5),if trace.fast() && !all && !continuous {100}else{5});
     for now in 0..12000 {
         // Approximate 115200-baud 8N1 draining between 1-ms foreground visits.
@@ -125,7 +125,7 @@ fn main() {
     STATE.with(|s|{let s=s.borrow();assert!(s.starts.len()>4);
         if trace.fast() {
             for pair in s.starts.windows(2){assert!(pair[1].0-pair[0].0>=if continuous {10}else{50});}
-            let low=env!("TILIQUA_TUNER_NSDF_TRACE")=="fast-low";
+            let low=env!("TILIQUA_INTONO_NSDF_TRACE")=="fast-low";
             if all || continuous {
                 if scenario!=2 {for (i,(_,command)) in s.starts.iter().enumerate() {
                     assert_eq!(*command,1|(((i/2)&3) as u32)<<3|((i&1) as u32)<<2);

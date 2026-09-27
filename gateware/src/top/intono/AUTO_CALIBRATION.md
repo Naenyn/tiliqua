@@ -445,7 +445,7 @@ population standard deviation 1.7636 cents. CORE is now below the supported
 20-Hz range, as expected. This confirms repeatability of the frequency-dependent
 symptom with V/oct disconnected; it does not prove its waveform mechanism.
 
-The existing `TILIQUA_TUNER_NSDF_TRACE=full` firmware diagnostic can export
+The existing `TILIQUA_INTONO_NSDF_TRACE=full` firmware diagnostic can export
 immutable NSDF score frames and aligned source moments on the unchanged FPGA.
 It is a temporary diagnostic, not the production continuous scheduler: leave
 it on the idle tuner page and do not run CAL/ROUTES. Normal live pitch display

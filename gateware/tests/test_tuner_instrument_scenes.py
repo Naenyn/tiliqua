@@ -12,7 +12,7 @@ from amaranth import Module, unsigned
 from amaranth.lib.memory import Memory
 from amaranth.sim import Simulator
 
-from top.intono.display import TunerOverlay
+from top.intono.display import IntonoOverlay
 from top.intono.renderer import TextPlane, Panel
 from test_tuner_renderer import atlas, text_cells, reference_pixel
 
@@ -37,10 +37,10 @@ def retained_scenes(tmp_path_factory):
 @pytest.mark.parametrize("menu_enabled", [False, True])
 def test_retained_instrument_graphics_with_production_text(scene, menu_enabled, retained_scenes):
     planes = [TextPlane(90,0,45,45,pitch_x=12,cell_color=True),
-              TextPlane(TunerOverlay.MENU_TEXT_X,TunerOverlay.MENU_TEXT_Y,28,9,
+              TextPlane(IntonoOverlay.MENU_TEXT_X,IntonoOverlay.MENU_TEXT_Y,28,9,
                         pitch_x=9,pitch_y=18,color=0xA9)]
-    panels = [None,Panel(TunerOverlay.MENU_X,TunerOverlay.MENU_Y,
-                         TunerOverlay.MENU_W,TunerOverlay.MENU_H,
+    panels = [None,Panel(IntonoOverlay.MENU_X,IntonoOverlay.MENU_Y,
+                         IntonoOverlay.MENU_W,IntonoOverlay.MENU_H,
                          rule_x=85,rule_y=8,rule_height=54)]
     entries = [(8,8,"SYNTHETIC UI TEST",0xF9,True)]
     if scene == "tuner":
@@ -59,7 +59,7 @@ def test_retained_instrument_graphics_with_production_text(scene, menu_enabled, 
                                       (10,0,"a4 ref 440",0,False)])]
     tiles = Memory(shape=unsigned(16),depth=4096,init=contents[0])
     menu = Memory(shape=unsigned(8),depth=512,init=contents[1])
-    dut = TunerOverlay(tiles,menu,h_active=1280,ascii_text=True,double_buffered=True)
+    dut = IntonoOverlay(tiles,menu,h_active=1280,ascii_text=True,double_buffered=True)
     m = Module()
     m.submodules.dut,m.submodules.tiles,m.submodules.menu = dut,tiles,menu
     sim = Simulator(m)

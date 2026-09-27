@@ -7,15 +7,15 @@ from amaranth.hdl import Fragment
 from amaranth.lib.memory import Memory
 from amaranth.sim import Simulator
 
-from top.intono.display import FONT, FONT_CHARS, FONT_INDEX, Peripheral, TunerOverlay
+from top.intono.display import FONT, FONT_CHARS, FONT_INDEX, Peripheral, IntonoOverlay
 from top.intono.font_9x15 import MENU_FONT_BOLD, MENU_FONT_NORMAL
-from top.intono.top import TunerSoc
+from top.intono.top import IntonoSoc
 
 
 def test_blank_backdrop_keeps_text_and_restores_cached_pixels():
     tiles=Memory(shape=unsigned(16),depth=4096,init=[(ord("A")-32)|(0xF9<<8)])
     menu=Memory(shape=unsigned(8),depth=512,init=[])
-    dut=TunerOverlay(tiles,menu,h_active=720,ascii_text=True,double_buffered=True)
+    dut=IntonoOverlay(tiles,menu,h_active=720,ascii_text=True,double_buffered=True)
     m=Module();m.submodules.dut=dut;m.submodules.tiles=tiles;m.submodules.menu=menu
     sim=Simulator(m);sim.add_clock(1e-6,domain="dvi")
     async def bench(ctx):
@@ -40,7 +40,7 @@ def test_settings_first_letter_has_clear_left_border_padding(rotate_left):
     tiles = Memory(shape=unsigned(16), depth=4096, init=[])
     menu = Memory(shape=unsigned(8), depth=512,
                   init=[128 + ord(c)-32 for c in "SETTINGS"])
-    dut = TunerOverlay(tiles, menu, h_active=720 if rotate_left else 1280,
+    dut = IntonoOverlay(tiles, menu, h_active=720 if rotate_left else 1280,
                        rotate_left=rotate_left, ascii_text=True, double_buffered=True)
     m = Module()
     m.submodules.dut, m.submodules.tiles, m.submodules.menu = dut, tiles, menu
@@ -71,7 +71,7 @@ def test_settings_first_letter_has_clear_left_border_padding(rotate_left):
 def test_production_four_colored_markers(rotate_left):
     tiles = Memory(shape=unsigned(16), depth=4096, init=[])
     menu = Memory(shape=unsigned(8), depth=512, init=[])
-    dut = TunerOverlay(tiles, menu, h_active=720 if rotate_left else 1280,
+    dut = IntonoOverlay(tiles, menu, h_active=720 if rotate_left else 1280,
                        rotate_left=rotate_left, ascii_text=True, double_buffered=True)
     m = Module()
     m.submodules.dut, m.submodules.tiles, m.submodules.menu = dut, tiles, menu
@@ -130,7 +130,7 @@ def test_production_four_colored_markers(rotate_left):
 def test_scanline_marker_all_orientations_and_frame_changes(rotate_left):
     tiles = Memory(shape=unsigned(6), depth=4096, init=[])
     menu = Memory(shape=unsigned(8), depth=512, init=[])
-    dut = TunerOverlay(tiles, menu, h_active=720 if rotate_left else 1280,
+    dut = IntonoOverlay(tiles, menu, h_active=720 if rotate_left else 1280,
                        rotate_left=rotate_left, double_buffered=True)
     m = Module()
     m.submodules.dut, m.submodules.tiles, m.submodules.menu = dut, tiles, menu
@@ -182,7 +182,7 @@ def test_tuner_cpu_ram_has_interrupt_headroom():
     # main() currently reserves about 7.25 KiB before nested calls or interrupt
     # frames. The old 8-KiB allocation booted far enough to draw static content
     # and then silently corrupted the stack when the live UI started.
-    assert TunerSoc.MAINRAM_SIZE >= 0x4000
+    assert IntonoSoc.MAINRAM_SIZE >= 0x4000
 
 
 def test_tuner_font_contract():
@@ -208,7 +208,7 @@ def test_compact_main_text_pitch_and_margins(rotate_left):
     cells = [(n + 33) | ((n % 2) << 7) | (0xD9 << 8) for n in range(45)]
     tiles = Memory(shape=unsigned(16), depth=4096, init=cells)
     menu = Memory(shape=unsigned(8), depth=512, init=[])
-    dut = TunerOverlay(tiles, menu, h_active=720 if rotate_left else 1280,
+    dut = IntonoOverlay(tiles, menu, h_active=720 if rotate_left else 1280,
                        rotate_left=rotate_left, ascii_text=True)
     m = Module()
     m.submodules.dut, m.submodules.tiles, m.submodules.menu = dut, tiles, menu
@@ -247,7 +247,7 @@ def test_shared_atlas_preserves_every_legacy_tuner_glyph(rotate_left):
     contents = list(range(len(FONT_CHARS))) + [0] * (45 * 45 - len(FONT_CHARS))
     tiles = Memory(shape=unsigned(6), depth=len(contents), init=contents)
     menu = Memory(shape=unsigned(8), depth=28 * 9, init=[])
-    dut = TunerOverlay(tiles, menu, h_active=720 if rotate_left else 1280,
+    dut = IntonoOverlay(tiles, menu, h_active=720 if rotate_left else 1280,
                        rotate_left=rotate_left)
     m = Module()
     m.submodules.dut = dut
@@ -292,18 +292,18 @@ def test_tuner_display_target_transforms_are_compile_time():
         ctx.set(dut.i.vsync, 0)
         ctx.set(dut.i.x, physical_x)
         ctx.set(dut.i.y, physical_y)
-        await ctx.tick("dvi").repeat(TunerOverlay.LATENCY + 1)
+        await ctx.tick("dvi").repeat(IntonoOverlay.LATENCY + 1)
         assert ctx.get(dut.o.pixel.intensity) == 10
 
     def run_target(*, h_active, rotate_left, physical_x, physical_y):
         tiles = Memory(
-            shape=unsigned(6), depth=TunerOverlay.COLS * TunerOverlay.ROWS,
-            init=[0] * (TunerOverlay.COLS * TunerOverlay.ROWS))
+            shape=unsigned(6), depth=IntonoOverlay.COLS * IntonoOverlay.ROWS,
+            init=[0] * (IntonoOverlay.COLS * IntonoOverlay.ROWS))
         menu = Memory(
             shape=unsigned(8),
-            depth=TunerOverlay.MENU_COLS * TunerOverlay.MENU_ROWS,
-            init=[0] * (TunerOverlay.MENU_COLS * TunerOverlay.MENU_ROWS))
-        dut = TunerOverlay(
+            depth=IntonoOverlay.MENU_COLS * IntonoOverlay.MENU_ROWS,
+            init=[0] * (IntonoOverlay.MENU_COLS * IntonoOverlay.MENU_ROWS))
+        dut = IntonoOverlay(
             tiles, menu, h_active=h_active, rotate_left=rotate_left)
         m = Module()
         m.submodules.dut = dut
@@ -321,22 +321,22 @@ def test_tuner_display_target_transforms_are_compile_time():
     # Standard HDMI centers the native canvas at x=280 without rotation.
     run_target(
         h_active=1280, rotate_left=False,
-        physical_x=TunerOverlay.MENU_X + 280, physical_y=400)
+        physical_x=IntonoOverlay.MENU_X + 280, physical_y=400)
     # The production panel applies the inverse of its physical left rotation.
     run_target(
         h_active=720, rotate_left=True,
-        physical_x=719 - 400, physical_y=TunerOverlay.MENU_X)
+        physical_x=719 - 400, physical_y=IntonoOverlay.MENU_X)
 
 
 def test_tuner_display_composites_framebuffer_marker_and_menu():
     tiles = Memory(
-        shape=unsigned(6), depth=TunerOverlay.COLS * TunerOverlay.ROWS,
-        init=[0] * (TunerOverlay.COLS * TunerOverlay.ROWS))
+        shape=unsigned(6), depth=IntonoOverlay.COLS * IntonoOverlay.ROWS,
+        init=[0] * (IntonoOverlay.COLS * IntonoOverlay.ROWS))
     menu = Memory(
         shape=unsigned(8),
-        depth=TunerOverlay.MENU_COLS * TunerOverlay.MENU_ROWS,
-        init=[0] * (TunerOverlay.MENU_COLS * TunerOverlay.MENU_ROWS))
-    dut = TunerOverlay(tiles, menu)
+        depth=IntonoOverlay.MENU_COLS * IntonoOverlay.MENU_ROWS,
+        init=[0] * (IntonoOverlay.MENU_COLS * IntonoOverlay.MENU_ROWS))
+    dut = IntonoOverlay(tiles, menu)
     m = Module()
     m.submodules.dut = dut
     m.submodules.tiles = tiles
@@ -361,28 +361,28 @@ def test_tuner_display_composites_framebuffer_marker_and_menu():
         ctx.set(dut.i.pixel.intensity, 5)
         ctx.set(dut.i.x, 360)
         ctx.set(dut.i.y, 360 - 52)
-        await ctx.tick("dvi").repeat(TunerOverlay.LATENCY + 1)
+        await ctx.tick("dvi").repeat(IntonoOverlay.LATENCY + 1)
         assert ctx.get(dut.o.pixel.intensity) == 5
 
         # An eighth-turn later, the guide has moved smoothly clockwise and
         # outward rather than remaining on the C0 circle.
         ctx.set(dut.i.x, 399)
         ctx.set(dut.i.y, 321)
-        await ctx.tick("dvi").repeat(TunerOverlay.LATENCY + 1)
+        await ctx.tick("dvi").repeat(IntonoOverlay.LATENCY + 1)
         assert ctx.get(dut.o.pixel.intensity) == 5
 
         # Consecutive samples on the outer turn are several pixels apart. The
         # connecting raster must fill their midpoint rather than showing dots.
         ctx.set(dut.i.x, 572)
         ctx.set(dut.i.y, 356)
-        await ctx.tick("dvi").repeat(TunerOverlay.LATENCY + 1)
+        await ctx.tick("dvi").repeat(IntonoOverlay.LATENCY + 1)
         assert ctx.get(dut.o.pixel.intensity) == 5
 
         # Background pixels pass through as black.
         ctx.set(dut.i.pixel.intensity, 0)
         ctx.set(dut.i.x, 393)
         ctx.set(dut.i.y, 400)
-        await ctx.tick("dvi").repeat(TunerOverlay.LATENCY + 1)
+        await ctx.tick("dvi").repeat(IntonoOverlay.LATENCY + 1)
         assert ctx.get(dut.o.pixel.intensity) == 0
 
         # The modal menu masks only its established right-side panel while leaving the live
@@ -393,20 +393,20 @@ def test_tuner_display_composites_framebuffer_marker_and_menu():
         ctx.set(dut.i.vsync, 0)
         ctx.set(dut.i.x, 500)
         ctx.set(dut.i.y, 400)
-        await ctx.tick("dvi").repeat(TunerOverlay.LATENCY + 1)
+        await ctx.tick("dvi").repeat(IntonoOverlay.LATENCY + 1)
         assert ctx.get(dut.o.pixel.intensity) == 0
 
         # A retained radial tick outside the box remains live.
         ctx.set(dut.i.pixel.intensity, 2)
         ctx.set(dut.i.x, 477)
         ctx.set(dut.i.y, 157)
-        await ctx.tick("dvi").repeat(TunerOverlay.LATENCY + 1)
+        await ctx.tick("dvi").repeat(IntonoOverlay.LATENCY + 1)
         assert ctx.get(dut.o.pixel.intensity) == 2
 
         # The panel border is procedural and does not depend on stale tiles.
-        ctx.set(dut.i.x, TunerOverlay.MENU_X)
+        ctx.set(dut.i.x, IntonoOverlay.MENU_X)
         ctx.set(dut.i.y, 400)
-        await ctx.tick("dvi").repeat(TunerOverlay.LATENCY + 1)
+        await ctx.tick("dvi").repeat(IntonoOverlay.LATENCY + 1)
         assert ctx.get(dut.o.pixel.intensity) == 10
         ctx.set(dut.menu_active, 0)
         ctx.set(dut.i.vsync, 1)
@@ -416,13 +416,13 @@ def test_tuner_display_composites_framebuffer_marker_and_menu():
         # Closing the menu reveals the retained guide again.
         ctx.set(dut.i.x, 477)
         ctx.set(dut.i.y, 157)
-        await ctx.tick("dvi").repeat(TunerOverlay.LATENCY + 1)
+        await ctx.tick("dvi").repeat(IntonoOverlay.LATENCY + 1)
         assert ctx.get(dut.o.pixel.intensity) == 2
 
         # Retained radial divisions continue through the center.
         ctx.set(dut.i.x, 360)
         ctx.set(dut.i.y, 360)
-        await ctx.tick("dvi").repeat(TunerOverlay.LATENCY + 1)
+        await ctx.tick("dvi").repeat(IntonoOverlay.LATENCY + 1)
         assert ctx.get(dut.o.pixel.intensity) == 2
 
         # ARC mode highlights a short run of the actual spiral around the
@@ -443,14 +443,14 @@ def test_tuner_display_composites_framebuffer_marker_and_menu():
         ctx.set(dut.i.x, 492)
         ctx.set(dut.i.y, 228)
         ctx.set(dut.i.pixel.intensity, 5)
-        await ctx.tick("dvi").repeat(TunerOverlay.LATENCY + 1)
+        await ctx.tick("dvi").repeat(IntonoOverlay.LATENCY + 1)
         assert ctx.get(dut.o.pixel.intensity) == 15
 
         # The long axis follows the 45-degree tangent.
         await prepare_row(237)
         ctx.set(dut.i.x, 501)
         ctx.set(dut.i.y, 237)
-        await ctx.tick("dvi").repeat(TunerOverlay.LATENCY + 1)
+        await ctx.tick("dvi").repeat(IntonoOverlay.LATENCY + 1)
         assert ctx.get(dut.o.pixel.intensity) == 15
 
         # The perpendicular axis remains narrow enough not to touch the next
@@ -458,7 +458,7 @@ def test_tuner_display_composites_framebuffer_marker_and_menu():
         await prepare_row(219)
         ctx.set(dut.i.x, 501)
         ctx.set(dut.i.y, 219)
-        await ctx.tick("dvi").repeat(TunerOverlay.LATENCY + 1)
+        await ctx.tick("dvi").repeat(IntonoOverlay.LATENCY + 1)
         assert ctx.get(dut.o.pixel.intensity) != 15
 
         # Exercise consecutive pixels as HDMI does, instead of holding each
@@ -498,14 +498,14 @@ def test_tuner_display_composites_framebuffer_marker_and_menu():
         ctx.set(dut.i.vsync, 0)
         ctx.set(dut.i.x, 510)
         ctx.set(dut.i.y, 250)
-        await ctx.tick("dvi").repeat(TunerOverlay.LATENCY + 1)
+        await ctx.tick("dvi").repeat(IntonoOverlay.LATENCY + 1)
         assert ctx.get(dut.o.pixel.intensity) == 8
 
         # The square corner is outside the official panel's circular viewport.
         ctx.set(dut.i.pixel.intensity, 0)
         ctx.set(dut.i.x, 0)
         ctx.set(dut.i.y, 0)
-        await ctx.tick("dvi").repeat(TunerOverlay.LATENCY + 1)
+        await ctx.tick("dvi").repeat(IntonoOverlay.LATENCY + 1)
         assert ctx.get(dut.o.pixel.intensity) == 0
 
     sim.add_testbench(bench)
