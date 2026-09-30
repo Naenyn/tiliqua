@@ -294,8 +294,7 @@ For Settings/Save, the save row shows `saved` for about two seconds. A failed wr
 shows `failed`; missing option storage shows `no flash`. These messages report
 the save result, not merely the encoder click.
 
-Display offers ARC, VISUALIZER, and LINEAR. Both spiral modes show four colored
-pitch markers; VISUALIZER adds emphasis to the focused channel. LINEAR shows
+Display offers ARC and LINEAR. ARC shows four colored pitch markers. LINEAR shows
 four simultaneous cents rulers, each with note, frequency and voltage readings.
 Channel colors are orange, green, cyan and purple for inputs 0–3. The input
 setting (now labeled `focus`) chooses the spiral detail readout,

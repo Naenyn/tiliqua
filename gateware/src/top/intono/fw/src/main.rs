@@ -1324,7 +1324,7 @@ fn publish_tuner(
     publish_markers(
         display,
         Markers(markers),
-        display_mode == DisplayMode::Visualizer,
+        false,
         menu_active,
     );
 }
@@ -3427,8 +3427,6 @@ fn run(resources: &mut RuntimeResources) -> ! {
                         controls.tuner_input,
                         if scene == ui_scene::Scene::Linear {
                             DisplayMode::Linear
-                        } else if controls.display_mode == DisplayMode::Visualizer {
-                            DisplayMode::Visualizer
                         } else {
                             DisplayMode::Arc
                         },

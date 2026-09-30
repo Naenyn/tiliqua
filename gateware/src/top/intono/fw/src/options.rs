@@ -44,8 +44,8 @@ impl From<Page> for &'static str {
 #[strum(serialize_all = "SCREAMING-KEBAB-CASE")]
 pub enum DisplayMode {
     #[default]
+    #[serde(alias = "Visualizer", alias = "VISUALIZER")]
     Arc,
-    Visualizer,
     Linear,
 }
 

@@ -16,6 +16,36 @@ below are retained as evidence of the builds that produced them.
 
 ## Contract
 
+### UX phase requirements (2026-09-30)
+
+The calibration/quantizer baseline is checkpointed. Resume interface work with
+four primary pages: TUNER, CAL (calibration profile generator), SCALES (scale
+generator), and ROUTES (assign input/output, profile and scale, then run; name
+may change). The concept image supplies visual direction, not a requirement
+for a separate PRESETS/profile page. Profiles belong in CAL and scale storage
+in SCALES; saved route setups belong with ROUTES.
+
+Replace the XBEAM/OSCIO-style global pop-up navigation with REZO-style visible
+controls: turn to focus, click to edit/activate, turn to change values, click
+to finish. Page navigation must be visible and selectable. Contextual pop-ups
+may remain for choices such as saved scales/profiles. Move existing menu
+functionality onto its owning page, trim repetitive explanatory text, and keep
+status/action feedback. Reserve access/layout for Settings and Help; add full
+help last before the release candidate. Preserve the oscillator setup guidance
+in README.md when writing that help.
+
+TUNER offers only ARC and LINEAR; VISUALIZER is removed. Previously saved
+VISUALIZER display settings deserialize as ARC.
+
+Legibility is a primary constraint. The user reports unreadable menus and some
+page text on a small 720p monitor. Seb at apf.audio recommended font height
+**greater than 15 pixels** for the circular display, according to the user.
+Use at least 16-pixel rendered text height for controls and normal readouts;
+check visible glyph height as well as line/cell spacing. Do not solve crowding
+by shrinking text. Reduce prose, use contextual panels and reserve sufficient
+spacing instead. Confirm on the user's small 720p screen; circular display
+qualification remains pending because the user does not own that panel.
+
 ### Calibration dashboard (2026-09-27)
 
 The CAL view now uses the retained framebuffer for a bounded response plot,
