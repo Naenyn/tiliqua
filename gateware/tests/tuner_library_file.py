@@ -34,32 +34,39 @@ def decode(data):
     if body[:4]!=b'TUCP' or len(data)<56:
         raise ValueError('Unknown library record type')
     version,channel_in,channel_out,zero,name_len,count,flags,reserved=body[4:12]
-    if version not in (1,2,3,4):raise ValueError('Unsupported profile version')
+    if version not in (1,2,3,4,5):raise ValueError('Unsupported profile version')
     maximum=32 if version==1 else MAX_PROFILE_POINTS
-    point_start=48 if version==4 else 36
+    point_start=48 if version>=4 else 36
     if not (2<=count<=maximum and len(data)==point_start+4+8*count and 1<=name_len<=24
             and channel_in<4 and channel_out<4 and 12<=zero<=108
             and flags<=(0 if version==1 else 3)
-            and (reserved<=4 if version==4 else reserved==0)
+            and (reserved<=5 if version>=4 else reserved==0)
             and not any(body[12+name_len:36])):
         raise ValueError('Invalid profile header')
-    if version==4:
+    if version>=4:
         worst,stability=struct.unpack_from('<II',body,36)
-        if worst>100_000 or stability>100_000 or any(body[44:48]):
+        if worst>100_000 or stability>100_000 or (version==4 and any(body[44:48])):
             raise ValueError('Invalid quality metadata')
+    zero_pitch=None
+    if version==5:
+        zero_pitch=struct.unpack_from('<i',body,44)[0]
+        if zero_pitch==-2**31: zero_pitch=None
+        elif not 0<=zero_pitch<=12_800_000: raise ValueError('Invalid measured zero pitch')
     name=body[12:12+name_len]
     if any(not 32<=c<=126 for c in name) or not name.strip():
         raise ValueError('Invalid profile name')
     points=[struct.unpack_from('<ii',body,point_start+8*i) for i in range(count)]
+    if version<5:
+        zero_pitch=next((mc for uv,mc in points if uv==0 and 0<=mc<=12_800_000),None)
     lo,hi=(0,2_000_000) if version==1 else (-5_000_000,5_000_000 if version==2 else 8_000_000)
     if any(not lo<=voltage<=hi for voltage,_ in points) or any(a[0]>=b[0] or a[1]>=b[1] for a,b in zip(points,points[1:])):
         raise ValueError('Invalid/nonmonotonic calibration curve')
     return dict(kind='oscillator_profile',version=version,name=name.decode('ascii'),
-        input=channel_in,output=channel_out,zero_note=note_name(zero),
+        input=channel_in,output=channel_out,zero_note=note_name(zero),zero_pitch_millicents=zero_pitch,
         limited_low=bool(flags&1),limited_high=bool(flags&2),
-        quality_grade=(reserved if version==4 else None),
-        worst_millicents=(worst if version==4 else None),
-        stability_millicents=(stability if version==4 else None),
+        quality_grade=(reserved if version>=4 else None),
+        worst_millicents=(worst if version>=4 else None),
+        stability_millicents=(stability if version>=4 else None),
         points=[dict(microvolts=uv,pitch_millicents=mc) for uv,mc in points])
 
 

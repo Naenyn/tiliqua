@@ -184,7 +184,8 @@ impl Average {
         }
         let spread = self.raw_high as i64 - self.raw_low as i64;
         // Never turn a grossly unstable signal into an apparently precise mean.
-        // Quarter-block means must agree within 2c; half means within 1c.
+        // The caller supplies policy-specific quarter- and half-block limits;
+        // the final quality grade still reports the actual spread.
         if spread > max_span as i64
             || sums.iter().max().unwrap() - sums.iter().min().unwrap()
                 > quarter_delta as i64 * (WINDOWS / 4) as i64
@@ -221,6 +222,27 @@ mod tests {
             overlapping.observe(500, n * 20, n * 20 + 110);
         }
         assert!(overlapping.tight_estimate().is_none());
+    }
+    #[test]
+    fn modest_drift_can_be_graded_without_being_called_precise() {
+        let quarter_means = [-1000, -900, 900, 1000];
+        let mut auto = Average::new();
+        let mut precision = Average::new();
+        let mut auto_result = None;
+        let mut precision_result = None;
+        for n in 0..WINDOWS {
+            let mean = quarter_means[n / 4];
+            let value = mean + if n % 2 == 0 { -1800 } else { 1800 };
+            let start = n as u64 * 180;
+            auto_result = auto.observe_with_limits(value, start, start + 110,
+                25_000, 5_000, 2_500);
+            precision_result = precision.observe_with_limits(value, start, start + 110,
+                25_000, 2_000, 1_000);
+        }
+        assert_eq!(auto.snapshot().half_delta, 1900);
+        assert!(auto.snapshot().raw_span > 3000);
+        assert!(auto_result.is_some());
+        assert!(precision_result.is_none());
     }
     #[test]
     fn excursions_disable_fast_path_even_if_overlapping_or_reset() {

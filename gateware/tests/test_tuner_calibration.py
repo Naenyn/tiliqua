@@ -10,12 +10,12 @@ def test_calibration_menu_overrides_match_option_order():
     firmware = Path(__file__).parents[1] / "src/top/intono/fw/src"
     options = (firmware / "options.rs").read_text()
     fields = re.findall(r"pub (\w+):", options.split("pub struct CalibrateOpts {")[1].split("}")[0])
-    assert fields == ["input", "output", "zero_note", "policy", "run", "accept", "discard", "profiles"]
+    assert fields == ["input", "output", "zero_note", "policy", "graph", "run", "accept", "discard", "profiles"]
     snapshot = (firmware / "main.rs").read_text().split("impl MenuSnapshot {")[1].split("#[inline(never)]")[0]
     overrides = {int(index): label for index, label in re.findall(
         r'\(Page::Calibrate, (\d+)\) => "([^"]+)"', snapshot)}
     assert [overrides.get(i, field) for i, field in enumerate(fields)] == [
-        "input", "output", "0v note", "policy", "run", "accept", "discard", "profiles"]
+        "input", "output", "0v note", "policy", "graph", "run", "accept", "discard", "profiles"]
     formatted_index = re.search(r"page == Page::Calibrate && index == (\d+)", snapshot)
     assert fields[int(formatted_index[1])] == "zero_note"
 
@@ -67,15 +67,17 @@ def test_scale_editor_and_routes_share_configuration_but_only_routes_run():
     assert 'Page::Quantizer' in (firmware/'runtime.rs').read_text()
 
 
-def test_calibration_children_are_not_top_level_modes_and_refine_is_automatic():
+def test_calibration_children_are_not_top_level_modes_and_manual_improve_is_advanced():
     firmware = Path(__file__).parents[1] / "src/top/intono/fw/src"
     options = (firmware / 'options.rs').read_text()
     for page in ['Verify', 'Profiles', 'QuantNotes', 'QuantSetups']:
         assert f'#[strum(disabled)]\n    {page},' in options
     verify = options.split('pub struct VerifyOpts {')[1].split('}')[0]
-    assert re.findall(r'pub (\w+):', verify) == ['run', 'back']
+    assert re.findall(r'pub (\w+):', verify) == [
+        'run', 'improve', 'accept', 'discard', 'back']
     main = (firmware / 'main.rs').read_text()
     assert 'calibration.toggle_automatic(&tuner' in main
+    assert 'refine: app.ui.opts.verify.improve.poll()' in main
     assert 'else if header_back {' in main and 'parent' in main
 
 

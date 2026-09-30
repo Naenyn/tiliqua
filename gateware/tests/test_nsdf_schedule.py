@@ -9,6 +9,47 @@ from types import SimpleNamespace
 import capture_nsdf_cpu
 
 
+@pytest.mark.parametrize('focus',range(4))
+@pytest.mark.parametrize('scenario',[5,6])
+def test_operation_sampling_and_passive_tuner_restore(tmp_path,scenario,focus):
+    """Exercise actual request writes, in-flight changes and published input identity."""
+    here=Path(__file__).parent
+    exe=tmp_path/'focused-scheduler'
+    subprocess.run([str(Path.home()/'.cargo/bin/rustc'),'--edition=2021','-O',
+                    '--cfg','tuner_nsdf_continuous',str(here/'nsdf_trace_mock.rs'),
+                    '-o',str(exe)],env=dict(os.environ,TILIQUA_INTONO_NSDF_TRACE='continuous'),check=True)
+    text=subprocess.check_output([exe,str(scenario),str(focus)],text=True)
+    starts=[dict(part.split('=') for part in line.split()[2:])
+            for line in text.splitlines() if line.startswith('SAMPLE START ')]
+    starts=[(int(p['ms']),int(p['slot'])) for p in starts]
+    assert len(starts)>900
+    assert all(b[0]-a[0]>=10 for a,b in zip(starts,starts[1:]))
+    if scenario==5:
+        for lo,hi,input_number in [(2000,4001,focus),(4001,7001,(focus+1)%4)]:
+            group=[slot for ms,slot in starts if lo<=ms<hi]
+            assert set(group)=={2*input_number,2*input_number+1}
+            assert all(a!=b for a,b in zip(group,group[1:]))
+        restored=[slot for ms,slot in starts if ms>=7001]
+        assert set(restored)==set(range(8))
+        assert all(b==(a+1)%8 for a,b in zip(restored,restored[1:]))
+        # One bank now receives 50 nominal requests/s in this ideal CSR mock.
+        # This is request throughput, not independent-window or hardware speed.
+        for slot in (focus*2,focus*2+1):
+            assert len([1 for ms,s in starts if 2000<=ms<4000 and s==slot])==100
+    else:
+        focused=[(ms,slot) for ms,slot in starts if slot>>1==focus]
+        assert all(a[1]!=b[1] for a,b in zip(focused,focused[1:]))
+        assert len(focused)>2*len(starts)//3-2
+        for slot in range(8):
+            group=[ms for ms,s in starts if s==slot]
+            assert len(group)>40
+            assert max(b-a for a,b in zip(group,group[1:]))<=180
+        # Native/low readings from other inputs remain live when TUNER is
+        # displayed; the Rust mock also checks actual per-input frequencies.
+        reports=list(analyze_schedule(text))
+        assert all(r['ok'] for r in reports if r['count']>0 and r['ms']>11000)
+
+
 @pytest.mark.parametrize('scenario',[0,1,2,3,4])
 def test_real_scheduler_keeps_acquiring_during_uart_stall(tmp_path,scenario):
     here=Path(__file__).parent

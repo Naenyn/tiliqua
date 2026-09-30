@@ -1,4 +1,4 @@
-//! Shared corrected-pitch mapping for calibrator playback and future quantizer.
+//! Shared corrected/nominal pitch mapping for profile playback and quantizer routes.
 //! No hardware writes, allocation, retained curve copy or automatic arming.
 //! The adapter must own the output and qualify fresh calibrated CV snapshots.
 use super::{Error, Profile};
@@ -80,10 +80,16 @@ pub fn map_nominal(pitch: i32, zero_note: u8) -> Result<Target, MappingError> {
     if !(12..=108).contains(&zero_note) {
         return Err(MappingError::InvalidOrigin);
     }
-    let delta = pitch as i64 - zero_note as i64 * 100_000;
+    map_nominal_reference(pitch, zero_note as i32 * 100_000)
+}
+
+/// Nominal fallback anchored to the oscillator's measured physical 0 V pitch.
+fn map_nominal_reference(pitch: i32, reference: i32) -> Result<Target, MappingError> {
+    let delta = pitch as i64 - reference as i64;
     let uv = rounded_ratio(delta, 5, 6);
     let uv = i32::try_from(uv).map_err(|_| MappingError::OutputOutsideLimits)?;
-    let bits = crate::bipolar::encode_voltage(uv).ok_or(MappingError::OutputOutsideLimits)?;
+    let bits =
+        crate::bipolar::encode_profile_voltage(uv).ok_or(MappingError::OutputOutsideLimits)?;
     Ok(Target {
         pitch_millicents: pitch,
         requested_microvolts: uv,
@@ -121,7 +127,16 @@ impl ProfileStorage for () {
 }
 pub type Engine = PlaybackEngine<Profile>;
 pub type QuantEngine = PlaybackEngine<()>;
+#[derive(Clone, Copy, PartialEq)]
+enum OutputMode {
+    Corrected,
+    Nominal,
+    Bypassed,
+    Limited,
+}
+
 pub struct PlaybackEngine<P: ProfileStorage> {
+    output_mode: OutputMode,
     profile: Option<P>,
     pub active: bool,
     pub status: &'static str,
@@ -156,6 +171,7 @@ pub struct PlaybackEngine<P: ProfileStorage> {
 impl<P: ProfileStorage> PlaybackEngine<P> {
     pub const fn new() -> Self {
         Self {
+            output_mode: OutputMode::Nominal,
             profile: None,
             active: false,
             status: "STOPPED - RUN TO START",
@@ -276,6 +292,9 @@ impl<P: ProfileStorage> PlaybackEngine<P> {
         self.profile = Some(profile.clone().into());
         true
     }
+    pub fn profile_zero_pitch(&self) -> Option<i32> {
+        self.profile.as_ref().and_then(ProfileStorage::measured).and_then(Profile::zero_pitch)
+    }
     pub fn profile_name(&self) -> Option<&str> {
         self.profile
             .as_ref()
@@ -331,6 +350,67 @@ impl<P: ProfileStorage> PlaybackEngine<P> {
             && end_age <= 100
             && now.wrapping_sub(self.target_since) as u64 >= 450 + window_age as u64
     }
+    /// Correction only covers measured pitches. Ordinary range crossings
+    /// bypass it, then enforce output limits without extrapolating the curve.
+    fn route_target(&self, pitch: i32) -> Result<(Target, OutputMode), MappingError> {
+        let mode = if self.standalone {
+            OutputMode::Nominal
+        } else {
+            let profile = self
+                .profile
+                .as_ref()
+                .and_then(ProfileStorage::measured)
+                .ok_or(MappingError::Profile(Error::Incomplete))?;
+            match map_pitch(profile, pitch) {
+                Ok(target) => return Ok((target, OutputMode::Corrected)),
+                Err(MappingError::Profile(Error::PitchOutsideRange)) => OutputMode::Bypassed,
+                Err(error) => return Err(error),
+            }
+        };
+        let reference = if self.standalone { None } else {
+            self.profile.as_ref().and_then(ProfileStorage::measured).and_then(Profile::zero_pitch)
+        }.unwrap_or(self.zero_note as i32 * 100_000);
+        match map_nominal_reference(pitch, reference) {
+            Ok(target) => return Ok((target, mode)),
+            Err(MappingError::OutputOutsideLimits) => {}
+            Err(error) => return Err(error),
+        }
+        let minimum = reference.checked_add(-6_000_000).ok_or(MappingError::InputOverflow)?;
+        let maximum = reference.checked_add(9_600_000).ok_or(MappingError::InputOverflow)?;
+        let bounded = if self.scale_enabled {
+            let scale = if self.scale_id == 6 {
+                self.pattern.scale()
+            } else {
+                crate::scale::preset(self.scale_id)
+            }
+            .ok_or(MappingError::InputOverflow)?;
+            let shift = self.transpose as i32 * 100_000;
+            let root = (self.zero_note as i32 / 12 * 12 + self.root as i32) * 100_000 + shift;
+            scale
+                .quantize_bounded(pitch, root, minimum, maximum)
+                .map_err(|_| MappingError::OutputOutsideLimits)?
+        } else if self.chromatic {
+            crate::scale::preset(0)
+                .unwrap()
+                .quantize_bounded(pitch, 0, minimum, maximum)
+                .map_err(|_| MappingError::OutputOutsideLimits)?
+        } else {
+            pitch.clamp(minimum, maximum)
+        };
+        // The reachable note may itself be covered by the measured curve.
+        // Keep its correction rather than forcing nominal CV at that note.
+        if !self.standalone {
+            if let Some(profile) = self.profile.as_ref().and_then(ProfileStorage::measured) {
+                match map_pitch(profile, bounded) {
+                    Ok(target) => return Ok((target, OutputMode::Limited)),
+                    Err(MappingError::Profile(Error::PitchOutsideRange)) => {}
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+        Ok((map_nominal_reference(bounded, reference)?, OutputMode::Limited))
+    }
+
     pub fn tick(&mut self, now: u32, packed: u32, status: u32, allowed: bool) -> Option<u32> {
         if !self.active {
             return None;
@@ -360,9 +440,9 @@ impl<P: ProfileStorage> PlaybackEngine<P> {
         self.sequence = Some(sequence);
         self.last_sample = now;
         let counts = packed as u16 as i16 as i32;
-        if counts.abs() >= 32760 {
-            return Some(self.stop("STOPPED - INPUT AT RAIL"));
-        }
+        // A clipped ADC sample still supplies the direction of overrange.
+        // Keep the route alive; its true voltage beyond the rail is unknown.
+        let input_clipped = counts.abs() >= 32760;
         // The hardware's nominal CV snapshot scale is exactly 4000 counts/V.
         // Avoid a software 64-bit divide on that normal path; retain the general
         // conversion for other supported scales, with the same overflow guard.
@@ -411,45 +491,29 @@ impl<P: ProfileStorage> PlaybackEngine<P> {
         // A held quantized note already has a validated DAC mapping. Reuse it,
         // but continue all freshness, ACK, watchdog and command-token handling.
         // start/stop clear last_command; live control changes are rejected above.
-        let mapping = if self.chromatic && self.last_command.is_some() && pitch == self.pitch {
-            Ok(Target {
-                pitch_millicents: pitch,
-                requested_microvolts: self.output_uv,
-                applied_microvolts: self.output_uv,
-                dac_bits: self.last_command.unwrap() as u16,
-            })
-        } else if self.standalone {
-            map_nominal(pitch, self.zero_note)
+        let mapping = if self.chromatic
+            && self.last_command.is_some()
+            && pitch == self.pitch
+            && self.output_mode != OutputMode::Limited
+        {
+            Ok((
+                Target {
+                    pitch_millicents: pitch,
+                    requested_microvolts: self.output_uv,
+                    applied_microvolts: self.output_uv,
+                    dac_bits: self.last_command.unwrap() as u16,
+                },
+                self.output_mode,
+            ))
         } else {
-            match self.profile.as_ref().and_then(ProfileStorage::measured) {
-                Some(profile) => map_pitch(profile, pitch),
-                None => return Some(self.stop("STOPPED - NO PROFILE")),
-            }
+            self.route_target(pitch)
         };
-        let target = match mapping {
+        let (target, mode) = match mapping {
             Ok(target) => target,
-            Err(MappingError::Profile(Error::PitchOutsideRange)) => {
-                self.quantized_pitch = None;
-                self.status = if self.last_command.is_some() {
-                    "HOLDING - PITCH OUT OF RANGE"
-                } else {
-                    "WAITING FOR IN-RANGE PITCH"
-                };
-                // Renew the last acknowledged command's hardware watchdog.
-                // Before any valid target there is nothing to hold: stay off.
-                return Some(self.last_command.unwrap_or(0));
-            }
-            Err(MappingError::OutputOutsideLimits) if self.standalone => {
-                self.quantized_pitch = None;
-                self.status = if self.last_command.is_some() {
-                    "HOLDING - OUTPUT OUT OF RANGE"
-                } else {
-                    "WAITING FOR IN-RANGE PITCH"
-                };
-                return Some(self.last_command.unwrap_or(0));
-            }
             Err(_) => return Some(self.stop("STOPPED - INVALID MAPPING")),
         };
+        self.output_mode = mode;
+        pitch = target.pitch_millicents;
         if self.last_command.is_none()
             || target.applied_microvolts != self.output_uv
             || target.pitch_millicents != self.pitch
@@ -464,11 +528,17 @@ impl<P: ProfileStorage> PlaybackEngine<P> {
         self.token = self.token.wrapping_add(1);
         self.pending = Some((self.token, now));
         self.updates = self.updates.wrapping_add(1);
-        self.status = match (self.standalone, self.scale_enabled) {
-            (true, true) => "QUANTIZING - NOMINAL CV",
-            (true, false) => "PLAYING - NOMINAL CV",
-            (false, true) => "QUANTIZING - CORRECTED CV",
-            (false, false) => "PLAYING - CORRECTED CV",
+        self.status = if input_clipped {
+            "LIMITED - INPUT CLIPPED"
+        } else {
+            match self.output_mode {
+                OutputMode::Limited => "LIMITED - OUTPUT RANGE",
+                OutputMode::Bypassed => "PROFILE BYPASSED - NOMINAL CV",
+                OutputMode::Corrected if self.scale_enabled => "QUANTIZING - CORRECTED CV",
+                OutputMode::Corrected => "PLAYING - CORRECTED CV",
+                OutputMode::Nominal if self.scale_enabled => "QUANTIZING - NOMINAL CV",
+                OutputMode::Nominal => "PLAYING - NOMINAL CV",
+            }
         };
         let command = target.dac_bits as u32
             | ((self.output as u32) << 16)
@@ -485,6 +555,55 @@ impl<P: ProfileStorage> PlaybackEngine<P> {
 mod tests {
     use super::*;
     use crate::oscillator_calibration::Point;
+    #[test]
+    fn natural_origin_keeps_scale_targets_and_fallback_in_the_same_octave() {
+        let mut profile = Profile::new("34 Hz", -5_000_000, 8_000_000).unwrap();
+        for (uv, pitch) in [(-500_000, 1_867_000), (0, 2_467_000), (1_000_000, 3_667_000), (2_000_000, 4_867_000)] {
+            profile.push(Point { microvolts: uv, millicents: pitch }).unwrap();
+        }
+        assert_eq!(profile.natural_note(), Some(25)); // C#1
+        let mut e = Engine::new();
+        assert!(e.bind_profile(&profile));
+        assert!(e.arm_route(1, 1, 25, 4000, 0, 0, true, true));
+        e.scale_id = 1; // C# major, not C major
+        e.root = 1;
+        let mut command = 0;
+        for (index, counts) in [0, 4000, 8000, 4000, 0].iter().enumerate() {
+            let now = index as u32 + 1;
+            command = e.tick(now, sample(now, *counts), if command == 0 { 0 } else { ack(command) }, true).unwrap();
+            assert!(e.active);
+            assert_eq!(e.pitch, 2_500_000 + *counts as i32 * 300);
+            assert_eq!(e.output_uv, *counts as i32 * 250 + 27_500);
+            assert_eq!(e.status, if *counts == 8000 { "PROFILE BYPASSED - NOMINAL CV" }
+                else { "QUANTIZING - CORRECTED CV" });
+        }
+        // Keeping C4 as an explicit user override changes musical targets,
+        // but must not replace the oscillator's physical fallback reference.
+        e.stop("test");
+        assert!(e.arm_route(1, 1, 60, 4000, 6, 0, true, false));
+        e.tick(7, sample(7, 0), 0, true);
+        assert_eq!(e.pitch, 6_000_000);
+        assert_eq!(e.output_uv, 2_944_250);
+    }
+
+    #[test]
+    fn natural_reference_limits_use_physical_not_input_origin() {
+        let mut p = Profile::new("offset", 0, 8_000_000).unwrap();
+        p.push(Point { microvolts: 0, millicents: 2_467_000 }).unwrap();
+        p.push(Point { microvolts: 1_000_000, millicents: 3_667_000 }).unwrap();
+        let mut e = Engine::new();
+        assert!(e.bind_profile(&p));
+        assert!(e.arm_route(0, 0, 60, 4000, 0, 0, true, true));
+        let command = e.tick(1, sample(1, 32767), 0, true).unwrap();
+        assert_eq!(e.pitch, 12_000_000); // highest chromatic note within physical +8V
+        assert_eq!(e.output_uv, 7_944_250);
+        assert!(e.active);
+        e.tick(2, sample(2, -32768), ack(command), true);
+        assert_eq!(e.pitch, -3_500_000);
+        assert_eq!(e.output_uv, -4_972_500);
+        assert!(e.active);
+    }
+
     #[test]
     fn route_stages_are_independent_and_curve_is_a_snapshot() {
         for quantize in [false, true] {
@@ -546,7 +665,8 @@ mod tests {
             assert_eq!(e.active, n != 0);
         }
         // One immutable curve per output; no duplicate calibration state.
-        assert!(core::mem::size_of::<[Engine; 4]>() < 5200);
+        // Four physical reference values add at most 32 host-layout bytes.
+        assert!(core::mem::size_of::<[Engine; 4]>() < 5232);
     }
     #[test]
     fn four_lightweight_lanes_keep_history_and_faults_independent() {
@@ -637,7 +757,7 @@ mod tests {
         }
     }
     #[test]
-    fn custom_two_octaves_equal_mapping_hold_and_reentry() {
+    fn custom_two_octaves_equal_mapping_and_reentry() {
         let mut e = Engine::new();
         assert!(e.arm_nominal(1, 1, 60, 4000, 0, 0));
         e.scale_id = 6;
@@ -646,12 +766,9 @@ mod tests {
         // +0.75 V lies in second equal bin -> +1 V output.
         let command = e.tick(1, sample(1, 3000), 0, true).unwrap();
         assert_eq!(e.output_uv, 1_000_000);
-        assert_eq!(
-            e.tick(2, sample(2, 26000), ack(command), true),
-            Some(command)
-        );
+        let command = e.tick(2, sample(2, 26000), ack(command), true).unwrap();
         assert!(e.active);
-        assert_eq!(e.output_uv, 1_000_000);
+        assert_eq!(e.output_uv, 7_000_000);
         let command = e.tick(3, sample(3, 0), ack(command), true).unwrap();
         assert_eq!(e.output_uv, 0);
         assert_eq!(e.tick(4, sample(4, 0), ack(command), false), Some(0));
@@ -690,12 +807,12 @@ mod tests {
     #[test]
     fn nominal_mapping_covers_bipolar_notes_without_profile() {
         for origin in 12..=108 {
-            for step in -60..=60 {
+            for step in -60..=96 {
                 let target = map_nominal(origin as i32 * 100_000 + step * 100_000, origin).unwrap();
                 let ideal = step as f64 * 1_000_000.0 / 12.0;
                 assert!((target.applied_microvolts as f64 - ideal).abs() <= 126.0);
             }
-            assert!(map_nominal(origin as i32 * 100_000 + 6_100_000, origin).is_err());
+            assert!(map_nominal(origin as i32 * 100_000 + 9_700_000, origin).is_err());
             assert!(map_nominal(origin as i32 * 100_000 - 6_100_000, origin).is_err());
         }
         assert!(map_nominal(0, 0).is_err());
@@ -711,12 +828,9 @@ mod tests {
         let command = e.tick(2, sample(2, 160), ack(command), true).unwrap();
         assert_eq!(e.pitch, 6_100_000);
         assert_eq!((command >> 16) & 3, 2);
-        assert_eq!(
-            e.tick(3, sample(3, 24000), ack(command), true),
-            Some(command)
-        );
+        let command = e.tick(3, sample(3, 24000), ack(command), true).unwrap();
         assert!(e.active);
-        assert_eq!(e.output_uv, 83_250);
+        assert_eq!(e.output_uv, 6_000_000);
         let command = e.tick(4, sample(4, -4000), ack(command), true).unwrap();
         assert_eq!(e.output_uv, -1_000_000);
         assert_eq!(e.tick(14, sample(4, -4000), ack(command), true), Some(0));
@@ -766,7 +880,7 @@ mod tests {
         assert_eq!(e.pitch, 6_000_000);
     }
     #[test]
-    fn chromatic_outside_profile_waits_instead_of_clamping_note() {
+    fn chromatic_outside_profile_bypasses_correction() {
         let mut p = Profile::new("partial", -5_000_000, 5_000_000).unwrap();
         p.push(Point {
             microvolts: 0,
@@ -782,9 +896,12 @@ mod tests {
         e.chromatic = true;
         assert!(e.arm(&p, 1, 1, 60, 4000, 0, 0));
         // Input is within measured pitch range, but nearest note is not.
-        assert_eq!(e.tick(1, sample(1, 120), 0, true), Some(0));
+        let command = e.tick(1, sample(1, 120), 0, true).unwrap();
         assert!(e.active);
-        assert_eq!(e.status, "WAITING FOR IN-RANGE PITCH");
+        assert_eq!(e.pitch, 6_000_000);
+        assert_eq!(e.output_uv, -25_000); // physical zero is C4 +30c
+        assert_ne!(command, 0);
+        assert_eq!(e.status, "PROFILE BYPASSED - NOMINAL CV");
     }
     fn curve() -> Profile {
         let mut p = Profile::new("variable", -5_000_000, 5_000_000).unwrap();
@@ -809,41 +926,135 @@ mod tests {
         ((command >> 21) & 255) | 256
     }
     #[test]
-    fn range_hold_renews_command_and_resumes_but_stale_cv_still_stops() {
+    fn profile_bypass_tracks_cv_and_reenters_but_stale_cv_stops() {
         for chromatic in [false, true] {
             let mut e = Engine::new();
             e.chromatic = chromatic;
             assert!(e.arm(&curve(), 1, 1, 60, 4000, 0, 0));
-            // No valid note yet: remain disabled but keep listening.
-            assert_eq!(e.tick(1, sample(1, 20000), 0, true), Some(0));
-            assert!(e.active);
-            let command = e.tick(2, sample(2, 0), 0, true).unwrap();
-            let voltage = e.output_uv;
-            let pitch = e.pitch;
-            for now in 3..1003 {
-                let counts = if now % 2 == 0 { 20000 } else { -20000 };
-                assert_eq!(
-                    e.tick(now, sample(now, counts), ack(command), true),
-                    Some(command)
-                );
+            let mut command = 0;
+            for (index, counts) in [20000, -20000, 20000, 0, 4000, 20000].iter().enumerate() {
+                let now = index as u32 + 1;
+                command = e
+                    .tick(
+                        now,
+                        sample(now, *counts),
+                        if command == 0 { 0 } else { ack(command) },
+                        true,
+                    )
+                    .unwrap();
+                let expected = if *counts == 0 {
+                    -900_000
+                } else if *counts == 4000 {
+                    200_000
+                } else {
+                    *counts as i32 * 250
+                };
+                assert_eq!(e.output_uv, expected);
                 assert!(e.active);
-                assert_eq!(e.output_uv, voltage);
-                assert_eq!(e.pitch, pitch);
+                assert_eq!(
+                    e.status,
+                    if counts.abs() == 20000 {
+                        "PROFILE BYPASSED - NOMINAL CV"
+                    } else {
+                        "PLAYING - CORRECTED CV"
+                    }
+                );
             }
-            let resumed = e
-                .tick(1003, sample(1003, 4000), ack(command), true)
-                .unwrap();
-            assert_ne!(resumed as u16, command as u16);
-            assert_eq!(e.pitch, 7_200_000);
-            assert_eq!(
-                e.tick(1004, sample(1004, 20000), ack(resumed), true),
-                Some(resumed)
-            );
-            assert_eq!(
-                e.tick(1014, sample(1004, 20000), ack(resumed), true),
-                Some(0)
-            );
+            assert_eq!(e.tick(16, sample(6, 20000), ack(command), true), Some(0));
             assert_eq!(e.status, "STOPPED - CV STALE");
+        }
+    }
+
+    #[test]
+    fn clipped_input_limits_output_and_recovers_without_rearming() {
+        for corrected in [false, true] {
+            for quantized in [false, true] {
+                let mut e = Engine::new();
+                assert!(e.bind_profile(&curve()));
+                assert!(e.arm_route(0, 0, 60, 4000, 0, 0, corrected, quantized));
+                let mut command = 0;
+                for (index, counts) in [32767, -32768, 32760, -32760, 0].iter().enumerate() {
+                    let now = index as u32 + 1;
+                    command = e
+                        .tick(
+                            now,
+                            sample(now, *counts),
+                            if command == 0 { 0 } else { ack(command) },
+                            true,
+                        )
+                        .unwrap();
+                    assert!(e.active);
+                    assert_ne!(command, 0);
+                    let expected = if *counts > 0 {
+                        8_000_000
+                    } else if *counts < 0 {
+                        -5_000_000
+                    } else if corrected {
+                        -900_000
+                    } else {
+                        0
+                    };
+                    assert_eq!(e.output_uv, expected);
+                    if *counts != 0 {
+                        assert_eq!(e.status, "LIMITED - INPUT CLIPPED");
+                    } else {
+                        assert!(!e.status.contains("LIMITED"));
+                    }
+                }
+                assert_eq!(e.tick(15, sample(5, 0), ack(command), true), Some(0));
+                assert!(!e.active);
+            }
+        }
+    }
+
+    #[test]
+    fn output_limit_without_input_clipping_retains_corrected_reachable_note() {
+        let mut profile = Profile::new("high", 0, 8_000_000).unwrap();
+        profile
+            .push(Point {
+                microvolts: 7_000_000,
+                millicents: 15_000_000,
+            })
+            .unwrap();
+        profile
+            .push(Point {
+                microvolts: 7_500_000,
+                millicents: 15_600_000,
+            })
+            .unwrap();
+        let mut e = Engine::new();
+        assert!(e.bind_profile(&profile));
+        assert!(e.arm_route(0, 0, 60, 4000, 0, 0, true, true));
+        let command = e.tick(1, sample(1, 32320), 0, true).unwrap(); // 8.08 V, below ADC rail
+        assert!(e.active);
+        assert_eq!(e.pitch, 15_600_000);
+        assert_eq!(e.output_uv, 7_500_000);
+        assert_eq!(e.status, "LIMITED - OUTPUT RANGE");
+        let command = e.tick(2, sample(2, 32000), ack(command), true).unwrap();
+        assert_eq!(e.status, "QUANTIZING - CORRECTED CV");
+        assert_eq!(e.output_uv, 7_500_000);
+        e.tick(3, sample(3, 30000), ack(command), true);
+        assert_eq!(e.output_uv, 7_000_000);
+    }
+
+    #[test]
+    fn limiting_preserves_sparse_transposed_scale_and_equal_mapping() {
+        for equal in [false, true] {
+            let mut e = Engine::new();
+            assert!(e.arm_nominal(0, 0, 60, 4000, 0, 0));
+            e.pattern = crate::scale::Pattern::compile([1, 0]).unwrap(); // octave Cs only
+            e.scale_id = 6;
+            e.transpose = 1; // C# octave notes: neither hardware edge is a degree
+            e.equal = equal;
+            let mut command = e.tick(1, sample(1, 32767), 0, true).unwrap();
+            assert_eq!(e.pitch, 14_500_000); // highest reachable C# = 7+1/12 V
+            assert_eq!(e.output_uv, 7_083_250);
+            command = e.tick(2, sample(2, -32768), ack(command), true).unwrap();
+            assert_eq!(e.pitch, 100_000); // lowest reachable C# = -5+1/12 V
+            assert_eq!(e.output_uv, -4_916_750);
+            e.tick(3, sample(3, 0), ack(command), true);
+            assert_eq!(e.pitch, 6_100_000);
+            assert_eq!(e.output_uv, 83_250);
         }
     }
     #[test]
@@ -886,15 +1097,14 @@ mod tests {
     #[test]
     fn playback_faults_latch_and_clock_wrap_is_bounded() {
         let p = curve();
-        for reason in 0..4 {
+        for reason in 0..3 {
             let mut e = Engine::new();
             assert!(e.arm(&p, 1, 1, 60, 4000, u32::MAX - 1, 0));
             let c = e.tick(u32::MAX, sample(32767, 0), 0, true).unwrap();
             let result = match reason {
                 0 => e.tick(2, sample(0, 0), 0, true),
                 1 => e.tick(0, sample(0, 0), 512, true),
-                2 => e.tick(0, sample(0, 0), ack(c), false),
-                _ => e.tick(0, sample(0, 32767), ack(c), true),
+                _ => e.tick(0, sample(0, 0), ack(c), false),
             };
             assert_eq!(result, Some(0));
             assert!(!e.active);
@@ -989,10 +1199,10 @@ mod tests {
         .unwrap();
         let target = map_pitch(&p, 7_200_000).unwrap();
         assert_eq!(target.applied_microvolts, 6_000_000);
-        // Nominal/unprofiled output retains its conservative +5 V ceiling.
+        // Nominal routes use the same guarded +8 V output ceiling.
         assert_eq!(
-            map_nominal(7_300_000, 12),
-            Err(MappingError::OutputOutsideLimits)
+            map_nominal(7_300_000, 12).unwrap().applied_microvolts,
+            5_083_250
         );
     }
 }

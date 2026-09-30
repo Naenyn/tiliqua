@@ -13,7 +13,8 @@ pub enum Scene {
 pub const SPIRAL_OCTAVES: usize = 11;
 pub const SPIRAL_STEPS: usize = 192;
 pub const CAL_GRID_SEGMENTS: usize = 16;
-pub const CAL_CURVE_SEGMENTS: usize = 128;
+// The profile holds 121 acquisition anchors plus 8 refinement anchors.
+pub const CAL_CURVE_SEGMENTS: usize = 129;
 pub const SPIRAL_SPACING: f32 = 176.0 / SPIRAL_OCTAVES as f32;
 pub fn spiral_radius(semitones: f32) -> f32 {
     52.0 + SPIRAL_SPACING
@@ -65,7 +66,9 @@ impl LiveTrace {
         Self { active: false, first: None, last: None, count: 0, drawn: [0; 2] }
     }
 
-    /// Returns true when an earlier provisional trace must be erased.
+    /// Returns true only when previously drawn provisional pixels must be
+    /// erased. Entering a fresh empty sweep must not invalidate both CAL
+    /// backgrounds while the output watchdog is running.
     pub fn observe(
         &mut self,
         active: bool,
@@ -74,17 +77,19 @@ impl LiveTrace {
         count: usize,
     ) -> bool {
         if !active {
+            let needs_clear = self.drawn.iter().any(|&drawn| drawn > 0);
             self.active = false;
             self.first = None;
             self.last = None;
             self.count = 0;
             self.drawn = [0; 2];
-            return false;
+            return needs_clear;
         }
         let restart = !self.active
             || (self.first.is_some() && self.first != first)
             || count < self.count
             || (count == self.count && self.last != last);
+        let needs_clear = restart && self.drawn.iter().any(|&drawn| drawn > 0);
         if restart {
             self.drawn = [0; 2];
         }
@@ -92,7 +97,7 @@ impl LiveTrace {
         self.first = first;
         self.last = last;
         self.count = count;
-        restart
+        needs_clear
     }
 
     pub fn reset_bank(&mut self, bank: usize) {
@@ -100,7 +105,7 @@ impl LiveTrace {
     }
 
     pub fn pending(&self, bank: usize) -> core::ops::Range<usize> {
-        self.drawn[bank].max(1)..self.count
+        self.drawn[bank]..self.count
     }
 
     pub fn mark_drawn(&mut self, bank: usize) {
@@ -114,6 +119,13 @@ pub struct Backgrounds {
 }
 
 impl Backgrounds {
+    pub fn with_prepared_calibration() -> Self {
+        Self {
+            resident: [Some(Scene::Spiral), Some(Scene::Calibration)],
+            preparing: None,
+        }
+    }
+
     pub fn new() -> Self {
         Self {
             resident: [Some(Scene::Spiral), None],
@@ -179,6 +191,17 @@ impl Backgrounds {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn empty_calibration_dashboard_is_ready_before_first_scan() {
+        let mut backgrounds = Backgrounds::with_prepared_calibration();
+        assert_eq!(backgrounds.step(0, Scene::Spiral, 720 * 720 / 4), Work::Ready);
+        assert_eq!(backgrounds.step(1, Scene::Calibration, 720 * 720 / 4), Work::Ready);
+        backgrounds.invalidate_calibration();
+        assert!(matches!(
+            backgrounds.step(1, Scene::Calibration, 720 * 720 / 4),
+            Work::Clear { first: 0, .. }
+        ));
+    }
     #[test]
     fn spiral_covers_high_notes_without_collapsing_octaves() {
         assert_eq!(spiral_radius(12.0), 52.0); // C0
@@ -329,22 +352,25 @@ mod tests {
     #[test]
     fn live_trace_advances_each_bank_and_restarts_on_discontinuity() {
         let mut trace = LiveTrace::new();
-        assert!(trace.observe(true, None, None, 0));
+        assert!(!trace.observe(true, None, None, 0));
         assert!(trace.pending(0).is_empty());
         assert!(!trace.observe(true, Some((-5, 100)), Some((-4, 200)), 2));
-        assert_eq!(trace.pending(0), 1..2);
+        assert_eq!(trace.pending(0), 0..2);
         trace.mark_drawn(0);
         assert!(trace.pending(0).is_empty());
-        assert_eq!(trace.pending(1), 1..2);
+        assert_eq!(trace.pending(1), 0..2);
         assert!(!trace.observe(true, Some((-5, 100)), Some((-3, 300)), 3));
         assert_eq!(trace.pending(0), 2..3);
-        assert_eq!(trace.pending(1), 1..3);
+        assert_eq!(trace.pending(1), 0..3);
         assert!(trace.observe(true, Some((0, 800)), Some((1, 900)), 2));
-        assert_eq!(trace.pending(0), 1..2);
+        assert_eq!(trace.pending(0), 0..2);
         trace.mark_drawn(0);
         trace.reset_bank(0);
-        assert_eq!(trace.pending(0), 1..2);
+        assert_eq!(trace.pending(0), 0..2);
         assert!(!trace.observe(false, None, None, 0));
-        assert!(trace.observe(true, None, None, 0));
+        assert!(!trace.observe(true, None, None, 0));
+        assert!(!trace.observe(true, Some((0, 800)), Some((1, 900)), 2));
+        trace.mark_drawn(1);
+        assert!(trace.observe(false, None, None, 0));
     }
 }

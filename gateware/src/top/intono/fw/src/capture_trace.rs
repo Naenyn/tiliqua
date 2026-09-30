@@ -109,6 +109,13 @@ impl Trace {
             write_snapshot(&mut self.report, tuner.quant_cv2().read().value().bits(), counts_per_v);
             write_snapshot(&mut self.report, tuner.quant_cv3().read().value().bits(), counts_per_v);
             self.report.push('\n').ok();
+            if !cal.active() {
+                writeln!(self.report,
+                    "TUNER MONITOR IN={} HZ={:.3} VALID={} QUALIFIED={} VPP={:.3} SEQ={} WINDOW_AGE_MS={} END_AGE_MS={}",
+                    cal.input, feedback.frequency_hz, feedback.valid, feedback.qualified,
+                    feedback.vpp, feedback.sequence, feedback.window_age_ms,
+                    feedback.end_age_ms).ok();
+            }
             if let Some(f) = cal.tracking_failure {
                 write!(
                     self.report,
@@ -133,6 +140,9 @@ impl Trace {
             if result.is_err() {
                 self.report.clear();
                 writeln!(self.report, "\nSERIAL REPORT TRUNCATED").ok();
+                // Emit these before optional diagnostics. Never erase the
+                // exact pass timings just because the detailed report grew.
+                crate::serial_report::timing(&mut self.report, cal).ok();
                 writeln!(
                     self.report,
                     "CAL STATUS {} ACTIVE={} POINT={}/{} MV={}",
@@ -143,15 +153,26 @@ impl Trace {
                     cal.millivolts
                 )
                 .ok();
+                if !cal.active() {
+                    writeln!(self.report,
+                        "TUNER MONITOR IN={} HZ={:.3} VALID={} QUALIFIED={} VPP={:.3} SEQ={} WINDOW_AGE_MS={} END_AGE_MS={}",
+                        cal.input, feedback.frequency_hz, feedback.valid, feedback.qualified,
+                        feedback.vpp, feedback.sequence, feedback.window_age_ms,
+                        feedback.end_age_ms).ok();
+                }
                 if let Some(auto) = cal.automatic.as_ref() {
                     writeln!(
                         self.report,
-                        "AUTO PHASE={} POLICY={} PASSES={}/8",
+                        "AUTO PHASE={} POLICY={} PASSES={}/{}",
                         auto.label(),
                         auto.policy_label(),
-                        auto.passes
+                        auto.passes,
+                        crate::oscillator_calibration::automatic::MAX_PASSES
                     )
                     .ok();
+                    if let Some(reason) = auto.review_reason {
+                        writeln!(self.report, "AUTO REVIEW_REASON={}", reason).ok();
+                    }
                     if let Some(scan) = auto.best.as_ref() {
                         let quality = scan.quality();
                         writeln!(
@@ -164,7 +185,90 @@ impl Trace {
                             scan.total
                         )
                         .ok();
+                        let (pitch, error) = scan.checked_worst();
+                        writeln!(self.report,
+                            "AUTO WORST MC={} ERROR_C={:+.2} GRID_C={:+.2} SPAN_C={:.2}",
+                            pitch, error, scan.worst_error, scan.max_spread).ok();
+                        if let Some(check) = scan.local.as_ref() {
+                            for (index, label) in ["LOW", "HIGH", "TARGET"].iter().enumerate() {
+                                if let Some((mean, span, repeat)) = check.aggregate(index) {
+                                    writeln!(self.report,
+                                        "AUTO LOCAL {} UV={} MEAN_C={:+.2} SPAN_C={:.2} REPEAT_C={:.2}",
+                                        label, check.targets[index].microvolts,
+                                        mean, span, repeat).ok();
+                                }
+                            }
+                            writeln!(self.report, "AUTO LOCAL ADVICE={}", check.advice()).ok();
+                        }
+                    } else if !auto.active() {
+                        if let Some(scan) = cal.scan.as_ref() {
+                            let (pitch, error) = scan.checked_worst();
+                            writeln!(self.report,
+                                "AUTO CANDIDATE_WORST MC={} ERROR_C={:+.2} SPAN_C={:.2}",
+                                pitch, error, scan.max_spread).ok();
+                            if let Some(check) = scan.local.as_ref() {
+                                writeln!(self.report,
+                                    "AUTO CANDIDATE_LOCAL TESTED={}/9 ADVICE={}",
+                                    check.tested, check.advice()).ok();
+                                for (index, label) in ["LOW", "HIGH", "TARGET"].iter().enumerate() {
+                                    if let Some((mean, span, repeat)) = check.aggregate(index) {
+                                        writeln!(self.report,
+                                            "AUTO CANDIDATE_LOCAL {} UV={} MEAN_C={:+.2} SPAN_C={:.2} REPEAT_C={:.2}",
+                                            label, check.targets[index].microvolts,
+                                            mean, span, repeat).ok();
+                                    }
+                                }
+                                if let Some(delta) = scan.grid_local_disagreement() {
+                                    writeln!(self.report,
+                                        "AUTO CANDIDATE_GRID_LOCAL_DELTA_C={:.2}", delta).ok();
+                                }
+                                for (visit, result) in check.results.iter().enumerate() {
+                                    if let Some(result) = result {
+                                        let target = crate::oscillator_calibration::verification_scan::LocalCheck::ORDER[visit];
+                                        writeln!(self.report,
+                                            "AUTO CANDIDATE_LOCAL VISIT={} TARGET={} UV={} MEAN_C={:+.2} SPAN_C={:.2}",
+                                            visit + 1, ["LOW", "HIGH", "MID"][target],
+                                            check.targets[target].microvolts,
+                                            result.mean, result.spread).ok();
+                                    }
+                                }
+                            }
+                        }
                     }
+                    if let Some((pitch, old, new, repeat)) = auto.last_refine {
+                        writeln!(self.report,
+                            "AUTO LAST_REFINE MC={} OLD_C={:+.2} NEW_C={:+.2} REPEAT_C={:.2}",
+                            pitch, old, new, repeat).ok();
+                    }
+                    if let Some((old, new, kept)) = auto.last_recheck {
+                        writeln!(self.report,
+                            "AUTO LAST_RECHECK OLD_C={:+.2} NEW_C={:+.2} KEPT={}",
+                            old, new, kept).ok();
+                    }
+                    if let Some(uv) = auto.recheck_missing_uv {
+                        writeln!(self.report, "AUTO RECHECK_FIRST_MISSING_UV={}", uv).ok();
+                    }
+                    if let Some(a) = cal.recovered_verification.as_ref() {
+                        writeln!(self.report,
+                            "AUTO RECOVERED_AVG COUNT={} RAW_SPAN_MC={} QUARTER_DELTA_MC={} HALF_DELTA_MC={}",
+                            a.count, a.raw_span, a.quarter_delta, a.half_delta).ok();
+                        write!(self.report, "AUTO RECOVERED_ERRORS_MC=").ok();
+                        for (i, error) in a.values[..a.count].iter().enumerate() {
+                            write!(self.report, "{}{}", if i == 0 { "" } else { "," }, error).ok();
+                        }
+                        self.report.push('\n').ok();
+                    }
+                }
+                if let Some(a) = cal.failure_verification.as_ref() {
+                    writeln!(self.report,
+                        "VERIFY FAILED_TARGET_MC={} COUNT={} RAW_SPAN_MC={} QUARTER_DELTA_MC={} HALF_DELTA_MC={}",
+                        cal.target_millicents, a.count, a.raw_span, a.quarter_delta,
+                        a.half_delta).ok();
+                    write!(self.report, "VERIFY FAILED_ERRORS_MC=").ok();
+                    for (i, error) in a.values[..a.count].iter().enumerate() {
+                        write!(self.report, "{}{}", if i == 0 { "" } else { "," }, error).ok();
+                    }
+                    self.report.push('\n').ok();
                 }
             }
         }

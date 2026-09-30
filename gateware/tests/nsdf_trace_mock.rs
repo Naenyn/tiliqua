@@ -58,7 +58,11 @@ impl NSDF_PERIPH {
 mod nsdf_select {
     pub struct Result {pub hz:f32,pub unrefined_hz:f32,pub clarity:f32,pub qualified:bool}
     pub fn select_frame(_:impl FnMut(usize)->i32,low:bool,_:u64,_:bool,_:bool)->Option<Result>{
-        let hz=super::STATE.with(|s|if s.borrow().scenario==4 && !low {881.0}else{880.0});
+        let hz=super::STATE.with(|s| {
+            let s=s.borrow();
+            if s.scenario>=5 {880.0+((s.command>>3)&3) as f32*50.0}
+            else if s.scenario==4 && !low {881.0}else{880.0}
+        });
         Some(Result{hz,unrefined_hz:hz,clarity:0.99,qualified:true})
     }
 }
@@ -66,6 +70,7 @@ mod nsdf_select {
 #[path="../src/top/intono/fw/src/nsdf_guard.rs"] mod nsdf_guard;
 fn main() {
     let scenario=std::env::args().nth(1).map_or(0,|s|s.parse::<u8>().unwrap());
+    let focus=std::env::args().nth(2).map_or(2,|s|s.parse::<u8>().unwrap());
     STATE.with(|s|s.borrow_mut().scenario=scenario);
     let mut trace=trace::Trace::new();let uart=UART0;
     #[cfg(tuner_nsdf_continuous)]
@@ -80,6 +85,15 @@ fn main() {
         // Approximate 115200-baud 8N1 draining between 1-ms foreground visits.
         // Ready falls within a service call, unlike the old always-ready mock.
         let before=STATE.with(|s|{let mut s=s.borrow_mut();s.now=now;s.ready=!(2500..2900).contains(&now);s.space=(s.space+11).min(16);s.out.len()});
+        #[cfg(tuner_nsdf_continuous)]
+        if scenario==5 {
+            // Changes at xx01 occur while the preceding xx00 request is
+            // still in flight. Its result must keep its original input.
+            trace.set_operation_input(if now<4001 {Some(focus)}
+                else if now<7001 {Some((focus+1)%4)} else {None},false);
+        } else if scenario==6 {
+            trace.set_operation_input(Some(focus),true);
+        }
         #[cfg(tuner_nsdf_continuous)]
         if scenario==3 {
             let due=now>=status_due;
@@ -108,12 +122,14 @@ fn main() {
                     assert_eq!(hz,None);
                 }
                 if now>11000 {
-                    assert_eq!(hz,Some(if scenario==4 {881.0}else{880.0}));
+                    let expected=if scenario>=5 {880.0+channel as f32*50.0}
+                        else if scenario==4 {881.0}else{880.0};
+                    assert_eq!(hz,Some(expected));
                     let mut live_id=trace::Sequence::default();let mut cal_id=trace::Sequence::default();
                     let live=trace.measurement(channel,now,&mut live_id);
                     let cal=trace.calibration_measurement(channel,now,&mut cal_id);
-                    assert_eq!(live.0,if scenario==4 {881.0}else{880.0});
-                    assert_eq!(cal.0,880.0);assert!(live.1 && cal.1);
+                    assert_eq!(live.0,expected);
+                    assert_eq!(cal.0,if scenario>=5 {expected}else{880.0});assert!(live.1 && cal.1);
                     assert!(cal.3>=cal.4+110);
                 }
             }
@@ -127,7 +143,7 @@ fn main() {
             for pair in s.starts.windows(2){assert!(pair[1].0-pair[0].0>=if continuous {10}else{50});}
             let low=env!("TILIQUA_INTONO_NSDF_TRACE")=="fast-low";
             if all || continuous {
-                if scenario!=2 {for (i,(_,command)) in s.starts.iter().enumerate() {
+                if scenario<5 && scenario!=2 {for (i,(_,command)) in s.starts.iter().enumerate() {
                     assert_eq!(*command,1|(((i/2)&3) as u32)<<3|((i&1) as u32)<<2);
                 }}
                 // UART stalls delay, but never skip a bank or queue catch-up.
@@ -141,5 +157,11 @@ fn main() {
             assert!(!std::str::from_utf8(&s.out).unwrap().contains("NSDF BEGIN"));
         } else {assert!(std::str::from_utf8(&s.out).unwrap().contains("NSDF BEGIN"));}
         print!("{}",std::str::from_utf8(&s.out).unwrap());
+        if scenario>=5 {
+            for (ms,command) in &s.starts {
+                println!("SAMPLE START ms={} slot={}",ms,
+                    ((command>>3)&3)*2+((command>>2)&1));
+            }
+        }
     });
 }

@@ -3,6 +3,8 @@
 
 mod calibration_live;
 mod capture_trace;
+#[cfg(tuner_nsdf_wave_diag)]
+mod cv_probe;
 mod feedback;
 mod measurement_snapshot;
 mod midi_learn;
@@ -42,7 +44,7 @@ use tiliqua_hal::pca9635::Pca9635Driver;
 use tiliqua_hal::pmod::EurorackPmod;
 use tiliqua_lib::*;
 
-use options::{DisplayMode, Opts, Page};
+use options::{CalibrationGraph, DisplayMode, Opts, Page};
 use opts::persistence::*;
 use opts::{OptionString, Options as _};
 use pac::constants::*;
@@ -479,25 +481,73 @@ impl BackgroundCanvas {
         }
     }
 
+    fn plot_dot(&mut self, x: i32, y: i32) {
+        for dy in -2..=2 {
+            for dx in -2..=2 {
+                if dx * dx + dy * dy <= 4 {
+                    self.put_panel_pixel(x + dx, y + dy, 0xFF);
+                }
+            }
+        }
+    }
+
+    fn draw_calibration_tracking_interval(
+        &mut self,
+        first: oscillator_calibration::Point,
+        last: oscillator_calibration::Point,
+        range: (i32, i32),
+    ) {
+        let Some(color) = ui_canvas::calibration_tracking_color(
+            first.microvolts, first.millicents,
+            last.microvolts, last.millicents,
+        ) else { return };
+        let plot = ui_canvas::CALIBRATION_PLOT;
+        let right = (plot.x + plot.width as i32 - 1) as u16;
+        let Some(x0) = ui_canvas::axis(first.microvolts, range.0, range.1,
+            plot.x as u16, right) else { return };
+        let Some(x1) = ui_canvas::axis(last.microvolts, range.0, range.1,
+            plot.x as u16, right) else { return };
+        for y in ui_canvas::CAL_TRACKING_Y
+            ..ui_canvas::CAL_TRACKING_Y + ui_canvas::CAL_TRACKING_HEIGHT {
+            self.line(x0, y, x1, y, color);
+        }
+    }
+
     fn draw_live_calibration_segments(
         &mut self,
         points: &[oscillator_calibration::Point],
         next_points: core::ops::Range<usize>,
+        graph: CalibrationGraph,
+        error_span_mc: i32,
     ) {
         let Some(anchor) = points.first() else { return };
         for index in next_points {
             if index >= points.len() { break; }
             let location = |sample: oscillator_calibration::Point| {
-                ui_canvas::live_calibration_point(
-                    ui_canvas::CALIBRATION_PLOT,
-                    sample.microvolts,
-                    sample.millicents,
-                    anchor.microvolts,
-                    anchor.millicents,
-                )
+                match graph {
+                    CalibrationGraph::Pitch => ui_canvas::calibration_pitch_point(
+                        ui_canvas::CALIBRATION_PLOT, sample.microvolts, sample.millicents,
+                        anchor.microvolts, anchor.millicents,
+                        bipolar::MIN_UV, bipolar::MAX_UV),
+                    CalibrationGraph::Error => ui_canvas::calibration_error_only_point(
+                        ui_canvas::CALIBRATION_PLOT, sample.microvolts, sample.millicents,
+                        anchor.microvolts, anchor.millicents,
+                        bipolar::MIN_UV, bipolar::MAX_UV,
+                        error_span_mc),
+                }
             };
-            if let (Some(a), Some(b)) = (location(points[index - 1]), location(points[index])) {
-                self.thick_line(a.x, a.y, b.x, b.y, 0xDB);
+            if index > 0 && points[index].microvolts as i64
+                - points[index - 1].microvolts as i64 <= 125_000 {
+                if let (Some(a), Some(b)) = (location(points[index - 1]), location(points[index])) {
+                    self.line(a.x, a.y, b.x, b.y, 0xDB);
+                }
+            }
+            if graph == CalibrationGraph::Pitch && index > 0 {
+                self.draw_calibration_tracking_interval(points[index - 1], points[index],
+                    (bipolar::MIN_UV, bipolar::MAX_UV));
+            }
+            if let Some(p) = location(points[index]) {
+                self.plot_dot(p.x, p.y);
             }
         }
     }
@@ -528,6 +578,10 @@ impl BackgroundCanvas {
         first: usize,
         end: usize,
         profile: Option<&oscillator_calibration::Profile>,
+        plot_range: (i32, i32),
+        plot_anchor: (i32, i32),
+        graph: CalibrationGraph,
+        error_span_mc: i32,
     ) {
         for segment in first..end.min(scene.segments()) {
             if segment < 2048 {
@@ -554,36 +608,89 @@ impl BackgroundCanvas {
                     });
                     continue;
                 }
+                if index == ui_scene::CAL_GRID_SEGMENTS {
+                    // The pitch view has a literal 1 V/oct diagonal. The error
+                    // view's ideal reference is a horizontal zero-cent line.
+                    for segment in (0..32).step_by(2) {
+                        let x0 = PLOT.x + segment * (PLOT.width as i32 - 1) / 32;
+                        let x1 = PLOT.x + (segment + 1) * (PLOT.width as i32 - 1) / 32;
+                        let uv0 = plot_range.0 as i64
+                            + (plot_range.1 as i64 - plot_range.0 as i64) * segment as i64 / 32;
+                        let uv1 = plot_range.0 as i64
+                            + (plot_range.1 as i64 - plot_range.0 as i64) * (segment + 1) as i64 / 32;
+                        let ideal_y = |uv: i32| match graph {
+                            CalibrationGraph::Pitch => ui_canvas::calibration_pitch_y(
+                                PLOT, ui_canvas::calibration_ideal_mc(
+                                    uv, plot_anchor.0, plot_anchor.1),
+                                plot_anchor.0, plot_anchor.1,
+                                plot_range.0, plot_range.1),
+                            CalibrationGraph::Error => ui_canvas::calibration_error_only_point(
+                                PLOT, uv, ui_canvas::calibration_ideal_mc(
+                                    uv, plot_anchor.0, plot_anchor.1),
+                                plot_anchor.0, plot_anchor.1,
+                                plot_range.0, plot_range.1,
+                                error_span_mc).map(|point| point.y),
+                        };
+                        if let (Some(y0), Some(y1)) = (ideal_y(uv0 as i32), ideal_y(uv1 as i32)) {
+                            self.line(x0, y0, x1, y1, 0x69);
+                        }
+                    }
+                    for division in 0..=4 {
+                        let y = PLOT.y + 8 + division * (PLOT.height as i32 - 17) / 4;
+                        self.line(PLOT.x - 6, y, PLOT.x, y, 0x69);
+                    }
+                    let (low_uv, high_uv) = plot_range;
+                    for volt in low_uv.div_euclid(1_000_000)
+                        ..=high_uv.div_euclid(1_000_000) {
+                        if let Some(x) = ui_canvas::axis(volt * 1_000_000,
+                            low_uv, high_uv, PLOT.x as u16,
+                            (PLOT.x + PLOT.width as i32 - 1) as u16)
+                        {
+                            if (low_uv..=high_uv).contains(&(volt * 1_000_000)) {
+                                self.line(x, PLOT.y + PLOT.height as i32 - 8,
+                                    x, PLOT.y + PLOT.height as i32 - 1, 0x69);
+                            }
+                        }
+                    }
+                    if graph == CalibrationGraph::Pitch {
+                        self.line(PLOT.x, ui_canvas::CAL_TRACKING_Y + 3,
+                            PLOT.x + PLOT.width as i32 - 1,
+                            ui_canvas::CAL_TRACKING_Y + 3, 0x29);
+                    }
+                    continue;
+                }
                 let Some(profile) = profile else { continue };
                 let points = profile.points();
                 if points.len() < 2 { continue; }
                 let low = points[0];
-                let high = points[points.len() - 1];
-                let ideal_span = (high.microvolts as i64 - low.microvolts as i64)
-                    * 1_200_000 / 1_000_000;
-                let measured_span = high.millicents as i64 - low.millicents as i64;
-                let top = (low.millicents as i64 + ideal_span.max(measured_span).max(1))
-                    .min(i32::MAX as i64) as i32;
                 let point = |sample: oscillator_calibration::Point| {
-                    ui_canvas::calibration_plot_point(
-                        PLOT, sample.microvolts, sample.millicents,
-                        low.microvolts, low.millicents, high.microvolts, top,
-                    )
-                };
-                if index == ui_scene::CAL_GRID_SEGMENTS {
-                    let ideal_high = oscillator_calibration::Point {
-                        microvolts: high.microvolts,
-                        millicents: (low.millicents as i64 + ideal_span)
-                            .clamp(i32::MIN as i64, i32::MAX as i64) as i32,
-                    };
-                    if let (Some(a), Some(b)) = (point(low), point(ideal_high)) {
-                        self.line(a.x, a.y, b.x, b.y, 0x69);
+                    match graph {
+                        CalibrationGraph::Pitch => ui_canvas::calibration_pitch_point(
+                            PLOT, sample.microvolts, sample.millicents,
+                            low.microvolts, low.millicents,
+                            plot_range.0, plot_range.1),
+                        CalibrationGraph::Error => ui_canvas::calibration_error_only_point(
+                            PLOT, sample.microvolts, sample.millicents,
+                            low.microvolts, low.millicents,
+                            plot_range.0, plot_range.1,
+                            error_span_mc),
                     }
-                } else {
+                };
+                {
                     let n = index - ui_scene::CAL_GRID_SEGMENTS - 1;
-                    if n + 1 < points.len() {
-                        if let (Some(a), Some(b)) = (point(points[n]), point(points[n + 1])) {
-                            self.thick_line(a.x, a.y, b.x, b.y, 0xDB);
+                    if n < points.len() {
+                        if n > 0 && points[n].microvolts as i64
+                            - points[n - 1].microvolts as i64 <= 125_000 {
+                            if let (Some(a), Some(b)) = (point(points[n - 1]), point(points[n])) {
+                                self.line(a.x, a.y, b.x, b.y, 0xDB);
+                            }
+                        }
+                        if graph == CalibrationGraph::Pitch && n > 0 {
+                            self.draw_calibration_tracking_interval(points[n - 1], points[n],
+                                plot_range);
+                        }
+                        if let Some(p) = point(points[n]) {
+                            self.plot_dot(p.x, p.y);
                         }
                     }
                 }
@@ -1475,9 +1582,12 @@ pub fn write_playback_status(
                     p.input,
                     p.input_uv,
                     p.output_uv,
+                    p.pitch,
+                    p.zero_note,
                     p.updates,
                     p.status,
                     q.configs[n],
+                    p.profile_zero_pitch(),
                 )
             });
             (q.running, q.max_cycles, q.max_gap, lanes)
@@ -1487,16 +1597,20 @@ pub fn write_playback_status(
             "QUANT4 ACTIVE={} RATE_HZ=500 MAX_BATCH_CYCLES={} MAX_GAP_CYCLES={}",
             running, cycles, gap
         )?;
-        for (n, (active, input, uv, voltage, updates, status, c)) in lanes.iter().enumerate() {
+        for (n, (active, input, uv, voltage, pitch, engine_zero, updates, status, c, physical_zero)) in lanes.iter().enumerate() {
+            if let Some(reference) = physical_zero {
+                writeln!(out, "Q{} PHYSICAL_ZERO_MC={}", n, reference)?;
+            }
             writeln!(
                 out,
-                "Q{} ACTIVE={} IN={} UV={} OUT_UV={} UPDATES={} STATUS={}",
-                n, active, input, uv, voltage, updates, status
+                "Q{} ACTIVE={} IN={} UV={} OUT_UV={} TARGET_MC={} ENGINE_ZERO={} UPDATES={} STATUS={}",
+                n, active, input, uv, voltage, pitch, engine_zero, updates, status
             )?;
             writeln!(
                 out,
-                "Q{} SCALE={} ROOT={} TRANSPOSE={} EQUAL={} A={:03X} B={:03X} QUANT={} CORR={}",
+                "Q{} ZERO_NOTE={} SCALE={} ROOT={} TRANSPOSE={} EQUAL={} A={:03X} B={:03X} QUANT={} CORR={}",
                 n,
+                c.zero,
                 c.scale,
                 c.root,
                 c.transpose,
@@ -1536,9 +1650,78 @@ fn publish_calibration(
     }, 32);
     write!(line, "OUT {} -> V/OCT    AUDIO -> IN {}", output, input).ok();
     write_centered(text, 9, &line, 40);
-    write_text(text, 7, 27, "OUTPUT CV (V)");
-    write_text(text, 31, 11, "RESPONSE");
-    write_text(text, 31, 12, "VS 1V/OCT");
+    let (plot_low, plot_high) = calibration_plot_range(cal, profile);
+    let plot_anchor = calibration_plot_anchor(cal, profile);
+    let error_span_mc = calibration_plot_error_span(cal, profile);
+    let voltage_step = if plot_high - plot_low > 8_000_000 { 2 } else { 1 };
+    for volt in plot_low.div_euclid(1_000_000)
+        ..=plot_high.div_euclid(1_000_000) {
+        if volt % voltage_step != 0 { continue }
+        let uv = volt * 1_000_000;
+        if uv < plot_low || uv > plot_high { continue }
+        if let Some(x) = ui_canvas::axis(uv, plot_low, plot_high,
+            ui_canvas::CALIBRATION_PLOT.x as u16, 429) {
+            line.clear();
+            write!(line, "{}", volt).ok();
+            let column = ((x - 90) / 12).clamp(0, 40) as u8;
+            write_text(text, column, 27, &line);
+        }
+    }
+    match controls.calibration_graph {
+        CalibrationGraph::Pitch => {
+            write_text(text, 0, 11, "PITCH (c)");
+            if let Some((low_mc, high_mc)) = ui_canvas::calibration_pitch_bounds(
+                plot_anchor.0, plot_anchor.1, plot_low, plot_high,
+            ) {
+                for division in 0..=4 {
+                    let pitch_mc = low_mc as i64
+                        + (high_mc as i64 - low_mc as i64) * division / 4;
+                    if let Some(y) = ui_canvas::calibration_pitch_y(
+                        ui_canvas::CALIBRATION_PLOT, pitch_mc as i32,
+                        plot_anchor.0, plot_anchor.1, plot_low, plot_high,
+                    ) {
+                        line.clear();
+                        write!(line, "{}", pitch_mc / 1000).ok();
+                        write_text(text, 0, (y / 16).clamp(0, 44) as u8, &line);
+                    }
+                }
+            }
+            write_text(text, 31, 11, "PITCH GRAPH");
+            write_text(text, 31, 12, "DASH = 1V/OCT");
+            write_text(text, 31, 13, "TRACK c/VOLT");
+            write_text(text, 31, 14, "C<50 Y<200 R+");
+        }
+        CalibrationGraph::Error => {
+            write_text(text, 0, 11, "ERROR (c)");
+            for division in -2..=2 {
+                let error_mc = division * error_span_mc / 2;
+                if let Some(y) = ui_canvas::axis(error_mc,
+                    -error_span_mc, error_span_mc,
+                    (ui_canvas::CALIBRATION_PLOT.y
+                        + ui_canvas::CALIBRATION_PLOT.height as i32 - 9) as u16,
+                    (ui_canvas::CALIBRATION_PLOT.y + 8) as u16,
+                ) {
+                    line.clear();
+                    if error_mc.abs() >= 1_000_000 {
+                        write!(line, "{:+.1}k", error_mc as f32 / 1_000_000.0).ok();
+                    } else {
+                        write!(line, "{:+}", error_mc / 1000).ok();
+                    }
+                    write_text(text, 0, (y / 16).clamp(0, 44) as u8, &line);
+                }
+            }
+            write_text(text, 31, 11, "ERROR GRAPH");
+            write_text(text, 31, 12, "DASH = 0c");
+            line.clear();
+            if error_span_mc >= 1_000_000 {
+                write!(line, "SCALE +/- {}kc", error_span_mc / 1_000_000).ok();
+            } else {
+                write!(line, "SCALE +/- {}c", error_span_mc / 1000).ok();
+            }
+            write_text(text, 31, 13, &line);
+        }
+    }
+    write_text(text, 10, 28, "OUTPUT V/OCT (V)");
     write_text(text, 31, 15, "PROFILE");
     write_text(text, 31, 19, "RANGE");
     write_text(text, 31, 23, "QUALITY");
@@ -1559,6 +1742,23 @@ fn publish_calibration(
         } else {
             cal.profile_quality.grade.label()
         });
+        let quality = if cal.pending_profile.is_some() {
+            cal.pending_quality
+        } else {
+            cal.profile_quality
+        };
+        if let Some(score) = quality.score_percent() {
+            line.clear();
+            write!(line, "SCORE {}%", score).ok();
+            write_text(text, 31, 25, &line);
+            line.clear();
+            write!(line, "W{:.0}c S{:.0}c", quality.worst_cents(), quality.stability_cents()).ok();
+            write_text(text, 31, 26, &line);
+        } else if let Some(scan) = cal.scan.as_ref().filter(|s| s.missing != 0) {
+            line.clear();
+            write!(line, "{} CHECKS MISSING", scan.missing).ok();
+            write_text(text, 31, 25, &line);
+        }
     } else {
         write_text(text, 31, 16, if cal.acquiring_points().is_some() {
             "SCANNING"
@@ -1574,6 +1774,15 @@ fn publish_calibration(
     if !plot_ready {
         write_centered(text, 29, "DRAWING RESPONSE PLOT", 34);
     }
+    if cal.can_accept_imperfect() {
+        write_centered(text, 18, "OFF TARGET - ACCEPT OR IMPROVE", 39);
+    } else if cal.pending_profile.is_some() && !cal.pending_quality.acceptable() && !cal.active() {
+        write_centered(text, 18, "INCOMPLETE - DIAGNOSTIC CURVE", 39);
+    } else if cal.pending_profile.as_ref().is_some_and(|p| p.limited_low || p.limited_high)
+        && !cal.active()
+    {
+        write_centered(text, 18, "LIMITED RANGE - REVIEW BEFORE ACCEPT", 39);
+    }
     if controls.mode == runtime::OperatingMode::Profiles {
         line.clear();
         write!(line, "PROFILE SLOT {} OF 4", profile_slot).ok();
@@ -1586,7 +1795,11 @@ fn publish_calibration(
         write_centered(text, 30, cal.status, 40);
         line.clear();
         if let Some(scan) = cal.scan.as_ref() {
-            write!(line, "CHECK {} / {} TARGETS", scan.tested, scan.total).ok();
+            if let Some(local) = scan.local.as_ref() {
+                write!(line, "GRID {}/{}  LOCAL {}/9", scan.tested, scan.total, local.tested).ok();
+            } else {
+                write!(line, "CHECK {} / {} TARGETS", scan.tested, scan.total).ok();
+            }
         } else {
             write!(line, "TARGET ").ok();
             pitch_units::write_pitch(&mut line, if cal.verifying {
@@ -1597,7 +1810,9 @@ fn publish_calibration(
         }
         write_centered(text, 32, &line, 38);
         line.clear();
-        if let Some(scan) = cal.scan.as_ref().filter(|scan| scan.complete) {
+        if let Some(scan) = cal.scan.as_ref().filter(|scan| scan.missing > 0) {
+            write!(line, "{} TARGETS UNRESOLVED", scan.missing).ok();
+        } else if let Some(scan) = cal.scan.as_ref().filter(|scan| scan.complete) {
             write!(line, "WORST {:+.2}c", scan.worst_error).ok();
         } else if let Some(error) = cal.error_cents {
             write!(line, "ERROR {:+.2}c", error).ok();
@@ -1642,15 +1857,39 @@ fn publish_calibration(
         }
         line.push(']').ok();
         write_centered(text, 35, &line, 26);
-        write_centered(text, 37, cal.status, 40);
+        write_centered(text, 37, if cal.automatic.as_ref().is_some_and(|a| a.best.is_some()) {
+            "RUN AGAIN: REVIEW VERIFIED CURVE"
+        } else {
+            "RUN AGAIN: CANCEL BEFORE FIRST CHECK"
+        }, 40);
     } else if cal.pending_profile.is_some() {
         write_centered(text, 30, cal.status, 39);
-        write_centered(text, 32, if cal.pending_quality.acceptable() {
-            "ACCEPT: USE RESULT IN RAM"
+        write_centered(text, 32, if cal.can_continue_automatic() {
+            if cal.pending_quality.acceptable() {
+                "RECOMMEND IMPROVE: RUN TO CONTINUE"
+            } else {
+                "OFF TARGET: RUN TO SEARCH RANGE"
+            }
+        } else if cal.pending_quality.acceptable() {
+            "RECOMMEND ACCEPT: USE RESULT IN RAM"
         } else {
-            "UNSAFE: RESCAN OR DISCARD"
+            if cal.can_accept_imperfect() {
+                "LOW SCORE: ACCEPT OR RESCAN"
+            } else {
+                "INCOMPLETE: RESCAN OR DISCARD"
+            }
         }, 36);
-        write_centered(text, 35, "RUN: ADJUST AND RESCAN", 36);
+        write_centered(text, 35, if cal.can_continue_automatic() && cal.pending_quality.acceptable() {
+            "ACCEPT CURRENT OR RUN TO IMPROVE"
+        } else if cal.can_continue_automatic() {
+            if cal.can_accept_imperfect() {
+                "ACCEPT AS-IS OR RUN TO IMPROVE"
+            } else {
+                "RUN TO RECHECK OR DISCARD"
+            }
+        } else {
+            "RUN: ADJUST AND RESCAN"
+        }, 36);
         write_centered(text, 37, "DISCARD: KEEP PRIOR PROFILE", 38);
     } else {
         write_centered(text, 30, cal.status, 40);
@@ -1691,9 +1930,63 @@ fn calibration_plot_profile(cal: &calibration_live::Live) -> Option<&oscillator_
     }
 }
 
-fn calibration_plot_revision(profile: Option<&oscillator_calibration::Profile>) -> u64 {
-    let Some(profile) = profile else { return 0 };
-    profile.points().iter().fold(profile.points().len() as u64, |hash, point| {
+fn calibration_plot_anchor(
+    cal: &calibration_live::Live,
+    profile: Option<&oscillator_calibration::Profile>,
+) -> (i32, i32) {
+    profile.and_then(|profile| profile.points().first())
+        .or_else(|| cal.acquiring_points().and_then(|points| points.first()))
+        .map(|point| (point.microvolts, point.millicents))
+        .unwrap_or((0, 6_000_000)) // C4 reference before any pitch is measured
+}
+
+fn calibration_plot_error_span(
+    cal: &calibration_live::Live,
+    profile: Option<&oscillator_calibration::Profile>,
+) -> i32 {
+    let points = profile.map(|profile| profile.points())
+        .or_else(|| cal.acquiring_points());
+    let Some(points) = points else { return ui_canvas::CAL_ERROR_SPAN_MC };
+    let Some(anchor) = points.first() else { return ui_canvas::CAL_ERROR_SPAN_MC };
+    let worst = points.iter().map(|point| ui_canvas::calibration_error_mc(
+        point.microvolts, point.millicents,
+        anchor.microvolts, anchor.millicents,
+    ).abs()).max().unwrap_or(0);
+    ui_canvas::calibration_error_span_mc(worst)
+}
+
+fn calibration_plot_range(
+    cal: &calibration_live::Live,
+    profile: Option<&oscillator_calibration::Profile>,
+) -> (i32, i32) {
+    const FULL: (i32, i32) = (bipolar::MIN_UV, bipolar::MAX_UV);
+    if cal.acquiring_points().is_some()
+        || (cal.pending_profile.is_some() && !cal.pending_quality.acceptable()) {
+        return FULL;
+    }
+    let Some(points) = profile.map(|profile| profile.points()) else { return FULL };
+    let (Some(first), Some(last)) = (points.first(), points.last()) else { return FULL };
+    if first.microvolts >= last.microvolts { return FULL }
+    let pad = ((last.microvolts - first.microvolts) / 20).max(100_000);
+    ((first.microvolts - pad).max(FULL.0),
+        (last.microvolts + pad).min(FULL.1))
+}
+
+fn calibration_plot_revision(profile: Option<&oscillator_calibration::Profile>,
+    plot_range: (i32, i32), plot_anchor: (i32, i32), graph: CalibrationGraph,
+    error_span_mc: i32) -> u64 {
+    if profile.is_none() && plot_anchor == (0, 6_000_000)
+        && plot_range == (bipolar::MIN_UV, bipolar::MAX_UV)
+        && graph == CalibrationGraph::Pitch { return 0; }
+    let seed = ((plot_range.0 as u32 as u64) << 32)
+        | plot_range.1 as u32 as u64;
+    let seed = seed ^ ((plot_anchor.0 as u32 as u64) << 32)
+        ^ plot_anchor.1 as u32 as u64
+        ^ if graph == CalibrationGraph::Error {
+            0x99aabbccdd ^ error_span_mc as u64
+        } else { 0 };
+    let Some(profile) = profile else { return seed };
+    profile.points().iter().fold(seed ^ profile.points().len() as u64, |hash, point| {
         hash.wrapping_mul(0x100000001b3)
             ^ ((point.microvolts as u32 as u64) << 32 | point.millicents as u32 as u64)
     })
@@ -1965,9 +2258,9 @@ fn poll_ui_frame() -> UiFrame {
             accept_scan: app.ui.opts.calibrate.accept.poll(),
             discard_scan: app.ui.opts.calibrate.discard.poll(),
             run_verify: app.ui.opts.verify.run.poll(),
-            refine: false,
-            accept_refinement: false,
-            discard_refinement: false,
+            refine: app.ui.opts.verify.improve.poll(),
+            accept_refinement: app.ui.opts.verify.accept.poll(),
+            discard_refinement: app.ui.opts.verify.discard.poll(),
             profile_slot: app.ui.opts.profiles.slot.value,
             name_position: app.ui.opts.profiles.position.value,
             name_character: app.ui.opts.profiles.character.value,
@@ -2176,7 +2469,24 @@ fn install_route_curve(
             return "CANNOT BIND PROFILE";
         }
         q.bound[output] = source;
-        "CURVE BOUND - RUN TO START"
+        if let Some(note) = profile.natural_note() {
+            // Binding adopts the oscillator's natural musical origin/root.
+            // Subsequent stopped-route edits remain explicit user overrides.
+            with_app(|app| {
+                let c = &mut app.quant_channels[output];
+                c.zero = note;
+                c.root = note % 12;
+                q.configs[output] = *c;
+                if app.quant_selected as usize == output {
+                    app.ui.opts.play.zero_note.value = note;
+                    show_quant_settings(&mut app.ui.opts.quantizer, *c);
+                    app.ui.external_modify();
+                }
+            });
+            "BOUND - NATURAL NOTE / ROOT SET"
+        } else {
+            "BOUND - NO MEASURED 0V REFERENCE"
+        }
     })
 }
 
@@ -2215,7 +2525,7 @@ fn save_profile(
     let Ok(len) = record::encode(
         profile,
         route,
-        zero_note,
+        profile.natural_note().unwrap_or(zero_note),
         cal.profile_quality,
         name,
         &mut bytes,
@@ -2280,7 +2590,7 @@ fn decode_profile(
     let Ok(record) = oscillator_calibration::storage::decode(bytes) else {
         return ("INVALID STORED PROFILE", None);
     };
-    let zero = record.zero_note;
+    let zero = record.profile.natural_note().unwrap_or(record.zero_note);
     if !cal.recall(record) {
         return ("BUSY - STOP OUTPUT FIRST", None);
     }
@@ -2365,6 +2675,27 @@ fn startup() -> RuntimeResources {
     background.clear();
     background.draw_static_tuner();
     background.finish();
+    // Bank 1 is not visible at boot. Build the empty CAL dashboard here so
+    // entering CAL can publish its grid and circular edge on the next frame,
+    // without waiting for a multi-frame clear/draw pass.
+    let mut calibration_background = BackgroundCanvas::new(
+        PSRAM_FB_BASE + 0x100000,
+        modeline.h_active,
+        modeline.v_active,
+        ROUND_DISPLAY,
+    );
+    calibration_background.clear();
+    calibration_background.draw_scene_range(
+        ui_scene::Scene::Calibration,
+        0,
+        ui_scene::Scene::Calibration.segments(),
+        None,
+        (bipolar::MIN_UV, bipolar::MAX_UV),
+        (0, 6_000_000),
+        CalibrationGraph::Pitch,
+        ui_canvas::CAL_ERROR_SPAN_MC,
+    );
+    calibration_background.finish();
     video.enable();
     boot_mark(b'V');
     let tuner_display = peripherals.TUNER_DISPLAY;
@@ -2470,6 +2801,8 @@ fn run(resources: &mut RuntimeResources) -> ! {
             *hardware_calibration,
             *hardware_calibration_bits,
         );
+        #[cfg(tuner_nsdf_wave_diag)]
+        let mut cv_probe = cv_probe::Probe::default();
         let mut nsdf_trace = nsdf_trace::Trace::new();
         let mut run_calibration = false;
         let mut run_verify = false;
@@ -2483,7 +2816,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
         // menu hides it; it does not destroy the retained contents of either bank.
         let mut menu_dirty_banks = 0b11u8;
         let mut save_feedback = feedback::Feedback::default();
-        let mut backgrounds = ui_scene::Backgrounds::new();
+        let mut backgrounds = ui_scene::Backgrounds::with_prepared_calibration();
         let mut scene = ui_scene::Scene::Spiral;
         let mut calibration_revision = 0u64;
         let mut calibration_plot_dirty = false;
@@ -2496,12 +2829,33 @@ fn run(resources: &mut RuntimeResources) -> ! {
         loop {
             riscv::asm::wfi();
             let now = with_app(|app| app.now_ms);
+            #[cfg(tuner_nsdf_wave_diag)]
+            cv_probe.tick(
+                &tuner,
+                uart,
+                now,
+                !calibration.active()
+                    && !playback_visible()
+                    && with_app(|app| app.ui.opts.tracker.page.value == options::Page::Tuner),
+            );
+            // Service the DAC watchdog before any opportunistic serial or
+            // framebuffer work. Transitions remain in calibration.tick().
+            calibration.renew_output(&tuner);
             // Fast diagnostic is foreground-only, never an ISR job. It gets
             // opportunities between UI frames; UART writes remain bounded.
             #[cfg(tuner_nsdf_continuous)]
             {
+                nsdf_trace.set_operation_input(
+                    calibration.active().then_some(calibration.input),
+                    with_app(|app| app.ui.opts.tracker.page.value == options::Page::Tuner),
+                );
                 let status_due = capture_trace.status_due(now, calibration.active());
-                nsdf_trace.tick_reporting(uart, now, !status_due);
+                nsdf_trace.tick_reporting(
+                    uart,
+                    now,
+                    !status_due
+                        && env!("TILIQUA_INTONO_NSDF_TRACE") != "continuous-quiet",
+                );
                 if status_due && nsdf_trace.serial_idle() {
                     // One owner at a time, including under UART backpressure.
                     // Reuse the existing report storage; no new RAM buffer.
@@ -2643,6 +2997,9 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     calibration.discard_scan();
                 } else if ui_frame.accept_scan {
                     calibration.accept_scan(&tuner);
+                    if let Some(note) = calibration.profile.as_ref().and_then(oscillator_calibration::Profile::natural_note) {
+                        with_app(|app| { app.ui.opts.calibrate.zero_note.value = note; });
+                    }
                 }
             }
             run_verify |= ui_frame.run_verify;
@@ -2774,17 +3131,22 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 ui_scene::Scene::Spiral
             };
             let plot_profile = calibration_plot_profile(&calibration);
+            let plot_range = calibration_plot_range(&calibration, plot_profile);
+            let plot_anchor = calibration_plot_anchor(&calibration, plot_profile);
+            let graph = ui_frame.controls.calibration_graph;
+            let error_span_mc = calibration_plot_error_span(&calibration, plot_profile);
             let live_points = calibration.acquiring_points();
             let live_first = live_points.and_then(|points| points.first())
                 .map(|point| (point.microvolts, point.millicents));
             let live_last = live_points.and_then(|points| points.last())
                 .map(|point| (point.microvolts, point.millicents));
-            let restarted_live_trace = live_trace.observe(
+            let stale_live_trace = live_trace.observe(
                 live_points.is_some(), live_first, live_last,
                 live_points.map_or(0, |points| points.len()),
             );
-            let plot_revision = calibration_plot_revision(plot_profile);
-            if plot_revision != calibration_revision || restarted_live_trace {
+            let plot_revision = calibration_plot_revision(
+                plot_profile, plot_range, plot_anchor, graph, error_span_mc);
+            if plot_revision != calibration_revision || stale_live_trace {
                 calibration_revision = plot_revision;
                 backgrounds.invalidate_calibration();
                 calibration_plot_dirty = true;
@@ -2792,14 +3154,16 @@ fn run(resources: &mut RuntimeResources) -> ! {
             let mut swap_background = false;
             let exchange = tuner_display.frame().read();
             if !exchange.busy().bit() {
-                // Warm the unused view in idle opportunities, never touching
-                // the visible background or adding another startup clear.
+                // Keep CAL ready on the unused bank while the tuner is shown.
+                // Otherwise the idle warmer immediately overwrites the CAL
+                // frame prepared at startup with Linear, reintroducing the
+                // long blank transition on the first CAL visit.
                 let prepare_scene = if requested_scene != scene {
                     requested_scene
                 } else if calibration_prepared {
                     ui_scene::Scene::Calibration
                 } else if scene == ui_scene::Scene::Spiral {
-                    ui_scene::Scene::Linear
+                    ui_scene::Scene::Calibration
                 } else {
                     ui_scene::Scene::Spiral
                 };
@@ -2817,7 +3181,8 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 ) {
                     ui_scene::Work::Clear { first, end } => canvas.clear_words(first, end),
                     ui_scene::Work::Draw { scene, first, end } => {
-                        canvas.draw_scene_range(scene, first, end, plot_profile);
+                        canvas.draw_scene_range(scene, first, end, plot_profile,
+                            plot_range, plot_anchor, graph, error_span_mc);
                     }
                     ui_scene::Work::Flush => {
                         canvas.finish();
@@ -2836,7 +3201,8 @@ fn run(resources: &mut RuntimeResources) -> ! {
                             if let Some(points) = live_points {
                                 let pending = live_trace.pending(bank);
                                 if !pending.is_empty() {
-                                    canvas.draw_live_calibration_segments(points, pending);
+                                    canvas.draw_live_calibration_segments(
+                                        points, pending, graph, error_span_mc);
                                     canvas.finish();
                                     live_trace.mark_drawn(bank);
                                     live_updated = true;
@@ -2912,16 +3278,21 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     capture_trace.cancel(&tuner);
                     run_calibration = false;
                     if controls.mode == runtime::OperatingMode::Calibrator {
+                        let resume = calibration.can_continue_automatic();
+                        let input = if resume { calibration.input } else { controls.calibration_input };
+                        let output = if resume { calibration.output } else { controls.calibration_output };
                         let can_start = calibration.active()
                             || critical_section::with(|cs| {
                                 OWNERS.borrow_ref_mut(cs).claim(
                                     Owner::Calibration,
-                                    1 << controls.calibration_input,
-                                    1 << controls.calibration_output,
+                                    1 << input,
+                                    1 << output,
                                 )
                             });
                         if can_start {
-                            calibration_controls = Some(controls);
+                            if !resume {
+                                calibration_controls = Some(controls);
+                            }
                             calibration.toggle_automatic(&tuner, controls, ui_frame.now_ms);
                         } else {
                             calibration.status = "CHANNEL BUSY - STOP ITS OWNER";
@@ -3076,8 +3447,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 tuner_display
                     .backdrop()
                     .write(|w| w.blank().bit(calibration_view
-                        && (!calibration_dashboard || scene != ui_scene::Scene::Calibration
-                            || calibration_plot_dirty)));
+                        && (!calibration_dashboard || scene != ui_scene::Scene::Calibration)));
                 tuner_display.frame().write(|w| {
                     w.swap_background().bit(swap_background);
                     w.commit().set_bit()

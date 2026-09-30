@@ -59,8 +59,9 @@ impl Reservations {
     pub fn cv_inputs(&self) -> u8 {
         self.inputs[1..].iter().fold(0, |mask, input| mask | input)
     }
+    /// Passive observation does not compete with an operation's jack claims.
     pub fn tuner_available(&self, input: u8) -> bool {
-        input < 4 && self.cv_inputs() & (1 << input) == 0
+        input < 4
     }
     pub fn focus(&self, requested: u8, previous: u8) -> Option<u8> {
         let backwards = requested < previous;
@@ -79,19 +80,19 @@ impl Reservations {
 mod tests {
     use super::*;
     #[test]
-    fn scan_audio_remains_visible_but_cv_is_not() {
+    fn passive_tuner_observes_claimed_inputs_without_claiming_them() {
         let mut r = Reservations::new();
         assert!(r.claim(Owner::Calibration, 2, 2));
         assert!(r.tuner_available(1));
         assert!(r.claim(Owner::Quant(2), 4, 4));
-        assert!(!r.tuner_available(2));
-        assert_eq!(r.focus(2, 1), Some(3));
-        assert_eq!(r.focus(2, 3), Some(1));
+        assert!(r.tuner_available(2));
+        assert_eq!(r.focus(2, 1), Some(2));
+        assert_eq!(r.focus(2, 3), Some(2));
         assert!(!r.claim(Owner::Quant(3), 2, 8));
         assert!(!r.held(Owner::Quant(3)));
         assert!(r.claim(Owner::Quant(3), 4, 8));
         r.release(Owner::Quant(2));
-        assert!(!r.tuner_available(2));
+        assert!(r.tuner_available(2));
         r.release(Owner::Quant(3));
         assert!(r.tuner_available(2));
     }
@@ -107,13 +108,13 @@ mod tests {
         assert!(!r.claim(Owner::Quant(1), 16, 1));
     }
     #[test]
-    fn no_audio_focus_when_all_inputs_are_cv() {
+    fn all_cv_inputs_remain_observable() {
         let mut r = Reservations::new();
         for n in 0..4 {
             assert!(r.claim(Owner::Quant(n), 1 << n, 1 << n));
         }
-        assert_eq!(r.focus(0, 0), None);
+        assert_eq!(r.focus(0, 0), Some(0));
         r.release(Owner::Quant(2));
-        assert_eq!(r.focus(0, 0), Some(2));
+        assert_eq!(r.focus(0, 0), Some(0));
     }
 }

@@ -86,9 +86,9 @@ pub fn encode_voltage(uv: i32) -> Option<u16> {
     encode_hardware_voltage(uv)
 }
 
-/// Wider output command used only by a measured positive-only profile and its
-/// acquisition/verification.  Standalone nominal CV remains conservatively
-/// bounded to the established -5..+5 V behavior through `encode_voltage`.
+/// Wider guarded INTONO output range, used by profiles and route playback.
+/// Acquisition/verification and nominal route fallback share these limits;
+/// `encode_voltage` retains the conservative +/-5 V helper for other callers.
 pub fn encode_profile_voltage(uv: i32) -> Option<u16> {
     if !(MIN_UV..=MAX_UV).contains(&uv) {
         return None;

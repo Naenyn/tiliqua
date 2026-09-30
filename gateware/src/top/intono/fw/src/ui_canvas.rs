@@ -2,12 +2,42 @@
 //! These helpers emit pixels; they do not allocate, flush caches or publish frames.
 
 pub const SIZE: i32 = 720;
+pub const CAL_ERROR_SPAN_MC: i32 = 20_000;
+const CAL_ERROR_SPANS_MC: [i32; 10] = [
+    20_000, 50_000, 100_000, 200_000, 500_000, 1_000_000,
+    2_000_000, 5_000_000, 10_000_000, 20_000_000,
+];
+
+/// Select a readable symmetric error axis with room beyond the worst point.
+pub fn calibration_error_span_mc(worst_abs_mc: i64) -> i32 {
+    let required = worst_abs_mc.saturating_mul(5) / 4;
+    CAL_ERROR_SPANS_MC.iter().copied()
+        .find(|span| *span as i64 >= required)
+        .unwrap_or(*CAL_ERROR_SPANS_MC.last().unwrap())
+}
 pub const CALIBRATION_PLOT: Rect = Rect {
-    x: 100,
+    x: 154,
     y: 190,
-    width: 330,
+    width: 276,
     height: 230,
 };
+pub const CAL_TRACKING_Y: i32 = CALIBRATION_PLOT.y + CALIBRATION_PLOT.height as i32 + 2;
+pub const CAL_TRACKING_HEIGHT: i32 = 7;
+
+/// Color one measured interval by its local departure from 1 V/oct, in
+/// cents per volt. Missing or nonadjacent samples leave a gap in the strip.
+pub fn calibration_tracking_color(
+    first_uv: i32, first_mc: i32, last_uv: i32, last_mc: i32,
+) -> Option<u8> {
+    let delta_uv = last_uv as i64 - first_uv as i64;
+    if !(1..=125_000).contains(&delta_uv) { return None; }
+    let error_mc = (last_mc as i64 - first_mc as i64)
+        - delta_uv * 1_200_000 / 1_000_000;
+    let slope_mc_per_volt = error_mc.abs().saturating_mul(1_000_000) / delta_uv;
+    Some(if slope_mc_per_volt < 50_000 { 0xD9 }
+        else if slope_mc_per_volt < 200_000 { 0xD2 }
+        else { 0xD0 })
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Point {
@@ -184,49 +214,114 @@ pub fn rectangle(rect: Rect, color: u8, emit: impl FnMut(Point, u8)) -> bool {
     grid(rect, 1, 1, color, emit)
 }
 
-/// The calibration response is plotted against *measured* pitch, not against
-/// the corrected output. A 1 V/oct guide uses the first measured anchor as
-/// its origin; both series share the same axes and neither extrapolates.
-pub fn calibration_plot_point(
-    rect: Rect,
-    voltage_uv: i32,
-    pitch_mc: i32,
-    first_uv: i32,
-    first_mc: i32,
-    last_uv: i32,
-    top_mc: i32,
+/// Difference from ideal 1 V/oct, anchored at the first measured point.
+/// Pitch is in millicents. The origin is relative, not A440.
+pub fn calibration_error_mc(
+    voltage_uv: i32, pitch_mc: i32, anchor_uv: i32, anchor_mc: i32,
+) -> i64 {
+    pitch_mc as i64 - anchor_mc as i64
+        - (voltage_uv as i64 - anchor_uv as i64) * 1_200_000 / 1_000_000
+}
+
+pub fn calibration_ideal_mc(voltage_uv: i32, anchor_uv: i32, anchor_mc: i32) -> i32 {
+    (anchor_mc as i64 + (voltage_uv as i64 - anchor_uv as i64) * 1_200_000 / 1_000_000)
+        .clamp(i32::MIN as i64, i32::MAX as i64) as i32
+}
+
+pub fn calibration_pitch_bounds(
+    anchor_uv: i32, anchor_mc: i32, low_uv: i32, high_uv: i32,
+) -> Option<(i32, i32)> {
+    if low_uv >= high_uv { return None; }
+    let low = calibration_ideal_mc(low_uv, anchor_uv, anchor_mc) as i64;
+    let high = calibration_ideal_mc(high_uv, anchor_uv, anchor_mc) as i64;
+    let pad = ((high - low) / 32).max(100_000);
+    let bounds = ((low - pad).clamp(i32::MIN as i64, i32::MAX as i64) as i32,
+        (high + pad).clamp(i32::MIN as i64, i32::MAX as i64) as i32);
+    (bounds.0 < bounds.1).then_some(bounds)
+}
+
+pub fn calibration_pitch_y(
+    rect: Rect, pitch_mc: i32, anchor_uv: i32, anchor_mc: i32,
+    low_uv: i32, high_uv: i32,
+) -> Option<i32> {
+    let (a, b) = rect.corners()?;
+    let (low, high) = calibration_pitch_bounds(anchor_uv, anchor_mc, low_uv, high_uv)?;
+    axis(pitch_mc, low, high, (b.y - 8) as u16, (a.y + 8) as u16)
+}
+
+pub fn calibration_pitch_point(
+    rect: Rect, voltage_uv: i32, pitch_mc: i32,
+    anchor_uv: i32, anchor_mc: i32, low_uv: i32, high_uv: i32,
 ) -> Option<Point> {
     let (a, b) = rect.corners()?;
-    if first_uv >= last_uv || first_mc >= top_mc {
-        return None;
-    }
     Some(Point {
-        x: axis(voltage_uv, first_uv, last_uv, a.x as u16, b.x as u16)?,
-        y: axis(pitch_mc, first_mc, top_mc, b.y as u16, a.y as u16)?,
+        x: axis(voltage_uv, low_uv, high_uv, a.x as u16, b.x as u16)?,
+        y: calibration_pitch_y(rect, pitch_mc, anchor_uv, anchor_mc, low_uv, high_uv)?,
     })
 }
 
-/// Live scan uses fixed -5..+8 V axes, so new points do not stretch earlier
-/// segments as acquisition advances. The first qualified pitch anchors an
-/// ideal 1 V/oct span; this visualization is provisional, not a profile.
+/// The dashed reference is the ideal 1 V/oct pitch rise across the voltage
+/// axis. Cent error is measured vertically from this line at each voltage.
+pub fn calibration_ideal_y(rect: Rect, voltage_uv: i32,
+    low_uv: i32, high_uv: i32) -> Option<i32> {
+    let (a, b) = rect.corners()?;
+    axis(voltage_uv, low_uv, high_uv,
+        (b.y - 32) as u16, (a.y + 32) as u16)
+}
+
+pub fn calibration_error_point(
+    rect: Rect,
+    voltage_uv: i32,
+    pitch_mc: i32,
+    anchor_uv: i32,
+    anchor_mc: i32,
+    low_uv: i32,
+    high_uv: i32,
+    half_span_mc: i32,
+) -> Option<Point> {
+    let (a, b) = rect.corners()?;
+    if low_uv >= high_uv || half_span_mc <= 0 {
+        return None;
+    }
+    let error = calibration_error_mc(voltage_uv, pitch_mc, anchor_uv, anchor_mc)
+        .clamp(-(half_span_mc as i64), half_span_mc as i64) as i32;
+    let ideal_y = calibration_ideal_y(rect, voltage_uv, low_uv, high_uv)?;
+    let error_pixels = error as i64 * 30 / half_span_mc as i64;
+    Some(Point {
+        x: axis(voltage_uv, low_uv, high_uv, a.x as u16, b.x as u16)?,
+        y: (ideal_y as i64 - error_pixels).clamp(a.y as i64, b.y as i64) as i32,
+    })
+}
+
+pub fn calibration_error_only_point(
+    rect: Rect, voltage_uv: i32, pitch_mc: i32,
+    anchor_uv: i32, anchor_mc: i32, low_uv: i32, high_uv: i32,
+    half_span_mc: i32,
+) -> Option<Point> {
+    let (a, b) = rect.corners()?;
+    if low_uv >= high_uv || half_span_mc <= 0 { return None; }
+    let error = calibration_error_mc(voltage_uv, pitch_mc, anchor_uv, anchor_mc)
+        .clamp(-(half_span_mc as i64), half_span_mc as i64) as i32;
+    Some(Point {
+        x: axis(voltage_uv, low_uv, high_uv, a.x as u16, b.x as u16)?,
+        y: axis(error, -half_span_mc, half_span_mc,
+            (b.y - 8) as u16, (a.y + 8) as u16)?,
+    })
+}
+
+/// Fixed sweep axes during acquisition prevent each new point from stretching
+/// the previously drawn trace. Out-of-scale errors clip to the detail limit.
 pub fn live_calibration_point(
     rect: Rect,
     voltage_uv: i32,
     pitch_mc: i32,
     anchor_uv: i32,
     anchor_mc: i32,
+    low_uv: i32,
+    high_uv: i32,
 ) -> Option<Point> {
-    const LOW_UV: i32 = -5_000_000;
-    const HIGH_UV: i32 = 8_000_000;
-    let low_mc = anchor_mc as i64
-        - (anchor_uv as i64 - LOW_UV as i64) * 1_200_000 / 1_000_000;
-    let high_mc = low_mc + (HIGH_UV as i64 - LOW_UV as i64) * 1_200_000 / 1_000_000;
-    calibration_plot_point(
-        rect, voltage_uv, pitch_mc, LOW_UV,
-        low_mc.clamp(i32::MIN as i64, i32::MAX as i64) as i32,
-        HIGH_UV,
-        high_mc.clamp(i32::MIN as i64, i32::MAX as i64) as i32,
-    )
+    calibration_error_point(rect, voltage_uv, pitch_mc,
+        anchor_uv, anchor_mc, low_uv, high_uv, CAL_ERROR_SPAN_MC)
 }
 
 // Map a bounded measurement onto a plot axis; descending pixel axes support
@@ -558,7 +653,7 @@ mod tests {
     }
 
     #[test]
-    fn calibration_response_uses_measured_pitch_and_clamps_safely() {
+    fn calibration_error_makes_small_deviations_visible_and_clamps_safely() {
         let rect = CALIBRATION_PLOT;
         assert!(rect.fits_circle(336));
         // Production text starts at x=90 with a 12-pixel cell pitch. The
@@ -566,27 +661,90 @@ mod tests {
         let sidebar = Rect { x: 90 + 31 * 12, y: 176, width: 168, height: 224 };
         assert!(sidebar.fits_circle(336));
         assert!(rect.x + rect.width as i32 + 24 < sidebar.x);
-        assert_eq!(calibration_plot_point(rect, -5_000_000, 0, -5_000_000, 0, 5_000_000, 12_000_000),
-                   Some(Point { x: 100, y: 419 }));
-        assert_eq!(calibration_plot_point(rect, 5_000_000, 12_000_000, -5_000_000, 0, 5_000_000, 12_000_000),
-                   Some(Point { x: 429, y: 190 }));
-        assert!(calibration_plot_point(rect, 0, 0, 0, 0, 0, 0).is_none());
+        let first = calibration_error_point(rect, -5_000_000, 0,
+            -5_000_000, 0, -5_000_000, 5_000_000, 20_000).unwrap();
+        let ideal = calibration_error_point(rect, 5_000_000, 12_000_000,
+            -5_000_000, 0, -5_000_000, 5_000_000, 20_000).unwrap();
+        let sharp = calibration_error_point(rect, 5_000_000, 12_005_000,
+            -5_000_000, 0, -5_000_000, 5_000_000, 20_000).unwrap();
+        assert_eq!(first.x, 154);
+        assert_eq!(ideal.x, 429);
+        assert!(first.y > ideal.y);
+        assert!(sharp.y < ideal.y);
+        let flat = calibration_error_point(rect, 5_000_000, 11_995_000,
+            -5_000_000, 0, -5_000_000, 5_000_000, 20_000).unwrap();
+        assert!(flat.y > ideal.y);
+        assert_eq!(calibration_ideal_y(rect, -5_000_000, -5_000_000, 5_000_000),
+            Some(first.y));
+        assert_eq!(calibration_error_mc(1_000_000, 1_198_000, 0, 0), -2_000);
+        assert!(calibration_error_point(rect, 0, 0, 0, 0, 0, 0, 0).is_none());
     }
 
     #[test]
     fn provisional_calibration_trace_keeps_fixed_voltage_axis() {
         let rect = CALIBRATION_PLOT;
-        let first = live_calibration_point(rect, -3_000_000, 1_000_000, -3_000_000, 1_000_000)
+        let first = live_calibration_point(rect, -3_000_000, 1_000_000, -3_000_000, 1_000_000,
+            -5_000_000, 8_000_000)
             .unwrap();
-        let next = live_calibration_point(rect, -2_000_000, 2_200_000, -3_000_000, 1_000_000)
+        let next = live_calibration_point(rect, -2_000_000, 2_205_000, -3_000_000, 1_000_000,
+            -5_000_000, 8_000_000)
             .unwrap();
-        let later = live_calibration_point(rect, 1_000_000, 5_800_000, -3_000_000, 1_000_000)
+        let later = live_calibration_point(rect, 1_000_000, 5_798_000, -3_000_000, 1_000_000,
+            -5_000_000, 8_000_000)
             .unwrap();
         assert!(rect.x < first.x && first.x < next.x && next.x < later.x);
-        assert!(first.y > next.y && next.y > later.y);
+        assert_eq!(first.y, calibration_ideal_y(rect, -3_000_000,
+            -5_000_000, 8_000_000).unwrap());
+        assert!(next.y < calibration_ideal_y(rect, -2_000_000,
+            -5_000_000, 8_000_000).unwrap());
+        assert!(later.y > calibration_ideal_y(rect, 1_000_000,
+            -5_000_000, 8_000_000).unwrap());
         assert_eq!(first, live_calibration_point(rect, -3_000_000, 1_000_000,
-            -3_000_000, 1_000_000).unwrap());
+            -3_000_000, 1_000_000, -5_000_000, 8_000_000).unwrap());
         assert_eq!(live_calibration_point(rect, i32::MAX, i32::MAX,
-            -3_000_000, 1_000_000).unwrap(), Point { x: 429, y: 190 });
+            -3_000_000, 1_000_000, -5_000_000, 8_000_000).unwrap(),
+            Point { x: 429, y: 252 });
+    }
+
+    #[test]
+    fn pitch_and_error_views_use_the_same_measurements_without_faking_pitch() {
+        let rect = CALIBRATION_PLOT;
+        let anchor = (0, 6_000_000); // C4 at 0 V
+        let ideal = calibration_pitch_point(rect, 1_000_000, 7_200_000,
+            anchor.0, anchor.1, -5_000_000, 8_000_000).unwrap();
+        let sharp = calibration_pitch_point(rect, 1_000_000, 7_205_000,
+            anchor.0, anchor.1, -5_000_000, 8_000_000).unwrap();
+        assert_eq!(ideal.x, sharp.x);
+        assert!(sharp.y <= ideal.y);
+        assert_eq!(ideal.y, calibration_pitch_y(rect,
+            calibration_ideal_mc(1_000_000, anchor.0, anchor.1),
+            anchor.0, anchor.1, -5_000_000, 8_000_000).unwrap());
+
+        let error_ideal = calibration_error_only_point(rect, 1_000_000, 7_200_000,
+            anchor.0, anchor.1, -5_000_000, 8_000_000, 20_000).unwrap();
+        let error_sharp = calibration_error_only_point(rect, 1_000_000, 7_205_000,
+            anchor.0, anchor.1, -5_000_000, 8_000_000, 20_000).unwrap();
+        assert_eq!(error_ideal.x, ideal.x);
+        assert_eq!(error_sharp.x, ideal.x);
+        assert!(error_sharp.y < error_ideal.y);
+    }
+
+    #[test]
+    fn error_axis_expands_before_clipping_real_tracking_deviation() {
+        assert_eq!(calibration_error_span_mc(0), 20_000);
+        assert_eq!(calibration_error_span_mc(20_000), 50_000);
+        assert_eq!(calibration_error_span_mc(80_000), 100_000);
+        assert_eq!(calibration_error_span_mc(300_000), 500_000);
+        assert_eq!(calibration_error_span_mc(i64::MAX), 20_000_000);
+    }
+
+    #[test]
+    fn tracking_strip_shows_local_slope_and_leaves_missing_intervals_blank() {
+        assert_eq!(calibration_tracking_color(0, 0, 100_000, 120_000), Some(0xD9));
+        assert_eq!(calibration_tracking_color(0, 0, 100_000, 130_000), Some(0xD2));
+        assert_eq!(calibration_tracking_color(0, 0, 100_000, 150_000), Some(0xD0));
+        assert_eq!(calibration_tracking_color(0, 0, 126_000, 151_200), None);
+        assert_eq!(calibration_tracking_color(0, 0, 0, 0), None);
+        assert_eq!(calibration_tracking_color(100_000, 120_000, 0, 0), None);
     }
 }

@@ -246,6 +246,39 @@ impl<'a> Scale<'a> {
         i32::try_from(target + root as i64).map_err(|_| Error::Overflow)
     }
 
+    /// Nearest scale degree inside an inclusive output pitch interval.
+    /// Search only the two neighbors of the bounded target, never all octaves.
+    /// Hysteresis is intentionally omitted when enforcing physical limits.
+    pub fn quantize_bounded(
+        &self,
+        pitch: i32,
+        root: i32,
+        minimum: i32,
+        maximum: i32,
+    ) -> Result<i32, Error> {
+        if minimum > maximum {
+            return Err(Error::InvalidDegrees);
+        }
+        let bounded = pitch.clamp(minimum, maximum) as i64 - root as i64;
+        let (lower, upper) = self.bracket(bounded);
+        let lower = lower + root as i64;
+        let upper = upper + root as i64;
+        let valid = |p: i64| p >= minimum as i64 && p <= maximum as i64;
+        let target = match (valid(lower), valid(upper)) {
+            (true, true) => {
+                if pitch as i64 - lower < upper - pitch as i64 {
+                    lower
+                } else {
+                    upper
+                }
+            }
+            (true, false) => lower,
+            (false, true) => upper,
+            (false, false) => return Err(Error::InvalidDegrees),
+        };
+        i32::try_from(target).map_err(|_| Error::Overflow)
+    }
+
     /// Equal input bins over the entire repeat span. Output intervals remain
     /// musical intervals; this is not equal temperament. Bin zero starts at root.
     pub fn distribute(&self, pitch: i32, root: i32, previous: Option<i32>) -> Result<i32, Error> {
@@ -278,6 +311,35 @@ impl<'a> Scale<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn bounded_scale_matches_exhaustive_nearest_degree() {
+        let degrees = [0, 17, 43];
+        let scale = Scale::new(&degrees, 71).unwrap();
+        for root in [-89, 0, 83] {
+            for (minimum, maximum) in [(-201, 190), (-50, -21), (0, 2), (12, 13)] {
+                let candidates: std::vec::Vec<i32> = (-10..=10)
+                    .flat_map(|cycle| {
+                        degrees
+                            .into_iter()
+                            .map(move |degree| root + cycle * 71 + degree)
+                    })
+                    .filter(|pitch| *pitch >= minimum && *pitch <= maximum)
+                    .collect();
+                for pitch in -250..=250 {
+                    let expected = candidates
+                        .iter()
+                        .copied()
+                        .min_by_key(|&p| ((pitch as i64 - p as i64).abs(), -(p as i64)))
+                        .ok_or(Error::InvalidDegrees);
+                    assert_eq!(
+                        scale.quantize_bounded(pitch, root, minimum, maximum),
+                        expected
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn shared_neighbor_lookup_matches_previous_bracket_algorithm() {
         for masks in [

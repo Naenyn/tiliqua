@@ -1,5 +1,22 @@
 # TUNER pause checkpoint — September 13, 2026
 
+**September 30 checkpoint:** the user considers the calibration foundation,
+basic quantization and tuning ready to checkpoint and resume UI work. The R5
+natural-origin build is flashed to #1 slot 1; the user reports a successful
+quantizer test with about five usable octaves. AUTO took 5m27.670s with a
+63-point CHARACTER profile (worst 8.474c, stability 8.600c). This is a working
+development baseline, not a release claim or full oscillator qualification.
+See [SPEED_WORK_HANDOFF.md](SPEED_WORK_HANDOFF.md) for current calibration,
+validation and flash details; its current records supersede the historical
+pause and older ranges below. Keep granular timing diagnostics in place.
+
+Resume the interface contract in [RENDERER.md](RENDERER.md): TUNER, CAL, QUANT,
+and ROUTES are the four primary surfaces. CAL's profile library and QUANT's
+scale library should become contextual panels. Preserve existing storage,
+advanced controls, explicit run/stop behavior and measured-data visibility
+while replacing the intermediate menu navigation. Further scan-speed work
+is deferred; the missing-reading discovery cost remains recorded for later.
+
 **Latest September 19 update:** `e3b1e805` is built and flashed to slot 1.
 Generate3 FUNDAMENTAL automatic calibration completed with 92 anchors from
 -2.58325 to +5 V and 181/181 corrected targets checked. Worst error was +2.23

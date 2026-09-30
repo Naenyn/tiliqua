@@ -6,10 +6,9 @@ a competing operation that needs RUN.
 
 ## User model
 
-- **TUNER:** shows audio-capable inputs. Active CV-source inputs are hidden and
-  skipped by focus selection. The audio input of a calibration scan remains
-  visible. With all four inputs used as CV, focus reads NONE. This is explicit
-  routing, not a claim that a detector can infer the purpose of every waveform.
+- **TUNER:** a read-only view of all four inputs, including inputs claimed by
+  calibration or CV routes. Observation never claims a jack or changes a route.
+  Pitch qualification still determines whether an input has a valid reading.
 - **CAL:** one automatic profile-building operation at a time. It exclusively reserves the
   chosen audio input against CV use, and its CV output against playback.
   Measurement, automatic verification and guarded refinement keep the same
@@ -55,7 +54,11 @@ other outputs run. Storage slots and runtime output bindings are different.
 The source profile's original audio/output route is not forced onto playback.
 The user must connect the correct oscillator and leave its tuning unchanged.
 Changing the physical output may change residual error; verify after rerouting.
-The route's 0 V note is explicit and is not inferred from the oscillator pitch.
+Binding a profile defaults the route's 0 V note to the nearest note of its
+measured zero-volt pitch and sets the scale root to that pitch class. Exact
+measured tuning anchors nominal fallback outside the curve. A stopped route
+may override note/root afterward; rebinding restores the natural defaults.
+A profile without a measured 0 V reference keeps the route's explicit settings.
 
 SETUPS now saves correction source and quantization enable with each route,
 using TQS2. TQS1 setups still load as nominal quantization. Setup recall clears
@@ -64,8 +67,16 @@ are not saved in setups; RAM bindings must be recreated after reboot.
 
 ## Safety and performance
 
-No extrapolation: out-of-range targets retain the last valid output and resume
-on reentry. Stale CV, rail, ACK and hardware faults retain stop behavior.
+No curve extrapolation: pitches outside the measured profile use nominal 1 V/oct
+output after quantization, with PROFILE BYPASSED status. Nominal output uses
+the existing guarded -5..+8 V range. Targets beyond it select the nearest
+reachable note in the configured scale (including root and transpose); continuous
+routes cap voltage at the edge. Input clipping keeps the route active using the
+clipped observation and shows LIMITED status; its true voltage is unknown.
+Correction resumes automatically on profile reentry. The existing quantizer
+hysteresis prevents noisy note switching at profile boundaries; continuous
+corrected/nominal transitions can still jump because the mappings differ.
+Stale CV, ACK and hardware faults retain stop behavior.
 Unrelated outputs survive scan completion or faults. Routes retain the common
 input snapshot and staged DAC commit, two lanes per 1-ms interrupt (500 Hz per
 lane). Combined route processing has a 500-us CPU guard; expensive work stops
@@ -90,9 +101,26 @@ See [AUTO_CALIBRATION.md](AUTO_CALIBRATION.md) for automatic-operation bounds,
 ## Physical test still required
 
 Start with one known curve on one output: OFF versus SCALE quantization,
-correction NONE versus bound profile, then add a second output. Confirm active
-CV inputs disappear from tuner focus while calibration audio remains available.
+correction NONE versus bound profile, then add a second output. Confirm all
+inputs remain available in tuner focus, including claimed CV and calibration inputs.
 Attempt conflicting CAL/ROUTE starts and check the running output is untouched.
 Finally exercise a scan alongside playback and four corrected outputs, monitoring
 serial peak cycles and scheduling gaps. These new combinations are not yet
 hardware-qualified. The earlier physical jack-skew investigation also remains open.
+
+## Focused calibration detector — September 30, 2026
+
+CAL, CHECK and refinement read only their captured input/output pair. While an
+operation is active, the shared pitch detector alternates the native and low
+banks of that input. Unrelated inputs no longer delay calibration readings.
+Opening TUNER during an operation requests passive background observations:
+two selected-input bank visits alternate with one background bank visit. Each
+of the other six banks is revisited every 18 requests. Leaving TUNER restores
+exclusive detector service for the operation; ending it restores all eight banks
+in round-robin order. An in-flight request always finishes with its original
+channel identity. CV routes continue using their independent raw CV path.
+
+Detector qualification, full-window age, settling, independent-window averaging
+and final verification rules are unchanged. Faster request cadence does not make
+overlapping audio windows independent. Hardware speed and accuracy comparison
+are still required before claiming a scan-time improvement.

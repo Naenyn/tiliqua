@@ -57,7 +57,22 @@ impl TargetedPlan {
         {
             plan.insert(reference.millicents);
         }
-        let mut ranked = [(0i64, 0usize); 8];
+        // Reserve one probe for the steepest measured interval. A pitch
+        // discontinuity can hide between two acquisition anchors even when
+        // the normal coverage grid misses its narrow voltage neighborhood.
+        let steepest = p.windows(2).enumerate().max_by_key(|(_, pair)| {
+            (pair[1].millicents as i64 - pair[0].millicents as i64) * 1_000_000
+                / (pair[1].microvolts as i64 - pair[0].microvolts as i64)
+        });
+        if let Some((_, pair)) = steepest {
+            let midpoint = (pair[0].millicents as i64 + pair[1].millicents as i64) / 2;
+            if lo <= midpoint && midpoint <= hi {
+                plan.insert(midpoint as i32);
+            }
+        }
+        // Seven curvature centers (at most fourteen neighbors) plus the
+        // steepest-interval probe fit within the fixed 50-target budget.
+        let mut ranked = [(0i64, 0usize); 7];
         for i in 1..p.len() - 1 {
             let (a, b, c) = (p[i - 1], p[i], p[i + 1]);
             let linear = a.millicents as i64
@@ -66,7 +81,7 @@ impl TargetedPlan {
                     / (c.microvolts as i64 - a.microvolts as i64);
             let score = (b.millicents as i64 - linear).abs();
             if let Some(pos) = ranked.iter().position(|&(s, _)| score > s) {
-                ranked.copy_within(pos..7, pos + 1);
+                ranked.copy_within(pos..6, pos + 1);
                 ranked[pos] = (score, i);
             }
         }
@@ -167,6 +182,15 @@ pub struct LocalCheck {
     pub tested: usize,
 }
 impl LocalCheck {
+    /// A timed-out visit is an observation with no qualified pitch, not a
+    /// reason to abandon the rest of an automatic check.
+    pub fn record_missing(&mut self) -> bool {
+        if self.tested >= Self::ORDER.len() {
+            return false;
+        }
+        self.tested += 1;
+        self.tested == Self::ORDER.len()
+    }
     /// Worst signed individual repeat mean, including endpoints. This is not
     /// the endpoint-adjusted interpolation residual used to propose edits.
     pub fn worst_absolute(&self) -> Option<(i32, f32)> {
@@ -208,7 +232,10 @@ impl LocalCheck {
         if values.iter().any(|r| r.signum() != residual.signum()) {
             return Some("REFINE NOT REPEATABLE");
         }
-        if self.aggregate(2).unwrap().0.abs() > 10.0
+        // A repeatable, isolated midpoint error is precisely what an inserted
+        // calibration point can correct. Keep a conservative bound on the
+        // proposed edit; larger jumps may be detector or oscillator faults.
+        if self.aggregate(2).unwrap().0.abs() > 25.0
             || (0..2).any(|i| self.aggregate(i).unwrap().0.abs() > 3.0)
         {
             return Some("REFINE DRIFT - RECALIBRATE");
@@ -306,9 +333,24 @@ pub struct Scan {
     pub target: i32,
     pub total: u16,
     pub tested: u16,
+    /// Targets visited without a qualified pitch. Never fill these in from
+    /// the calibration curve or call such a replay fully verified.
+    pub missing: u16,
+    /// Missing grid targets in a targeted verification (at most 50 targets).
+    /// Keep every gap so range selection is based on the whole replay, not
+    /// whichever target happened to fail first.
+    pub missing_grid_mask: u64,
+    /// Targeted-grid observations with >10c within-window spread. A single
+    /// worst-spread value cannot reveal several separated unstable sections.
+    pub unstable_grid_mask: u64,
+    /// Physical CV of the first missing observation, when supplied by the
+    /// live adapter. Retained for diagnosis if recovery cannot continue.
+    pub first_missing_uv: Option<i32>,
     pub worst_pitch: i32,
     pub worst_error: f32,
     pub max_spread: f32,
+    /// Grid target responsible for max_spread, if observed by record().
+    pub max_spread_pitch: Option<i32>,
     pub complete: bool,
     pub local: Option<LocalCheck>,
 }
@@ -328,6 +370,45 @@ impl Scan {
     pub fn targeted(profile: &Profile) -> Option<Self> {
         let mut scan = Self::new(profile)?;
         let plan = TargetedPlan::new(profile)?;
+        scan.target = plan.pitches[0];
+        scan.total = plan.len as u16;
+        scan.extra = Some(ExtraPlan::Targeted(plan));
+        Some(scan)
+    }
+    /// Check only the half-volt of measured response adjacent to a newly
+    /// trimmed boundary. This is a recovery probe, never a full-profile
+    /// quality certificate; the adapter must follow it with targeted().
+    pub fn targeted_boundary(profile: &Profile, high: bool) -> Option<Self> {
+        let points = profile.points();
+        let edge_uv = if high { points.last()?.microvolts } else { points.first()?.microvolts };
+        let inner_uv = if high { edge_uv.saturating_sub(500_000) }
+            else { edge_uv.saturating_add(500_000) };
+        let index = points.partition_point(|p| p.microvolts < inner_uv);
+        let inner = points[index.min(points.len() - 1)];
+        let edge = if high { *points.last()? } else { *points.first()? };
+        let lo = inner.millicents.min(edge.millicents).max(AUDIO_LOW_MC);
+        let hi = inner.millicents.max(edge.millicents).min(AUDIO_HIGH_MC);
+        if hi <= lo { return None; }
+        let mut plan = TargetedPlan { pitches: [0; 50], len: 0 };
+        // This is only a quick guard on the newly exposed edge, never the
+        // independent certificate. Five evenly spaced pitches plus the two
+        // adjacent acquisition-interval midpoints catch a renewed boundary
+        // fault without paying for a dense replay that the final full check
+        // must repeat anyway.
+        for i in 0..=4 {
+            plan.insert((lo as i64 + (hi - lo) as i64 * i / 4) as i32);
+        }
+        // Probe the two intervals nearest the cut even if uniform spacing
+        // misses a steep measured bend there.
+        let nearest = if high { points.len() - 1 } else { 0 };
+        for offset in 0..2 {
+            let i = if high { nearest.checked_sub(offset + 1)? } else { nearest + offset };
+            if let Some(pair) = points.get(i..=i + 1) {
+                let mid = ((pair[0].millicents as i64 + pair[1].millicents as i64) / 2) as i32;
+                if lo <= mid && mid <= hi { plan.insert(mid); }
+            }
+        }
+        let mut scan = Self::new(profile)?;
         scan.target = plan.pitches[0];
         scan.total = plan.len as u16;
         scan.extra = Some(ExtraPlan::Targeted(plan));
@@ -353,12 +434,25 @@ impl Scan {
             .filter(|(_, error)| error.abs() > initial.1.abs())
             .unwrap_or(initial)
     }
+    /// Compare the grid's worst target with its later interleaved repeat at
+    /// the identical commanded voltage. A stable local trio alone does not
+    /// make the whole check repeatable if the earlier grid read differed.
+    pub fn grid_local_disagreement(&self) -> Option<f32> {
+        let check = self.local.as_ref()?;
+        if check.tested != LocalCheck::ORDER.len()
+            || check.targets[2].millicents != self.worst_pitch
+        {
+            return None;
+        }
+        Some((self.worst_error - check.aggregate(2)?.0).abs())
+    }
     pub fn meets_target(&self, target: f32) -> bool {
         self.meets_policy(target, 0.75)
     }
 
     pub fn meets_policy(&self, target: f32, repeatability: f32) -> bool {
         self.complete
+            && self.missing == 0
             && self.worst_error.is_finite()
             && self.worst_error.abs() <= target
             && self
@@ -372,6 +466,11 @@ impl Scan {
                         .is_some_and(|(_, _, repeat)| repeat <= repeatability)
                 })
             })
+            // Both readings can legitimately be within the pitch target
+            // while differing by more than the much tighter local-repeat
+            // tolerance. Use the Precision stability limit here; quality()
+            // still grades the actual disagreement at 3/5/10 cents.
+            && self.grid_local_disagreement().is_some_and(|d| d <= repeatability.max(3.0))
     }
 
     /// Grade only a completed independent replay.  Accuracy and stability are
@@ -379,7 +478,7 @@ impl Scan {
     /// misrepresented as precision, while detector ambiguity still fails
     /// before a quality result can be produced.
     pub fn quality(&self) -> CalibrationQuality {
-        if !self.complete || self.local.as_ref().map_or(true, |c| c.tested != 9) {
+        if !self.complete || self.missing != 0 || self.local.as_ref().map_or(true, |c| c.tested != 9) {
             return CalibrationQuality {
                 grade: CalibrationGrade::Unsafe,
                 ..CalibrationQuality::default()
@@ -395,7 +494,8 @@ impl Scan {
                     .fold(0.0f32, f32::max)
             })
             .unwrap_or(f32::INFINITY);
-        let stability = self.max_spread.max(local_repeat);
+        let stability = self.max_spread.max(local_repeat)
+            .max(self.grid_local_disagreement().unwrap_or(f32::INFINITY));
         let grade = if worst <= 2.0 && stability <= 3.0 {
             CalibrationGrade::Precision
         } else if worst <= 5.0 && stability <= 5.0 {
@@ -413,7 +513,7 @@ impl Scan {
     }
     /// Shared display/serial conclusion, distinct from operation completion.
     pub fn accuracy_label(&self) -> &'static str {
-        if !self.complete || self.local.as_ref().map_or(true, |c| c.tested != 9) {
+        if !self.complete || self.missing != 0 || self.local.as_ref().map_or(true, |c| c.tested != 9) {
             "ACCURACY CHECK INCOMPLETE"
         } else if self.meets_target(super::automatic::TARGET_CENTS) {
             "CHECKED PITCHES WITHIN 2C"
@@ -442,9 +542,14 @@ impl Scan {
             target: first as i32,
             total,
             tested: 0,
+            missing: 0,
+            missing_grid_mask: 0,
+            unstable_grid_mask: 0,
+            first_missing_uv: None,
             worst_pitch: first as i32,
             worst_error: 0.0,
             max_spread: 0.0,
+            max_spread_pitch: None,
             complete: false,
             local: None,
         })
@@ -464,9 +569,14 @@ impl Scan {
             target: p[0].millicents,
             total: p.len() as u16,
             tested: 0,
+            missing: 0,
+            missing_grid_mask: 0,
+            unstable_grid_mask: 0,
+            first_missing_uv: None,
             worst_pitch: p[0].millicents,
             worst_error: 0.0,
             max_spread: 0.0,
+            max_spread_pitch: None,
             complete: false,
             local: None,
         })
@@ -485,7 +595,32 @@ impl Scan {
         if self.tested < 2 {
             self.first_errors[self.tested as usize] = Some(s.mean);
         }
-        self.max_spread = self.max_spread.max(s.spread);
+        if s.spread > self.max_spread {
+            self.max_spread = s.spread;
+            self.max_spread_pitch = Some(self.target);
+        }
+        if s.spread > 10.0 && self.targeted_plan().is_some() && self.tested < 64 {
+            self.unstable_grid_mask |= 1u64 << self.tested;
+        }
+        self.tested += 1;
+        self.complete = self.tested == self.total;
+        if !self.complete && !self.points_mode {
+            self.target = self
+                .targeted_plan()
+                .map_or(self.target + 50000, |p| p.pitches[self.tested as usize]);
+        }
+        true
+    }
+    /// Advance an automatic replay after a bounded per-target timeout. The
+    /// target is counted as missing, not assigned a synthetic pitch/error.
+    pub fn record_missing(&mut self) -> bool {
+        if self.complete || self.tested >= self.total {
+            return false;
+        }
+        if self.targeted_plan().is_some() && self.tested < 64 {
+            self.missing_grid_mask |= 1u64 << self.tested;
+        }
+        self.missing += 1;
         self.tested += 1;
         self.complete = self.tested == self.total;
         if !self.complete && !self.points_mode {
@@ -551,6 +686,52 @@ mod tests {
         p
     }
     #[test]
+    fn boundary_check_samples_only_the_trimmed_edge_neighborhood() {
+        let mut p = Profile::new("measured", 0, 2_000_000).unwrap();
+        for i in 0..=24 {
+            p.push(Point {
+                microvolts: i * 83_333,
+                millicents: 6_000_000 + i * 100_000,
+            }).unwrap();
+        }
+        let full = Scan::targeted(&p).unwrap();
+        let high = Scan::targeted_boundary(&p, true).unwrap();
+        let low = Scan::targeted_boundary(&p, false).unwrap();
+        assert!(high.total < full.total);
+        assert!(low.total < full.total);
+        assert!(high.total <= 7 && low.total <= 7);
+        assert!(high.target >= 7_700_000);
+        assert!(low.target <= 6_100_000);
+        assert_eq!(high.targeted_plan().unwrap().pitches[high.total as usize - 1], 8_400_000);
+    }
+    #[test]
+    fn missing_targets_advance_without_claiming_verified_accuracy() {
+        let p = profile(6_000_000, 8_400_000);
+        let mut scan = Scan::targeted(&p).unwrap();
+        let total = scan.total;
+        let first = scan.target;
+        assert!(scan.record_missing());
+        assert_eq!(scan.missing, 1);
+        assert!(scan.target > first);
+        for _ in 1..total {
+            assert!(scan.record_missing());
+        }
+        assert!(scan.complete);
+        assert_eq!(scan.tested, total);
+        assert_eq!(scan.missing, total);
+        assert_eq!(scan.missing_grid_mask, (1u64 << total) - 1);
+        assert_eq!(scan.quality().grade, CalibrationGrade::Unsafe);
+        assert!(!scan.meets_target(2.0));
+        assert_eq!(scan.accuracy_label(), "ACCURACY CHECK INCOMPLETE");
+
+        let mut local = LocalCheck::new(&p, 7_200_000).unwrap();
+        for _ in 0..LocalCheck::ORDER.len() {
+            local.record_missing();
+        }
+        assert_eq!(local.tested, 9);
+        assert!(local.worst_absolute().is_none());
+    }
+    #[test]
     fn targeted_plan_is_bounded_sorted_covers_edges_and_freezes_across_edits() {
         let mut p = Profile::new("curved", -5000000, 5000000).unwrap();
         for i in 0..=120 {
@@ -600,6 +781,38 @@ mod tests {
             core::mem::size_of::<ExtraPlan>() <= 224,
             "bounded shared storage, not two plans"
         );
+    }
+    #[test]
+    fn targeted_replay_tracks_every_excessive_grid_spread() {
+        let p = profile(6_000_000, 8_400_000);
+        let mut scan = Scan::targeted(&p).unwrap();
+        let first = scan.target;
+        assert!(scan.record(Summary {
+            mean: 0.1,
+            spread: 12.0,
+            count: 16,
+            averaged: true,
+        }));
+        assert_eq!(scan.unstable_grid_mask, 1);
+        assert_eq!(scan.tested, 1);
+        assert_eq!(scan.max_spread_pitch, Some(first));
+        assert_eq!(scan.max_spread, 12.0);
+        assert!(!scan.record(Summary {
+            mean: 0.0,
+            spread: 26.0,
+            count: 16,
+            averaged: true,
+        }));
+        assert_eq!(scan.unstable_grid_mask, 1);
+        assert_eq!(scan.tested, 1);
+        assert!(scan.record(Summary {
+            mean: 0.2,
+            spread: 11.0,
+            count: 16,
+            averaged: true,
+        }));
+        assert_eq!(scan.unstable_grid_mask, 3);
+        assert_eq!(scan.tested, 2);
     }
     #[test]
     fn targeted_plan_certifies_only_the_stated_twenty_hz_to_twenty_khz_range() {
@@ -661,6 +874,26 @@ mod tests {
             let midpoint = (p.points()[i].millicents + p.points()[i + 1].millicents) / 2;
             assert!(plan.pitches[..plan.len as usize].contains(&midpoint));
         }
+    }
+    #[test]
+    fn steepest_interval_probe_exposes_an_unreachable_pitch_gap() {
+        // 83-mV acquisition anchors straddle a 48.8-cent jump like the one
+        // observed on ACRONYM. The ordinary pitch grid need not land in it.
+        let mut profile = Profile::new("step", -5_000_000, 5_000_000).unwrap();
+        let actual = |uv: i32| {
+            6_000_000 + uv * 6 / 5 + if uv >= 2_457_500 { 48_800 } else { 0 }
+        };
+        for i in 0..=120 {
+            let uv = -5_000_000 + i * 10_000_000 / 120;
+            profile.push(Point { microvolts: uv, millicents: actual(uv) }).unwrap();
+        }
+        let pair = &profile.points()[89..=90];
+        let target = (pair[0].millicents + pair[1].millicents) / 2;
+        let plan = TargetedPlan::new(&profile).unwrap();
+        assert!(plan.pitches[..plan.len as usize].contains(&target));
+        let commanded = profile.voltage_for_pitch(target).unwrap();
+        let error_cents = (actual(commanded) - target).abs() / 1000;
+        assert!(error_cents > 10, "gap must not certify as CHARACTER");
     }
     #[test]
     fn targeted_checks_expose_smooth_local_bends_in_synthetic_curves() {
@@ -764,6 +997,29 @@ mod tests {
             spread: 0.0,
             count: 8
         }));
+    }
+    #[test]
+    fn stable_local_repeats_do_not_hide_grid_to_local_disagreement() {
+        let p = profile(6000000, 8400000);
+        let mut scan = Scan::new(&p).unwrap();
+        scan.tested = scan.total;
+        scan.complete = true;
+        scan.worst_pitch = 6600000;
+        scan.worst_error = 29.34;
+        let mut local = LocalCheck::new(&p, scan.worst_pitch).unwrap();
+        for target in LocalCheck::ORDER {
+            assert!(local.record(Summary {
+                averaged: false,
+                mean: if target == 2 { -18.12 } else { -0.03 },
+                spread: 0.19,
+                count: 8,
+            }));
+        }
+        scan.local = Some(local);
+        assert!((scan.grid_local_disagreement().unwrap() - 47.46).abs() < 0.01);
+        assert!(!scan.meets_policy(30.0, 0.75));
+        assert_eq!(scan.quality().grade, super::super::CalibrationGrade::Unsafe);
+        assert!(scan.quality().stability_cents() > 47.0);
     }
     #[test]
     fn advice_distinguishes_repeatability_and_large_endpoint_bias() {

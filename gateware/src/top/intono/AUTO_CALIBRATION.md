@@ -11,33 +11,128 @@ The graded acceptance-policy rationale and published-product comparison are in
 is now present, but its thresholds and partial-range behavior still require
 physical qualification across the oscillator matrix.
 
+Current control policy (September 29): there is no whole-operation wall-clock
+limit or worst-case time reservation before refinement. Individual target
+measurements still have deadlines to prevent a silent or untrackable signal
+from hanging the UI, and at most sixteen improvements are attempted. An interior
+automatic-check target that times out is marked missing and the remaining
+planned targets are still visited. No pitch/error is invented for that target;
+the candidate is graded UNSAFE and offered for explicit review rather than
+automatically certified. Boundary timeouts may still trigger bounded trimming
+and a fresh replay. Ambiguous or unstable signals are separate failures, not
+scan-length limits.
+During a run, pressing RUN again reviews the last independently checked curve
+(or cancels if there is none yet). Otherwise CAL proceeds on its own to one
+final review. From review, ACCEPT keeps the result in RAM, DISCARD keeps the
+prior profile, and RUN starts a new scan rather than resuming a hidden phase.
+Historical
+time-limit descriptions in the dated qualification notes below refer to older
+firmware, not this control policy.
+
+The first scan-speed experiment shortened only the fixed pre-measurement guard:
+acquisition waits 75 ms after the acknowledged CV step rather than 350 ms;
+automatic and read-only scan windows must begin at least 175 ms after the CV
+command (including the allowed 100 ms acknowledgement), and the scan status
+becomes ready at 225 ms rather than 550 ms. Every accepted window still has to
+be fresh and post-step, and the existing five-reading acquisition gate,
+eight-reading tight replay gate, sixteen-independent-window fallback, drift
+tests, and per-target timeouts remain. On the same ACRONYM sine patch it kept
+82 points from -4.58325 to +2.16675 V, passed 44/44 final check targets and
+again scored 91% CHARACTER (2.86c worst error, 9.23c stability). Acquisition
+took 181 s and all checks 240 s, versus 149 s and 287 s on the preceding run:
+about 7.0 versus 7.3 minutes overall. The smaller guard helped some checks,
+but the acquisition trace showed repeated two-second waits on absent upper
+signal beyond ACRONYM's usable range. A single pair of runs is not a general
+speed or quality guarantee.
+
+The next speed experiment retains full -5..+8 V *range* discovery but, after
+four consecutive silent semitone steps beyond an established usable profile,
+probes the rest of a silent gap at quarter-volt spacing. Any qualified pitch
+restores semitone spacing; the later region is not bridged with invented points.
+The short half-volt boundary guard now uses up to seven targets instead of
+nineteen, while every final retained range still receives a fresh independent
+full-range targeted check. These changes are host-tested but await physical
+timing and quality comparison. A sub-30-second scan would need further
+adaptive sampling and replay changes, not merely shorter settling guards.
+
+The September 30 overnight candidate combines missing and unstable grid targets
+when selecting a retained region. It also skips nine local repeats when the
+completed grid already requires instability recovery; good grids, PRECISION,
+post-refinement rechecks and final certification retain those repeats. The
+new opt-in FAST policy is described below. All sweep, phase and per-pass timing
+logs remain, including in the truncated-report fallback; `AUTO SPEED` identifies
+the policy and counts skipped local checks. Host tests and the R5 firmware build
+pass. The first ACRONYM FAST/AUTO pair completed in 4m13.243s / 5m03.669s,
+retaining the same 82 anchors and voltage endpoints. Both needed one recovery
+and graded CHARACTER; worst errors were 6.682c / 4.652c. Sequential oscillator
+drift and different pitch grids limit conclusions about the sample-count
+tradeoff. Broader hardware qualification is pending. See
+[the speed-work handoff](SPEED_WORK_HANDOFF.md) for the preserved baseline,
+candidate archives, simulated results and morning test procedure.
+
+An unsafe upper/lower segment can be removed only as a contiguous boundary
+trim followed by a fresh independent check. Up to sixteen bounded recoveries
+can proceed within one RUN, without an intermediate user checkpoint. A
+repeatable interior error eligible for paired local refinement is addressed
+before discarding otherwise usable range. A check with missing
+targets cannot be auto-accepted; if at least one grid target and the local
+follow-up were visited, the user may explicitly keep its clearly marked
+UNSAFE candidate for experimentation. DISCARD
+keeps the prior profile. Each trim must remove at least one real measured
+anchor and keep the minimum profile length, so this cannot continue forever.
+When a localized error is repeatable but the paired refinement fails, AUTO may
+instead trim the larger contiguous side at that measured failure voltage and
+recheck the remaining curve. Neither the rejected edit nor the unverified
+trimmed curve becomes an accepted profile.
+
 ## Simple workflow
 
 An automatic paired refinement comparison that fails repeatability gets at most
 one fresh local retry per run. It reacquires the local measurements and repeats
 the paired tests on the unchanged curve; it does not restart acquisition or
-relax the 0.75-cent repeatability limit. The retry counts toward eight attempts
-and must reserve time for a complete recheck within the existing 15-minute
-deadline. Persistent instability preserves the best checked curve. Serial
+relax the 0.75-cent repeatability limit. The retry counts toward sixteen attempts
+without a whole-operation deadline. Persistent instability preserves the best checked curve. Serial
 reports `AUTO UNSTABLE_RETRY=1/1` when used.
 
 - TUNER observes audio inputs, with spiral and linear views.
 - CAL selects the audio input, CV output, nominal 0 V note, and policy. RUN first seeks
-  a stable measurable reference from 0 V upward, then starts an upward -5..+5 V
-  measurement, automatically checks the resulting curve, then
-  attempts guarded improvements when appropriate. RUN again cancels.
+  a stable measurable reference from 0 V upward, then characterizes -5..+8 V
+  and identifies a contiguous usable span, automatically checks the resulting curve, then
+  attempts guarded improvements when appropriate. RUN again reviews the latest
+  fully checked curve, or cancels if none exists yet. RUN from review starts a
+  fresh scan; no intermediate manual continuation is required.
+  Four consecutive missing measurements after an established response above
+  roughly 18 kHz end the upper sweep early; lower-frequency gaps still get the
+  full search. Missing points are never filled or extrapolated.
 - AUTO is the default: it attempts the two-cent Precision objective, then may
   offer a safe Musical (at most 5 cents) or Character (at most 10 cents) result
   with an explicit grade. PRECISION accepts only Precision. FORGIVING uses
   wider acquisition/replay tolerances but does not relax ambiguity,
   monotonicity, routing, output-acknowledgement, or DAC safety.
+- FAST is an opt-in alternative to AUTO for known well-behaved oscillators.
+  It takes three closely agreeing fresh acquisition estimates instead of five
+  (the existing two-estimate sub-audio exception is unchanged). It keeps
+  semitone voltage spacing, the measured range search, the 75 ms settling
+  guard, AUTO's acquisition tolerance, and the 16-independent-window fallback.
+  Its final grid, nine local repeats, refinement tests and quality thresholds
+  are identical to AUTO. Fewer acquisition estimates may miss brief variation
+  and cause additional correction/recovery, so faster end-to-end operation is
+  not guaranteed. AUTO remains the default. Initial ACRONYM results are logged
+  in the speed-work handoff; broader oscillator qualification is pending.
 - The review page reports grade, worst checked error, stability, and measured
-  range. Unsafe automatic results cannot be accepted. Accepted version-four
-  profile records retain this quality metadata; older records load as
+  range. A fully checked but off-target result may be explicitly accepted as
+  USER-KEPT. The advisory score is 100 minus the larger of worst replay error
+  and repeatability span in cents, clipped to 0..100; it is not a probability
+  or safety guarantee. The worst error and stability are reported separately.
+  Accepted version-four profile records retain this quality metadata; older records load as
   UNVERIFIED.
-- PROFILES is reached from CAL. It offers eight oscillator slots and a
+- PROFILES is reached from CAL. It offers four oscillator slots and a
   read-only CHECK of an accepted/loaded profile. CHECK still drives the
-  oscillator; "read-only" means it never changes the curve.
+  oscillator; "read-only" means it never changes the curve. Its commanded
+  targets use the same bounded independent-window estimator as automatic
+  replay, so modest estimator-bin jitter is measured and graded rather than
+  misreported as a missing signal. Gross drift and ambiguous pitch remain
+  rejectable.
 - SCALES edits the selected output's scale, notes, root, transpose and mapping.
   NOTES and SETUPS are child pages, not separate top-level modes.
 - ROUTES selects input/output, optional quantization and optional correction.
@@ -69,11 +164,17 @@ Other nonconflicting routes may continue running.
 4. Recheck the exact same frozen probe set across the range. Local paired
    candidate validation also checks both newly split intervals and neighboring
    intervals and must first demonstrate at least 0.5 cents of local gain.
+   Automatic refinement can propose the new anchor from the nine already
+   repeated local-check observations rather than reacquiring that same trio;
+   the separate paired before/after validation remains mandatory.
    Retain that insertion only if the range-wide checked worst absolute error
    does not increase and the recheck's local repeats remain valid and repeatable.
    Another pitch becoming worst must not erase a demonstrated local improvement.
    Otherwise undo it and retain the last checked candidate. Serial retains both
-   scores and the decision. Repeat only within the limits below.
+   scores and the decision. If that earlier checked curve is itself unsafe,
+   a rejected edit falls back to selecting a contiguous measured region and
+   checking it again, rather than ending the automatic run at the failed edit.
+   Repeat only within the limits below.
 5. Return output to commanded calibrated zero and present a review. ACCEPT
    replaces RAM only; SAVE in PROFILES is separate. Neither starts playback.
 
@@ -88,24 +189,54 @@ Noise, drift, boundaries or nonrepeatability can prevent refinement. Retuning
 requires a new scan.
 
 The accepted profile and saved slots remain untouched during work. Cancellation
-keeps them. A timeout/fault cannot offer a candidate that never completed its
-first check; after a successful check, a failed tentative improvement is rolled
-back. An operation is bounded to eight improvement attempts and 15 minutes
-total, not eight unbounded rescans. Before starting each improvement, reserve
-time for 9 local measurements, up to 16 paired tests, the entire verification
-grid and its 9 local measurements, one first-target retry, and 30 seconds of
-transition margin. The reservation uses the existing five-second per-target
-deadline, not optimistic observed speed. For 50 targets this is 7 minutes
-35 seconds. Insufficient remaining time yields `REVIEW - NO TIME FOR FULL RECHECK`
-with the best verified curve, without starting a tentative edit. The hard overall
-deadline and rollback remain safeguards. This ceiling is not a promised duration
-or a guarantee that all eight attempts can run. No flash writes happen inside the loop.
+keeps them. Characterization traverses the safe voltage range and chooses the
+longest contiguous monotonic measured segment; a gap does not abort the rest
+of that sweep. During the subsequent sampled replay, unstable, ambiguous, or
+missing pitch is recorded as a gap and the remaining planned targets are still
+visited. Only after that full grid does automatic recovery compare the measured
+sections and retain the widest contiguous segment with at least one octave of
+anchors. It locally rechecks the new boundary and then independently checks the
+whole retained range. A missing local repeat can also trigger this selection.
+For a completed but unsafe check, retain every targeted-grid voltage with
+over 10 cents of within-window pitch spread, separately from the largest mean
+pitch error. In one pass, compare the contiguous measured sections between
+those unstable targets and keep the widest one. Such instability is not repaired
+by inserting a curve point at a different, repeatable error. The shortened
+section still needs fresh regional and full-range checks. If no spread location
+is known, retain the poor-quality result for review rather than guessing a cut.
+If guarded recovery cannot proceed, the missing target remains explicit in an
+incomplete diagnostic result; it cannot certify an unmeasured pitch or be
+accepted. Output-command faults still stop safely. After a
+successful check, a failed tentative improvement is rolled back. There is no
+total wall-clock deadline: the user can review the last independently checked
+curve at any point, and each target measurement retains its five-second wait
+before being marked missing. At most sixteen guarded improvement attempts can run.
+No flash writes happen inside the loop.
+
+In the ACRONYM sine hardware run that motivated multi-target spread recovery,
+the earlier one-target-at-a-time build completed 120 acquisition points, then
+nine range recoveries. It retained 82 measured points from -4.58325 to
++2.16675 V (about 20.2 Hz to 2.25 kHz), checked 44/44 targets, and graded
+CHARACTER: 3.12 cents worst pitch error, 9.31 cents worst spread, 91% advisory
+score. Acquisition took 154 s and verification/recovery took 722 s. With the
+accepted RAM profile, continuous corrected playback measured about -0.2,
+-0.6, and +0.7 cents at three input-CV test points. This supports usability
+over those tested points, not full continuous-range accuracy. The subsequent
+multi-unstable-target selection was also tested on the unchanged ACRONYM sine
+patch. It selected the stable lower side in two recoveries instead of nine,
+retained 81 measured points from -4.58325 to +2.08325 V (about 20.2 Hz to
+2.13 kHz), and passed 45/45 final replay targets. It again graded CHARACTER:
+4.09 cents worst pitch error, 9.24 cents worst spread, 91% advisory score.
+Acquisition took 149 s and verification/recovery 287 s, reducing this run from
+about 14.6 to 7.3 minutes. These are two runs on one oscillator, not a general
+performance guarantee; neither result certifies every unsampled pitch.
 
 ### Calibration-speed requirement
 
-The briefly deployed 45-minute ceiling allowed a 24-minute qualification run,
-but is not the intended normal user experience. Targeted checking restores the
-15-minute hard ceiling; actual hardware speed/accuracy is not yet qualified.
+The briefly deployed 45-minute and subsequent 15-minute ceilings interrupted
+otherwise valid checks. They have been removed; actual hardware speed/accuracy
+is not yet qualified, and the user may review the verified result rather than
+wait for every possible improvement.
 Initial 121-position acquisition is unchanged. Longer duration is not evidence of superior
 accuracy. The user reports dedicated calibrators completing in under a minute.
 Aim for approximately one-minute normal calibration where signal/range permit;
@@ -117,16 +248,44 @@ than silently trading away correctness or presenting today's runtime as final.
 
 ## Point count and storage budget
 
-The initial 121 positions provide semitone voltage spacing across ten volts.
-That is a sensible baseline for a smooth oscillator response, not proof of
-sufficient precision for every oscillator. We measure interpolation error and
-place extra points where needed rather than increasing every scan's density.
+The -5..+8 V characterization visits up to 157 nominal semitone-voltage
+positions. The initial profile retains at most 121 measured anchors. If the
+usable response fills that space, the sweep now removes interior anchors with
+the smallest local pitch-interpolation loss; endpoints stay, and a small gap
+penalty keeps long smooth regions adequately sampled. This is a storage
+decision, not a shortcut in measurement: the full grid is still characterized.
+It cannot prove accuracy between retained anchors, so independent replay
+continues to probe pitches between them.
 
 There are eight additional point slots: at most 129 stored points. A limited
-initial range may contain fewer than 121 anchors; the eight-attempt limit still
-applies. Original anchors are never discarded to make room. If the bounded
-refinement cannot meet the target, present the measured result rather than
-silently claiming success or looping forever.
+initial range may contain fewer than 121 anchors; the sixteen-attempt limit
+and 129-point capacity both apply. Refinement may add only physically measured points and requires paired
+before/after checks plus independent replay. If the first measured insertion
+overshoots a repeatable local target, one interpolated voltage is *probed*,
+not stored as an invented pitch; its measured result is checked the same way.
+If the bounded refinement cannot meet the target, present the measured result
+rather than silently claiming success or looping forever.
+
+A smooth, repeatable nonlinear response is a correction target, even when its
+deviation from ideal 1 V/oct is large. A later check disagreeing with an
+earlier reading at the *same* commanded pitch by over 10 cents is different:
+another fitted anchor would not explain both readings. AUTO/FORGIVING may
+remove that target and one side of the pending curve, retain the larger
+contiguous measured range, and independently check it again. This specific
+disagreement recovery is limited to two trims per run. Intermediate boundary
+checks probe only the half-volt of measured response beside the new endpoint;
+they are never published as a whole-profile grade. Once that edge stops
+moving, a fresh full-range check is mandatory before the candidate is offered
+for review. If recovery cannot yield a verified range, show the measured
+poor-quality result rather than claiming correction or asking for endless
+manual retries.
+
+This one-shot control change removes repeated *user decisions*, not yet the
+internal cost of one full recheck per accepted anchor. The next efficiency
+step is to retain several spatially separated residual peaks from one check,
+measure multiple candidate anchors around those peaks, then independently
+validate the resulting batch once. Do not claim a speed gain until hardware
+timing and accuracy are measured on ACRONYM and other poor trackers.
 
 Eight oscillator profiles fit the existing 16-KiB profile journal alongside the
 unchanged separate settings allocation. Each maximum TUCP v2 payload is 1,072
@@ -167,8 +326,10 @@ sixteen non-overlapping measurement windows (initially eight; see retry below).
 Raw span must stay within 8 cents;
 quarter-block means must agree within 2 cents and half-block means within 1
 cent. Fresh overlapping observations still participate in the raw-span guard,
-so decimation cannot conceal alternating outliers. The initial 350 ms settling
-time, 5-second point deadline, freshness checks and final zero-drift guard remain.
+so decimation cannot conceal alternating outliers. At the time of this change,
+the initial 350 ms settling time, 5-second point deadline, freshness checks and
+final zero-drift guard remained. The current shorter settling guard is described
+above.
 Automatic low-note verification uses the same bounded mean; diagnostics retain
 the raw spread, not a smoothed spread. This is a repeatability heuristic, not a
 statistical confidence interval or guarantee of sub-cent absolute accuracy.

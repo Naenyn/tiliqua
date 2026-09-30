@@ -143,6 +143,32 @@ def test_synthetic_high_sine_phase_coverage(frequency,tolerance,amplitude):
         assert abs(1200*math.log2(result['hz']/frequency))<tolerance
 
 
+def test_synthetic_high_triangle_fine_steps_do_not_staircase(tmp_path):
+    # ACRONYM's measured ~11-kHz response held near-constant for several
+    # 10-mV steps, then jumped ~50 cents. A clean triangle at the same pitches
+    # must not acquire that staircase from the production NSDF selector.
+    here=Path(__file__).parent
+    rustc=shutil.which('rustc') or str(Path.home()/'.cargo/bin/rustc')
+    exe=tmp_path/'selector'
+    subprocess.run([rustc,'--edition=2021','-O','-C','overflow-checks=on',
+                    str(here/'nsdf_selector_fixture.rs'),'-o',str(exe)],check=True)
+    frequencies=[10840*2**(12*i/1200) for i in range(8)]
+    cases=[]
+    for phase in np.linspace(0,1,8,endpoint=False):
+        for frequency in frequencies:
+            p=(np.arange(674)*frequency/192000+phase)%1
+            x=np.rint(14000*(4*np.abs(p-.5)-1))
+            cases.append((frequency,scores_for(x,321)))
+    output=subprocess.run([str(exe)],input=''.join(
+        'high '+' '.join(map(str,scores))+'\n' for _,scores in cases),
+        capture_output=True,text=True,check=True).stdout.splitlines()
+    assert len(output)==len(cases)
+    for (frequency,_),line in zip(cases,output):
+        words=line.split()
+        assert words[0]!='none' and words[2]=='true'
+        assert abs(1200*math.log2(float(words[0])/frequency))<.3
+
+
 @pytest.mark.parametrize('frequency,tolerance',[(22,.25),(23.5,.25),
                                               (440*2**((18.5-69)/12),.25),
                                               (25,.25),(55,.12)])

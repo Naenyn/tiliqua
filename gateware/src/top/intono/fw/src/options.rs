@@ -63,6 +63,7 @@ pub enum VerifyMode {
 /// User-facing calibration policy.  All modes retain the same hard safety,
 /// routing, monotonicity, and detector-ambiguity checks; this only selects how
 /// much measured pitch error/repeatability is acceptable for a usable curve.
+/// FAST uses AUTO's final checks with fewer acquisition estimates per point.
 #[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]
 pub enum CalibrationPolicy {
     #[default]
@@ -72,6 +73,17 @@ pub enum CalibrationPolicy {
     Precision,
     #[strum(serialize = "FORGIVING")]
     Forgiving,
+    #[strum(serialize = "FAST")]
+    Fast,
+}
+
+#[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]
+pub enum CalibrationGraph {
+    #[default]
+    #[strum(serialize = "PITCH")]
+    Pitch,
+    #[strum(serialize = "ERROR")]
+    Error,
 }
 
 int_params!(InputParams<u8> { step: 1, min: 0, max: 3 });
@@ -203,6 +215,8 @@ pub struct CalibrateOpts {
     pub zero_note: IntOption<NoteParams>,
     #[option]
     pub policy: EnumOption<CalibrationPolicy>,
+    #[option]
+    pub graph: EnumOption<CalibrationGraph>,
     #[option(false)]
     pub run: ButtonOption<OneShotButtonParams>,
     #[option(false)]
@@ -304,6 +318,12 @@ pub enum QuantizeMode {
 pub struct VerifyOpts {
     #[option(false)]
     pub run: ButtonOption<OneShotButtonParams>,
+    #[option(false)]
+    pub improve: ButtonOption<OneShotButtonParams>,
+    #[option(false)]
+    pub accept: ButtonOption<OneShotButtonParams>,
+    #[option(false)]
+    pub discard: ButtonOption<OneShotButtonParams>,
     #[option(false)]
     pub back: ButtonOption<OneShotButtonParams>,
 }

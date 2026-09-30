@@ -51,7 +51,7 @@ pub fn encode(
     }
     out.fill(0);
     out[..4].copy_from_slice(b"TUCP");
-    out[4] = 4;
+    out[4] = 5;
     out[10] = u8::from(profile.limited_low) | (u8::from(profile.limited_high) << 1);
     out[5] = route.input();
     out[6] = route.output();
@@ -62,6 +62,7 @@ pub fn encode(
     out[12..12 + name.len()].copy_from_slice(name.as_bytes());
     out[36..40].copy_from_slice(&quality.worst_millicents.to_le_bytes());
     out[40..44].copy_from_slice(&quality.stability_millicents.to_le_bytes());
+    out[44..48].copy_from_slice(&profile.zero_pitch().unwrap_or(i32::MIN).to_le_bytes());
     for (i, p) in profile.points().iter().enumerate() {
         let start = 48 + i * 8;
         out[start..start + 4].copy_from_slice(&p.microvolts.to_le_bytes());
@@ -78,22 +79,26 @@ pub fn decode(data: &[u8]) -> Result<Recalled, Error> {
         return Err(Error::Invalid);
     }
     let version = data[4];
-    if version != 1 && version != 2 && version != 3 && version != 4 {
+    if version != 1 && version != 2 && version != 3 && version != 4 && version != 5 {
         return Err(Error::Version);
     }
     let (name_len, count) = (data[8] as usize, data[9] as usize);
     if !(1..=24).contains(&name_len)
         || !(2..=if version == 1 { 32 } else { MAX_POINTS }).contains(&count)
-        || data.len() != if version == 4 { 52 + count * 8 } else { 40 + count * 8 }
+        || data.len() != if version >= 4 { 52 + count * 8 } else { 40 + count * 8 }
         || !(12..=108).contains(&data[7])
         || data[10] > if version == 1 { 0 } else { 3 }
         || (version < 4 && data[11] != 0)
-        || (version == 4 && CalibrationGrade::from_u8(data[11]).is_none())
+        || (version >= 4 && CalibrationGrade::from_u8(data[11]).is_none())
         || data[12 + name_len..36].iter().any(|b| *b != 0)
-        || (version == 4
+        || (version >= 4
             && (u32::from_le_bytes(data[36..40].try_into().unwrap()) > 100_000
                 || u32::from_le_bytes(data[40..44].try_into().unwrap()) > 100_000))
         || (version == 4 && data[44..48].iter().any(|b| *b != 0))
+        || (version == 5 && {
+            let pitch = i32::from_le_bytes(data[44..48].try_into().unwrap());
+            pitch != i32::MIN && !(0..=12_800_000).contains(&pitch)
+        })
     {
         return Err(Error::Invalid);
     }
@@ -115,7 +120,7 @@ pub fn decode(data: &[u8]) -> Result<Recalled, Error> {
     .map_err(|_| Error::Invalid)?;
     profile.limited_low = data[10] & 1 != 0;
     profile.limited_high = data[10] & 2 != 0;
-    let points_start = if version == 4 { 48 } else { 36 };
+    let points_start = if version >= 4 { 48 } else { 36 };
     for i in 0..count {
         let start = points_start + i * 8;
         profile
@@ -125,11 +130,15 @@ pub fn decode(data: &[u8]) -> Result<Recalled, Error> {
             })
             .map_err(|_| Error::Invalid)?;
     }
+    if version == 5 {
+        let pitch = i32::from_le_bytes(data[44..48].try_into().unwrap());
+        profile.set_zero_pitch((pitch != i32::MIN).then_some(pitch)).map_err(|_| Error::Invalid)?;
+    }
     Ok(Recalled {
         profile,
         route,
         zero_note: data[7],
-        quality: if version == 4 {
+        quality: if version >= 4 {
             CalibrationQuality {
                 grade: CalibrationGrade::from_u8(data[11]).ok_or(Error::Invalid)?,
                 worst_millicents: u32::from_le_bytes(data[36..40].try_into().unwrap()),
@@ -170,6 +179,39 @@ mod tests {
         (bytes, end + 4)
     }
     #[test]
+    fn measured_zero_reference_survives_trim_save_load_and_binding() {
+        let mut p = Profile::new("origin", -5_000_000, 8_000_000).unwrap();
+        for i in 0..=24 {
+            p.push(Point { microvolts: i * 83333, millicents: 2_467_000 + i * 100000 }).unwrap();
+        }
+        assert_eq!(p.natural_note(), Some(25));
+        assert_eq!(p.trim_low_through(0, 1), 1);
+        assert!(p.points()[0].microvolts > 0);
+        assert_eq!(p.zero_pitch(), Some(2_467_000));
+        let mut bytes = [0; MAX_BYTES];
+        let size = encode(&p, Route::new(0, 1).unwrap(), 25, CalibrationQuality::default(), "origin", &mut bytes).unwrap();
+        let r = decode(&bytes[..size]).unwrap();
+        assert_eq!(r.profile.zero_pitch(), Some(2_467_000));
+        assert_eq!(r.profile.natural_note(), Some(25));
+        let mut engine = crate::oscillator_calibration::playback::Engine::new();
+        assert!(engine.bind_profile(&r.profile));
+        assert_eq!(engine.profile_zero_pitch(), Some(2_467_000));
+    }
+
+    #[test]
+    fn legacy_zero_anchor_is_reused_but_missing_zero_is_not_extrapolated() {
+        let (bytes, len) = legacy_record(3);
+        let r = decode(&bytes[..len]).unwrap();
+        assert_eq!(r.profile.zero_pitch(), Some(6_500_000));
+        let mut p = Profile::new("no zero", 0, 8_000_000).unwrap();
+        p.push(Point { microvolts: 250000, millicents: 2467000 }).unwrap();
+        p.push(Point { microvolts: 1250000, millicents: 3667000 }).unwrap();
+        let mut b = [0; MAX_BYTES];
+        let n = encode(&p, Route::new(0, 0).unwrap(), 60, CalibrationQuality::default(), "no zero", &mut b).unwrap();
+        assert_eq!(decode(&b[..n]).unwrap().profile.zero_pitch(), None);
+    }
+
+    #[test]
     fn round_trip_preserves_name_route_origin_and_curve() {
         let (bytes, n) = record();
         let r = decode(&bytes[..n]).unwrap();
@@ -195,7 +237,7 @@ mod tests {
         let mut bytes = [0; MAX_BYTES];
         let quality = CalibrationQuality { grade: CalibrationGrade::Musical, worst_millicents: 4200, stability_millicents: 1800 };
         let n = encode(&p, Route::new(0, 0).unwrap(), 48, quality, "Positive", &mut bytes).unwrap();
-        assert_eq!(bytes[4], 4);
+        assert_eq!(bytes[4], 5);
         let r = decode(&bytes[..n]).unwrap();
         assert_eq!(r.profile.points(), p.points());
         assert!(r.profile.limited_low);
@@ -205,6 +247,22 @@ mod tests {
         let (v2, n) = legacy_record(2);
         assert_eq!(decode(&v2[..n]).unwrap().profile.points().len(), 25);
         assert_eq!(decode(&v2[..n]).unwrap().quality.grade, CalibrationGrade::Unverified);
+    }
+    #[test]
+    fn user_kept_grade_and_advisory_score_round_trip() {
+        let (mut bytes, old_n) = record();
+        let profile = decode(&bytes[..old_n]).unwrap().profile;
+        let quality = CalibrationQuality {
+            grade: CalibrationGrade::UserAccepted,
+            worst_millicents: 42_400,
+            stability_millicents: 7_100,
+        };
+        let n = encode(&profile, Route::new(0, 0).unwrap(), 48, quality,
+            "Character", &mut bytes).unwrap();
+        let loaded = decode(&bytes[..n]).unwrap();
+        assert_eq!(loaded.quality, quality);
+        assert_eq!(loaded.quality.score_percent(), Some(58));
+        assert!(loaded.quality.acceptable());
     }
     #[test]
     fn reads_legacy_and_roundtrips_all_121_signed_points() {

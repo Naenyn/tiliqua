@@ -82,11 +82,15 @@ ROUTES and SCALES. Supporting pages are reached through parent-page buttons.
 The menu hides after five seconds of inactivity. Boot restores saved settings
 but starts navigation at INTONO, with no output armed.
 
-CAL contains input, output, 0v note, run, accept, discard and profiles. RUN
+CAL contains input, output, 0v note, policy, graph, run, accept, discard and profiles. RUN
 performs the automatic procedure described in [AUTO_CALIBRATION.md](AUTO_CALIBRATION.md).
 Initial measurement runs upward with nominal semitone voltage spacing over
--5..+5 V; valid edge limits can yield a smaller range. Ten volts does not
-guarantee ten measurable octaves. The 0v note is the musical reference for
+-5..+8 V; valid edge limits can yield a smaller range. The voltage span does not
+guarantee the same number of measurable octaves. AUTO is the default policy.
+FAST uses fewer acquisition estimates for known well-behaved oscillators,
+with the same independent final checks; it may miss brief acquisition variation
+or need more correction afterwards. Broader hardware qualification is still pending.
+The 0v note is the musical reference for
 nominal voltage display, not the oscillator's measured pitch at zero.
 
 Review shows measured coverage, checked worst error and cautious tuning advice.
@@ -122,7 +126,9 @@ including endpoints, the zero-volt reference when available, and probes near
 measured bends. This is explicitly a sampled check, not certification of every
 pitch: narrow errors between probes can escape it. CHECK retains the exhaustive
 50-cent grid. Automatic acceptance includes local absolute repeat errors, not
-just the initial scan result; the total procedure is bounded to 15 minutes.
+just the initial scan result. There is no overall time limit; RUN again reviews
+the last fully checked curve, and RUN from review continues improvement when
+available. Individual measurements and correction attempts remain bounded.
 
 ## Standalone quantizer
 
@@ -187,7 +193,7 @@ voltages are committed together at one DAC update boundary. Safety disables
 remain immediate rather than waiting for a group commit.
 Running settings are locked; channel selection and page navigation do not stop
 outputs. An empty custom pattern cannot arm its lane.
-Per-lane stale CV, missing ACK, rail, and output faults stop that lane; scheduling
+Per-lane stale CV, missing ACK, and output faults stop that lane; scheduling
 or shared CPU-budget faults stop the whole group. Calibration has
 hardware priority only on its reserved output; unrelated quantizer lanes continue.
 The earlier four-quantizer implementation passed live operation; mixed-mode
@@ -205,9 +211,12 @@ Missing/invalid setups leave current settings intact. Setup slots, pattern slots
 and oscillator profile slots are separate; existing records are preserved.
 
 The shared engine uses nearest-degree rounding with midpoint hysteresis (up to
-five cents, capped to a quarter of each adjacent interval for dense scales), retains
-the last valid note for out-of-range CV, and stops on stale CV, rails, output
-faults, or missed processing deadlines. STOP commands 0 V, not an audio mute.
+five cents, capped to a quarter of each adjacent interval for dense scales). Outside
+a measured profile, routes continue using nominal 1 V/oct output after scale
+quantization. Beyond the guarded -5..+8 V output range, quantized routes use the
+nearest reachable scale note; continuous routes cap the nominal voltage. Clipped
+input does not stop a route, and normal processing resumes when it returns.
+Stale CV, output faults, and missed processing deadlines still stop the route. STOP commands 0 V, not an audio mute.
 The tuner acquisition continues independently. Four output routes support
 optional oscillator-profile correction; a trigger input is not implemented.
 Routes share the renderer and pitch engine, with one immutable curve snapshot
@@ -228,11 +237,35 @@ then apply an independently bound oscillator calibration curve optionally.
 Use CORRECTION NONE for nominal voltage, RAM or SLOT 1–8 plus BIND for correction.
 BIND is explicit and never starts playback. RUN controls only the selected output.
 
-TUNER is always read-only: active CV inputs are hidden/unfocusable, but the audio
-input of a calibration scan remains available. One calibration/verification
+TUNER is always read-only: all four inputs remain observable, including inputs
+claimed by calibration or CV routes. One calibration/verification
 operation can run alongside independent output routes. Simultaneous scans are
 not supported. Profile flash access and setup recall require stopped outputs.
 Changing route settings requires stopping the affected output; navigation does not.
+
+Oscillator setup guidance for the future module help: at the lowest pitch-CV
+voltage you intend to use, within both the oscillator's supported range and
+Intono's output range, tune the oscillator to the lowest stable pitch you want
+reproduced. For an oscillator that responds only to non-negative pitch CV, this
+means setting that pitch at 0 V. Use TUNER to confirm reliable detection; tuning
+below the measurable range does not add useful calibrated coverage. This places
+the desired low note at the bottom of the available voltage range, but the
+oscillator's tracking, upper frequency limit and usable voltage span still limit
+the number of octaves. Centered tuning knobs are optional. Fully lowering the
+knobs can provide a repeatable physical position, but is useful only if the
+resulting pitch is stable, measurable and appropriate for the desired range.
+Record coarse/fine/octave positions and keep them fixed after calibration.
+
+A qualified pitch measured at 0 V is stored with each new profile. BIND defaults
+that route's 0 V note to the nearest musical note and its scale root to the same
+pitch class: an oscillator near D3 becomes D3 at zero input, with D as the root.
+The exact measured pitch (including cents) anchors nominal fallback beyond the
+curve; it does not offset the already measured correction twice. You may edit
+note/root afterward while stopped. Rebinding reapplies the profile defaults.
+Older profiles reuse an existing measured 0 V point. If none exists, binding
+keeps the configured note/root and reports that the measured reference is absent.
+No zero-volt pitch is extrapolated. Updated profile records use TUCP version 5,
+with the same size and legacy versions 1–4 still readable.
 
 Curves are immutable per-output snapshots. Setup records save the correction
 source and quantization enable, not curve contents; rebind after setup recall

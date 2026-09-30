@@ -3,12 +3,18 @@
 use core::fmt::Write;
 use heapless::String;
 use tiliqua_pac as pac;
+#[cfg(tuner_nsdf_wave_diag)]
+type Pending = String<448>;
+#[cfg(not(tuner_nsdf_wave_diag))]
+type Pending = String<512>;
 #[path = "nsdf_publish.rs"]
 mod publish;
 #[path = "nsdf_resolve.rs"]
 mod resolve;
 #[path = "nsdf_sequence.rs"]
 mod sequence;
+#[path = "nsdf_sampling.rs"]
+mod sampling;
 pub use sequence::Sequence;
 
 #[derive(Clone, Copy)]
@@ -42,9 +48,10 @@ impl Latest {
 }
 pub struct Scheduler {
     latest: [Latest; 8],
-    pending: String<512>,
+    pending: Pending,
     offset: usize,
     slot: u8,
+    sampling: sampling::Sampling,
     report: u8,
     active: bool,
     due: u64,
@@ -52,10 +59,49 @@ pub struct Scheduler {
     report_due: u64,
     faults: u32,
     baseline: [(u32, bool, u32, u64); 4],
+    #[cfg(tuner_nsdf_wave_diag)]
+    wave_mhz: u32,
+    #[cfg(tuner_nsdf_wave_diag)]
+    wave_crossings: u16,
+    #[cfg(tuner_nsdf_wave_diag)]
+    wave_seq: u32,
 }
 // Also checked by the embedded compiler with the real heapless buffer layout.
 const _: () = assert!(core::mem::size_of::<Scheduler>() <= 1024);
 impl Scheduler {
+    /// Independent rising-zero-crossing estimate from the immutable native
+    /// frame. Diagnostic only: never participates in published pitch or CAL.
+    #[cfg(tuner_nsdf_wave_diag)]
+    fn wave_period_mhz() -> (u32, u16) {
+        let nsdf = unsafe { &*pac::NSDF_PERIPH::ptr() };
+        let mut previous = 0_i32;
+        let mut first = 0_u32;
+        let mut last = 0_u32;
+        let mut crossings = 0_u16;
+        for index in 0..674_u32 {
+            nsdf.address()
+                .write(|w| unsafe { w.value().bits((1024 | index) as u16) });
+            let _ = nsdf.data().read(); // Settle the synchronous sample RAM.
+            let current = nsdf.data().read().value().bits() as i32;
+            if index != 0 && previous <= 0 && current > 0 {
+                let denominator = (current - previous) as u32;
+                let fraction = ((-previous as u32) << 16) / denominator;
+                let position = ((index - 1) << 16) + fraction;
+                if crossings == 0 {
+                    first = position;
+                }
+                last = position;
+                crossings += 1;
+            }
+            previous = current;
+        }
+        if crossings < 4 || last <= first {
+            return (0, crossings);
+        }
+        let mhz = (192000_u64 * 1000 * (crossings - 1) as u64 * 65536
+            / (last - first) as u64) as u32;
+        (mhz, crossings)
+    }
     pub fn fast(&self) -> bool {
         true
     }
@@ -68,6 +114,7 @@ impl Scheduler {
             pending: String::new(),
             offset: 0,
             slot: 0,
+            sampling: sampling::Sampling::new(),
             report: 0,
             active: false,
             due: 2000,
@@ -75,6 +122,12 @@ impl Scheduler {
             report_due: 2000,
             faults: 0,
             baseline: [(0, false, u32::MAX, 0); 4],
+            #[cfg(tuner_nsdf_wave_diag)]
+            wave_mhz: 0,
+            #[cfg(tuner_nsdf_wave_diag)]
+            wave_crossings: 0,
+            #[cfg(tuner_nsdf_wave_diag)]
+            wave_seq: 0,
         }
     }
     pub fn observe_baseline(
@@ -182,9 +235,27 @@ impl Scheduler {
     }
     fn finish(&mut self, now: u64) {
         self.active = false;
-        self.slot = (self.slot + 1) & 7;
+        #[cfg(tuner_nsdf_pair_diag)]
+        {
+            // Diagnostic only: acquire the two buffered copies back-to-back.
+            // The opt-in copy-comparison diagnostic keeps its special plan.
+            self.slot = if self.slot == 0 { 4 } else { 0 };
+        }
+        #[cfg(not(tuner_nsdf_pair_diag))]
+        {
+            self.slot = self.sampling.next();
+        }
         // At most 100 acquisitions/s TOTAL. Late service never queues catch-up.
         self.due = now.max(self.started.saturating_add(10));
+    }
+    /// The live operation supplies its captured input, independent of menu
+    /// selection. Finish an in-flight bank under its original channel before
+    /// changing the next request; no frame may be relabeled as another input.
+    pub fn set_operation_input(&mut self, input: Option<u8>, tuner_visible: bool) {
+        #[cfg(not(tuner_nsdf_pair_diag))]
+        if self.sampling.configure(input, tuner_visible) && !self.active {
+            self.slot = self.sampling.next();
+        }
     }
     pub fn tick(&mut self, uart: &pac::UART0, now: u64) {
         self.tick_reporting(uart, now, true);
@@ -260,6 +331,19 @@ impl Scheduler {
                         r.qualified,
                     )
                 });
+                #[cfg(tuner_nsdf_wave_diag)]
+                let (wave_mhz, wave_crossings) = if !low && (channel == 0
+                    || (cfg!(tuner_nsdf_pair_diag) && channel == 2)) {
+                    Self::wave_period_mhz()
+                } else {
+                    (0, 0)
+                };
+                #[cfg(tuner_nsdf_wave_diag)]
+                if channel == 0 && !low {
+                    self.wave_mhz = wave_mhz;
+                    self.wave_crossings = wave_crossings;
+                    self.wave_seq = seq;
+                }
                 let old = self.latest[self.slot as usize];
                 self.latest[self.slot as usize] = Latest {
                     count: old.count.saturating_add(1),
@@ -274,6 +358,17 @@ impl Scheduler {
                     guard,
                     valid: true,
                 };
+                #[cfg(tuner_nsdf_pair_diag)]
+                if self.slot == 4 && self.serial_idle() {
+                    self.pending.clear();
+                    self.offset = 0;
+                    let first = self.latest[0];
+                    write!(self.pending,
+                        "NSDF PAIR dt={} n0={} n2={} w0={} w2={} s0={} s2={} q0={} q2={}\n",
+                        now.saturating_sub(first.done),first.mhz,mhz,
+                        self.wave_mhz,wave_mhz,self.wave_seq,seq,
+                        first.valid && first.raw && first.guard,raw && guard).ok();
+                }
                 self.finish(now);
             }
         } else if now >= self.due {
@@ -304,7 +399,7 @@ impl Scheduler {
                 }
             }
         }
-        if reports && self.serial_idle() && now >= self.report_due {
+        if reports && !cfg!(tuner_nsdf_pair_diag) && self.serial_idle() && now >= self.report_due {
             self.pending.clear();
             self.offset = 0;
             let r = self.latest[self.report as usize];
@@ -314,6 +409,11 @@ impl Scheduler {
             // results, never replay an unbounded backlog. age is at formatting.
             write!(self.pending,"NSDF RUN ch={} low={} count={} seq={} mhz={} first={} raw={} guard={} ok={} age={} dt={} cycles={} work={} faults={} ms={}\n",
                 self.report>>1,self.report&1!=0,r.count,r.seq,r.mhz,r.first_mhz,r.raw,r.guard,ok,age,r.dt,r.cycles,r.work,self.faults,now as u32).ok();
+            #[cfg(tuner_nsdf_wave_diag)]
+            if self.report == 0 {
+                write!(self.pending,"NSDF WAVE ch=0 seq={} mhz={} crossings={} nsdf_mhz={}\n",
+                    self.wave_seq,self.wave_mhz,self.wave_crossings,r.mhz).ok();
+            }
             if self.report & 1 != 0 {
                 let n = self.latest[(self.report - 1) as usize];
                 let na = now.saturating_sub(n.done).min(u32::MAX as u64) as u32;

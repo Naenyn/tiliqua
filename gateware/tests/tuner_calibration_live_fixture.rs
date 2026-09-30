@@ -31,6 +31,7 @@ mod options {
         Auto,
         Precision,
         Forgiving,
+        Fast,
     }
 }
 mod runtime {
@@ -122,6 +123,140 @@ mod pac {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn simulated_speed_run(policy: options::CalibrationPolicy, curvature: f64, acquisition_bias_cents: f64) -> calibration_live::Live {
+        use oscillator_calibration::automatic::Phase;
+        let mut live = ready();
+        let prior = live.profile.as_ref().unwrap().points().to_vec();
+        let p = pac::TUNER_PERIPH::default();
+        let mut c = controls();
+        c.calibration_policy = policy;
+        live.toggle_automatic(&p, c, 0);
+        for n in 1..24000u16 {
+            p.ack();
+            let volts = p.command.get() as u16 as i16 as f64 / 4000.0;
+            let bias = if live.automatic.as_ref().unwrap().phase == Phase::Sweep {
+                acquisition_bias_cents / 1200.0
+            } else { 0.0 };
+            let hz = (500.0 * 2.0f64.powf(volts + curvature * volts * volts + bias)) as f32;
+            let valid = (20.0..=20000.0).contains(&hz);
+            live.tick(&p, ChannelMeasurement {
+                frequency_hz: hz, valid, qualified: valid, sequence: n,
+                window_age_ms: 120, end_age_ms: 10,
+            }, c, n as u64 * 80);
+            assert_eq!(live.profile.as_ref().unwrap().points(), prior);
+            if !live.active() { break; }
+        }
+        assert!(!live.active(), "{}", live.status);
+        assert_eq!(p.command.get(), 0);
+        live
+    }
+    #[test]
+    fn fast_acquisition_saves_simulated_time_with_identical_independent_coverage() {
+        for curvature in [0.0, 0.006] {
+            let auto = simulated_speed_run(options::CalibrationPolicy::Auto, curvature, 0.0);
+            let fast = simulated_speed_run(options::CalibrationPolicy::Fast, curvature, 0.0);
+            let a = auto.automatic.as_ref().unwrap();
+            let f = fast.automatic.as_ref().unwrap();
+            assert!(f.phase_ms[0] < a.phase_ms[0]);
+            assert_eq!(f.phase_ms[1..], a.phase_ms[1..]);
+            assert_eq!(fast.pending_profile.as_ref().unwrap().points(), auto.pending_profile.as_ref().unwrap().points());
+            assert_eq!(fast.pending_quality, auto.pending_quality);
+            assert_eq!(fast.pending_quality.grade, oscillator_calibration::CalibrationGrade::Precision);
+            let (a_scan, f_scan) = (a.best.as_ref().unwrap(), f.best.as_ref().unwrap());
+            assert_eq!(a_scan.targeted_plan().unwrap().pitches, f_scan.targeted_plan().unwrap().pitches);
+            assert_eq!((f_scan.tested, f_scan.missing), (a_scan.total, 0));
+            assert_eq!(f_scan.local.as_ref().unwrap().tested, 9);
+            assert_eq!(f.check_timing_count, 1);
+            eprintln!("SIMULATED SPEED curvature={curvature} AUTO={:?} FAST={:?} points={} checked={}",
+                a.phase_ms, f.phase_ms, fast.pending_profile.as_ref().unwrap().points().len(), f_scan.total);
+        }
+    }
+    #[test]
+    fn fast_acquisition_bias_cannot_bypass_independent_verification() {
+        let live = simulated_speed_run(options::CalibrationPolicy::Fast, 0.0, 40.0);
+        assert!(!live.pending_quality.acceptable());
+        assert!(!live.status.starts_with("READY"));
+        assert!(live.automatic.as_ref().unwrap().phase_ms[1] > 0);
+    }
+    #[test]
+    fn unsafe_grid_skips_local_repeats_then_requires_boundary_and_fresh_full_check() {
+        use oscillator_calibration::automatic::Phase;
+        let mut live = ready();
+        let prior = live.profile.as_ref().unwrap().points().to_vec();
+        let p = pac::TUNER_PERIPH::default();
+        let c = controls();
+        live.toggle_automatic(&p, c, 0);
+        let mut injected = false;
+        let mut initial_local_visits = 0;
+        for n in 1..24000u16 {
+            p.ack();
+            let auto = live.automatic.as_ref().unwrap();
+            let first_check = auto.phase == Phase::Verify && auto.check_timing_count == 0;
+            let bad_target = first_check && live.scan.as_ref().is_some_and(|s| {
+                s.local.is_none() && s.tested + 1 == s.total
+            });
+            initial_local_visits += usize::from(first_check
+                && live.scan.as_ref().is_some_and(|s| s.local.is_some()));
+            let error = if bad_target {
+                injected = true;
+                // Sixteen non-overlapping windows agree in their block
+                // means, but the 12c raw spread is unsafe at this target.
+                if (n / 2) % 2 == 0 { 6.0 } else { -6.0 }
+            } else { 0.0 };
+            let volts = p.command.get() as u16 as i16 as f64 / 4000.0;
+            let hz = (500.0 * 2.0f64.powf(volts + error / 1200.0)) as f32;
+            let valid = (20.0..=20000.0).contains(&hz);
+            live.tick(&p, ChannelMeasurement {
+                frequency_hz: hz, valid, qualified: valid, sequence: n,
+                window_age_ms: 120, end_age_ms: 10,
+            }, c, n as u64 * 80);
+            assert_eq!(live.profile.as_ref().unwrap().points(), prior);
+            if !live.active() { break; }
+        }
+        let auto = live.automatic.as_ref().unwrap();
+        assert!(injected);
+        assert!(!live.active(), "{}", live.status);
+        assert_eq!(p.command.get(), 0);
+        assert_eq!(initial_local_visits, 0);
+        assert_eq!(auto.skipped_local_checks, 1);
+        assert_eq!(auto.partial_recoveries, 1);
+        assert_eq!(auto.check_timing_count, 3);
+        assert_eq!(auto.check_timings[..3].iter().flatten().map(|t| t.kind).collect::<Vec<_>>(), ['I', 'B', 'F']);
+        let best = auto.best.as_ref().unwrap();
+        assert_eq!(best.local.as_ref().unwrap().tested, 9);
+        assert_eq!(best.tested, best.total);
+        assert!(best.quality().acceptable());
+        assert!(live.pending_profile.as_ref().unwrap().limited_high);
+    }
+    #[test]
+    fn maximum_timing_history_fits_reserved_serial_space_and_reports_overflow() {
+        use oscillator_calibration::automatic::{Automatic, Phase, MAX_CHECK_TIMINGS};
+        let mut live = ready();
+        let mut auto = Automatic::new_with_policy(0, options::CalibrationPolicy::Fast);
+        auto.phase = Phase::Verify;
+        auto.phase_ms = [u32::MAX; 4];
+        auto.skipped_local_checks = 16;
+        for _ in 0..MAX_CHECK_TIMINGS + 1 {
+            auto.start_check_timing(0);
+            auto.finish_check_timing(u32::MAX as u64, u16::MAX, u16::MAX);
+        }
+        live.automatic = Some(auto);
+        live.sweep_timing = bipolar_sweep::SweepTiming {
+            measured_points: u16::MAX, measured_ms: u32::MAX,
+            missing_points: u16::MAX, missing_ms: u32::MAX,
+            slow_points: u16::MAX, averaged_points: u16::MAX,
+        };
+        let mut out = String::new();
+        serial_report::timing(&mut out, &live).unwrap();
+        assert!(out.len() < 1024, "timing bytes={}", out.len());
+        assert!(out.contains("POLICY=FAST SKIPPED_LOCAL_CHECKS=16"));
+        assert!(out.contains("I:4294967295:65535/65535"));
+        assert_eq!(out.matches("F:4294967295:65535/65535").count(), MAX_CHECK_TIMINGS - 1);
+        assert!(out.contains("OVERFLOW=1"));
+        let mut full = String::new();
+        serial_report::verification(&mut full, &live).unwrap();
+        assert!(full.starts_with(&out));
+    }
     #[test]
     fn high_zero_pitch_scan_checks_limited_range_without_inventing_upper_points() {
         // Current physical test is near 18 kHz at commanded zero. Simulate
@@ -437,7 +572,7 @@ mod tests {
     #[test]
     fn automatic_refinement_rechecks_and_rolls_back_worse_or_faulted_candidates() {
         use oscillator_calibration::automatic::{Automatic, Phase};
-        for scenario in 0..7 {
+        for scenario in [0, 1, 2, 3, 5, 6] {
             let mut live = refinement_ready();
             let prior = live.profile.as_ref().unwrap().points().to_vec();
             let p = pac::TUNER_PERIPH::default();
@@ -454,15 +589,6 @@ mod tests {
                 p.ack();
                 let phase = live.automatic.as_ref().unwrap().phase;
                 rechecked |= phase == Phase::Reverify;
-                if scenario == 4 && phase == Phase::Reverify {
-                    live.tick(
-                        &p,
-                        ChannelMeasurement::default(),
-                        c,
-                        oscillator_calibration::automatic::MAX_DURATION_MS,
-                    );
-                    break;
-                }
                 let uv = bipolar::decode_voltage(p.command.get() as u16).unwrap();
                 let x = uv as f64 / 100000.0;
                 let mut mc = 6000000.0 + uv as f64
@@ -540,13 +666,11 @@ mod tests {
                         .abs()
                         <= 2.0
                 );
-            } else if scenario == 3 {
-                assert!(live.pending_profile.is_none());
             } else {
                 assert_eq!(live.pending_profile.as_ref().unwrap().points(), prior);
             }
-            if scenario == 4 {
-                assert_eq!(live.status, "STOPPED - CALIBRATION TIME LIMIT");
+            if scenario == 3 {
+                assert_eq!(live.status, "PAUSED - REVIEW VERIFIED CURVE");
                 assert!(live.automatic.as_ref().unwrap().undo.is_none());
                 assert!(
                     live.automatic
@@ -562,7 +686,7 @@ mod tests {
     }
     #[test]
     fn automatic_without_completed_verification_cannot_offer_a_profile() {
-        use oscillator_calibration::automatic::{Automatic, Phase, MAX_DURATION_MS};
+        use oscillator_calibration::automatic::{Automatic, Phase};
         let mut live = ready();
         let p = pac::TUNER_PERIPH::default();
         let c = controls();
@@ -570,16 +694,16 @@ mod tests {
         let mut auto = Automatic::new(0);
         auto.phase = Phase::Verify;
         live.automatic = Some(auto);
-        live.tick(&p, ChannelMeasurement::default(), c, MAX_DURATION_MS);
+        live.toggle_automatic(&p, c, 1_000_000);
         assert!(!live.active());
         assert!(live.pending_profile.is_none());
         assert!(live.profile.is_some());
         assert_eq!(p.command.get(), 0);
     }
     #[test]
-    fn insufficient_time_preserves_checked_curve_without_starting_refinement() {
+    fn elapsed_time_does_not_block_refinement_after_a_checked_curve() {
         use oscillator_calibration::{
-            automatic::{Automatic, Phase, MAX_DURATION_MS},
+            automatic::{Automatic, Phase},
             deviation::Summary,
             verification_scan::LocalCheck,
         };
@@ -597,7 +721,6 @@ mod tests {
             });
         }
         assert!(check.refinement_issue().is_none());
-        let targets = scan.total;
         let mut auto = Automatic::new(0);
         auto.phase = Phase::Verify;
         live.automatic = Some(auto);
@@ -608,15 +731,330 @@ mod tests {
             &p,
             ChannelMeasurement::default(),
             controls(),
-            MAX_DURATION_MS - Automatic::refinement_budget_ms(targets) + 1,
+            24 * 60 * 60 * 1000,
         );
-        assert_eq!(live.status, "REVIEW - NO TIME FOR FULL RECHECK");
-        assert!(!live.active());
-        assert_eq!(p.command.get(), 0);
-        assert_eq!(live.automatic.as_ref().unwrap().passes, 0);
+        assert!(live.active());
+        assert_eq!(live.automatic.as_ref().unwrap().phase, Phase::Refine);
+        assert_eq!(live.automatic.as_ref().unwrap().passes, 1);
         assert!(live.automatic.as_ref().unwrap().best.is_some());
         assert_eq!(live.pending_profile.as_ref().unwrap().points(), original);
         assert_eq!(live.profile.as_ref().unwrap().points(), original);
+    }
+    #[test]
+    fn reviewed_curve_run_starts_fresh_one_shot_scan_without_replacing_prior() {
+        use oscillator_calibration::{
+            automatic::{Automatic, Phase},
+            deviation::Summary,
+            verification_scan::LocalCheck,
+        };
+        let mut live = refinement_ready();
+        let prior = live.profile.as_ref().unwrap().points().to_vec();
+        let scan = live.scan.as_mut().unwrap();
+        scan.worst_error = -3.0;
+        for (i, result) in scan.local.as_mut().unwrap().results.iter_mut().enumerate() {
+            *result = Some(Summary {
+                mean: if LocalCheck::ORDER[i] == 2 { -3.0 } else { 0.0 },
+                spread: 0.2,
+                count: 8,
+                averaged: false,
+            });
+        }
+        let mut auto = Automatic::new(0);
+        auto.phase = Phase::Review;
+        auto.best = live.scan.clone();
+        live.automatic = Some(auto);
+        live.pending_profile = live.profile.clone();
+        let p = pac::TUNER_PERIPH::default();
+        let c = controls();
+        assert!(!live.can_continue_automatic());
+        live.toggle_automatic(&p, c, 24 * 60 * 60 * 1000);
+        assert!(live.active());
+        assert_eq!(live.automatic.as_ref().unwrap().phase, Phase::Sweep);
+        assert_eq!(live.automatic.as_ref().unwrap().passes, 0);
+        assert!(live.pending_profile.is_none());
+        live.toggle_automatic(&p, c, 24 * 60 * 60 * 1000 + 1);
+        assert!(!live.active());
+        assert_eq!(live.status, "CANCELLED - PRIOR PROFILE KEPT");
+        assert_eq!(p.command.get(), 0);
+        assert!(!live.can_continue_automatic());
+        assert_eq!(live.profile.as_ref().unwrap().points(), prior);
+    }
+    #[test]
+    fn one_shot_recovery_continues_without_a_user_checkpoint() {
+        use oscillator_calibration::{
+            automatic::{Automatic, Phase, MAX_PARTIAL_RECOVERIES},
+            deviation::Summary,
+            verification_scan::{LocalCheck, Scan},
+            Point, Profile,
+        };
+        let mut live = ready();
+        let prior = live.profile.as_ref().unwrap().points().to_vec();
+        let mut candidate = Profile::new("partial", -1_000_000, 7_000_000).unwrap();
+        for i in 0..90 {
+            candidate.push(Point {
+                microvolts: -1_000_000 + i * 83_333,
+                millicents: 4_000_000 + i * 100_000,
+            }).unwrap();
+        }
+        let mut scan = Scan::targeted(&candidate).unwrap();
+        scan.complete = true;
+        scan.tested = scan.total;
+        scan.worst_pitch = 4_000_000 + 75 * 100_000;
+        scan.worst_error = -39.0;
+        let mut local = LocalCheck::new(&candidate, scan.worst_pitch).unwrap();
+        for target in LocalCheck::ORDER {
+            local.record(Summary {
+                mean: if target == 2 { -39.0 } else { 0.1 },
+                spread: 0.1,
+                count: 8,
+                averaged: false,
+            });
+        }
+        scan.local = Some(local);
+        let mut auto = Automatic::new(0);
+        auto.phase = Phase::Verify;
+        auto.partial_recoveries = MAX_PARTIAL_RECOVERIES - 1;
+        auto.last_recovery = Some((6_500_000, "UNSAFE COMPLETE REPLAY"));
+        live.automatic = Some(auto);
+        live.pending_profile = Some(candidate);
+        live.scan = Some(scan);
+        live.status = "SCAN DONE - OUTPUT ZERO";
+        let p = pac::TUNER_PERIPH::default();
+        let c = controls();
+        live.tick(&p, ChannelMeasurement::default(), c, 10_000);
+        assert!(live.active());
+        assert!(!live.can_continue_automatic());
+        assert!(live.pending_profile.is_some());
+        // The next verification is already running; no review page or
+        // intermediate accept/continue choice is exposed to the user.
+        assert_eq!(live.automatic.as_ref().unwrap().phase, Phase::Verify);
+        assert_eq!(live.automatic.as_ref().unwrap().partial_recoveries, MAX_PARTIAL_RECOVERIES);
+        assert!(live.automatic.as_ref().unwrap().regional_check);
+        assert!(live.pending_profile.as_ref().unwrap().points().len() < 90);
+        assert!(live.scan.as_ref().unwrap().total <
+            Scan::targeted(live.pending_profile.as_ref().unwrap()).unwrap().total);
+        assert_eq!(live.profile.as_ref().unwrap().points(), prior);
+    }
+    #[test]
+    fn passing_boundary_probe_promotes_to_full_independent_check() {
+        use oscillator_calibration::{
+            automatic::{Automatic, Phase}, deviation::Summary,
+            verification_scan::{LocalCheck, Scan}, Point, Profile,
+        };
+        let mut live = ready();
+        let mut candidate = Profile::new("boundary", -1_000_000, 7_000_000).unwrap();
+        for i in 0..90 {
+            candidate.push(Point {
+                microvolts: -1_000_000 + i * 83_333,
+                millicents: 4_000_000 + i * 100_000,
+            }).unwrap();
+        }
+        let mut scan = Scan::targeted_boundary(&candidate, true).unwrap();
+        let region_total = scan.total;
+        scan.complete = true;
+        scan.tested = scan.total;
+        scan.worst_pitch = scan.target;
+        scan.worst_error = 0.1;
+        scan.max_spread = 0.1;
+        let mut local = LocalCheck::new(&candidate, scan.worst_pitch).unwrap();
+        for _ in LocalCheck::ORDER {
+            assert!(local.record(Summary {
+                mean: 0.1, spread: 0.1, count: 8, averaged: false,
+            }));
+        }
+        scan.local = Some(local);
+        let mut auto = Automatic::new(0);
+        auto.phase = Phase::Verify;
+        auto.regional_check = true;
+        auto.last_recovery = Some((6_500_000, "UNSAFE COMPLETE REPLAY"));
+        live.automatic = Some(auto);
+        live.pending_profile = Some(candidate);
+        live.scan = Some(scan);
+        live.status = "SCAN DONE - OUTPUT ZERO";
+        let p = pac::TUNER_PERIPH::default();
+        live.tick(&p, ChannelMeasurement::default(), controls(), 10_000);
+        assert!(live.active());
+        assert!(!live.automatic.as_ref().unwrap().regional_check);
+        assert!(live.scan.as_ref().unwrap().total > region_total);
+        assert_eq!(live.scan.as_ref().unwrap().tested, 0);
+    }
+    #[test]
+    fn failing_boundary_probe_rechecks_only_the_new_boundary() {
+        use oscillator_calibration::{
+            automatic::{Automatic, Phase}, deviation::Summary,
+            verification_scan::{LocalCheck, Scan}, Point, Profile,
+        };
+        let mut live = ready();
+        let mut candidate = Profile::new("boundary", -1_000_000, 7_000_000).unwrap();
+        for i in 0..90 {
+            candidate.push(Point {
+                microvolts: -1_000_000 + i * 83_333,
+                millicents: 4_000_000 + i * 100_000,
+            }).unwrap();
+        }
+        let mut scan = Scan::targeted_boundary(&candidate, true).unwrap();
+        scan.complete = true;
+        scan.tested = scan.total;
+        scan.worst_pitch = candidate.points()[85].millicents;
+        scan.worst_error = -21.0;
+        let mut local = LocalCheck::new(&candidate, scan.worst_pitch).unwrap();
+        for _ in LocalCheck::ORDER {
+            assert!(local.record(Summary {
+                mean: -21.0, spread: 0.2, count: 8, averaged: false,
+            }));
+        }
+        scan.local = Some(local);
+        let mut auto = Automatic::new(0);
+        auto.phase = Phase::Verify;
+        auto.regional_check = true;
+        auto.last_recovery = Some((6_500_000, "UNSAFE COMPLETE REPLAY"));
+        live.automatic = Some(auto);
+        live.pending_profile = Some(candidate);
+        live.scan = Some(scan);
+        live.status = "SCAN DONE - OUTPUT ZERO";
+        let p = pac::TUNER_PERIPH::default();
+        live.tick(&p, ChannelMeasurement::default(), controls(), 10_000);
+        assert!(live.active());
+        assert!(live.automatic.as_ref().unwrap().regional_check);
+        assert_eq!(live.automatic.as_ref().unwrap().partial_recoveries, 1);
+        assert!(live.scan.as_ref().unwrap().total <= 19);
+        assert!(live.pending_profile.as_ref().unwrap().points().len() < 90);
+    }
+    #[test]
+    fn missing_local_boundary_target_trims_and_rechecks_only_that_boundary() {
+        use oscillator_calibration::{
+            automatic::{Automatic, Phase}, verification_scan::{LocalCheck, Scan}, Point, Profile,
+        };
+        let mut live = ready();
+        let mut candidate = Profile::new("boundary", -1_000_000, 7_000_000).unwrap();
+        for i in 0..90 {
+            candidate.push(Point {
+                microvolts: -1_000_000 + i * 83_333,
+                millicents: 4_000_000 + i * 100_000,
+            }).unwrap();
+        }
+        let mut scan = Scan::targeted_boundary(&candidate, true).unwrap();
+        scan.complete = true;
+        scan.tested = scan.total;
+        scan.local = LocalCheck::new(&candidate, candidate.points()[83].millicents);
+        let failed_uv = candidate.points()[83].microvolts;
+        let mut auto = Automatic::new(0);
+        auto.phase = Phase::Verify;
+        auto.regional_check = true;
+        auto.last_recovery = Some((candidate.points()[87].microvolts, "UNSAFE COMPLETE REPLAY"));
+        live.automatic = Some(auto);
+        live.pending_profile = Some(candidate.clone());
+        live.scan = Some(scan);
+        live.failure_voltage = Some(failed_uv);
+        live.status = "SCAN TIMEOUT - OUTPUT ZERO";
+        let p = pac::TUNER_PERIPH::default();
+        live.tick(&p, ChannelMeasurement::default(), controls(), 10_000);
+        assert!(live.active());
+        assert_eq!(live.automatic.as_ref().unwrap().partial_recoveries, 1);
+        assert!(live.automatic.as_ref().unwrap().regional_check);
+        assert!(live.pending_profile.as_ref().unwrap().points().len() < candidate.points().len());
+        assert!(live.scan.as_ref().unwrap().total <= 19);
+    }
+    #[test]
+    fn recovery_checkpoint_allows_repeatable_interior_refinement_first() {
+        use oscillator_calibration::{
+            automatic::{Automatic, Phase, MAX_PARTIAL_RECOVERIES},
+            deviation::Summary,
+            verification_scan::{LocalCheck, Scan},
+            Point, Profile,
+        };
+        let mut live = ready();
+        let mut candidate = Profile::new("kink", -1_000_000, 7_000_000).unwrap();
+        for i in 0..90 {
+            candidate.push(Point {
+                microvolts: -1_000_000 + i * 83_333,
+                millicents: 4_000_000 + i * 100_000,
+            }).unwrap();
+        }
+        let midpoint_pitch = 4_000_000 + 75 * 100_000 + 50_000;
+        let mut scan = Scan::targeted(&candidate).unwrap();
+        scan.complete = true;
+        scan.tested = scan.total;
+        scan.worst_pitch = midpoint_pitch;
+        scan.worst_error = -23.9;
+        let mut local = LocalCheck::new(&candidate, midpoint_pitch).unwrap();
+        for target in LocalCheck::ORDER {
+            assert!(local.record(Summary {
+                mean: if target == 2 { -23.9 } else { -0.1 },
+                spread: 0.2,
+                count: 8,
+                averaged: false,
+            }));
+        }
+        assert!(local.refinement_issue().is_none());
+        scan.local = Some(local);
+        let mut auto = Automatic::new(0);
+        auto.phase = Phase::Verify;
+        auto.partial_recoveries = MAX_PARTIAL_RECOVERIES;
+        auto.last_recovery = Some((5_000_000, "UNSAFE COMPLETE REPLAY"));
+        live.automatic = Some(auto);
+        live.pending_profile = Some(candidate.clone());
+        live.scan = Some(scan);
+        live.status = "SCAN DONE - OUTPUT ZERO";
+        let p = pac::TUNER_PERIPH::default();
+        live.tick(&p, ChannelMeasurement::default(), controls(), 10_000);
+        assert!(live.active());
+        assert_eq!(live.automatic.as_ref().unwrap().phase, Phase::Refine);
+        assert_eq!(live.automatic.as_ref().unwrap().passes, 1);
+        assert_eq!(live.pending_profile.as_ref().unwrap().points(), candidate.points());
+        assert_ne!(p.command.get(), 0);
+    }
+    #[test]
+    fn grid_local_mismatch_has_explicit_review_and_can_be_kept() {
+        use oscillator_calibration::{
+            automatic::{Automatic, Phase, MAX_PARTIAL_RECOVERIES},
+            deviation::Summary,
+            verification_scan::{LocalCheck, Scan},
+            Point, Profile,
+        };
+        let mut live = ready();
+        let mut candidate = Profile::new("mismatch", -1_000_000, 7_000_000).unwrap();
+        for i in 0..90 {
+            candidate.push(Point {
+                microvolts: -1_000_000 + i * 83_333,
+                millicents: 4_000_000 + i * 100_000,
+            }).unwrap();
+        }
+        let mut scan = Scan::targeted(&candidate).unwrap();
+        scan.complete = true;
+        scan.tested = scan.total;
+        scan.worst_pitch = 4_000_000 + 75 * 100_000;
+        scan.worst_error = 29.34;
+        let mut local = LocalCheck::new(&candidate, scan.worst_pitch).unwrap();
+        for target in LocalCheck::ORDER {
+            local.record(Summary {
+                mean: if target == 2 { -18.12 } else { 0.1 },
+                spread: 0.1,
+                count: 8,
+                averaged: false,
+            });
+        }
+        scan.local = Some(local);
+        let mut auto = Automatic::new(0);
+        auto.phase = Phase::Verify;
+        auto.partial_recoveries = MAX_PARTIAL_RECOVERIES;
+        auto.last_recovery = Some((6_500_000, "UNSAFE COMPLETE REPLAY"));
+        live.automatic = Some(auto);
+        live.pending_profile = Some(candidate);
+        live.scan = Some(scan);
+        live.status = "SCAN DONE - OUTPUT ZERO";
+        let p = pac::TUNER_PERIPH::default();
+        live.tick(&p, ChannelMeasurement::default(), controls(), 10_000);
+        assert_eq!(live.status, "OFF TARGET - REVIEW QUALITY");
+        assert!(!live.active());
+        assert!(!live.can_continue_automatic());
+        let mut report = String::new();
+        serial_report::verification(&mut report, &live).unwrap();
+        assert!(report.contains("AUTO"));
+        assert!(live.can_accept_imperfect());
+        live.accept_scan(&p);
+        assert_eq!(live.status, "USER-KEPT IN RAM - CHECK QUALITY");
+        assert_eq!(live.profile_quality.grade, oscillator_calibration::CalibrationGrade::UserAccepted);
     }
     #[test]
     fn nsdf_window_and_generation_handoff_completes_sweep() {
@@ -803,6 +1241,18 @@ mod tests {
             verify_points: false,
         }
     }
+    #[test]
+    fn serial_reports_output_fault_status() {
+        let mut live = calibration_live::Live::new();
+        live.failure_voltage = Some(-5_000_000);
+        live.failure_output_status = Some(0x301);
+        live.failure_output_cause = "DAC FAULT";
+        let mut out = String::new();
+        serial_report::verification(&mut out, &live).unwrap();
+        assert!(out.contains("CAL OUTPUT CAUSE=DAC FAULT STATUS_RAW=0x301"));
+        assert!(out.contains("TOKEN=1 ACTIVE=true FAULT=true"));
+    }
+
     #[test]
     fn serial_reports_match_points_and_scan_results_without_changing_them() {
         for points_mode in [false, true] {
@@ -1024,6 +1474,7 @@ mod tests {
         auto.phase_ms = [110508, 73131, 62295, 146170];
         live.automatic = Some(auto);
         live.pending_profile = live.profile.clone();
+        live.pending_quality = live.automatic.as_ref().unwrap().best.as_ref().unwrap().quality();
         live.status = "LOCAL ERROR <1C - NO REFINE";
         let mut out = String::new();
         serial_report::verification(&mut out, &live).unwrap();
@@ -1037,7 +1488,7 @@ mod tests {
         assert!(out.contains("AUTO LOCAL TARGET MEAN_C=-3.20"));
         assert!(out.contains("ENDPOINT_ADJUSTED_C=+0.00; NOT ABSOLUTE ERROR"));
         assert!(out.contains("CAL REVIEW POINTS="));
-        assert!(out.len() + 400 < 1536, "{}", out.len());
+        assert!(out.len() + 400 < 1700, "{}", out.len());
         assert_eq!(
             live.automatic
                 .as_ref()
@@ -1090,6 +1541,80 @@ mod tests {
         live.profile_route = Some(Route::new(1, 2).unwrap());
         live
     }
+    #[test]
+    fn shortened_scan_guard_still_rejects_pre_step_detector_windows() {
+        let mut live = ready();
+        let p = pac::TUNER_PERIPH::default();
+        let mut c = controls();
+        c.mode = OperatingMode::Verify;
+        c.verify_scan = true;
+        live.toggle_verify(&p, c, 0);
+        p.ack();
+        let hz = 440.0f32
+            * 2.0f32.powf((live.target_millicents as f32 / 100_000.0 - 69.0) / 12.0);
+        let mut m = ChannelMeasurement {
+            frequency_hz: hz,
+            valid: true,
+            qualified: true,
+            sequence: 1,
+            window_age_ms: 50,
+            end_age_ms: 0,
+        };
+        live.tick(&p, m, c, 220);
+        assert!(live.error_cents.is_none(), "status gate must still hold");
+        m.sequence = 2;
+        live.tick(&p, m, c, 230);
+        assert!(live.error_cents.is_some(), "fresh window should enter promptly");
+        m.sequence = 3;
+        m.window_age_ms = 100;
+        live.tick(&p, m, c, 240);
+        assert!(live.error_cents.is_none(), "window beginning before guard is stale");
+    }
+    #[test]
+    fn off_target_curve_remains_visible_and_requires_explicit_user_acceptance() {
+        use oscillator_calibration::{automatic::{Automatic, Phase}, deviation::Summary,
+            verification_scan::{LocalCheck, Scan}, CalibrationGrade};
+        let mut live = ready();
+        let prior = live.profile.as_ref().unwrap().points().to_vec();
+        let candidate = live.profile.clone().unwrap();
+        let mut scan = Scan::targeted(&candidate).unwrap();
+        scan.tested = scan.total;
+        scan.complete = true;
+        scan.worst_pitch = 7_800_000;
+        scan.worst_error = -42.0;
+        let mut local = LocalCheck::new(&candidate, scan.worst_pitch).unwrap();
+        for target in LocalCheck::ORDER {
+            assert!(local.record(Summary {
+                mean: if target == 2 { -42.0 } else { 0.2 },
+                spread: 0.2,
+                count: 8,
+                averaged: false,
+            }));
+        }
+        scan.local = Some(local);
+        live.pending_profile = Some(candidate);
+        live.scan = Some(scan);
+        live.status = "SCAN DONE - OUTPUT ZERO";
+        let mut auto = Automatic::new(0);
+        auto.phase = Phase::Verify;
+        live.automatic = Some(auto);
+        let p = pac::TUNER_PERIPH::default();
+        live.tick(&p, ChannelMeasurement::default(), controls(), 1);
+        assert_eq!(live.status, "OFF TARGET - REVIEW QUALITY");
+        assert_eq!(live.pending_quality.grade, CalibrationGrade::Unsafe);
+        assert!(live.pending_profile.is_some(), "retain rejected diagnostic curve");
+        assert_eq!(live.profile.as_ref().unwrap().points(), prior);
+        let mut report = String::new();
+        serial_report::verification(&mut report, &live).unwrap();
+        assert!(report.contains("CAL REVIEW OFF TARGET"));
+        assert!(report.contains("CAL REVIEW SCORE="));
+        assert!(report.contains("LOCAL CHECK TESTED=9 TOTAL=9"));
+        live.accept_scan(&p);
+        assert_eq!(live.status, "USER-KEPT IN RAM - CHECK QUALITY");
+        assert_eq!(live.profile_quality.grade, CalibrationGrade::UserAccepted);
+        assert!(live.pending_profile.is_none());
+        assert_eq!(live.profile.as_ref().unwrap().points(), prior);
+    }
     fn refinement_ready() -> calibration_live::Live {
         use oscillator_calibration::{
             deviation::Summary,
@@ -1123,6 +1648,29 @@ mod tests {
         live.profile = Some(profile);
         live.scan = Some(scan);
         live
+    }
+    #[test]
+    fn rejected_optional_edit_keeps_a_checked_profile_ready_for_review() {
+        use oscillator_calibration::{automatic::{Automatic, Phase}, refinement::Refinement};
+        let mut live = refinement_ready();
+        let candidate = live.profile.clone().unwrap();
+        let checked = live.scan.clone().unwrap();
+        assert!(checked.quality().acceptable());
+        live.pending_profile = Some(candidate.clone());
+        let mut auto = Automatic::new(0);
+        auto.phase = Phase::Refine;
+        auto.best = Some(checked);
+        live.automatic = Some(auto);
+        let mut refinement = Refinement::new(&candidate, 6_050_000).unwrap();
+        refinement.reject("REFINE WORSE - BEST KEPT");
+        live.refinement = Some(refinement);
+        live.status = "REFINE WORSE - BEST KEPT";
+        let p = pac::TUNER_PERIPH::default();
+        live.tick(&p, ChannelMeasurement::default(), controls(), 1);
+        assert_eq!(live.status, "READY - CHECKED CURVE; NO EDIT");
+        assert!(!live.active());
+        assert_eq!(live.pending_profile.as_ref().unwrap().points(), candidate.points());
+        assert!(live.pending_quality.acceptable());
     }
     fn refinement_measurement(command: u32, n: u16) -> ChannelMeasurement {
         let uv = bipolar::decode_voltage((command & 65535) as u16).unwrap();
@@ -1396,7 +1944,7 @@ mod tests {
         assert_eq!(p.command.get(), 0);
     }
     #[test]
-    fn verification_scan_times_out_on_missing_stale_cached_or_unstable_pitch() {
+    fn verification_scan_records_missing_stale_cached_or_unstable_pitch_and_continues() {
         for scenario in 0..5 {
             let mut live = ready();
             let p = pac::TUNER_PERIPH::default();
@@ -1407,7 +1955,9 @@ mod tests {
             for n in 1..=250u16 {
                 p.ack();
                 let cents = if scenario == 4 && n % 2 == 0 {
-                    10.0
+                    // Beyond the shared bounded-estimator limit; a smaller
+                    // stationary spread is now graded instead of timing out.
+                    30.0
                 } else {
                     0.0
                 };
@@ -1428,14 +1978,48 @@ mod tests {
                 }
                 live.tick(&p, m, c, n as u64 * 20);
             }
-            assert_eq!(
-                live.status, "SCAN TIMEOUT - OUTPUT ZERO",
-                "scenario {scenario}"
-            );
-            assert_eq!(p.command.get(), 0);
-            assert!(!live.active());
-            assert_eq!(live.scan.as_ref().unwrap().tested, 0);
+            assert!(live.active(), "scenario {scenario}");
+            let scan = live.scan.as_ref().unwrap();
+            assert!(scan.tested >= 1, "scenario {scenario}");
+            assert!(scan.missing >= 1, "scenario {scenario}");
+            assert!(!scan.complete, "scenario {scenario}");
+            assert_eq!(live.profile.as_ref().unwrap().points(), ready().profile.as_ref().unwrap().points());
         }
+    }
+    #[test]
+    fn read_only_check_finishes_with_explicit_missing_targets() {
+        let mut live = ready();
+        let original = live.profile.as_ref().unwrap().points().to_vec();
+        let p = pac::TUNER_PERIPH::default();
+        let mut c = controls();
+        c.mode = OperatingMode::Verify;
+        c.verify_scan = true;
+        live.toggle_verify(&p, c, 0);
+        for n in 1..20000u16 {
+            p.ack();
+            live.tick(
+                &p,
+                ChannelMeasurement {
+                    sequence: n,
+                    ..ChannelMeasurement::default()
+                },
+                c,
+                n as u64 * 20,
+            );
+            if !live.active() {
+                break;
+            }
+        }
+        assert_eq!(live.status, "SCAN DONE - MISSING TARGETS");
+        assert_eq!(p.command.get(), 0);
+        let scan = live.scan.as_ref().unwrap();
+        assert!(scan.complete);
+        assert_eq!(scan.tested, scan.total);
+        assert_eq!(scan.missing, scan.total);
+        assert_eq!(live.profile.as_ref().unwrap().points(), original);
+        let mut report = String::new();
+        serial_report::verification(&mut report, &live).unwrap();
+        assert!(report.contains("MISSING=49"));
     }
     #[test]
     fn low_note_check_uses_tight_independent_windows_or_full_fallback() {
@@ -1494,11 +2078,11 @@ mod tests {
             assert_eq!(live.profile.as_ref().unwrap().points(), original);
         }
         assert!(
-            times[0] >= 450 + 120 + 7 * 180,
+            times[0] >= 175 + 120 + 7 * 180,
             "full settling plus eight independent windows"
         );
         assert!(times[0] < 2500);
-        assert!(times[1] >= 450 + 120 + 15 * 180);
+        assert!(times[1] >= 175 + 120 + 15 * 180);
         assert!(
             times[1] >= times[0] + 1200,
             "noisy signals retain long averaging"
@@ -1567,8 +2151,44 @@ mod tests {
                 live.deviation
             )
         });
-        assert!(progressed_at >= 450 + 120 + 15 * 180);
+        assert!(progressed_at >= 175 + 120 + 15 * 180);
         assert!(progressed_at < 5000);
+    }
+    #[test]
+    fn read_only_check_averages_bounded_jitter_at_high_notes_too() {
+        let mut live = ready();
+        let original = live.profile.as_ref().unwrap().points().to_vec();
+        let p = pac::TUNER_PERIPH::default();
+        let mut c = controls();
+        c.mode = OperatingMode::Verify;
+        c.verify_scan = true;
+        live.toggle_verify(&p, c, 0);
+        let mut progressed_at = None;
+        for n in 1..=30u16 {
+            let now = n as u64 * 180;
+            p.ack();
+            // This stationary 6c estimator-bin spread defeats the fast 3c
+            // rolling gate. The independent block means still agree.
+            let error = [-3.0, -1.0, 1.0, 3.0][n as usize % 4];
+            let target_note = live.target_millicents as f64 / 100_000.0;
+            let hz = (440.0 * 2.0f64.powf((target_note + error / 100.0 - 69.0) / 12.0)) as f32;
+            live.tick(&p, ChannelMeasurement {
+                frequency_hz: hz,
+                valid: true,
+                qualified: true,
+                sequence: n,
+                window_age_ms: 120,
+                end_age_ms: 10,
+            }, c, now);
+            if live.scan.as_ref().is_some_and(|s| s.tested > 0) {
+                progressed_at = Some(now);
+                break;
+            }
+        }
+        let progressed_at = progressed_at.expect("manual CHECK must use independent windows");
+        assert!(progressed_at >= 175 + 120 + 15 * 180);
+        assert!(progressed_at < 5000);
+        assert_eq!(live.profile.as_ref().unwrap().points(), original);
     }
     #[test]
     fn automatic_high_note_check_names_time_varying_blocks_as_unstable() {
@@ -1622,11 +2242,11 @@ mod tests {
                 break;
             }
         }
-        assert_eq!(live.status, "FAILED - UNSTABLE PITCH");
-        let snapshot = live.failure_verification.unwrap();
-        assert_eq!(snapshot.count, oscillator_calibration::averaging::WINDOWS);
-        assert!(snapshot.quarter_delta > 2_000 || snapshot.half_delta > 1_000);
-        assert_eq!(p.command.get(), 0);
+        assert!(live.active(), "an unstable target must not abort the full grid");
+        assert_eq!(live.scan.as_ref().unwrap().missing, 1);
+        // The per-target diagnostic may be cleared when the next CV is
+        // applied; the gap remains recorded for whole-grid range selection.
+        assert_ne!(p.command.get(), 0);
     }
     #[test]
     fn first_automatic_check_retries_once_without_changing_voltage_or_limits() {
@@ -1662,10 +2282,10 @@ mod tests {
             for n in 1..=120u16 {
                 let now = n as u64 * 90;
                 p.ack();
-                // Synthetic large-jump settling: about 8c over the first 5s,
+                // Synthetic large-jump settling: about 12c over the first 5s,
                 // then stationary. The remaining cases never become usable.
                 let error = if scenario == 0 {
-                    (-8.0 + now as f64 * 0.0016).min(0.0)
+                    (-12.0 + now as f64 * 0.0024).min(0.0)
                 } else {
                     now as f64 * 0.002
                 };
@@ -1681,14 +2301,8 @@ mod tests {
                 live.tick(&p, m, c, now);
                 retried |= live.verify_retried;
                 if live.scan.as_ref().is_some_and(|s| s.tested > 0) {
-                    assert_eq!(scenario, 0);
                     assert!(!live.verify_retried);
-                    assert!(now > 5000 && now < 10000);
-                    progressed = true;
-                    break;
-                }
-                if !live.active() {
-                    assert!(now >= 10000 && now < 10200);
+                    progressed = live.scan.as_ref().unwrap().missing == 0;
                     break;
                 }
                 assert_eq!(p.command.get(), command); // no zero pulse or CV change on retry
@@ -1697,16 +2311,10 @@ mod tests {
             assert_eq!(progressed, scenario == 0);
             assert_eq!(live.profile.as_ref().unwrap().points(), prior);
             if !progressed {
-                assert_eq!(live.status, "SCAN TIMEOUT - OUTPUT ZERO");
-                assert!(!live.active());
-                assert_eq!(p.command.get(), 0);
-                assert_eq!(live.failure_voltage, Some(0));
-                assert!(live.failure_verification.is_some());
-                let mut report = String::new();
-                serial_report::verification(&mut report, &live).unwrap();
-                assert!(report.contains("VERIFY FIRST_TARGET_RETRY=1/1"));
-                assert!(report.contains("VERIFY AVG ERRORS_MC="));
-                assert!(report.len() + 400 < 1536);
+                assert!(live.active());
+                assert_eq!(live.scan.as_ref().unwrap().missing, 1);
+                assert_ne!(p.command.get(), 0);
+                assert!(retried);
             } else {
                 // The second target does not inherit an extra attempt.
                 for n in 121..=185u16 {
@@ -1716,14 +2324,14 @@ mod tests {
                         break;
                     }
                 }
-                assert_eq!(live.status, "SCAN TIMEOUT - OUTPUT ZERO");
+                assert!(live.active(), "later failures are observed, not immediate aborts");
                 assert!(!live.verify_retried);
-                assert_eq!(p.command.get(), 0);
+                assert_ne!(p.command.get(), 0);
             }
         }
     }
     #[test]
-    fn initial_automatic_boundary_timeout_trims_pending_curve_and_restarts_check() {
+    fn initial_automatic_boundary_timeout_waits_for_full_grid_before_trimming() {
         use oscillator_calibration::{
             automatic::{Automatic, Phase},
             Point, Profile, Route,
@@ -1762,32 +2370,209 @@ mod tests {
                 c,
                 n as u64 * 100,
             );
-            if live.automatic.as_ref().unwrap().edge_retries > 0 {
+            if live.scan.as_ref().is_some_and(|s| s.missing > 0) {
                 break;
             }
         }
         let auto = live.automatic.as_ref().unwrap();
         assert_eq!(
             (auto.edge_retries, auto.edge_trim_low, auto.edge_trim_high),
-            (1, 1, 0)
+            (0, 0, 0)
         );
         assert!(live.active());
         assert!(live.verifying);
-        assert!(live.failure_verification.is_none());
-        assert!(live.failure_verification_diagnostic.is_none());
-        assert_eq!(live.point, live.point_count);
-        assert_eq!(live.scan.as_ref().unwrap().tested, 0);
+        assert!(live.scan.as_ref().unwrap().missing > 0);
+        assert_eq!(live.scan.as_ref().unwrap().missing, 1);
+        assert_eq!(live.scan.as_ref().unwrap().tested, 1);
         assert_eq!(
             live.pending_profile.as_ref().unwrap().points()[0].microvolts,
-            83333
+            0
         );
         assert_eq!(live.profile.as_ref().unwrap().points(), original_candidate); // only pending was trimmed
+        assert_ne!(p.command.get(), 0); // moving to the next grid target
+    }
+    #[test]
+    fn interior_automatic_timeout_warns_and_advances_without_inventing_pitch() {
+        use oscillator_calibration::{automatic::{Automatic, Phase}, Point, Profile};
+        let mut live = ready();
+        let mut candidate = Profile::new("interior", 0, 4_000_000).unwrap();
+        for i in 0..40 {
+            candidate.push(Point {
+                microvolts: i * 83_333,
+                millicents: 6_000_000 + i * 100_000,
+            }).unwrap();
+        }
+        live.profile = Some(candidate.clone());
+        let p = pac::TUNER_PERIPH::default();
+        let mut c = controls();
+        c.mode = OperatingMode::Verify;
+        c.verify_scan = true;
+        live.toggle_verify(&p, c, 0);
+        live.pending_profile = Some(candidate.clone());
+        let mut scan = oscillator_calibration::verification_scan::Scan::targeted(&candidate).unwrap();
+        scan.tested = 10;
+        scan.target = scan.targeted_plan().unwrap().pitches[10];
+        live.scan = Some(scan);
+        let mut auto = Automatic::new(0);
+        auto.phase = Phase::Verify;
+        auto.recovery_limit = 0; // exercise the explicit missing-target fallback
+        live.automatic = Some(auto);
+        for n in 1..=100u16 {
+            p.ack();
+            live.tick(&p, ChannelMeasurement {
+                sequence: n,
+                ..Default::default()
+            }, c, n as u64 * 100);
+            if live.scan.as_ref().unwrap().missing != 0 {
+                break;
+            }
+        }
+        let scan = live.scan.as_ref().unwrap();
+        assert_eq!((scan.tested, scan.missing), (11, 1));
+        assert!(!scan.complete);
+        assert!(live.active());
+        assert!(live.verifying);
+        assert_eq!(live.pending_profile.as_ref().unwrap().points(), candidate.points());
+        assert_eq!(scan.quality().grade, oscillator_calibration::CalibrationGrade::Unsafe);
         let mut report = String::new();
         serial_report::verification(&mut report, &live).unwrap();
-        assert!(
-            report.contains("AUTO EDGE_RECOVERY RETRIES=1/2 LOW_TRIM=1 HIGH_TRIM=0 MAX_TOTAL=4")
-        );
-        assert_ne!(p.command.get(), 0); // restarted at the new measured boundary
+        assert!(report.contains("MISSING=1"));
+        assert_ne!(p.command.get(), 0);
+    }
+    #[test]
+    fn completed_missing_automatic_check_recovers_measured_side_before_review() {
+        use oscillator_calibration::{automatic::{Automatic, Phase}, Point, Profile};
+        let mut live = ready();
+        let mut candidate = Profile::new("gap", 0, 4_000_000).unwrap();
+        for i in 0..40 {
+            candidate.push(Point {
+                microvolts: i * 83_333,
+                millicents: 6_000_000 + i * 100_000,
+            }).unwrap();
+        }
+        let mut scan = oscillator_calibration::verification_scan::Scan::targeted(&candidate).unwrap();
+        scan.tested = scan.total;
+        scan.complete = true;
+        scan.missing = 1;
+        scan.first_missing_uv = Some(2_210_250);
+        live.pending_profile = Some(candidate);
+        live.scan = Some(scan);
+        let mut auto = Automatic::new(0);
+        auto.phase = Phase::Verify;
+        live.automatic = Some(auto);
+        live.status = "SCAN DONE - MISSING TARGETS";
+        let p = pac::TUNER_PERIPH::default();
+        live.tick(&p, ChannelMeasurement::default(), controls(), 10_000);
+        let kept = live.pending_profile.as_ref().unwrap();
+        assert!(kept.points().last().unwrap().microvolts < 2_210_250);
+        assert!(live.active());
+        assert!(live.verifying);
+        assert!(live.automatic.as_ref().unwrap().regional_check);
+        assert!(live.scan.as_ref().unwrap().total <= 19);
+        assert_eq!(live.scan.as_ref().unwrap().missing, 0);
+    }
+    #[test]
+    fn missing_automatic_checks_reach_review_without_certifying_the_curve() {
+        use oscillator_calibration::{automatic::{Automatic, Phase}, Point, Profile};
+        let mut live = ready();
+        let mut candidate = Profile::new("incomplete", 0, 4_000_000).unwrap();
+        for i in 0..40 {
+            candidate.push(Point {
+                microvolts: i * 83_333,
+                millicents: 6_000_000 + i * 100_000,
+            }).unwrap();
+        }
+        live.profile = Some(candidate.clone());
+        let p = pac::TUNER_PERIPH::default();
+        let mut c = controls();
+        c.mode = OperatingMode::Verify;
+        c.verify_scan = true;
+        live.toggle_verify(&p, c, 0);
+        live.pending_profile = Some(candidate.clone());
+        let mut scan = oscillator_calibration::verification_scan::Scan::targeted(&candidate).unwrap();
+        scan.tested = scan.total;
+        scan.complete = true;
+        scan.missing = 1;
+        scan.worst_pitch = 7_800_000;
+        scan.worst_error = 4.0;
+        let mut local = oscillator_calibration::verification_scan::LocalCheck::new(
+            &candidate, scan.worst_pitch,
+        ).unwrap();
+        local.tested = 8;
+        scan.local = Some(local);
+        live.scan = Some(scan);
+        let mut auto = Automatic::new(0);
+        auto.phase = Phase::Verify;
+        auto.recovery_limit = 0; // exercise the explicit incomplete fallback
+        live.automatic = Some(auto);
+        for n in 1..=1_000u16 {
+            p.ack();
+            live.tick(&p, ChannelMeasurement {
+                sequence: n,
+                ..Default::default()
+            }, c, n as u64 * 100);
+            if !live.active() {
+                break;
+            }
+        }
+        assert!(!live.active(), "a missing target must not stall the scan");
+        assert_eq!(live.status, "REVIEW - INCOMPLETE CHECK");
+        assert_eq!(live.scan.as_ref().unwrap().missing, 2);
+        assert_eq!(live.automatic.as_ref().unwrap().phase, Phase::Review);
+        assert_eq!(live.pending_profile.as_ref().unwrap().points(), candidate.points());
+        assert_eq!(live.profile_quality.grade, oscillator_calibration::CalibrationGrade::Unverified);
+        assert!(!live.can_accept_imperfect());
+    }
+    #[test]
+    fn completed_local_check_with_missing_target_remains_diagnostic_only() {
+        use oscillator_calibration::{automatic::{Automatic, Phase}, verification_scan::LocalCheck};
+        let mut live = refinement_ready();
+        let p = pac::TUNER_PERIPH::default();
+        live.pending_profile = live.profile.clone();
+        let scan = live.scan.as_mut().unwrap();
+        scan.complete = true;
+        scan.tested = scan.total;
+        scan.missing = 1;
+        scan.local = LocalCheck::new(live.pending_profile.as_ref().unwrap(), scan.worst_pitch);
+        scan.local.as_mut().unwrap().tested = 9;
+        let mut auto = Automatic::new(0);
+        auto.phase = Phase::Verify;
+        auto.recovery_limit = 0;
+        live.automatic = Some(auto);
+        live.status = "SCAN DONE - MISSING TARGETS";
+        live.tick(&p, ChannelMeasurement::default(), controls(), 10_000);
+        assert_eq!(live.status, "REVIEW - INCOMPLETE CHECK");
+        assert!(live.pending_profile.is_some());
+        assert_eq!(live.scan.as_ref().unwrap().missing, 1);
+        assert!(!live.can_accept_imperfect());
+    }
+    #[test]
+    fn incomplete_recheck_rolls_back_tentative_anchor_before_review() {
+        use oscillator_calibration::{automatic::{Automatic, Phase}, Point};
+        let mut live = refinement_ready();
+        let original = live.profile.as_ref().unwrap().clone();
+        let point = Point { microvolts: 50_000, millicents: 6_048_000 };
+        let refined = original.refined_with(point).unwrap();
+        let original_scan = live.scan.clone().unwrap();
+        let mut incomplete = original_scan.clone();
+        incomplete.missing = 1;
+        incomplete.first_missing_uv = Some(75_000);
+        let mut auto = Automatic::new(0);
+        auto.phase = Phase::Reverify;
+        auto.best = Some(original_scan);
+        auto.undo = Some(point);
+        live.automatic = Some(auto);
+        live.pending_profile = Some(refined);
+        live.scan = Some(incomplete);
+        live.status = "SCAN DONE - MISSING TARGETS";
+        let p = pac::TUNER_PERIPH::default();
+        live.tick(&p, ChannelMeasurement::default(), controls(), 10_000);
+        assert_eq!(live.automatic.as_ref().unwrap().phase, Phase::Review);
+        assert_eq!(live.pending_profile.as_ref().unwrap().points(), original.points());
+        assert_eq!(live.point_count as usize, original.points().len());
+        assert_eq!(live.scan.as_ref().unwrap().missing, 0);
+        assert_eq!(live.status, "REVIEW - RECHECK INCOMPLETE");
+        assert_eq!(live.automatic.as_ref().unwrap().recheck_missing_uv, Some(75_000));
     }
     #[test]
     fn local_followup_timeout_and_leaving_verify_stop_output_without_curve_edits() {
@@ -1840,9 +2625,16 @@ mod tests {
                     if cancel {
                         "STOPPED - OUTPUT ZERO"
                     } else {
-                        "SCAN TIMEOUT - OUTPUT ZERO"
+                        "SCAN DONE - MISSING TARGETS"
                     }
                 );
+                if !cancel {
+                    let scan = live.scan.as_ref().unwrap();
+                    assert_eq!(scan.tested, scan.total);
+                    assert!(scan.complete);
+                    assert_eq!(scan.local.as_ref().unwrap().tested, 9);
+                    assert_eq!(scan.missing as usize, 9 - fail_after);
+                }
                 assert_eq!(live.profile.as_ref().unwrap().points(), original);
                 assert!(live
                     .scan
@@ -2292,7 +3084,8 @@ mod tests {
                 break;
             }
         }
-        assert_eq!(live.status, "FAILED - AMBIGUOUS WAVEFORM");
+        assert!(live.active());
+        assert_eq!(live.scan.as_ref().unwrap().missing, 1);
         assert!(live.profile.is_some());
     }
     #[test]

@@ -2,7 +2,33 @@
 use crate::{calibration_live::Live, pitch_units};
 use core::fmt::{self, Write};
 
+/// Kept separate so the bounded serial fallback can always retain timings
+/// even when verbose detector/local-repeat diagnostics overflow its buffer.
+pub fn timing(out: &mut impl Write, cal: &Live) -> fmt::Result {
+    let sweep = cal.sweep_timing;
+    if sweep.measured_points != 0 || sweep.missing_points != 0 {
+        writeln!(out,
+            "CAL SWEEP_TIMING MEASURED={} MS={} SLOW_GE_1S={} AVG16={} MISSING={} MS={}",
+            sweep.measured_points, sweep.measured_ms, sweep.slow_points,
+            sweep.averaged_points, sweep.missing_points, sweep.missing_ms)?;
+    }
+    if let Some(auto) = cal.automatic.as_ref() {
+        writeln!(out, "AUTO SPEED POLICY={} SKIPPED_LOCAL_CHECKS={}",
+            auto.policy_label(), auto.skipped_local_checks)?;
+        let t = auto.phase_ms;
+        writeln!(out, "AUTO TIME_MS ACQUIRE={} CHECK={} REFINE={} RECHECK={}",
+            t[0], t[1], t[2], t[3])?;
+        write!(out, "AUTO CHECK_PASSES_MS")?;
+        for timing in auto.check_timings[..auto.check_timing_count as usize].iter().flatten() {
+            write!(out, " {}:{}:{}/{}", timing.kind, timing.ms, timing.tested, timing.total)?;
+        }
+        writeln!(out, " OVERFLOW={}", auto.check_timing_overflow)?;
+    }
+    Ok(())
+}
+
 pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
+    timing(out, cal)?;
     let warnings = cal.scan_warnings;
     if warnings.any() {
         writeln!(
@@ -21,6 +47,11 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
     if let Some(uv) = cal.failure_voltage {
         writeln!(out, "CAL FAILED_AT_UV={}", uv)?;
     }
+    if let Some(status) = cal.failure_output_status {
+        writeln!(out, "CAL OUTPUT CAUSE={} STATUS_RAW=0x{:03X} TOKEN={} ACTIVE={} FAULT={}",
+            cal.failure_output_cause, status, status & 255,
+            status & 256 != 0, status & 512 != 0)?;
+    }
     if cal
         .tracking_failure
         .as_ref()
@@ -34,7 +65,7 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
     if cal.verify_retried {
         writeln!(
             out,
-            "VERIFY FIRST_TARGET_RETRY=1/1; SAME VOLTAGE; FRESH ACQUISITION"
+            "VERIFY SAME_CV_RETRY=1/1; FRESH ACQUISITION"
         )?;
     }
     if let Some(a) = cal.failure_verification.as_ref() {
@@ -64,6 +95,10 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
         if let Some((low, high)) = d.hz_range() {
             writeln!(out, "VERIFY DETECTOR HZ={:.2}..{:.2}", low, high)?;
         }
+        writeln!(out, "VERIFY SETTLED FRESH={} TARGET_NEAR={}", d.settled_fresh, d.target_near)?;
+        if let Some((low, high)) = d.settled_hz_range() {
+            writeln!(out, "VERIFY SETTLED_HZ={:.2}..{:.2}", low, high)?;
+        }
     }
     if let Some(d) = cal.failure_acquisition.as_ref() {
         let a = &d.average;
@@ -91,13 +126,13 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
     if let Some(auto) = cal.automatic.as_ref() {
         writeln!(
             out,
-            "AUTO PHASE={} POLICY={} PASSES={}/8 STATUS={}",
+            "AUTO PHASE={} POLICY={} PASSES={}/{} STATUS={}",
             auto.label(),
             auto.policy_label(),
             auto.passes,
+            crate::oscillator_calibration::automatic::MAX_PASSES,
             cal.status
         )?;
-        let t = auto.phase_ms;
         if auto.unstable_retries > 0 {
             writeln!(out, "AUTO UNSTABLE_RETRY=1/1")?;
         }
@@ -108,17 +143,37 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
                 auto.edge_retries, auto.edge_trim_low, auto.edge_trim_high
             )?;
         }
-        writeln!(
-            out,
-            "AUTO TIME_MS ACQUIRE={} CHECK={} REFINE={} RECHECK={}",
-            t[0], t[1], t[2], t[3]
-        )?;
+        if let Some((uv, cause)) = auto.last_recovery {
+            writeln!(out, "AUTO LAST_RECOVERY_UV={} CAUSE={}", uv, cause)?;
+            if let Some(d) = cal.recovered_verification_diagnostic.as_ref() {
+                writeln!(out,
+                    "AUTO RECOVERED_DETECTOR FRAMES={} VALID={} QUALIFIED={} FRESH={} WINDOW_AGE_MS={} END_AGE_MS={}",
+                    d.frames, d.valid, d.qualified, d.fresh,
+                    d.last_window_age_ms, d.last_end_age_ms)?;
+                if let Some((low, high)) = d.hz_range() {
+                    writeln!(out, "AUTO RECOVERED_HZ={:.2}..{:.2}", low, high)?;
+                }
+                writeln!(out, "AUTO RECOVERED_SETTLED FRESH={} TARGET_NEAR={}",
+                    d.settled_fresh, d.target_near)?;
+                if let Some((low, high)) = d.settled_hz_range() {
+                    writeln!(out, "AUTO RECOVERED_SETTLED_HZ={:.2}..{:.2}", low, high)?;
+                }
+            }
+            if let Some(a) = cal.recovered_verification.as_ref() {
+                writeln!(out, "AUTO RECOVERED_AVG COUNT={} SEEN={} OVERLAP={} SPAN_RESETS={} GAP_RESETS={} RAW_SPAN_MC={} QUARTER_DELTA_MC={} HALF_DELTA_MC={}",
+                    a.count, a.seen, a.overlap, a.span_resets, a.gap_resets,
+                    a.raw_span, a.quarter_delta, a.half_delta)?;
+            }
+        }
         if let Some((old, new, accepted)) = auto.last_recheck {
             writeln!(
                 out,
                 "AUTO RECHECK OLD_C={:+.2} NEW_C={:+.2} KEPT={}",
                 old, new, accepted
             )?;
+        }
+        if let Some(uv) = auto.recheck_missing_uv {
+            writeln!(out, "AUTO RECHECK_FIRST_MISSING_UV={}", uv)?;
         }
         if let Some((pitch, old, new, repeat)) = auto.last_refine {
             writeln!(
@@ -151,6 +206,14 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
                 pitch_units::write_pitch(out, scan.checked_worst().0)?;
                 writeln!(out, " GRID_WORST_C={:+.2}", scan.worst_error)?;
                 writeln!(out, " MAX_SPAN_C={:.2}", scan.max_spread)?;
+                if let Some(pitch) = scan.max_spread_pitch {
+                    write!(out, "AUTO MAX_SPREAD_AT=")?;
+                    pitch_units::write_pitch(out, pitch)?;
+                    writeln!(out, " SPAN_C={:.2}", scan.max_spread)?;
+                }
+                if scan.unstable_grid_mask != 0 {
+                    writeln!(out, "AUTO UNSTABLE_GRID_MASK={:013X}", scan.unstable_grid_mask)?;
+                }
                 // Review returns early below. Keep absolute repeat errors and
                 // endpoint-relative interpolation error visible before then.
                 if let Some(check) = scan.local.as_ref() {
@@ -176,15 +239,68 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
                     }
                 }
             }
+        } else if !auto.active() {
+            // A rejected review has no `best`, but its completed scan is the
+            // only evidence explaining why the preview cannot be accepted.
+            // Report the local repeats rather than only its aggregate grade.
+            if let Some(scan) = cal.scan.as_ref() {
+                writeln!(out, "AUTO CANDIDATE_WORST_MC={} ERROR_C={:+.2} MAX_SPAN_C={:.2}",
+                    scan.checked_worst().0, scan.checked_worst().1, scan.max_spread)?;
+                writeln!(out, "AUTO CANDIDATE_CHECKED={}/{} MISSING={}; MISSING TARGETS NOT CERTIFIED",
+                    scan.tested, scan.total, scan.missing)?;
+                if scan.missing_grid_mask != 0 {
+                    writeln!(out, "AUTO CANDIDATE_GAP_MASK={:013X}", scan.missing_grid_mask)?;
+                }
+                if let Some(uv) = scan.first_missing_uv {
+                    writeln!(out, "AUTO CANDIDATE_FIRST_MISSING_UV={}", uv)?;
+                }
+                if let Some(check) = scan.local.as_ref() {
+                    writeln!(out, "AUTO CANDIDATE_LOCAL TESTED={}/9 ADVICE={}",
+                        check.tested, check.advice())?;
+                    for index in 0..3 {
+                        if let Some((mean, span, repeat)) = check.aggregate(index) {
+                            writeln!(out,
+                                "AUTO CANDIDATE_LOCAL {} UV={} MEAN_C={:+.2} SPAN_C={:.2} REPEAT_C={:.2}",
+                                ["LOW", "HIGH", "TARGET"][index],
+                                check.targets[index].microvolts, mean, span, repeat)?;
+                        }
+                    }
+                    if let Some(delta) = scan.grid_local_disagreement() {
+                        writeln!(out, "AUTO CANDIDATE_GRID_LOCAL_DELTA_C={:.2}", delta)?;
+                    }
+                    // Preserve visit order: the same target is approached
+                    // from alternating neighboring CVs, which distinguishes
+                    // a direction-dependent response from random variation.
+                    for (visit, result) in check.results.iter().enumerate() {
+                        if let Some(result) = result {
+                            let target = crate::oscillator_calibration::verification_scan::LocalCheck::ORDER[visit];
+                            writeln!(out,
+                                "AUTO CANDIDATE_LOCAL VISIT={} TARGET={} UV={} MEAN_C={:+.2} SPAN_C={:.2}",
+                                visit + 1, ["LOW", "HIGH", "MID"][target],
+                                check.targets[target].microvolts,
+                                result.mean, result.spread)?;
+                        }
+                    }
+                    if let Some(residual) = check.residual() {
+                        writeln!(out, "AUTO CANDIDATE_LOCAL ENDPOINT_ADJUSTED_C={:+.2}",
+                            residual)?;
+                    }
+                }
+            }
         }
         if auto.active() {
             if let Some(scan) = cal.scan.as_ref() {
                 writeln!(
                     out,
-                    "AUTO CHECK={}/{} MODE={}",
+                    "AUTO CHECK={}/{} MISSING={} GAPS={:013X} UNSTABLE={:013X} MODE={}",
                     scan.tested,
                     scan.total,
-                    if scan.targeted_plan().is_some() {
+                    scan.missing,
+                    scan.missing_grid_mask,
+                    scan.unstable_grid_mask,
+                    if auto.regional_check {
+                        "REGION"
+                    } else if scan.targeted_plan().is_some() {
                         "TARGETED"
                     } else {
                         "EXHAUSTIVE"
@@ -213,6 +329,9 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
             cal.pending_quality.stability_cents(),
             cal.pending_quality.acceptable()
         )?;
+        if let Some(score) = cal.pending_quality.score_percent() {
+            writeln!(out, "CAL REVIEW SCORE={}PCT BASIS=MAX(WORST_C,STABILITY_C) 100C=0PCT ADVISORY_ONLY", score)?;
+        }
         if let Some(auto) = cal.automatic.as_ref() {
             writeln!(
                 out,
@@ -242,11 +361,20 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
                 !crate::oscillator_calibration::discovery::nonstandard_response(profile)
             )?;
         }
-        writeln!(
-            out,
-            "CAL REVIEW ACCEPT=RAM RUN=RESCAN DISCARD=PRIOR; RETUNING REQUIRES RESCAN"
-        )?;
-        return Ok(());
+        if cal.pending_quality.acceptable() {
+            writeln!(
+                out,
+                "CAL REVIEW ACCEPT=RAM RUN=RESCAN DISCARD=PRIOR; RETUNING REQUIRES RESCAN"
+            )?;
+            return Ok(());
+        }
+        if cal.can_accept_imperfect() {
+            writeln!(out, "CAL REVIEW OFF TARGET; ACCEPT=KEEP AS-IS IN RAM RUN=IMPROVE DISCARD=PRIOR; RETUNING REQUIRES RESCAN")?;
+        } else {
+            writeln!(out, "CAL REVIEW INCOMPLETE; ACCEPT/SAVE BLOCKED; RETUNING REQUIRES RESCAN")?;
+        }
+        // Continue to the independent check below: the retained curve is
+        // diagnostic, and its failed target is the most useful next clue.
     }
     if let Some(profile) = cal.profile.as_ref() {
         writeln!(
@@ -344,10 +472,11 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
         }
         writeln!(
             out,
-            "VERIFY MODE={} TESTED={} TOTAL={} COMPLETE={} MAX_SPAN_C={:.2}",
+            "VERIFY MODE={} TESTED={} TOTAL={} MISSING={} COMPLETE={} MAX_SPAN_C={:.2}",
             if scan.points_mode { "POINTS" } else { "SCAN" },
             scan.tested,
             scan.total,
+            scan.missing,
             scan.complete,
             scan.max_spread
         )?;

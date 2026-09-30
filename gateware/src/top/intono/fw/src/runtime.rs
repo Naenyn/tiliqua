@@ -4,7 +4,7 @@
 //! scale tables, and renderer state must not become part of the foreground
 //! loop's stack frame just because the menu grows.
 
-use crate::options::{CalibrationPolicy, DisplayMode, Opts};
+use crate::options::{CalibrationGraph, CalibrationPolicy, DisplayMode, Opts};
 
 pub const INTONO_CHANNELS: usize = 4;
 
@@ -29,6 +29,7 @@ pub struct RuntimeControls {
     pub calibration_input: u8,
     pub calibration_output: u8,
     pub calibration_policy: CalibrationPolicy,
+    pub calibration_graph: CalibrationGraph,
     pub target_millicents: i32,
     pub verify_scan: bool,
     pub verify_points: bool,
@@ -63,6 +64,7 @@ impl RuntimeControls {
             calibration_input: opts.calibrate.input.value,
             calibration_output: opts.calibrate.output.value,
             calibration_policy: opts.calibrate.policy.value,
+            calibration_graph: opts.calibrate.graph.value,
             tuner_input: opts.tuner.input.value,
             display_mode: opts.tuner.display.value,
             reference_hz: opts.settings.reference.value,

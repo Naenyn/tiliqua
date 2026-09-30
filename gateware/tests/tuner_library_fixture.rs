@@ -7,6 +7,7 @@ mod options {
         Auto,
         Precision,
         Forgiving,
+        Fast,
     }
 }
 #[path="../src/top/intono/fw/src/scale.rs"] mod scale;

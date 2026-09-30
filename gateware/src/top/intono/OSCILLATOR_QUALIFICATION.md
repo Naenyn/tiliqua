@@ -1374,3 +1374,911 @@ excess without risking another blank diagnostic. No further physical Waveplane
 run is required merely to establish the present conclusion: under this patch
 and panel setting it is measurably responsive but not safely representable by a
 static Character-grade correction curve.
+
+### WORNG ACRONYM: intermittent high-CV period change
+
+With a Disting EX holding approximately +5 V on ACRONYM's V/oct input and its
+sine output sent to IN0, two R5 Tiliquas independently reported frequent
+~3030.7 Hz readings interspersed with ~3007–3017 Hz readings. A prior fixed
+~+4.5 V test was much steadier. The second Tiliqua used its own ADC and the
+same INTONO NSDF estimator, so the agreement alone did not distinguish a
+source-side change from a shared estimator artifact.
+
+A temporary `TILIQUA_INTONO_NSDF_TRACE=continuous-wave` firmware mode was then
+flashed **only to Tiliqua #2**. It computes a rising-zero-crossing frequency
+from the same immutable 674-sample native frame as each high-bank NSDF result;
+it never changes the published pitch, CV outputs, or CAL decisions. In 97
+paired frames, 88 were in the high-frequency cluster and nine below 3020 Hz.
+The independent zero-crossing estimate followed every low event. The median
+absolute difference was 0.109 Hz in the high cluster and 0.771 Hz in the low
+cluster. For example, the paired readings included 3007.137/3007.485 Hz and
+3031.097/3030.821 Hz (zero crossing/NSDF). Thus the intermittent apparent
+period change is present in the captured audio itself, before the NSDF peak
+selection or refinement. This does **not** yet establish whether ACRONYM's
+oscillator, its +5 V CV source, or some aspect of their interaction is moving.
+The next controlled test is to change only the fixed CV source, keeping the
+ACRONYM settings and audio patch constant.
+
+Replacing Disting EX #1's nominal +5 V with Disting EX #2's nominal +5 V did
+not remove the period split. The center moved to about 3.10–3.13 kHz, as
+expected from two differently calibrated voltage sources, but in an 86-frame
+follow-up the lower cluster had 49 frames (median NSDF 3103.046 Hz) and the
+upper 37 (median NSDF 3127.763 Hz). The paired zero-crossing medians were
+3103.182 and 3127.735 Hz. Thus this is not peculiar to Disting #1's output.
+Because both Disting units share a design and ACRONYM's sine is shaped from its
+triangle core, the next least-disruptive isolation is to compare ACRONYM's
+triangle output with the same CV and panel settings. If that remains split,
+remove the V/oct cable and retune the oscillator near the same frequency to
+separate CV-path behavior from the free-running core.
+
+The triangle-core output produced the same two clusters with Disting #2 still
+feeding +5 V: 98 paired frames split into 57 lower (median NSDF 3103.062 Hz,
+zero crossing 3103.327 Hz) and 41 upper (3127.832/3127.845 Hz). The overall
+median absolute NSDF/zero-crossing difference was 0.264 Hz. The sine
+waveshaper is therefore not needed for this intermittent apparent period
+change. The remaining controlled comparison is free-running triangle at a
+similar pitch with V/oct unplugged.
+
+With V/oct unplugged, the user brought the free-running triangle to roughly
+3 kHz with coarse tuning at maximum. Of 97 paired frames, the NSDF median was
+3007.619 Hz; the central 80% were tightly grouped from approximately 3007.5
+to 3007.7 Hz, but intermittent readings reached 3025.867 Hz. The independent
+zero-crossing estimator ranged from 3005.990 to 3025.324 Hz and followed the
+higher events. Thus neither Disting CV source nor a connected V/oct cable is
+required for an intermittent apparent period change. Because the coarse
+control was at its end stop in this particular free-running test, the result
+does not yet establish how the core behaves at a midrange tuning position or
+exclude other oscillator modulation/sync connections and audio-path effects.
+
+With V/oct still unplugged, the user backed the coarse control away from its
+maximum and tuned the free-running triangle to roughly 2 kHz. All 97 paired
+high-bank frames produced both estimates. NSDF ranged from 1994.526 to
+2005.153 Hz; the zero-crossing estimate ranged from 1994.404 to 2005.368 Hz,
+with a median absolute difference of 0.075 Hz. The lower and upper apparent
+periods therefore persist at a lower pitch and away from the coarse end stop.
+This rules out those two conditions as necessary causes, but the shared audio
+capture path still needs a known-stable oscillator control at a comparable
+frequency before attributing the variation to ACRONYM itself.
+
+As an analog control at approximately the same pitch, the user replaced only
+the IN0 audio patch with Pittsburgh Modular Local Parks' triangle at roughly
+2 kHz. Over 103 paired frames the zero-crossing readings ranged from
+2004.134 to 2007.618 Hz, and NSDF ranged from 2004.105 to 2007.602 Hz; their
+median absolute difference was 0.071 Hz. This is a narrower, wandering
+approximately 3.5 Hz span, rather than ACRONYM's two approximately 10 Hz
+clusters at the lower-pitch free-running setting. The common capture path
+therefore does not impose an identical split on every analog oscillator, but
+this control is not a fixed-frequency reference. A stable digital oscillator
+through the same cable/input would better isolate residual acquisition jitter.
+
+Twin Waves' unmodulated digital sine was then patched to the same Tiliqua #2
+IN0 input near 2 kHz. Over 103 paired frames, zero crossing ranged from
+1998.686 to 2002.839 Hz, and NSDF ranged from 1998.553 to 2002.809 Hz;
+their median absolute difference was 0.061 Hz. The approximately 4.2 Hz
+apparent spread is comparable to Local Parks' wandering control, although
+neither had ACRONYM's sharp, repeatable two-cluster separation. This shifts
+attention to the shared acquisition/timebase or signal connection for the
+smaller variation. A simultaneous second oscillator on another input can
+test whether fractional pitch movement is correlated across channels.
+
+With Twin Waves sine near 2 kHz on IN0 and Local Parks triangle near 2 kHz on
+IN2, an 82-second simultaneous run collected 201 and 202 qualified high-bank
+NSDF readings, respectively, with no acquisition faults. IN0 ranged from
+1998.912 to 2005.126 Hz (standard deviation 1.059 Hz); IN2 ranged from
+1998.670 to 2003.389 Hz (standard deviation 0.974 Hz). Nearest-time pairs
+had a weak Pearson correlation of 0.087, with adjacent-pair shifts also weak
+(approximately 0.02–0.16). The serial report schedule puts the channels about
+202 ms apart, so this argues against a **slow** shared timebase drift but
+cannot rule out faster common jitter. Feeding the *same* oscillator signal to
+both channels through a buffered mult is the next direct separation of source
+motion from channel-specific measurement noise.
+
+The user then buffered-multed the **same** Twin Waves sine to IN0 and IN2.
+Ordinary serialized reports, about 201 ms apart, remained uncorrelated, so a
+temporary `continuous-pair` firmware diagnostic was flashed only to Tiliqua
+#2. It services just the two native-rate inputs back-to-back and reports both
+NSDF and independent zero-crossing estimates; it does not change the
+production scheduler or calibration logic. In 1,245 fully qualified pairs,
+the frame endpoints were a median 1,916 native samples (about 10 ms) apart.
+Each channel's NSDF frequency had roughly 1.0 Hz standard deviation around
+2001.05 Hz, but the cross-channel Pearson correlation was only 0.069 (zero
+crossing: 0.062), including low correlations at adjacent-pair offsets. There
+was negligible median channel bias (-0.017 Hz) but 1.396 Hz standard deviation
+of their difference. Each channel's NSDF and zero-crossing estimates agreed
+within a median 0.08 Hz. Thus a material part of the short-frame apparent
+pitch spread is channel/frame-specific measurement variation rather than
+actual Twin Waves pitch motion or slow common clock drift. It is not yet a
+complete explanation for ACRONYM's much larger, distinct period clusters; the
+same buffered two-input test with ACRONYM will distinguish those.
+
+After the user replaced the mult's source with ACRONYM's free-running triangle
+near 2 kHz, 1,530 fully qualified back-to-back pairs showed **no** two-cluster
+separation. IN0 NSDF ranged from 2004.580 to 2004.995 Hz; IN2 ranged from
+2004.557 to 2005.082 Hz. The channel-difference standard deviation was only
+0.079 Hz with virtually no median bias. The independent zero-crossing values
+had wider tails (roughly 2004.0–2005.6 Hz), but their medians matched NSDF and
+their correlation across inputs was 0.475. These measurements demonstrate that
+this ACRONYM output can be stable and precisely trackable under the buffered
+patch. The earlier direct-input split is not reproducible under the current
+connection; changing only the mult/direct audio path while leaving tuning and
+V/oct disconnected is the next isolation test. The diagnostic build changes
+the NSDF request schedule as well as the patch, so any attribution must also
+consider that changed timing.
+
+The user then bypassed the mult, sending ACRONYM triangle directly to Tiliqua
+#2 IN0 while keeping V/oct unplugged and the panel controls unchanged. Under
+the paired diagnostic schedule, 1,687/1,687 IN0 frames qualified and NSDF
+ranged only from 2004.822 to 2005.220 Hz (standard deviation 0.060 Hz); IN2,
+now disconnected, had zero qualified frames. Restoring the original all-bank
+schedule without changing this direct patch likewise produced 103 qualified
+frames, NSDF 2005.022–2005.368 Hz (standard deviation 0.063 Hz). Therefore
+neither the buffered mult nor the paired-only request schedule is necessary
+for this stable state. The earlier approximately 10 Hz split has not been
+reproduced after repatching; an unrecorded physical state, connection, or
+transient remains possible. Do not call the disappearance a firmware fix.
+
+With Tiliqua #2 OUT0 patched to ACRONYM V/oct and its triangle directly into
+IN0, a subsequent full CAL run acquired 101 points. The first automatic replay
+failed at approximately +0.162 V, then the partial-range recovery retained
+the larger contiguous side (-5.000 through +0.083 V, 62 points). That
+limited curve independently rechecked 45/45 targets and 9/9 local checks,
+earning a CHARACTER grade (worst 5.15 cents, maximum observed span 9.53
+cents). The user explicitly does **not** need to save this test profile.
+
+Crucially, the failure at +0.162 V was `INCOMPLETE REPLAY`, not absent audio:
+the serial diagnostic counted 105 detector frames, 98 valid/qualified, 22
+fresh settled target-adjacent readings, and 13 of the required 16 independent
+averaging windows within the five-second check deadline. The raw error span
+was 5.898 cents with no span/gap resets. The temporary all-bank waveform
+trace printed on every detector update during this run and may have worsened
+the acquisition budget. A bounded extension now gives an otherwise stable,
+target-adjacent, incomplete replay up to three additional seconds **at the
+same CV**, preserving the already collected windows. It does not relax the
+16-window acceptance or stability limits. The previous partial result must
+not be represented as proof that ACRONYM tracks only five octaves.
+
+On the first retest, verification advanced well past +0.162 V before trimming
+from the high end. It eventually rejected a 70-point -5.00..+0.75 V preview
+after four partial recoveries. At +1.174 V, all 16 independent windows were
+present, but their raw error span was 20.174 cents and quarter-block means
+differed by 14.968 cents; this is a different repeatability failure, not a
+mere window shortage. However, investigation of the supposed "quiet" build
+found that omitting `TILIQUA_INTONO_NSDF_TRACE` still defaulted to
+`continuous`, which emits `NSDF RUN/PICK/COMP` for every channel. Therefore
+that retest was **not** free of telemetry overhead. A distinct
+`continuous-quiet` mode now retains the same production eight-slot NSDF
+scheduler while suppressing per-frame serial reports; it is the new build
+default. The next hardware comparison must run that actual quiet mode before
+attributing the high-end variability to the oscillator or CV output.
+
+The subsequent `continuous-quiet` retest completed acquisition with 101
+contiguous points from -5 V to roughly +3.4 V. Its automatic verifier made
+four high-side cuts, then rejected an 87-point -5.000..+2.167 V preview
+after 227.5 seconds acquiring and 463.7 seconds checking. The final 47/47
+targeted replay and 9/9 local check isolated a **repeatable interior error**:
+the +2.000 and +2.08325 V anchors replayed at +0.25 and +0.21 cents, with
+under 0.2-cent within-window spans, while the +2.04175 V midpoint replayed
+at +17.69 cents on average across three interleaved visits (0.06-cent
+between-visit spread). The 17.74-cent overall error is thus not well explained
+by a lost signal or unstable read at that location. The cause of the response
+nonlinearity remains unproven; it could be in the oscillator or CV path.
+
+The automatic workflow previously classified every midpoint error above
+10 cents as drift and trimmed the whole high-side range *before* considering
+local refinement. A bounded policy fix now allows a repeatable, isolated
+midpoint error up to 25 cents to enter the existing paired-candidate
+refinement path. The candidate still must improve the original point without
+regressing neighboring intervals and must pass a complete independent replay
+before the user can accept it. Larger or unstable errors retain range-recovery
+or rejection behavior. This fix is built but requires a hardware retest;
+neither its efficacy nor a usable full-range ACRONYM profile is established.
+
+In the first hardware run of that policy, acquisition again found 101 points.
+Completed replay first isolated unsafe locations near +3.125 and +3.083 V,
+then an **incomplete** replay at +1.711 V caused a larger trim to 81 points.
+Thus this run never reached the previous +2.042 V hotspot. On the shorter
+curve, the verifier did enter local refinement. One inserted point passed the
+paired comparison and independent 46-target replay improved worst error from
+13.70 to 12.47 cents. A second refinement attempt stopped; the final
+82-point preview was correctly rejected (UNSAFE, 12.466-cent worst error,
+10.542-cent stability). The large detailed serial report overflowed its
+2 KiB buffer and fell back to a terse summary, obscuring the last local
+failure. The fallback has now been extended to include worst pitch, local
+three-point repeatability, and last refine/recheck results. This is a
+diagnostic-only change has been built and flashed to Tiliqua #2 slot 1; it
+does not alter acceptance. A new hardware run is needed to capture that
+compact failure evidence.
+
+A second ACRONYM triangle run again found high-side unsafe replay near
++3.208 and +3.083 V. A later `INCOMPLETE REPLAY` at +1.466 V was not a loss
+of detector lock: 166/166 frames qualified, with 16 averaging windows and
+37 settled target-near readings. Instead, those readings spanned 24.660
+cents and their quarter-block means differed by 12.292 cents, so the
+stability gate correctly withheld a result. The "incomplete" label is
+misleading for this case; the data were abundant but too variable. This is
+a distinct failure from the repeatable local interpolation errors and must
+not be fixed by relaxing accuracy or acceptance thresholds.
+
+After shortening to a candidate ending below that location, an independent
+46/46 replay found another very repeatable midpoint error at +1.29175 V:
++10.20 cents at the midpoint, +0.14/+0.17 cents at its neighboring points,
+and only 0.04-cent between-visit variation at the midpoint. The full local
+correction overshot from +10.23 to -11.52 cents in the paired trial and was
+properly rejected. The resulting 78-point profile was UNSAFE (10.239-cent
+worst error, 17.346-cent stability), and nothing was accepted or saved.
+
+One bounded half-step backtracking trial is now permitted when a full
+correction *repeatedly overshoots the original target in the opposite
+direction*. That trial reruns the same paired target/neighbor checks; a
+passing trial still needs the existing full independent recheck before a
+profile can be accepted. No new quality allowance is introduced. Host tests
+cover the observed +10/-11.5-cent overshoot and a successful half-step, but
+hardware behavior remains to be tested.
+
+For the next isolation check, idle serial status now includes the selected
+input's numeric tuner frequency, qualification, level, sequence and age.
+This allows a fixed external CV source to hold ACRONYM near the troublesome
+5.5 kHz region while comparing pitch stability, without waiting for another
+full calibration sweep. Serial recovery text also distinguishes an explicitly
+unstable replay from a check that merely lacked enough measurements.
+
+With Tiliqua OUT0 disconnected from ACRONYM V/oct and a fixed external
+approximately +1.5 V source substituted, the ACRONYM triangle remained on
+Tiliqua #2 IN0. A clean 60-second idle-tuner sample returned 11/11 valid,
+qualified readings: median 5506.682 Hz, 5506.530–5506.877 Hz, only 0.109
+cents total spread and 0.036 cents standard deviation. The previous unstable
+calibration replay near this frequency spanned 24.660 cents across 16
+measurement windows. Therefore the ACRONYM plus Tiliqua pitch detector is
+capable of stable measurement at this pitch under a fixed external CV.
+This does **not** yet identify whether Tiliqua's output is unstable when held,
+or whether the oscillator/control path needs more settling after a sweep
+step. A fixed Tiliqua-output route is the next discriminating comparison.
+
+That comparison used a steady Disting CV into Tiliqua #2 IN2, ROUTES OUT0
+configured to source IN2 with chromatic quantization and no oscillator
+correction, and OUT0 patched to ACRONYM V/oct. IN2 read approximately +1.451 V.
+During 65 seconds with ACRONYM triangle on IN0, all 18 idle-tuner reports
+were valid and qualified: median 5356.715 Hz, range 5356.556–5356.851 Hz,
+0.095-cent total spread and 0.029-cent standard deviation. This demonstrates
+that Tiliqua OUT0 can hold a steady pitch in this static route, comparable
+to the direct external-CV test. It does not establish its behavior immediately
+after each calibration step. The remaining likely distinction is the step,
+settling, or measurement sequence; the oscillator itself and the CV output
+cannot yet be singled out as the cause of the transient replay variation.
+
+The next ACRONYM triangle run used the same patch and AUTO policy on Tiliqua
+#2. Acquisition found 101 points before the oscillator stopped supplying
+usable higher-range points, then finished its -5..+8 V characterization.
+Automatic replay independently completed each progressively shortened check,
+but found unsafe results around +3.208, +3.083, +2.958, and +2.431 V. At its
+four-recovery checkpoint the remaining 90-point preview covered -5.000 to
++2.417 V and still graded UNSAFE: 48/48 targets checked, worst +19.445 cents
+at D9 -35.3c, maximum within-target spread 15.158 cents. It was correctly
+blocked from acceptance and saving. The run spent 225.9 seconds acquiring and
+469.7 seconds checking, a conspicuously long and unsuccessful experience.
+
+This run did not trigger the new per-window *unstable timeout* capture: its
+checks completed, but the completed checks were inaccurate or variable enough
+to fail the grade. The rejected-review serial report exposed only aggregate
+quality because `Automatic::best` was empty, even though the final `Scan` and
+its nine local repeat checks remained in RAM. The report now includes those
+rejected-candidate local measurements, including the serial fallback path.
+Host regression covers this reporting; it requires a new hardware run to
+reveal whether the limiting +2.43 V area is a repeatable response kink,
+within-target drift, or both. No accuracy/stability acceptance limits have
+been relaxed, and no ACRONYM profile was accepted or saved.
+
+The next run moved the identical ACRONYM triangle patch to Tiliqua #1
+(OUT0 to V/oct, triangle to IN0). Acquisition again found 101 points and
+completed the -5..+8 V characterization. Four independent replay recoveries
+trimmed the high side around +3.125, +3.083, +2.958, and +2.430 V. The
+remaining 90-point candidate covered about -5 to +2.417 V; its 46/46
+targeted replay and 9/9 interleaved local check completed, but it was
+correctly rejected. The local check's critical midpoint was +2.2085 V:
+its three visit means spanned 40.76 cents although each visit's own
+within-window span was at most 0.14 cents. Its neighboring +2.16675 and
++2.250 V points were almost exactly on target and repeated within 0.02
+cents each. This independently reproduces a sharply localized,
+between-visit change on both Tiliquas; it does not yet establish whether
+the cause is the oscillator's CV response, a direction/settling effect,
+or pitch-estimator behavior. The report now records the nine local readings
+in visit order, so a future run can distinguish those possibilities without
+inferring direction from aggregates. No profile was accepted or saved.
+
+With that visit-order diagnostic on Tiliqua #1, another unchanged ACRONYM
+triangle run again acquired 101 points and recovered its high-side range to
+a 93-point candidate. Its last 47-target replay completed, but the grid's
+worst target (12,422,050 millicents) measured +29.34 cents. The local check
+then commanded the *same profile pitch and voltage* (+2.4325 V) three more
+times, yielding -18.11, -18.11, and -18.13 cents. The two surrounding
+anchors (+2.41675 and +2.500 V) stayed near -0.03 cents and repeated within
+0.03 cents. Thus the grid and local phases disagreed by about 47.46 cents
+at the same target, despite the three close-step local visits being steady.
+It is unsafe to interpret this as a fixed, correctable curve kink; the
+measurement depends on the preceding scan/step history or some other
+unobserved state. The automatic run correctly stopped at `REVIEW - MORE
+RANGE SEARCH?`, zeroed the output, and did not accept or save the profile.
+
+Calibration quality now includes the grid-to-local discrepancy as a stability
+term, and completion requires it to fit the policy's stability limit. The
+serial report names that discrepancy explicitly, and host regression covers
+the observed 47-cent contradiction. The cause remains unproven: possible
+settling/approach behavior in the oscillator or CV path, or a measurement
+state effect. Do not relax accuracy limits or insert a refinement point on
+the basis of these conflicting readings.
+
+The subsequent UI change reports `REVIEW - CHECKS DISAGREE` at a bounded
+range-search checkpoint when the grid/local discrepancy exceeds 10 cents,
+while keeping the rejected preview and the user's explicit option to search
+a smaller range. This message does not authorize acceptance or overwrite a
+stored profile. It is tested on the host but has not yet been flashed or
+verified on hardware.
+
+The next hardware check should avoid another full calibration until the
+contradiction is isolated. With the ACRONYM triangle still patched to IN0,
+hold its V/oct input at one fixed external CV near the problematic +2.43 V
+region and observe the tuner/serial frequency for at least several seconds.
+Then approach that same voltage once from below and once from above, without
+retuning or changing the waveform. Compare steady readings and the first
+second after each change. This separates a static high-frequency detector
+problem from a direction/settling effect. An external source's actual
+voltage need not equal its nominal setting for this *repeatability* test;
+record the source and setting. Do not save a calibration profile on the
+basis of this diagnostic alone. A separate short controlled CV-step replay
+can follow if static readings are stable.
+
+At fixed Disting EX CV near nominal +2.5 V, ACRONYM triangle stayed qualified
+around 10.77–10.80 kHz. The slow drift was under a few cents over several
+minutes, not a 47-cent jump. Controlled +2.0→+2.5 and +3.0→+2.5 V returns
+showed immediate agreement between the NSDF pitch and an independent
+rising-zero-crossing estimate computed on the same immutable audio frame
+(paired reports approximately every 400 ms). The return frames were already
+at the steady +2.5 V cluster, with no observed large transient. This does
+not exclude a sub-frame event or behavior peculiar to Tiliqua's DAC steps,
+but it argues against a general high-frequency NSDF or ACRONYM instability.
+
+For the next isolation, the temporary `continuous-wave` firmware adds an
+idle-tuner-only serial CV probe on OUT0. It is opt-in: ASCII `d`, `a`, `b`,
+`c`, `e` command +2.00000, +2.41675, +2.43250, +2.50000, +3.00000 V;
+`x` stops it. Each enabled command expires and zeros the output after 30
+seconds, and leaving the idle tuner stops it. The probe uses the calibration
+output hardware path but does not create or modify a profile. It must not be
+left in the eventual release build; it is compiled only for the paired-wave
+diagnostic mode. The build succeeded and was flashed to Tiliqua #1 slot 1
+with option storage preserved. Hardware command reception is confirmed below.
+
+The idle-tuner serial probe was hardware-checked on Tiliqua #1 with OUT0 to
+ACRONYM V/oct and its triangle output to IN0. ASCII `c` moved the measured
+pitch from about 1997.6 Hz at idle zero to 11129.3 Hz, and `x` restored the
+idle pitch and zeroed the output. The two independent estimators agreed.
+The subsequent 5-second-per-step sequence exposed a direction-dependent
+result at the *same* commanded count value: `a` (9667 counts) held about
+10528.7 Hz; `b` (9730 counts) approached from `a` remained at about
+10528.7 Hz; `c` (10000 counts) held about 11130.5 Hz; `b` approached from
+`c` held about 10821.3 Hz; returning to `a` restored about 10528.7 Hz;
+and a second `a`→`b` again remained near 10528.7 Hz. NSDF and independent
+zero-crossing estimates agreed on every step, and the readings were stable
+through the whole dwell. The two observed `b` states differ by roughly
+47.4 cents, closely matching the original grid/local contradiction. The
+probe was explicitly stopped and its output zeroed. The cause is not yet
+localized: a missed/incorrect CV command, analog output behavior, or an
+ACRONYM CV-response memory effect remain possible. Measure the physical
+OUT0 voltage during both approaches before changing calibration policy.
+
+With OUT0 buffered/multed to an external voltage monitor and ACRONYM, a
+second 12-second-per-step `a`→`b`→`c`→`b` replay was filmed. The monitor's
+top-left reading was approximately 2.445–2.446 V at `a`, 2.459–2.461 V at
+the first `b`, 2.529–2.530 V at `c`, and 2.457–2.460 V at the second `b`.
+Thus the small `a`→`b` commanded CV increment did appear at the monitored
+branch, and the two visits to `b` measured nearly the same voltage. Absolute
+monitor offsets (~+0.03 V) are not used as evidence because its calibration
+and the mult's loading have not been established. In this patched test the
+audio stayed at ~10.837 kHz at `a` and both `b` visits, while `c` produced
+~11.475 kHz. The monitor and pitch observations rule out a completely
+missing small step *at the monitored node*, but do not yet prove the same
+voltage reached ACRONYM's V/oct jack; the exact mult topology is being
+confirmed. Also, the earlier direction-dependent `b` pitch was not
+reproduced after changing the patch/load. Do not average the two historical
+pitch readings into a correction point. The user confirmed the topology is
+Tiliqua OUT0 → buffered mult → separate outputs to the Disting voltage
+monitor and ACRONYM V/oct. Therefore the Disting reading does not directly
+measure the particular mult output feeding ACRONYM. Swapping those two mult
+outputs is the next non-destructive isolation test.
+
+After swapping the two cables at the buffered mult's outputs, a second
+video of the previously unmonitored output showed about 2.444 V at `a`,
+2.460 V at the first `b`, 2.529 V at `c`, and 2.460 V at the second `b`.
+The simultaneous tuner telemetry was ~10.861 kHz at `a` and both `b`
+visits, and ~11.499 kHz at `c`. Both buffered outputs therefore show the
+small CV increment, but neither routing makes ACRONYM's measured pitch
+respond to that increment. This makes a fault isolated to one buffered
+output unlikely. It still does not prove the voltage exactly at ACRONYM's
+jack, nor explain why an earlier direct-patch run had distinct `b` pitch
+states. A temporary firmware probe now offers additional 10-mV-spaced
+commands between `b` and `c` to locate the response threshold; the
+firmware-only build was flashed with option storage preserved, pending a
+local sweep after boot.
+
+The first fine local sweep used 3-second dwell steps from +2.41675 through
++2.50000 V and back. The reported pitch looked staircase-like: about
+10.676–10.679 kHz across +2.4325–2.45 V, a jump to ~10.986 kHz at
++2.46 V, then ~10.989 kHz at +2.49 V and a jump to ~11.314 kHz at
++2.50 V; descending transitions occurred at different commands. The
+first +2.41675 V command appeared not to reach the oscillator at all.
+Consequently this run is **not** sufficient evidence of oscillator CV
+quantization or hysteresis: commands may have been missed, and only the
+earlier `a`/`b`/`c` commands were independently voltage-monitored. The
+temporary probe was extended to transmit a one-byte, high-bit serial ACK
+only after the hardware calibration-output token becomes active. Firmware
+with this ACK was built and flashed; the local sweep must be repeated after
+the user boots INTONO and the host must require matching ACKs before
+assigning a pitch reading to a command.
+
+The ACK-gated repeat on Tiliqua #1 completed with **every command
+acknowledged on its first transmission**. Four steady NSDF WAVE frames per
+step gave about 10.8234 kHz from `a` (+2.41675 V) through `q` (+2.45 V),
+11.1325 kHz from `r` (+2.46 V) through `u` (+2.49 V), and 11.4602 kHz at
+`c` (+2.50 V). Descending from `c`, `u` initially remained at 11.4603 kHz,
+`t` through `r` returned to about 11.1326 kHz, and `q` through `a` to about
+10.8235 kHz. The first upward transition is about 48.8 cents, and the
+second about 50.2 cents, much larger than the 12-cent ideal change
+over 10 mV at 1 V/oct. This repeat removes *missed software commands* as
+an explanation of the staircase: the DAC-side output controller accepted
+each step. It still does **not** prove that physical voltage at ACRONYM's
+V/oct jack moved smoothly on the intermediate 10-mV commands. The earlier
+buffered-monitor videos show correct-sized increments at `a`, `b`, `c` on
+both mult outputs, but did not capture `q` through `u`. An independently
+monitored fine sweep is the next discriminating test. The serial probe sent
+`x` and returned OUT0 to zero after the run. Do not accept a calibration
+profile based on this staircase.
+
+A second ACK-gated fine sweep was run while the user recorded the external
+Disting monitor. Each command dwelled for six seconds; all 13 steps were
+acknowledged. Pitch stayed near 10.839 kHz at `b`/`q`, jumped to about
+11.149 kHz at `r` and stayed there through `u`, then jumped to about
+11.477 kHz at `c`. On the descent, `u` initially held the high value,
+`t` through `r` returned to about 11.149 kHz, and `q`/`b` returned to
+about 10.839 kHz. `x` restored the idle pitch to about 2.001 kHz. The
+user's voltage-monitor video is needed before deciding whether physical
+CV also forms a staircase; these pitch readings alone do not distinguish
+the output analog path from ACRONYM's V/oct response.
+
+The user requested a repeat because the camera missed that replay. The
+identical 13-step, six-second-per-command sequence was rerun, with every
+command again acknowledged. On the ascent the levels were approximately
+10.841 kHz (`b`, `q`), 11.150 kHz (`r` through `u`), and 11.478 kHz
+(`c`). Descending `u` remained high; `t` through `q` remained at the middle
+plateau; only `b` returned to the low plateau. In particular, descending
+`q` differed from the previous run, consistent with a threshold close to
+that commanded voltage and possible state/approach dependence. `x` restored
+the idle pitch to about 2.001 kHz. Await the new external voltage video
+before attributing this to the oscillator or Tiliqua analog CV path.
+
+The second recording (`ED9738CD-5927-4041-B489-00978746D0AE.MP4`)
+shows the Disting's top-left voltage monitor while this replay ran. Its
+readout traverses many distinct intermediate values, rising in roughly
+10-mV increments from the mid-2.4-V region to about 2.528 V and then
+descending again. In contrast, the simultaneously logged audio pitch has
+only three plateaus. The video's start is not frame-synchronized to the
+serial command timestamps, and the monitor has its own update/settling
+time; use the **continuous sequence of intermediate voltages**, not an
+exact video-frame-to-command pairing, as evidence. The recorded branch
+therefore does not have a matching coarse voltage staircase. Together with
+the earlier output-swap videos, this makes Tiliqua's command path or a
+single faulty buffered output a poor explanation of the 50-cent pitch
+steps. The monitor is still on a separate buffered-mult output, so the
+voltage directly at ACRONYM's V/oct jack has not been measured. The next
+useful control is to repeat the same fine CV sweep with ACRONYM tuned much
+lower (roughly two octaves) without changing the CV patch: if the steps
+disappear, the phenomenon is associated with its high-frequency operating
+region; if they remain, inspect the jack/patch and test another oscillator
+with the identical CV path. No calibration profile was accepted or saved.
+
+The user then lowered only ACRONYM's coarse tuning to about 499.5 Hz at
+idle/0 V and left the CV/audio patch in place. In the same ACK-gated
+`b,q,r,s,t,u,c,u,t,s,r,q,b` replay, every command was acknowledged and
+the combined tuner pitch rose **smoothly**: 2750.67, 2790.06, 2810.11,
+2830.36, 2851.14, 2872.11, and 2893.35 Hz on the ascent. Descending
+`u,t,r,q,b` returned within about 0.1 Hz of their ascent readings;
+descending `s` was 2826.46 Hz versus 2830.36 Hz on ascent and deserves
+one more repeat before treating that small deviation as real. The run
+ended with `x` to zero OUT0. Thus the same CV commands and patch support
+fine, continuous pitch changes at this lower tuning. The high-frequency
+staircase is frequency-region dependent. This does not yet separate an
+ACRONYM high-frequency/core or patch interaction from a high-frequency
+pitch-estimator artifact; earlier native-frame zero-crossing agreement
+helps but is not independent physical audio instrumentation. Keep the
+profile rejection safeguard and do not average across the high-range
+plateaus.
+
+As a host-side control, the production Rust NSDF selector was exercised on
+synthetic 192-kHz triangle frames swept in 12-cent steps across the same
+10.84–11.5-kHz neighborhood, with eight starting phases. All 64 estimates
+were qualified and within 0.3 cent of their known input frequency
+(`test_synthetic_high_triangle_fine_steps_do_not_staircase`). A clean
+triangle does not acquire the observed staircase merely because of the
+selector's high-frequency lag resolution. This test cannot rule out an
+artifact caused by ACRONYM's *actual* high-frequency waveform. To resolve
+that, capture the physical audio independently or export a native sample
+frame at adjacent commanded CV points before altering calibration policy.
+
+With ACRONYM retuned to about 2.0 kHz at idle, an ACK-gated alternating
+`q,r,q,r` check at +2.450/+2.460 V reproduced the high-range step twice.
+At `q`, the independent rising-zero-crossing period estimate on each raw
+ADC frame was about 10,855 Hz; at `r` it was about 11,165 Hz. The NSDF
+selector gave the same respective frequencies. The ratio is approximately
+48.7 cents, versus the 12 cents expected for a 10-mV step at 1 V/oct.
+The raw-wave estimator does not use the NSDF lag choice, so this is not
+solely an NSDF peak-selection jump. Both estimators still consume the same
+ADC signal, not a separate physical audio instrument. The test sent `x`
+to zero OUT0, and the idle audio reading returned to roughly 2.0 kHz.
+OSCIO's whole-sample period counter is too coarse at about 11 kHz to
+resolve a normal 10-mV pitch step, so it should not be used as the arbiter
+of this discrepancy. The actionable conclusion for calibration is to
+retain the discontinuity/rejection safeguard pending an independent
+waveform or at-jack CV measurement; averaging across the step would hide
+an approximately 37-cent *excess* over the ideal step.
+
+The ACRONYM triangle was then multed to a second, independently sampled
+Tiliqua (#2 IN0) while remaining on #1 IN0. At 0 V, #2 reported a qualified
+pitch near 2.0 kHz with about 9.1 Vpp. During an ACK-gated `q,r,q,r`
+repeat, both tuners agreed at each six-second hold:
+
+| OUT0 command | Tiliqua #1 (Hz) | Tiliqua #2 (Hz) |
+| --- | ---: | ---: |
+| `q`, +2.450 V | 10,857.5–10,858.3 | 10,857.949 / 10,858.032 |
+| `r`, +2.460 V | 11,167.8–11,168.3 | 11,168.099 |
+| `q`, +2.450 V | 10,857.2–10,857.6 | 10,857.983 |
+| `r`, +2.460 V | 11,167.6–11,168.2 | 11,167.759 |
+
+All four DAC-side commands were acknowledged, and `x` zeroed OUT0 afterward.
+This corroborates a real period/frequency step in ACRONYM's audio, rather
+than an artifact unique to #1's ADC, NSDF selector, or sample clock. Both
+Tiliquas still use the same estimator implementation, but #1's separate
+raw-frame zero-crossing estimate and the synthetic continuous-triangle
+regression provide orthogonal checks against a shared peak-selection bug.
+Earlier voltage-monitor videos showed fine CV increments at the buffered
+mult, but not directly at ACRONYM's V/oct jack. A jack-level measurement or
+an alternate oscillator on the same CV path would be needed to distinguish
+an ACRONYM-specific high-range response from a remaining jack/patch issue.
+The calibration must not smooth or accept the large local step as a normal
+1 V/oct curve.
+
+WMD Legion was then substituted for ACRONYM, with its triangle multed to
+both Tiliqua audio inputs and its V/oct fed by the same buffered OUT0 path.
+Both tuners read about 2.0 kHz at idle/0 V. The same acknowledged
+`q,r,q,r` comparison gave about 11,223 Hz at +2.450 V and 11,302 Hz at
++2.460 V, on both devices and on both visits. This is approximately
+12.1 cents: the expected 1 V/oct change over 10 mV. The test ended with
+`x` zeroing OUT0. The CV source, mult and two audio detectors can therefore
+resolve a normal fine step in this frequency neighborhood. ACRONYM's
+behavior is source-specific under the tested setup, though voltage directly
+at its V/oct jack remains unmeasured.
+
+Compensability depends on what happens *inside* the 10-mV interval. A
+continuous but steep response can be represented by more closely spaced
+anchors and inverse interpolation. A true jump leaves an interval of pitches
+with no corresponding voltage, which no static calibration curve can play
+exactly; the correct behavior is to identify and report that gap, not invent
+values or average it away. Map this interval at the 250-microvolt DAC count
+resolution, in both voltage directions, before changing profile acceptance.
+
+**Multi-device flashing caution:** with both R5 DBG cables connected,
+openFPGALoader's DirtyJTAG `--busdev-num` option did not provide a reliable
+way to identify which Tiliqua the archive flasher would actually write. The
+attempted serial-targeted flash was followed by no probe ACK on #1, a reset
+on #2, and an ambiguous identical manifest readback from both requested bus
+addresses. Do not rely on `--busdev-num` for this backend. The safe retry was
+performed only after unplugging #2 DBG and checking `--scan-usb` showed the
+single remaining #1 debugger (`E46534A193222B21`); slot 1 was then flashed
+without erasing option storage. Confirm a new probe ACK on #1 before running
+the fine-count diagnostic.
+
+The 250-microvolt count sweep resolved the ACRONYM transition. On an upward
+pass, the measured triangle stayed near 10,859 Hz through +2.45725 V and
+jumped to about 11,169 Hz at +2.45750 V: roughly **48.7 cents for one DAC
+count**. On the downward pass it remained near 11,169 Hz through +2.45125 V
+and fell to about 10,859 Hz at +2.45100 V. A long hold at the *same*
++2.45500 V stayed near 10,860 Hz for nine seconds when approached from below,
+but near 11,170 Hz for nine seconds when approached from above. Repeating the
+below approach restored the lower pitch. All commands were ACKed and the
+output was zeroed after each diagnostic. This is a stable hysteresis window
+of about 6.25 mV, not merely slow settling. No single-valued static inverse
+curve can play every pitch in the skipped ~49-cent interval, and averaging
+the two states would invent a pitch the oscillator did not produce. The
+calibrator must treat such a region as unsafe, retain a separately verified
+contiguous span if possible, and disclose its reduced range. Retuning the
+oscillator may move the problematic region outside the desired playing span.
+
+The targeted replay now reserves a bounded probe at the midpoint of the
+steepest measured acquisition interval. A host regression models the
+48.8-cent jump between semitone-spaced anchors, proves the new target falls
+inside the unreachable pitch gap, and proves the existing completed-replay
+recovery trims the pending high range without authorizing acceptance before
+a fresh check. This is still a sampled safeguard, not exhaustive proof of
+continuity; the hardware needs a full CAL run to validate it on ACRONYM.
+
+The first hardware CAL run with that targeted probe never reached replay:
+the final zero-volt reference check timed out after a full -5..+8 V
+characterization. Its last observed zero error was only -0.88 cent, but it
+had accumulated three rather than the required five consecutive tight pitch
+readings. The old timeout mislabeled this as "REFERENCE PITCH CHANGED" because
+it tested only whether *any* zero pitch had been observed. The reference
+check now gets one bounded 2.5-second recovery margin when qualified readings
+are already within tolerance and nearly sufficient; if it still fails there,
+the result is called unstable pitch. A genuinely out-of-tolerance reference
+does not get that margin and remains a pitch-changed failure.
+
+On the next full hardware run, the zero check genuinely measured -8.24 cents
+after returning from +8 V and correctly refused the profile. With output
+disabled at 0 V, the independent raw zero-crossing and NSDF diagnostic
+readings alternated between approximately 1,995.5 and 2,005.8 Hz over many
+seconds, a roughly nine-cent two-state difference. Thus the variable zero
+check was not explained by the DAC's absolute-accuracy specification above
++5 V alone. Its cause remains to be isolated with a separate, stable 0 V CV
+source feeding ACRONYM while its audio remains on the same Tiliqua input.
+
+That control used a Disting EX 0 V output instead of Tiliqua OUT0, with
+ACRONYM triangle still on #1 IN0 and its tuning untouched. Across 61
+qualified raw-frame readings over 25 seconds, the rising-crossing estimator
+spanned approximately 1,935.1–1,946.1 Hz and NSDF matched it
+(1,935.8–1,946.0 Hz). The absolute pitch moved because the Disting's 0 V
+need not equal Tiliqua's 0 V, but the same two-band alternation persisted.
+That strongly disfavors Tiliqua's CV output as its cause. Further controls
+are no-CV at ACRONYM and, if needed, direct audio to IN0 without the mult.
+
+With ACRONYM's V/oct cable completely unplugged, 60 raw-wave measurements
+over 25 seconds still spanned 1,995.1–2,006.0 Hz; NSDF agreed within the
+same two bands. The center now matches the Tiliqua-zero neighborhood again,
+but the alternation persists without *any* external CV. The remaining
+simple routing control is ACRONYM triangle directly into Tiliqua #1 IN0,
+bypassing the audio mult and the second input. If it persists there, this
+particular output/settings combination cannot support a 3-cent stable
+calibration reference at the present coarse tuning, regardless of curve
+fitting or zero-check timing.
+
+That direct-audio control was run with V/oct still unplugged and all ACRONYM
+controls unchanged. Sixty qualified raw-wave readings over 25 seconds spanned
+1,995.072–2,005.839 Hz (9.318 cents); NSDF independently spanned
+1,995.36–2,005.81 Hz. The two-band variation therefore does not require
+the audio mult or second Tiliqua input either. Next compare ACRONYM's sine
+output at the same settings, directly into #1 IN0, to distinguish a
+triangle-output/waveform issue from variation shared by both outputs. These
+controls identify the signal path but do not yet prove which circuit or
+oscillator setting produces the variation.
+
+With only the audio cable moved to ACRONYM's sine output, still direct into
+#1 IN0 and with V/oct unplugged, 60 qualified raw readings over 25 seconds
+spanned 1,995.048–2,006.085 Hz (9.55 cents); NSDF spanned
+1,995.402–2,005.885 Hz. The same variation on both oscillator outputs
+disfavors a triangle-specific waveform/detector interaction. A separate
+oscillator around 2 kHz on the same direct input is the next control needed
+before attributing the variation to ACRONYM's core or settings rather than
+the receiving/measurement path.
+
+WMD Legion was then connected directly to the same #1 IN0, near 2 kHz and
+without a V/oct cable. Sixty qualified raw readings over 25 seconds spanned
+1,999.988–2,001.530 Hz (1.33 cents); NSDF spanned 2,000.006–2,001.592 Hz.
+The 9.5-cent variation therefore follows the tested ACRONYM setup rather
+than this Tiliqua input or the detector in general. It may still originate
+in ACRONYM's settings, other connected modulation, its power environment,
+or the oscillator itself; these tests do not identify that internal cause.
+Do not loosen the 3-cent reference-stability gate or average away the two
+states to force a calibration. Report unstable pitch and offer a fresh scan
+once the oscillator's unmodulated reference is stable.
+
+A subsequent panel photo showed ACRONYM's V/oct, sync, through-zero PM and
+other visible input jacks empty. The external-modulation explanation is thus
+not supported by the visible patch. WORNG's ACRONYM manual describes the
+sine as waveshaped from the triangle core, consistent with both outputs
+sharing the same measured variation. A no-CV measurement near 500 Hz is the
+next control for whether this depends on the present ~2-kHz tuning rather
+than being a persistent feature of the module or its environment.
+
+With ACRONYM sine direct into #1 IN0 and no CV, the user retuned the same
+module to about 500 Hz. The fast-bank raw-wave trace was inapplicable there
+(only two crossings per short buffer), so the qualified low-bank NSDF output
+was used instead: 61 readings over 25 seconds spanned 500.157–500.406 Hz,
+or 0.86 cent; the independent first-peak estimate agreed closely. The
+module can supply a stable reference at this lower tuning. Next keep those
+knob settings and apply an external +2 V to reach ~2 kHz, distinguishing a
+pitch-region dependency from the previous coarse/fine settings.
+
+With those ~500-Hz knobs unchanged, a Disting EX supplied +2.0 V to
+ACRONYM's V/oct, producing approximately 1,945 Hz. Sixty qualified
+high-bank raw-wave readings over 25 seconds spanned 1,944.763–1,946.493 Hz
+(1.54 cents). The ~9.5-cent variation at ~2 kHz is therefore not inherent
+to that audio frequency; it depends on the previous knob/CV operating
+condition. No individual control or internal circuit has been isolated.
+The stable ~500-Hz baseline is suitable for a new full calibration attempt,
+keeping the two-state jump safeguard active and avoiding any acceptance of
+unverified pitch gaps.
+
+A full CAL with those lower knob settings, ACRONYM sine direct to #1 IN0 and
+Tiliqua #1 OUT0 direct to V/oct, completed acquisition and zero-reference
+checking and entered targeted verification. It returned a **usable graded**
+candidate spanning -4.58325 to +2.00000 V (80 acquisition points). All 43
+targeted verification points were measured, but the worst residual was
+6.83 cents and the local high-end repeatability span was 9.12 cents;
+the current safety policy did not certify the unsampled pitches. Nothing
+was saved as a production profile. On the TUNER page, a temporary serial
+hold at exactly +2.000 V on OUT0 made the same direct ACRONYM sine alternate
+between 2,004.889 and 2,015.911 Hz (9.49 cents) in 43 readings. By
+contrast, Disting EX +2 V had produced a stable 1,944.763–1,946.493 Hz
+under the same knob settings. The absolute pitches differ by roughly
+60 cents, so the two nominal +2 V sources likely did not deliver identical
+voltage at ACRONYM; this comparison alone cannot establish DAC noise.
+OUT0 was explicitly zeroed after the probe. A new temporary, exact-count
+serial window of ±10.75 mV around +2 V will map whether the instability is
+localized in voltage, as the earlier +2.455-V hysteresis was.
+
+The exact-count window was flashed in a firmware-only build with the same
+HDMI bitstream and `spread_spectrum=0.0`, after a one-device DBG scan. At
+the unchanged ~500-Hz knobs, direct OUT0 → ACRONYM V/oct and sine → #1 IN0,
+an upward 5-mV grid measured: +1.990 V ≈ 1,995.03 Hz, +1.995 V ≈ 2,005.22
+Hz, +2.000 V alternating ≈ 2,005/2,015 Hz (9.44-cent span), +2.005 V
+≈ 2,015.61 Hz, and +2.010 V ≈ 2,026.01 Hz. Each non-boundary hold varied
+by less than one cent over 14–15 wave readings. Reversing the steps gave
+the same bands and again a 9.33-cent spread at exactly +2.000 V. The two
+bands are reproducible near a narrow voltage threshold, but this grid does
+not demonstrate direction-dependent hysteresis at that threshold. Both the
+native-wave rising-crossing estimate and NSDF agreed on each band, though
+both analyze the same short input frames; an independent long-window or
+external frequency measurement would be needed to rule out shared
+waveform/window effects conclusively. OUT0 was zeroed after both passes.
+
+Finer 0.25-mV probing localized the mixed readings: +1.997 and +1.998 V
+remained tightly near 2,005.2–2,005.6 Hz; occasional high-band readings
+appeared by +1.999 V; at +1.99975 to +2.00025 V both bands and some
+intermediate estimates appeared; +2.0005 V was mostly near 2,015.6 Hz.
+The probe stopped on a missing ACK at +2.001 V and sent `x` in its cleanup
+path. The tuner then showed a qualified 500.3–500.5 Hz baseline, confirming
+the output returned to zero. These data narrow the unstable interval to
+roughly 1.5 mV but do not yet prove whether ACRONYM's physical pitch jumps
+or the short-window measurement responds nonlinearly to a waveform change.
+
+The user then routed OUT0 through a buffered mult, with separate branches
+to ACRONYM V/oct and a Disting EX voltage monitor. At the same nominal
++2.000-V raw DAC command, 49 native-wave readings over 20 seconds were
+2,036.776–2,037.701 Hz (0.79 cent), versus the ~2,005/2,015-Hz alternation
+with OUT0 patched directly. The routing moved the absolute pitch by tens of
+hertz and away from the narrow threshold; it does **not** by itself prove
+that direct OUT0 was noisy. In the user's 27-second voltage-monitor video,
+the Disting's top-left numeric reading held at approximately +2.025 V during
+the nominal +2.000-V raw-count command, then returned to approximately
++0.005 V after the output was zeroed. No switching between displayed voltage
+values was visible at the monitor's resolution. This is the buffered branch,
+not an independent measurement of the direct OUT0-to-ACRONYM patch or of
+the ACRONYM jack; the probe command also bypasses the normal calibrated
+voltage conversion. The video therefore does not identify which element
+caused the earlier narrow pitch boundary. The serial probe sent `x` after
+the hold.
+
+With the same ~500-Hz coarse/fine setting and direct OUT0-to-V/oct patch,
+the later adaptive scan acquired 120 usable points after nine low/high
+no-signal skips. Repeated independent checks narrowed the candidate and
+exposed a localized upper-range discrepancy. The user accepted a
+105-point, **user-kept (not certified)** RAM curve covering -4.58325 to
++4.00000 V. Its automatic targeted grid covered 44/44 notes; the worst
+residual was +14.69 cents at A8 -27.4 cents. A nine-visit local check
+around +3.80250 V found the low and high neighbors at +3.79175 and
++3.83325 V individually stable within 0.15 cent, but the center repeated
+at +14.67 cents residual. This is a repeatable failure of the *current
+correction* at that command, not proof of a globally unusable oscillator.
+
+A separate, denser read-only CHECK on that RAM curve completed its entire
+207/207-target grid without missing any target. The worst grid error was
++18.45 cents at A8 (command +3.82075 V), and the largest within-target
+span was 18.61 cents in the upper register. The follow-up nine-visit local
+check timed out after 7/9 visits at the same +3.82075 V command, where
+fresh settled detector readings spanned 6,987.96–7,115.67 Hz and the
+available center repeats disagreed by 31.19 cents. Thus the old firmware's
+`SCAN TIMEOUT` status concealed a completed grid and an **incomplete local
+check**. A firmware change now preserves the completed grid, records
+unresolved local visits explicitly, and labels grid/local progress
+separately. After flashing that change and loading saved profile slot 3, a
+second read-only CHECK completed all 207 grid targets and all nine local
+visits, with no missing targets. Its worst error was +18.55 cents at A8;
+the grid's maximum within-target span was 18.61 cents. The interleaved
+local visits at +3.82075 V repeated +18.52, +18.49, and +18.49 cents at
+the center (0.15-cent within-window span; 0.03-cent between-repeat range),
+while the neighboring low and high targets averaged +0.11 and -0.04 cents.
+The firmware correctly reported `OUTSIDE 2C OR NOT REPEATABLE`. The repeated
+center error is a narrow *profile residual* that may be correctable; the large
+grid span means other upper-range behavior remains less certain. A local
+refinement or bounded range cut must be independently checked before it is
+called a precision calibration. Do not attribute the upper-register
+alternation solely to ACRONYM without an independent pitch measurement at
+the commanded voltage.
+
+The advanced CHECK → IMPROVE action was restored to the UI for a paired
+single-anchor experiment on saved profile slot 3. With the same ACRONYM
+patch, it acquired nine local visits and validated 20 alternating original
+and candidate requests. The candidate was offered in RAM, not committed:
+the worst of its paired test targets improved only from 18.30 to 15.35 cents.
+Two neighboring pitches remained approximately +15 cents sharp, so one
+anchor did not capture the full width of the upper-range bend. This is a
+reason to test successive measured anchors or a targeted denser acquisition,
+not to conclude that poorly tracking oscillators are out of scope. The
+original saved slot 3 remains available for comparison.
+
+The user accepted that first refinement in RAM only and reran the full
+read-only CHECK. The 106-point candidate completed all 207 grid targets and
+all nine local visits with no missing measurements. The worst residual moved
+from A8 +18.55 cents to B8 -16.73 cents at a +3.98500-V command. Three
+interleaved B8 visits repeated -16.47, -16.49, and -16.45 cents after
+neighbor adjustment, with only 0.02-cent between-repeat range. The adjacent
++3.91675-V and +4.00000-V targets averaged -0.26 and -0.24 cents. The
+single-anchor candidate corrected part of one high-end bend but left a
+second narrow residual near the upper endpoint; the useful next test is a
+second measured anchor, not a claim of full-range precision. Slot 3 remains
+the untouched baseline curve.
+
+In the subsequent one-shot AUTO trial, acquisition retained 95 measured
+anchors after one unstable high-range segment and missing readings beyond
+roughly +5.5 V. Its first targeted check completed 44/44 pitches with a
+-9.17-cent worst residual. A paired local candidate proceeded to an
+independent 44/44 recheck and improved the worst magnitude to +8.65 cents;
+the final retained curve had 96 points and a CHARACTER grade. The +8.65-cent
+target repeated within about 0.02 cent locally, so this is a consistent
+residual, not evidence of a wildly inconsistent oscillator region. The
+automatic run ended after a second refinement attempt; its status was
+`REVIEW - USABLE GRADED RESULT`. The exact underlying stop reason was not
+preserved by that firmware, so the next build records it separately rather
+than speculating from the status label. The result demonstrates graded
+retention, not yet the desired precision on ACRONYM.
+
+The following repeat run characterized 120 points, then trimmed its high edge
+in four complete 44-target passes (roughly +5.08, +4.96, +4.79, then +4.75 V).
+This repeated full-range replay was the dominant avoidable cost. The
+subsequent local refinement produced a tentative 112-point candidate; its
+full recheck reduced worst error from -23.96 to -21.46 cents but failed the
+other acceptance conditions. The firmware correctly rolled back the edit and
+reported `REVIEW - RECHECK REJECTED`, with an UNSAFE 23.96-cent residual. The
+specific failed condition was not separately logged, so this is not proof of
+oscillator non-repeatability. The next build probes only the new edge during
+intermediate range recovery, then performs one full check before review.
+
+The first regional-recovery hardware run characterized 106 points. Three
+successive high-edge trims used 19-target half-volt checks instead of three
+whole-profile replays, then returned to a complete check. A later regional
+check had a missing local target. The firmware stopped at `SCAN DONE - MISSING
+TARGETS` and discarded the diagnostic candidate. That was not a measured
+grade of the remaining curve: the regional recovery guard excluded completed
+local checks, and the status path hid the missing target. The follow-up build
+allows a repeatably missing local target to trigger a bounded contiguous trim,
+retains incomplete diagnostics if no recovery remains, and prohibits accepting
+any result with missing targets.
+
+With that fix, the next ACRONYM run retained 91 acquisition points and checked
+44/44 targets without missing readings. Its worst residual was -8.32 cents at
+about +2.79175 V. Interleaved local repeats at this target had just 0.01-cent
+between-visit range; adjacent measured anchors were about +0.2 cents. The
+second *acquisition* of that identical trio for refinement rejected as `REFINE
+NOT REPEATABLE`; the retained check was graded UNSAFE due 13.75-cent maximum
+within-window span. Automatic refinement now reuses the already-repeatable
+local trio to propose a measured anchor, but still requires a separate paired
+old/new validation and full independent recheck.
+
+The next build characterized 120 points, used three short high-edge checks
+near +5.083, +4.750, and +4.244 V, then checked 45/45 pitches on the retained
+106-point range. Paired refinement produced a tentative 107th point and
+reached full recheck, but one of 45 targets lacked qualified pitch. The
+result correctly remained unverified, yet review displayed 107 points while
+its 18.97-cent grade came from the *pre-edit* 106-point curve. This exposed a
+rollback bug: an incomplete recheck was treated as an initial range-review
+checkpoint. The fix rolls the tentative point back before showing the prior
+checked curve and records the first missing recheck voltage on serial. This
+corrected path has host coverage; its next hardware run is pending.
+
+The next ACRONYM run retained 120 anchors and completed all 44 sampled check
+targets. Near +5.01675 V, the grid read about +56.56 cents while three later
+visits at that same commanded CV averaged -14.14 cents (0.09-cent
+between-repeat range): a 70.69-cent grid/local disagreement. This is not a
+consistent profile residual to fit. The run stopped at `REVIEW - GRID/LOCAL
+DISAGREE` without trimming, because the recovery branch deferred to local
+refinement while the refinement gate then rejected the earlier disagreement.
+The control flow now prioritizes contiguous range recovery when an initial
+grid/local revisit disagrees by more than 10 cents. It still probes the newly
+cut boundary region and requires a subsequent full-range check. The precise
+cause of the discrepant high-register first reading remains unproven.

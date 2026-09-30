@@ -1,8 +1,8 @@
 //! Bipolar acquisition protocol used by the live firmware.
-//! Characterize the complete hardware-safe -5 V .. +8 V range, then retain
-//! the longest contiguous monotonic response as the calibration curve.
-//! Missing, unstable, flat and discontinuous regions are observations rather
-//! than reasons to abort the hardware sweep.
+//! Characterize the hardware-safe -5 V .. +8 V range, then retain the longest
+//! contiguous monotonic response as the calibration curve. A confirmed upper
+//! audio/detection limit may end the sweep early; missing points are never
+//! extrapolated. Other gaps remain observations rather than abort conditions.
 //! No candidate escapes until a final disabled/zero request is acknowledged.
 use crate::bipolar::{self, Density, Direction};
 use crate::oscillator_calibration::averaging::{Average, LOW_PITCH, MAX_SPAN};
@@ -12,6 +12,16 @@ use crate::oscillator_calibration::{
     Point, Route, MIN_PROFILE_POINTS,
 };
 const SUBAUDIO_PITCH: i32 = 1_550_000; // Approximately 20 Hz at A4=440.
+// millicents relative to MIDI 0, with A4=440 Hz. Use a little headroom below
+// 20 kHz before deciding that consecutive missing high-end points are final.
+const HIGH_EDGE_PITCH: i32 = 13_325_219; // 18 kHz
+const HIGH_EDGE_MISSES: u8 = 4;
+// A long silent upper gap is still searched through +8 V, but after four
+// consecutive misses we probe it at quarter-volt spacing. A later qualified
+// tone restores semitone spacing. An isolated <quarter-volt island cannot
+// provide the minimum one-octave calibration range by itself.
+const SILENT_GAP_MISSES: u8 = 4;
+const SILENT_GAP_STRIDE: usize = 3;
 
 // A shorter fragment is not a useful oscillator calibration profile.  At the
 // semitone acquisition density, thirteen contiguous points cover one octave
@@ -87,6 +97,15 @@ pub struct AcquisitionDiagnostic {
     pub needs_average: bool,
     pub average: crate::oscillator_calibration::averaging::Snapshot,
 }
+#[derive(Clone, Copy, Default)]
+pub struct SweepTiming {
+    pub measured_points: u16,
+    pub missing_points: u16,
+    pub measured_ms: u32,
+    pub missing_ms: u32,
+    pub averaged_points: u16,
+    pub slow_points: u16,
+}
 
 #[derive(Clone, Copy)]
 pub struct Curve {
@@ -156,12 +175,36 @@ impl Curve {
         if keep >= self.count {
             return;
         }
-        let old_count = self.count;
-        for dst in 0..keep {
-            let src = dst * (old_count - 1) / (keep - 1);
-            self.points[dst] = self.points[src];
+        // Remove the least informative interior anchors. A point's loss is
+        // the pitch error that a straight line between its neighbours would
+        // introduce. The small span penalty spreads removals across an
+        // otherwise straight response instead of hollowing out one end.
+        // This is bounded by the fixed 121-point array and runs only when a
+        // full-range sweep needs to reserve space for its remaining samples.
+        while self.count > keep {
+            let mut best = 1;
+            let mut best_loss = i64::MAX;
+            for i in 1..self.count - 1 {
+                let (a, b, c) = (self.points[i - 1], self.points[i], self.points[i + 1]);
+                let span = (c.microvolts - a.microvolts) as i64;
+                let predicted = a.millicents as i64
+                    + (b.microvolts - a.microvolts) as i64
+                        * (c.millicents as i64 - a.millicents as i64)
+                        / span;
+                let interpolation_loss = (b.millicents as i64 - predicted).abs();
+                // 250 millicents for a two-grid-step span. Wider gaps cost
+                // quadratically, keeping smooth regions reasonably sampled.
+                let grid_steps = (span + 41_667) / 83_333;
+                let coverage_loss = 250 * grid_steps * grid_steps / 4;
+                let loss = interpolation_loss + coverage_loss;
+                if loss < best_loss {
+                    best_loss = loss;
+                    best = i;
+                }
+            }
+            self.points.copy_within(best + 1..self.count, best);
+            self.count -= 1;
         }
-        self.count = keep;
     }
 }
 
@@ -193,6 +236,8 @@ pub struct Sweep {
     lower_flat_pitch: i32,
     lower_flat_points: u8,
     upper_flat_points: u8,
+    upper_missing_points: u8,
+    silent_gap_misses: u8,
     saw_qualified: bool,
     average: Average,
     needs_average: bool,
@@ -201,6 +246,7 @@ pub struct Sweep {
     unqualified_count: u16,
     period_family_corrections: u8,
     warnings: ScanWarnings,
+    timing: SweepTiming,
 }
 impl Sweep {
     /// Provisional ascending measurements for the UI. These are not a
@@ -218,11 +264,16 @@ impl Sweep {
             average: self.average.snapshot(),
         }
     }
+    pub fn timing(&self) -> SweepTiming { self.timing }
     pub fn failure_voltage(&self) -> Option<i32> {
         self.failure_voltage
     }
     pub fn tracking_failure(&self) -> Option<TrackingFailure> {
         self.tracking_failure
+    }
+    /// Only an actual qualified 0 V observation can anchor nominal fallback.
+    pub fn zero_pitch(&self) -> Option<i32> {
+        (self.measured_origin && self.origin_uv == 0).then_some(self.origin)
     }
     pub fn origin_error(&self) -> Option<i32> {
         self.origin_error
@@ -274,6 +325,8 @@ impl Sweep {
             lower_flat_pitch: 0,
             lower_flat_points: 0,
             upper_flat_points: 0,
+            upper_missing_points: 0,
+            silent_gap_misses: 0,
             saw_qualified: false,
             average: Average::new(),
             needs_average: false,
@@ -282,6 +335,7 @@ impl Sweep {
             unqualified_count: 0,
             period_family_corrections: 0,
             warnings: ScanWarnings::default(),
+            timing: SweepTiming::default(),
         })
     }
     fn voltage(&self) -> i32 {
@@ -314,12 +368,27 @@ impl Sweep {
     fn next_characterization_point(&mut self, now: u64) {
         self.finish_segment();
         if self.index < self.last_ascending_index() {
-            self.advance(Phase::Ascending, self.index + 1, now);
+            let step = if self.density == Density::Semitone
+                && self.silent_gap_misses >= SILENT_GAP_MISSES
+                && self.best.usable()
+            {
+                SILENT_GAP_STRIDE
+            } else {
+                1
+            };
+            self.advance(
+                Phase::Ascending,
+                self.index.saturating_add(step).min(self.last_ascending_index()),
+                now,
+            );
         } else {
-            self.finish_segment();
-            self.candidate = Some(self.best);
-            self.advance(Phase::CheckEnd, 0, now);
+            self.finish_characterization(now);
         }
+    }
+    fn finish_characterization(&mut self, now: u64) {
+        self.finish_segment();
+        self.candidate = Some(self.best);
+        self.advance(Phase::CheckEnd, 0, now);
     }
     fn restart_segment_with(&mut self, p: Point, now: u64) {
         self.finish_segment();
@@ -419,10 +488,15 @@ impl Sweep {
         // excursion and still have ample qualified evidence. Give only that
         // path a bounded 2.5s recovery margin; silence, high-frequency
         // instability and DAC acknowledgement retain their existing deadlines.
+        let near_origin = matches!(self.phase, Phase::CheckEnd)
+            && self.measured_origin
+            && self.saw_qualified
+            && self.origin_error.is_some_and(|error| error.unsigned_abs() <= self.origin_tolerance)
+            && self.count >= 2;
         let point_deadline = self
             .policy
             .point_timeout_ms
-            .saturating_add(if self.needs_average { 2500 } else { 0 });
+            .saturating_add(if self.needs_average || near_origin { 2500 } else { 0 });
         if matches!(self.state, State::Applying | State::Measuring { .. })
             && (now - self.point_started >= point_deadline || empty_leading || empty_origin)
         {
@@ -431,6 +505,9 @@ impl Sweep {
                 self.output_failed();
                 return true;
             }
+            self.timing.missing_points = self.timing.missing_points.saturating_add(1);
+            self.timing.missing_ms = self.timing.missing_ms.saturating_add(
+                now.saturating_sub(self.point_started).min(u32::MAX as u64) as u32);
             match self.phase {
                 Phase::Ascending => {
                     if self.saw_qualified {
@@ -438,7 +515,32 @@ impl Sweep {
                     } else {
                         self.warnings.missing = self.warnings.missing.saturating_add(1);
                     }
-                    self.next_characterization_point(now);
+                    // Four consecutive absent measurements immediately after
+                    // an established >=18 kHz response indicate that the
+                    // detector/oscillator has reached its high end. Do not
+                    // waste the rest of the +8 V sweep on silence. Gaps below
+                    // this threshold still get the complete search because
+                    // some oscillators resume tracking after a dead region.
+                    let high_edge = self.candidate.as_ref().is_some_and(|curve| {
+                        curve.usable()
+                            && curve.points().last().is_some_and(|p| p.millicents >= HIGH_EDGE_PITCH)
+                    }) || self.best.usable()
+                        && self.best.points().last().is_some_and(|p| p.millicents >= HIGH_EDGE_PITCH);
+                    self.upper_missing_points = if !self.saw_qualified && high_edge {
+                        self.upper_missing_points.saturating_add(1)
+                    } else {
+                        0
+                    };
+                    self.silent_gap_misses = if self.saw_qualified {
+                        0
+                    } else {
+                        self.silent_gap_misses.saturating_add(1)
+                    };
+                    if self.upper_missing_points >= HIGH_EDGE_MISSES {
+                        self.finish_characterization(now);
+                    } else {
+                        self.next_characterization_point(now);
+                    }
                 }
                 Phase::Origin => {
                     let n = bipolar::intervals(self.density);
@@ -454,8 +556,12 @@ impl Sweep {
                 {
                     self.restore(Outcome::Complete)
                 }
-                Phase::CheckEnd if self.origin_error.is_some() => {
+                Phase::CheckEnd if self.origin_error
+                    .is_some_and(|error| error.unsigned_abs() > self.origin_tolerance) => {
                     self.restore(Outcome::Failed(Failure::OriginChanged))
+                }
+                Phase::CheckEnd if self.origin_error.is_some() => {
+                    self.restore(Outcome::Failed(Failure::UnstablePitch))
                 }
                 Phase::CheckEnd => self.restore(Outcome::Failed(Failure::OriginLost)),
             }
@@ -479,6 +585,12 @@ impl Sweep {
         }
     }
     fn accept(&mut self, mut pitch: i32, now: u64) {
+        let elapsed = now.saturating_sub(self.point_started).min(u32::MAX as u64) as u32;
+        self.timing.measured_points = self.timing.measured_points.saturating_add(1);
+        self.timing.measured_ms = self.timing.measured_ms.saturating_add(elapsed);
+        self.timing.averaged_points = self.timing.averaged_points
+            .saturating_add((self.average.snapshot().count >= crate::oscillator_calibration::averaging::WINDOWS) as u16);
+        self.timing.slow_points = self.timing.slow_points.saturating_add((elapsed >= 1000) as u16);
         match self.phase {
             Phase::Origin => {
                 self.origin = pitch;
@@ -676,9 +788,9 @@ impl Sweep {
                 }
                 if self.candidate.as_ref().unwrap().count == bipolar::MAX_POINTS {
                     // Profile storage is capped at 121 points, while the full
-                    // semitone characterization has 157. Preserve both
-                    // endpoints and evenly thin earlier observations just
-                    // enough to retain every remaining upper-range point.
+                    // semitone characterization has 157. Preserve endpoints
+                    // and locally curved portions while reserving room for
+                    // every remaining upper-range sample.
                     let remaining = self.last_ascending_index() - self.index + 1;
                     self.candidate
                         .as_mut()
@@ -712,6 +824,8 @@ impl Sweep {
                     return;
                 }
                 self.tracking_failure = None;
+                self.upper_missing_points = 0;
+                self.silent_gap_misses = 0;
                 if uv == self.origin_uv {
                     self.origin = pitch;
                     self.measured_origin = true;
@@ -955,6 +1069,23 @@ mod tests {
         6000000 + (uv as i64 * 1200000 / 1000000) as i32
     }
     #[test]
+    fn repeated_high_edge_silence_ends_sweep_but_lower_gap_does_not() {
+        let response = |uv: i32| {
+            if (-1_000_000..=-666_667).contains(&uv) || uv > 5_000_000 {
+                None
+            } else {
+                Some(7_350_000 + (uv as i64 * 1_200_000 / 1_000_000) as i32)
+            }
+        };
+        let (outcome, curve, trace) = walk(Density::Semitone, response);
+        assert_eq!(outcome, Outcome::Complete);
+        let curve = curve.unwrap();
+        assert!(curve.points().last().unwrap().microvolts <= 5_000_000);
+        assert!(trace.iter().any(|&uv| uv > -666_667));
+        assert!(trace.iter().all(|&uv| uv < 5_500_000));
+        assert!(curve.limited_high);
+    }
+    #[test]
     fn clean_subaudio_pitch_uses_two_qualified_consistent_windows() {
         let mut s = make(Density::Semitone);
         let Request::Apply { token, .. } = s.poll(0, None) else {
@@ -1029,6 +1160,35 @@ mod tests {
             .points()
             .iter()
             .any(|p| (-1_000_000..=-500_000).contains(&p.microvolts)));
+    }
+    #[test]
+    fn extended_silent_gap_uses_sparse_probes_and_recovers_fine_spacing() {
+        let gap = 1_000_000..3_000_000;
+        let (outcome, curve, trace) = walk(Density::Semitone, |uv| {
+            if gap.contains(&uv) { None } else { Some(ideal(uv)) }
+        });
+        assert_eq!(outcome, Outcome::Complete);
+        let curve = curve.unwrap();
+        assert!(curve.points().iter().all(|p| !gap.contains(&p.microvolts)));
+        let gap_steps: Vec<_> = trace.windows(2)
+            .filter(|pair| gap.contains(&pair[0]) && gap.contains(&pair[1]))
+            .map(|pair| pair[1] - pair[0])
+            .collect();
+        assert!(gap_steps.iter().any(|&step| step >= 250_000));
+        let resume = trace.iter().position(|&uv| uv >= gap.end).unwrap();
+        assert!(trace[resume + 1] - trace[resume] < 100_000);
+        assert!(trace.iter().filter(|&&uv| gap.contains(&uv)).count() < 16);
+    }
+    #[test]
+    fn silent_upper_range_still_reaches_eight_volts_without_invented_points() {
+        let (outcome, curve, trace) = walk(Density::Semitone, |uv| {
+            (uv <= 2_500_000).then(|| ideal(uv))
+        });
+        assert_eq!(outcome, Outcome::Complete);
+        let curve = curve.unwrap();
+        assert!(curve.points().last().unwrap().microvolts <= 2_500_000);
+        assert_eq!(trace.iter().copied().max(), Some(8_000_000));
+        assert!(trace.iter().filter(|&&uv| uv > 2_500_000).count() < 30);
     }
     #[test]
     fn inaudible_zero_searches_upward_for_a_reference_then_scans_normally() {
@@ -1141,6 +1301,28 @@ mod tests {
             assert_eq!(trace.last(), Some(&0));
             assert!(core::mem::size_of::<Sweep>() < 2400);
         }
+    }
+    #[test]
+    fn capacity_retains_local_bends_and_spreads_loss_on_straight_regions() {
+        let mut curve = Curve::new();
+        for i in 0..bipolar::MAX_POINTS {
+            let uv = bipolar::full_voltage(Density::Semitone, i).unwrap();
+            let bend = if i == 55 { 8_000 } else { 0 };
+            assert!(curve.add(Point {
+                microvolts: uv,
+                millicents: ideal(uv) + bend,
+            }));
+        }
+        let endpoints = (curve.points()[0], *curve.points().last().unwrap());
+        let bend_voltage = curve.points()[55].microvolts;
+        curve.make_room_for_remaining(36);
+        assert_eq!(curve.count, bipolar::MAX_POINTS - 36);
+        assert_eq!(curve.points()[0], endpoints.0);
+        assert_eq!(*curve.points().last().unwrap(), endpoints.1);
+        assert!(curve.points().iter().any(|p| p.microvolts == bend_voltage));
+        assert!(curve.points().windows(2).all(|p| {
+            p[1].microvolts - p[0].microvolts <= 166_750
+        }));
     }
     #[test]
     fn boundaries_are_independent_and_keep_only_contiguous_measured_points() {
@@ -1349,6 +1531,39 @@ mod tests {
         });
         assert_eq!(o, Outcome::Failed(Failure::NotTracking));
         assert!(c.is_none());
+    }
+    #[test]
+    fn near_zero_recheck_gets_a_bounded_margin_and_an_accurate_failure_label() {
+        let mut sweep = make(Density::Semitone);
+        sweep.phase = Phase::CheckEnd;
+        sweep.state = State::Measuring { since: 0 };
+        sweep.point_started = 0;
+        sweep.measured_origin = true;
+        sweep.saw_qualified = true;
+        sweep.origin_error = Some(-880); // within the 5-cent test tolerance
+        sweep.count = 2; // nearly enough consecutive settled readings
+        assert_eq!(sweep.poll(20, None), Request::Wait);
+        assert_eq!(sweep.poll(2519, None), Request::Wait);
+        let Request::Disable { token, .. } = sweep.poll(2520, None) else {
+            panic!("near-zero margin must remain finite");
+        };
+        assert!(sweep.acknowledge(token, 2520));
+        assert_eq!(sweep.poll(2521, None),
+            Request::Finished(Outcome::Failed(Failure::UnstablePitch)));
+
+        let mut drifted = make(Density::Semitone);
+        drifted.phase = Phase::CheckEnd;
+        drifted.state = State::Measuring { since: 0 };
+        drifted.point_started = 0;
+        drifted.measured_origin = true;
+        drifted.saw_qualified = true;
+        drifted.origin_error = Some(6000);
+        let Request::Disable { token, .. } = drifted.poll(20, None) else {
+            panic!("out-of-tolerance origin must not get extra time");
+        };
+        assert!(drifted.acknowledge(token, 20));
+        assert_eq!(drifted.poll(21, None),
+            Request::Finished(Outcome::Failed(Failure::OriginChanged)));
     }
     #[test]
     fn sub_octave_detector_island_never_reaches_verification() {

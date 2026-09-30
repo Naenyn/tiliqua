@@ -53,8 +53,8 @@ pub struct Point {
 }
 
 /// Result of the independent replay check stored alongside a calibration
-/// profile.  `Unverified` is reserved for legacy records; `Unsafe` is never
-/// eligible for acceptance or playback.
+/// profile. `Unverified` is reserved for legacy records. `Unsafe` means the
+/// automatic quality target was missed, not that a completed curve is unusable.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 #[repr(u8)]
 pub enum CalibrationGrade {
@@ -64,6 +64,7 @@ pub enum CalibrationGrade {
     Musical = 2,
     Character = 3,
     Unsafe = 4,
+    UserAccepted = 5,
 }
 
 impl CalibrationGrade {
@@ -74,6 +75,7 @@ impl CalibrationGrade {
             2 => Self::Musical,
             3 => Self::Character,
             4 => Self::Unsafe,
+            5 => Self::UserAccepted,
             _ => return None,
         })
     }
@@ -85,11 +87,12 @@ impl CalibrationGrade {
             Self::Musical => "MUSICAL",
             Self::Character => "CHARACTER",
             Self::Unsafe => "UNSAFE",
+            Self::UserAccepted => "USER-KEPT",
         }
     }
 
     pub fn acceptable(self) -> bool {
-        matches!(self, Self::Precision | Self::Musical | Self::Character)
+        matches!(self, Self::Precision | Self::Musical | Self::Character | Self::UserAccepted)
     }
 }
 
@@ -111,6 +114,21 @@ impl CalibrationQuality {
 
     pub fn stability_cents(self) -> f32 {
         self.stability_millicents as f32 / 1000.0
+    }
+
+    /// Advisory score: 100 at zero error, losing one point per cent of the
+    /// larger of worst replay error and repeatability span. One semitone or
+    /// more is zero. It is not a probability or an acceptance threshold.
+    pub fn score_percent(self) -> Option<u8> {
+        if matches!(self.grade, CalibrationGrade::Unverified)
+            || (self.grade == CalibrationGrade::Unsafe
+                && self.worst_millicents == 0 && self.stability_millicents == 0)
+        {
+            return None;
+        }
+        let cents = self.worst_millicents.max(self.stability_millicents)
+            .saturating_add(500) / 1000;
+        Some(100u32.saturating_sub(cents).min(100) as u8)
     }
 }
 
@@ -182,6 +200,8 @@ impl Route {
 /// separate: future recall must validate all points rather than trust raw bytes.
 #[derive(Clone)]
 pub struct Profile {
+    // i32::MIN means no qualified 0 V observation (never extrapolate one).
+    zero_pitch: i32,
     pub limited_low: bool,
     pub limited_high: bool,
     name: [u8; NAME_BYTES],
@@ -200,6 +220,7 @@ impl Profile {
             return Err(Error::InvalidLimits);
         }
         let mut profile = Self {
+            zero_pitch: i32::MIN,
             limited_low: false,
             limited_high: false,
             name: [0; NAME_BYTES],
@@ -272,6 +293,22 @@ impl Profile {
         remove
     }
 
+    pub fn zero_pitch(&self) -> Option<i32> {
+        (self.zero_pitch != i32::MIN).then_some(self.zero_pitch)
+    }
+    pub fn set_zero_pitch(&mut self, pitch: Option<i32>) -> Result<(), Error> {
+        if pitch.is_some_and(|p| !(0..=12_800_000).contains(&p)) {
+            return Err(Error::PitchOutsideRange);
+        }
+        self.zero_pitch = pitch.unwrap_or(i32::MIN);
+        Ok(())
+    }
+    /// Nearest concert-pitch note, not the middle of the usable curve.
+    pub fn natural_note(&self) -> Option<u8> {
+        let note = (self.zero_pitch()? as i64 + 50_000).div_euclid(100_000);
+        (12..=108).contains(&note).then_some(note as u8)
+    }
+
     pub fn suggested_note(&self) -> Option<u8> {
         let points = self.points();
         if points.len() < 2 {
@@ -304,6 +341,9 @@ impl Profile {
         }
         self.points[self.count as usize] = point;
         self.count += 1;
+        if point.microvolts == 0 && (0..=12_800_000).contains(&point.millicents) {
+            self.zero_pitch = point.millicents;
+        }
         Ok(())
     }
 

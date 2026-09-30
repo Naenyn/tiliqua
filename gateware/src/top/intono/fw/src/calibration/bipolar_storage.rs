@@ -65,7 +65,7 @@ pub fn decode(data: &[u8]) -> Option<Record> {
         return None;
     }
     let version = data[4];
-    if version != 1 && version != 2 && version != 3 && version != 4 {
+    if version != 1 && version != 2 && version != 3 && version != 4 && version != 5 {
         return None;
     }
     let count = data[9] as usize;
@@ -76,14 +76,18 @@ pub fn decode(data: &[u8]) -> Option<Record> {
         bipolar::MAX_POINTS
     })
         .contains(&count)
-        || data.len() != if version == 4 { 52 + 8 * count } else { 40 + 8 * count }
+        || data.len() != if version >= 4 { 52 + 8 * count } else { 40 + 8 * count }
         || !(1..=24).contains(&name_len)
         || !(12..=108).contains(&data[7])
         || (version < 4 && data[11] != 0)
-        || (version == 4 && data[11] > 4)
+        || (version >= 4 && data[11] > 5)
         || data[10] > if version == 1 { 0 } else { 3 }
         || data[12 + name_len..36].iter().any(|b| *b != 0)
         || (version == 4 && data[44..48].iter().any(|b| *b != 0))
+        || (version == 5 && {
+            let pitch = i32::from_le_bytes(data[44..48].try_into().ok()?);
+            pitch != i32::MIN && !(0..=12_800_000).contains(&pitch)
+        })
     {
         return None;
     }
@@ -99,7 +103,7 @@ pub fn decode(data: &[u8]) -> Option<Record> {
     let mut curve = Curve::new();
     curve.limited_low = data[10] & 1 != 0;
     curve.limited_high = data[10] & 2 != 0;
-    let points_start = if version == 4 { 48 } else { 36 };
+    let points_start = if version >= 4 { 48 } else { 36 };
     for i in 0..count {
         let at = points_start + i * 8;
         let p = Point {

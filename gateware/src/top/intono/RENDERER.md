@@ -20,12 +20,36 @@ below are retained as evidence of the builds that produced them.
 
 The CAL view now uses the retained framebuffer for a bounded response plot,
 with text overlaid for patch routing, profile range/quality, and the existing
-scan/review actions. The horizontal axis is actual output CV; the vertical
-axis is measured pitch. A guide starts at the first measured point and rises
-at 1 V/oct. The measured polyline uses only stored points, with no implied
-extrapolation or fabricated correction series. Profile changes invalidate the
-cached plot in both background banks; the previous graphical scene stays
-blanked while a replacement is prepared. PLAY and QUANTIZER retain their text
+scan/review actions. The horizontal axis is actual applied V/oct voltage, with
+integer-volt ticks. During acquisition it spans the characterized voltage
+limits from `calibration::bipolar`; after a quality-acceptable candidate is
+found it zooms to that measured range with 5% padding. An unsafe candidate
+retains the full sweep view. The dashed rising diagonal denotes the ideal
+1 V/oct pitch rise in the default **PITCH** graph. Here the Y-axis is literal
+detected pitch in cents (A4 = 6900c), so the vertical distance between a dot
+and the diagonal is the tracking error; small errors can be subpixel at a
+many-octave span. A narrow strip below the PITCH plot marks each qualified
+adjacent interval by its *local* departure from 1 V/oct: cyan below 50,
+yellow from 50 to 200, and red at or above 200 cents per volt. Unmeasured
+intervals remain dim rather than being interpolated. This is raw oscillator
+tracking, not the residual error after applying a correction profile.
+The CAL menu's **GRAPH** option switches to **ERROR**, where
+the same measurements have a linear, symmetric cents-error Y-axis and a
+horizontal dashed 0c ideal line. Its scale expands through readable steps
+from ±20c to fit the measured curve with headroom, so broad slope errors do
+not masquerade as a flat +20c plateau. Both views anchor the ideal response to the first qualified
+measurement, so arbitrary oscillator tuning offset does not count as
+tracking error.
+The measured polyline crosses only adjacent dots at most 125 mV apart, leaving
+unmeasured intervals blank. The ERROR view clips only beyond the largest
+supported axis span. A graph toggle redraws
+both cached banks, including the active provisional trace, from the same
+stored points; neither acquisition nor profile storage changes.
+The live sweep keeps fixed bounds so new points do not rescale older pixels.
+The polyline uses only stored points, with no implied extrapolation or
+fabricated correction series. Profile changes invalidate the
+cached plot in both background banks; the previously published CAL background
+stays visible while its replacement is prepared. PLAY and QUANTIZER retain their text
 views for now. This is a visual first pass, not a change to
 calibration acquisition, acceptance, or flash storage.
 
@@ -39,9 +63,9 @@ not show the legacy text layout as an intermediate screen.
 A later hardware photo still showed the old text view briefly: a stale
 tracking-failure record selected its renderer whenever the background was
 rebuilding. That renderer is now removed. CAL keeps the graphical layout,
-presents a live point-count progress bar and compact failure diagnostics, and
-blanks the plot until the new response is ready. The progress bar reflects
-acquisition count; it is not yet a live measured-point plot.
+presents a live point-count progress bar and compact failure diagnostics. The
+progress bar reflects acquisition count; qualified sweep anchors also appear
+on the live plot as they arrive.
 
 The intended navigation is four primary utility surfaces: TUNER, CAL, QUANT,
 and ROUTES. CAL owns scan, automatic check/improve, review, and quality display.
@@ -71,6 +95,25 @@ returns to the normal profile renderer and its quality grade. This changes
 only visualization, not the measured data, acceptance policy, or flash format.
 It requires a hardware scan to check redraw cadence and tearing; none was
 flashed while the rack was off.
+
+The first hardware check found an empty CAL page whose grid and circular edge
+appeared only after entering a scan. Preparing the empty CAL background in the
+unused bank at startup was insufficient: the tuner idle path immediately
+replaced it with the linear tuner background. The idle path now preserves CAL
+on that bank while Spiral is visible, so the first CAL transition can swap a
+complete frame. A profile redraw retains the previous visible background
+instead of blanking it. Hardware confirmed that the empty graph and outer
+circle now appear immediately.
+
+The next hardware run failed before collecting a low-voltage pitch sample.
+Serial reported `DAC FAULT STATUS_RAW=0x203` at -4.91675 V. That encoded
+voltage is inside the gateware's -5..+8 V guard. History review shows the
+repository rename changed labels and build-environment names but not the DAC
+command path; the live-trace commit added an unnecessary two-bank graph
+invalidation at the start of an empty scan. Avoid that redraw when there are
+no old pixels, and renew the existing output command before optional serial
+and graphics work. Retain the 100 ms hardware watchdog and the explicit
+failure diagnostic. A follow-up hardware run must confirm acquisition.
 
 ### Complete retained graphics fixtures (2026-09-09)
 
