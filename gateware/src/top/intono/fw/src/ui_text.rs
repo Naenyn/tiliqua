@@ -69,6 +69,13 @@ pub fn field(
     align: Align,
     mut emit: impl FnMut(u16, u16),
 ) {
+    field_emit(column,row,width,value,style,align,&mut emit);
+}
+// One shared glyph loop avoids duplicating the renderer for each caller's
+// emission closure. The bounded drawing behavior stays identical.
+#[inline(never)]
+fn field_emit(column:usize,row:usize,width:usize,value:&str,style:Style,align:Align,
+    emit:&mut dyn FnMut(u16,u16)) {
     if column >= COLUMNS || row >= ROWS {
         return;
     }
@@ -76,7 +83,8 @@ pub fn field(
     let count = value.chars().take(width).count();
     let padding = match align {
         Align::Left => 0,
-        Align::Center => (width - count) / 2,
+        // Glyph ink is narrower than its cell; round spare half-cells right.
+        Align::Center => (width - count + 1) / 2,
         Align::Right => width - count,
     };
     let mut characters = value.chars().take(count);
@@ -115,10 +123,87 @@ pub fn text(column: usize, row: usize, value: &str, style: Style, mut emit: impl
     }
 }
 
+/// Keep the established 30-column control geometry while packing glyphs
+/// into 40 native cells (12px pitch rather than 16px). Storage stays 45-wide.
+pub const UX_COLUMNS: usize = 43;
+pub const fn ux_column(column: usize) -> usize { (column * 4 + 1) / 3 }
+pub fn ux_field(column: usize, row: usize, width: usize, value: &str,
+    style: Style, align: Align, emit: impl FnMut(u16,u16)) {
+    if column >= 32 || row >= 22 { return; }
+    let start = ux_column(column);
+    let end = ux_column((column + width).min(32));
+    field(start,row,end-start,value,style,align,emit);
+}
+/// A label/value pair occupies exactly one row, or emits nothing if it cannot fit.
+#[inline(never)]
+pub fn inline_field(column:usize,row:usize,width:usize,label:&str,value:&str,
+    style:Style,mut emit:impl FnMut(u16,u16)) -> bool {
+    if column>=32 || row>=22 {return false;}
+    let start=ux_column(column);let end=ux_column((column+width).min(32));
+    let count=label.chars().count()+2+value.chars().count();
+    if count>end-start {return false;}
+    let padding=(end-start-count+1)/2;
+    let mut chars=label.chars().chain(": ".chars()).chain(value.chars());
+    for offset in 0..end-start {
+        let character=if offset>=padding && offset<padding+count {
+            chars.next().unwrap_or(' ')
+        } else {' '};
+        emit((row*COLUMNS+start+offset) as u16,cell(character,style));
+    }
+    true
+}
+pub fn ux_text(column: usize, row: usize, value: &str, style: Style,
+    emit: impl FnMut(u16,u16)) {
+    if column >= 32 || row >= 22 { return; }
+    let start=ux_column(column);
+    let mut emit=emit;
+    for (offset,character) in value.chars().take(UX_COLUMNS-start).enumerate() {
+        emit((row*COLUMNS+start+offset) as u16,cell(character,style));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn compact_character_pitch_preserves_control_regions_and_centering() {
+        let mut cells=Vec::new();
+        ux_field(11,5,8,"INTONO",DEFAULT,Align::Center,|a,c|cells.push((a,c)));
+        assert_eq!(cells.first().unwrap().0,5*45+15);
+        assert_eq!(cells.last().unwrap().0,5*45+24);
+        let ink:Vec<_>=cells.iter().filter(|(_,c)|c&127!=0).collect();
+        assert_eq!(ink.first().unwrap().0,5*45+17);
+        assert_eq!(ink.last().unwrap().0,5*45+22);
+        assert_eq!(ux_column(32),UX_COLUMNS);
+        ux_text(32,0,"X",DEFAULT,|_,_|panic!("outside viewport"));
+        ux_field(29,21,99,"LONG",DEFAULT,Align::Left,|a,_|assert!(a%45<43));
+    }
 
+    #[test]
+    fn centered_labels_balance_native_glyph_footprints() {
+        for (column,width,label) in [(2,9,"TUNER"),(11,9,"CAL"),(20,9,"SCALES"),
+            (29,9,"ROUTES"),(11,9,"OPTIONS"),(23,5,"HELP"),(5,16,"CLEAR PROFILE")] {
+            let mut ink=Vec::new();
+            field(column,3,width,label,DEFAULT,Align::Center,|a,c| {
+                if c&127!=0 {ink.push(a as i32%45);}
+            });
+            let text_center_twice=ink[0]*12+(ink.last().unwrap()*12+9);
+            let field_center_twice=(column*24+width*12) as i32;
+            assert!((text_center_twice-field_center_twice).abs()<=9,"{label}");
+        }
+    }
+
+    #[test]
+    fn inline_fields_keep_whole_values_on_one_row_or_emit_nothing() {
+        let mut cells=Vec::new();
+        assert!(inline_field(16,6,14,">TRANSPOSE","-12 st",DEFAULT,|a,c|cells.push((a,c))));
+        assert!(cells.iter().all(|(a,_)|a/45==6));
+        let label:String=cells.iter().map(|(_,c)|((c&127) as u8+32) as char).collect();
+        assert_eq!(label.trim(),">TRANSPOSE: -12 st");
+        assert!(!inline_field(4,5,10,"PROFILE","TWENTY-FOUR LETTER NAME",DEFAULT,|_,_|panic!()));
+        assert!(!inline_field(30,5,10,"X","Y",DEFAULT,|_,_|panic!()));
+        assert!(!inline_field(4,22,10,"X","Y",DEFAULT,|_,_|panic!()));
+    }
     #[test]
     fn sparse_clear_preserves_bank_independence_and_shorter_fields() {
         assert_eq!(core::mem::size_of::<Occupied>(), 256);

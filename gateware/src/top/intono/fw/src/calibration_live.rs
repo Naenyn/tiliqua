@@ -221,14 +221,13 @@ impl Live {
     /// Keep an already acknowledged output alive before optional serial and
     /// framebuffer work. The sweep state machine still owns all transitions;
     /// this repeats only its exact current command and never starts output.
+    pub fn output_command(&self) -> u32 {
+        if self.verifying { self.verify_command }
+        else if self.sweep.is_some() { self.sweep_command }
+        else { 0 }
+    }
     pub fn renew_output(&self, tuner: &pac::TUNER_PERIPH) {
-        let command = if self.verifying {
-            self.verify_command
-        } else if self.sweep.is_some() {
-            self.sweep_command
-        } else {
-            0
-        };
+        let command = self.output_command();
         if command & (1 << 18) != 0 {
             tuner.cal_command().write(|w| unsafe { w.value().bits(command) });
         }
@@ -339,6 +338,11 @@ impl Live {
                     && s.local.as_ref().is_some_and(|c| c.tested == 9)
             })
     }
+    /// Read-only UI hint; acquisition decisions and timeouts remain in Sweep.
+    pub fn waiting_for_tone(&self) -> bool {
+        self.sweep.as_ref().is_some_and(|s| s.acquisition_diagnostic().qualified == 0)
+    }
+
     pub fn acquiring_points(&self) -> Option<&[crate::oscillator_calibration::Point]> {
         self.sweep.as_ref().map(Sweep::progress_points)
     }

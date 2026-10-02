@@ -19,13 +19,17 @@ from tiliqua.video.types import Pixel, ScanPixel
 
 try:
     from .font_9x15 import MENU_FONT_BOLD, MENU_FONT_NORMAL
+    from .font_7x10 import UX_FONT_BOLD, UX_FONT_NORMAL
     from .renderer import FrameExchange, Panel, TextCompositor, TextPlane
     from .sprites import ScanlineSprites
+    from .ui_shapes import RoundedBorders
     from .background import SceneExchange
 except ImportError:
     from font_9x15 import MENU_FONT_BOLD, MENU_FONT_NORMAL
+    from font_7x10 import UX_FONT_BOLD, UX_FONT_NORMAL
     from renderer import FrameExchange, Panel, TextCompositor, TextPlane
     from sprites import ScanlineSprites
+    from ui_shapes import RoundedBorders
     from background import SceneExchange
 
 
@@ -87,7 +91,7 @@ FONT_INIT = [row for char in FONT_CHARS for row in (*FONT[char], 0)]
 class IntonoOverlay(wiring.Component):
     FRAME_FIELDS = ("marker_x", "marker_y", "marker_hue", "marker_lens_base",
                     "marker_lens_bank", "marker_valid", "marker_visualizer", "menu_active",
-                    "marker1", "marker2", "marker3", "blank_background")
+                    "marker1", "marker2", "marker3", "blank_background", "keyboard_mask", "keyboard_mask_b", "keyboard_enable", "keyboard_second", "ui_surface", "ui_focus", "ui_ready")
     LATENCY = 4 + TextCompositor.LATENCY
     PANEL_W = 720
     PANEL_H = 720
@@ -96,6 +100,11 @@ class IntonoOverlay(wiring.Component):
     CELL = 16
     MAIN_TEXT_X = 90
     MAIN_TEXT_PITCH = 12
+    UX_TEXT_X = 120
+    UX_COLUMNS = 43
+    UX_ROWS = 22
+    UX_PITCH_X = 12
+    UX_PITCH_Y = 32
 
     # OSCIO/SONORO text placement, with enough left padding for SETTINGS.
     # Grow leftward only: text, divider and the right edge stay in place.
@@ -110,16 +119,18 @@ class IntonoOverlay(wiring.Component):
     MENU_ROW_PITCH = 18
 
     def __init__(self, tile_memory, menu_memory, *, h_active=720,
-                 rotate_left=False, double_buffered=False, ascii_text=False):
+                 rotate_left=False, double_buffered=False, ascii_text=False, large_text=False):
         self.tile_memory = tile_memory
         self.menu_memory = menu_memory
         self.x_offset = 0 if rotate_left else max(0, (h_active - self.PANEL_W) // 2)
         self.rotate_left = rotate_left
         self.double_buffered = double_buffered
         self.ascii_text = ascii_text
+        self.large_text = large_text
         super().__init__({
             "i": In(ScanPixel),
             "o": Out(ScanPixel),
+            "background_errors": Out(8),
             "marker_x": In(12),
             "marker_y": In(12),
             "marker_hue": In(4),
@@ -130,6 +141,8 @@ class IntonoOverlay(wiring.Component):
             "menu_active": In(1),
             "front_bank": In(1),
             "blank_background": In(1),
+            "keyboard_mask": In(12), "keyboard_mask_b": In(12), "keyboard_enable": In(1), "keyboard_second": In(1),
+            "ui_surface": In(4), "ui_focus": In(5), "ui_ready": In(1, init=1),
             # Additional arcs: x10/y10/orientation5/hue4/valid1. Slot zero
             # retains the legacy ABI and its optional visualizer halo.
             "marker1": In(30), "marker2": In(30), "marker3": In(30),
@@ -161,10 +174,52 @@ class IntonoOverlay(wiring.Component):
         else:
             m.d.comb += [x.eq(self.i.x - self.x_offset), y.eq(self.i.y)]
         active = self.i.de & (x >= 0) & (x < 720) & (y >= 0) & (y < 720)
+        if self.large_text and self.double_buffered:
+            # Diagnostic only: retained canvases use cyan guides, white loading
+            # dots, cream traces, red/yellow tracking, or E/F keyboard tags.
+            # No retained canvas draws outside the logical 720-pixel panel.
+            raw = self.i.pixel.as_value()
+            known = ((raw == 0) | (self.i.pixel.color == 9) |
+                     (raw == 0xFF) | (raw == 0xDB) | (raw == 0xD2) |
+                     (raw == 0xD0) |
+                     ((self.i.pixel.intensity >= 14) & (self.i.pixel.color < 12)))
+            bad = self.i.de & ((~known) | ((~active) & (raw != 0)))
+            # Sticky evidence is enough to distinguish an incoming bad sample
+            # from a later output fault; avoid another multi-bit counter/CDC.
+            seen, crossed = Signal(), Signal()
+            with m.If(bad):
+                m.d.dvi += seen.eq(1)
+            m.submodules.background_error_ff = FFSynchronizer(seen, crossed, o_domain="sync")
+            m.d.comb += self.background_errors[0].eq(crossed)
+
         xs = [x] + [Signal.like(x) for _ in range(4)]
         ys = [y] + [Signal.like(y) for _ in range(4)]
         for n in range(4):
             m.d.dvi += [xs[n+1].eq(xs[n]), ys[n+1].eq(ys[n])]
+
+        # Cached key interiors use E0..EB for A and F0..FB for B (C..B). Decode
+        # membership rather than re-testing twelve rectangles per pixel.
+        # The published enable prevents tags affecting any other page.
+        if self.large_text:
+            note = self.i.pixel.color
+            tagged = ((self.i.pixel.intensity == 14) | (self.i.pixel.intensity == 15)) & (note < 12)
+            black = (note == 1) | (note == 3) | (note == 6) | (note == 8) | (note == 10)
+            mask = Mux(self.i.pixel.intensity == 15, state["keyboard_mask_b"], state["keyboard_mask"])
+            selected = mask.bit_select(note,1)
+            fill = active & state["keyboard_enable"] & tagged
+            # Solid fills keep natural and accidental keys visually distinct.
+            fill_color = Mux(selected,Mux(black,0x79,0xA9),Mux(black,0x09,0x39))
+        else:
+            fill, fill_color = Const(0), Const(0,8)
+        fills = [fill] + [Signal() for _ in range(4)]
+        fill_colors = [fill_color] + [Signal(8) for _ in range(4)]
+        for n in range(4):
+            m.d.dvi += [fills[n+1].eq(fills[n]), fill_colors[n+1].eq(fill_colors[n])]
+
+        if self.large_text:
+            m.submodules.borders = borders = RoundedBorders()
+            m.d.comb += [borders.x.eq(x),borders.y.eq(y),borders.active.eq(active & state["ui_ready"]),
+                        borders.surface.eq(state["ui_surface"]),borders.focus.eq(state["ui_focus"])]
 
         # One row-wide atlas, fetched in blanking rather than once per pixel.
         # Rotate bitmap samples as well as marker positions for the round panel.
@@ -256,6 +311,13 @@ class IntonoOverlay(wiring.Component):
         with m.If(intensity4 != 0):
             m.d.comb += [marked.pixel.color.eq(hue4), marked.pixel.intensity.eq(intensity4)]
 
+        with m.If(fills[4]):
+            m.d.comb += marked.pixel.eq(fill_colors[4])
+
+        if self.large_text:
+            with m.If(borders.hit):
+                m.d.comb += marked.pixel.eq(borders.color)
+
         # One atlas and one glyph fetch for BOTH text layers. Legacy tuner
         # lettering fits in unused normal-font addresses; the menu keeps the
         # exact normal/bold 9x15 assets from OSCIO/SONORO.
@@ -266,7 +328,11 @@ class IntonoOverlay(wiring.Component):
                     atlas[row | (glyph << 4) | (bold << 11)] = font[glyph * 15 + row]
         atlas[1536:1536 + len(FONT_INIT)] = FONT_INIT
         planes = [
-            (TextPlane(self.MAIN_TEXT_X, 0, self.COLS, self.ROWS,
+            (TextPlane(self.UX_TEXT_X, 0, self.UX_COLUMNS, self.UX_ROWS,
+                       pitch_x=self.UX_PITCH_X, pitch_y=self.UX_PITCH_Y,
+                       scale=1, cell_color=True, row_stride=self.COLS, bank_stride=2048)
+             if self.large_text else
+             TextPlane(self.MAIN_TEXT_X, 0, self.COLS, self.ROWS,
                        pitch_x=self.MAIN_TEXT_PITCH, cell_color=True) if self.ascii_text else
              TextPlane(0, 0, self.COLS, self.ROWS, glyph_width=5, glyph_height=7,
                        scale=2, row_bits=3, glyph_bits=6, font_base=1536, bold_bit=None)),
@@ -275,15 +341,33 @@ class IntonoOverlay(wiring.Component):
         ]
         panels = [None, Panel(self.MENU_X, self.MENU_Y, self.MENU_W, self.MENU_H,
                               rule_x=85, rule_y=8, rule_height=54)]
+        # Visible UX controls replace the old popup. Omit its decoder and
+        # character fetch entirely in production; retain the legacy adapter.
+        memories = [self.tile_memory, self.menu_memory]
+        if self.large_text:
+            planes, panels, memories = planes[:1], panels[:1], memories[:1]
         m.submodules.text = text = TextCompositor(
-            [self.tile_memory, self.menu_memory], planes, atlas, panels=panels,
+            memories, planes, atlas, panels=panels,
             double_buffered=self.double_buffered)
         m.d.comb += [
             text.i.eq(marked), text.x.eq(xs[4]), text.y.eq(ys[4]),
-            text.enable.eq(Cat(Const(1), state["menu_active"])),
+            text.enable.eq(Const(1) if self.large_text else Cat(Const(1), state["menu_active"])),
             text.bank.eq(self.front_bank),
             self.o.eq(text.o),
         ]
+        if self.large_text and self.double_buffered:
+            # Independently watch the completed overlay. Reuse the input
+            # panel predicate, delayed by the complete overlay latency, rather
+            # than duplicating wide output-coordinate comparisons.
+            panel_valid = [active] + [Signal() for _ in range(self.LATENCY)]
+            for previous, following in zip(panel_valid, panel_valid[1:]):
+                m.d.dvi += following.eq(previous)
+            output_seen, output_crossed = Signal(), Signal()
+            with m.If(text.o.de & ~panel_valid[-1] & (text.o.pixel.as_value() != 0)):
+                m.d.dvi += output_seen.eq(1)
+            m.submodules.output_error_ff = FFSynchronizer(
+                output_seen, output_crossed, o_domain="sync")
+            m.d.comb += self.background_errors[1].eq(output_crossed)
         return m
 
 class Peripheral(wiring.Component):
@@ -315,6 +399,8 @@ class Peripheral(wiring.Component):
         back_bank: csr.Field(csr.action.R, unsigned(1))
         swap_background: csr.Field(csr.action.W, unsigned(1))
         background_back: csr.Field(csr.action.R, unsigned(1))
+        # 0: mutable CAL banks, 1: ARC, 2: LINEAR, 3: two keyboards, 4: circle, 5: centered keyboard.
+        background_source: csr.Field(csr.action.W, unsigned(3))
 
     class ExtraMarker(csr.Register, access="w"):
         x: csr.Field(csr.action.W, unsigned(10))
@@ -325,8 +411,21 @@ class Peripheral(wiring.Component):
 
     class Backdrop(csr.Register, access="w"):
         blank: csr.Field(csr.action.W, unsigned(1))
+        keyboard_mask: csr.Field(csr.action.W, unsigned(12))
+        keyboard_enable: csr.Field(csr.action.W, unsigned(1))
+        ui_surface: csr.Field(csr.action.W, unsigned(4))
+        ui_focus: csr.Field(csr.action.W, unsigned(5))
+        ui_ready: csr.Field(csr.action.W, unsigned(1))
+        keyboard_second: csr.Field(csr.action.W, unsigned(1))
 
-    def __init__(self, *, h_active=1280, rotate_left=False, scene_layout=None):
+    class KeyboardB(csr.Register, access="w"):
+        mask: csr.Field(csr.action.W, unsigned(12))
+
+    class VideoHealth(csr.Register, access="r"):
+        gaps: csr.Field(csr.action.R, unsigned(8))
+        background_errors: csr.Field(csr.action.R, unsigned(8))
+
+    def __init__(self, *, h_active=1280, rotate_left=False, scene_layout=None, large_text=False):
         self.scene_layout = scene_layout
         self.tile_memory = Memory(
             shape=unsigned(16), depth=4096, init=[])
@@ -337,14 +436,14 @@ class Peripheral(wiring.Component):
         self.overlay = IntonoOverlay(
             self.tile_memory, self.menu_memory,
             h_active=h_active, rotate_left=rotate_left, double_buffered=True,
-            ascii_text=True)
+            ascii_text=True, large_text=large_text)
         self.staging = {name: Signal.like(getattr(self.overlay, name))
                         for name in IntonoOverlay.FRAME_FIELDS}
         payload_width = sum(len(field) for field in self.staging.values())
         self.exchange = (FrameExchange(payload_width) if scene_layout is None else
                          SceneExchange(scene_layout, payload_width))
 
-        regs = csr.Builder(addr_width=5, data_width=8)
+        regs = csr.Builder(addr_width=6, data_width=8)
         self._marker = regs.add("marker", self.Marker(), offset=0x0)
         self._tile_write = regs.add("tile_write", self.TileWrite(), offset=0x4)
         self._frame = regs.add("frame", self.Frame(), offset=0x8)
@@ -354,14 +453,19 @@ class Peripheral(wiring.Component):
                                        offset=0x10 + (slot - 1) * 4)
                                for slot in range(1, 4)]
         self._backdrop = regs.add("backdrop", self.Backdrop(), offset=0x1c)
+        self._keyboard_b = regs.add("keyboard_b", self.KeyboardB(), offset=0x20)
+        self._video_health = regs.add("video_health", self.VideoHealth(), offset=0x24)
         self._bridge = csr.Bridge(regs.as_memory_map())
         super().__init__({
             "bus": In(csr.Signature(addr_width=regs.addr_width, data_width=regs.data_width)),
+            "scanout_gaps": In(16),
         })
         self.bus.memory_map = self._bridge.bus.memory_map
 
     def elaborate(self, platform):
         m = Module()
+        m.d.comb += [self._video_health.f.gaps.r_data.eq(self.scanout_gaps[:8]),
+                     self._video_health.f.background_errors.r_data.eq(self.overlay.background_errors)]
         m.submodules.bridge = self._bridge
         m.submodules.overlay = self.overlay
         m.submodules.tile_memory = self.tile_memory
@@ -372,11 +476,21 @@ class Peripheral(wiring.Component):
         else:
             # SceneExchange is owned by the DMA, which supplies its acquire
             # event. This peripheral supplies CPU staging and visible boundary.
-            m.d.comb += [exchange.swap_background.eq(self._frame.f.swap_background.w_data),
+            m.d.comb += [exchange.static_source.eq(self._frame.f.background_source.w_data),
+                        exchange.swap_background.eq(self._frame.f.swap_background.w_data),
                         self._frame.f.background_back.r_data.eq(exchange.draw_base != 0)]
         wiring.connect(m, wiring.flipped(self.bus), self._bridge.bus)
         with m.If(self._backdrop.element.w_stb & ~exchange.busy):
-            m.d.sync += self.staging["blank_background"].eq(self._backdrop.f.blank.w_data)
+            m.d.sync += [self.staging["blank_background"].eq(self._backdrop.f.blank.w_data),
+                         self.staging["keyboard_mask"].eq(self._backdrop.f.keyboard_mask.w_data),
+                         self.staging["keyboard_enable"].eq(self._backdrop.f.keyboard_enable.w_data),
+                         self.staging["keyboard_second"].eq(self._backdrop.f.keyboard_second.w_data),
+                         self.staging["ui_surface"].eq(self._backdrop.f.ui_surface.w_data),
+                         self.staging["ui_focus"].eq(self._backdrop.f.ui_focus.w_data),
+                         self.staging["ui_ready"].eq(self._backdrop.f.ui_ready.w_data)]
+
+        with m.If(self._keyboard_b.element.w_stb & ~exchange.busy):
+            m.d.sync += self.staging["keyboard_mask_b"].eq(self._keyboard_b.f.mask.w_data)
 
         m.d.comb += [
             exchange.payload.eq(Cat(*self.staging.values())),

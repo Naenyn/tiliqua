@@ -35,7 +35,8 @@ class Peripheral(wiring.Component):
         m.submodules.fifo = fifo = SyncFIFOBuffered(width=24, depth=8)
         m.d.comb += [
             # Do not stall the UART decoder forever if the foreground is busy.
-            # A full FIFO drops new events; it never changes an active route.
+            # A full FIFO drops new events. Route transposition drains up to
+            # four messages per 1-ms interrupt; scale learning uses the foreground.
             self.i_midi.ready.eq(1),
             fifo.w_data.eq(self.i_midi.payload),
             fifo.w_en.eq(self.i_midi.valid),

@@ -16,10 +16,10 @@ pub fn calibration_error_span_mc(worst_abs_mc: i64) -> i32 {
         .unwrap_or(*CAL_ERROR_SPANS_MC.last().unwrap())
 }
 pub const CALIBRATION_PLOT: Rect = Rect {
-    x: 154,
-    y: 190,
-    width: 276,
-    height: 230,
+    x: 180,
+    y: 256,
+    width: 280,
+    height: 204,
 };
 pub const CAL_TRACKING_Y: i32 = CALIBRATION_PLOT.y + CALIBRATION_PLOT.height as i32 + 2;
 pub const CAL_TRACKING_HEIGHT: i32 = 7;
@@ -337,6 +337,65 @@ pub fn axis(value: i32, low: i32, high: i32, first: u16, last: u16) -> Option<i3
     )
 }
 
+/// Rounded scanline primitive for retained shapes. Interior colors may be
+/// palette tags; the overlay resolves them when publishing a frame.
+pub fn rounded_rectangle(rect: Rect, radius: u8, border: u8, fill: u8,
+    mut emit: impl FnMut(Point,u8)) -> bool {
+    if rect.corners().is_none() || radius>32 || radius as u16*2>rect.width.min(rect.height)
+        || rect.width as usize*rect.height as usize>100_000 {return false;}
+    let span=|y:i32,h:i32,r:i32| {
+        let dy=(r-y.min(h-1-y)).max(0);
+        let mut dx=r;
+        while dx*dx+dy*dy>r*r {dx-=1;}
+        r-dx
+    };
+    let (w,h,r)=(rect.width as i32,rect.height as i32,radius as i32);
+    for y in 0..h {
+        let outer=span(y,h,r);
+        let inner=if y>0 && y<h-1 {span(y-1,h-2,(r-1).max(0))+1}else{w};
+        for x in outer..w-outer {
+            emit(Point{x:rect.x+x,y:rect.y+y},if x>=inner && x<w-inner {fill}else{border});
+        }
+    }
+    true
+}
+
+/// Center a single row within the area occupied by the two-row keyboard.
+pub const SINGLE_KEYBOARD_Y_OFFSET: i32 = 64;
+
+/// One octave of piano keys, within the standard scale panel.
+/// Black keys overlay the shared white-key boundaries, as on a keyboard.
+pub fn piano_key(note: usize) -> Option<(Rect, bool)> {
+    let (position,black)=match note {
+        0=>(0,false),1=>(1,true),2=>(1,false),3=>(2,true),4=>(2,false),
+        5=>(3,false),6=>(4,true),7=>(4,false),8=>(5,true),9=>(5,false),
+        10=>(6,true),11=>(6,false),_=>return None,
+    };
+    Some((Rect {x:164+position*56-if black {18}else{0},y:280,
+        width:if black {36}else{57},height:if black {40}else{72}},black))
+}
+
+/// Native 12px character-cell label footprint within each key.
+pub fn piano_label(note: usize) -> Option<(usize,usize,usize)> {
+    let (key,black)=piano_key(note)?;
+    let center=key.x+key.width as i32/2;
+    Some((if black {(center-124)/12}else{(center-120)/12-1} as usize,
+        if black {9}else{10},if black {2}else{3}))
+}
+
+/// Second octave shares horizontal geometry and native text spacing.
+pub fn octave_key(note:usize,octave:usize) -> Option<(Rect,bool)> {
+    if octave>1 {return None;}
+    let (mut key,black)=piano_key(note)?;
+    key.y+=octave as i32*128;
+    Some((key,black))
+}
+pub fn octave_label(note:usize,octave:usize) -> Option<(usize,usize,usize)> {
+    if octave>1 {return None;}
+    let (column,row,width)=piano_label(note)?;
+    Some((column,row+octave*4,width))
+}
+
 /// Circular-safe linear cents ruler, shared by the retained view and tests.
 pub const LINEAR_LEFT: u16 = 152;
 pub const LINEAR_RIGHT: u16 = 568;
@@ -417,6 +476,62 @@ fn scale_segment(segment: usize, y: i32, mut emit: impl FnMut(Point, u8)) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn rounded_primitives_keep_tags_inside_curved_borders() {
+        let rect=Rect{x:164,y:344,width:57,height:136};
+        let mut pixels=[[0u8;57];136];
+        assert!(rounded_rectangle(rect,4,0x49,0xe0,|p,c|pixels[(p.y-344) as usize][(p.x-164) as usize]=c));
+        assert_eq!(pixels[0][0],0);assert_eq!(pixels[0][4],0x49);
+        assert_eq!(pixels[4][0],0x49);assert_eq!(pixels[4][4],0xe0);
+        for y in 0..136 {for x in 0..57 {
+            assert_eq!(pixels[y][x],pixels[135-y][x]);
+            assert_eq!(pixels[y][x],pixels[y][56-x]);
+        }}
+        assert!(!rounded_rectangle(rect,33,0,0,|_,_|panic!()));
+    }
+    #[test]
+    fn keyboard_labels_fit_keys_and_notes_follow_chromatic_order() {
+        let mut previous=0;
+        let mut blacks=0;
+        for note in 0..12 {
+            let (key,black)=piano_key(note).unwrap();
+            assert!(key.fits_circle(360));
+            let center=key.x+key.width as i32/2;
+            assert!(center>previous);previous=center;
+            blacks+=usize::from(black);
+            let (col,row,width)=piano_label(note).unwrap();
+            let left=120+col as i32*12;
+            let right=left+(width as i32-1)*12+8;
+            assert!(left>key.x && right<key.x+key.width as i32-1);
+            assert!(row as i32*32>key.y && row as i32*32+14<key.y+key.height as i32-1);
+        }
+        assert_eq!(blacks,5);
+        assert!(piano_key(12).is_none() && piano_label(12).is_none());
+    }
+    #[test]
+    fn stacked_octave_labels_fit_both_short_keyboards() {
+        for octave in 0..2 {for note in 0..12 {
+            let (key,_)=octave_key(note,octave).unwrap();
+            let (column,row,width)=octave_label(note,octave).unwrap();
+            assert!(key.fits_circle(360));
+            assert!(row*32>key.y as usize && row*32+14<(key.y+key.height as i32) as usize);
+            assert!(120+column*12>key.x as usize);
+            assert!(120+(column+width-1)*12+8<(key.x+key.width as i32) as usize);
+        }}
+        assert!(octave_key(0,2).is_none() && octave_label(0,2).is_none());
+        assert!(octave_key(12,0).is_none() && octave_label(12,0).is_none());
+    }
+    #[test]
+    fn centered_single_keyboard_keeps_native_labels_inside_each_key() {
+        for note in 0..12 {
+            let (mut key,_)=piano_key(note).unwrap();key.y+=SINGLE_KEYBOARD_Y_OFFSET;
+            let (_,row,_)=piano_label(note).unwrap();let row=row+SINGLE_KEYBOARD_Y_OFFSET as usize/32;
+            assert!(key.fits_circle(360));
+            assert!(row*32>key.y as usize && row*32+14<(key.y+key.height as i32) as usize);
+        }
+        let (key,_)=piano_key(0).unwrap();
+        assert_eq!(key.y+SINGLE_KEYBOARD_Y_OFFSET+key.height as i32/2,380);
+    }
     #[test]
     fn segmented_grids_and_traces_are_bounded_and_reject_invalid_work() {
         let rect = Rect {
@@ -656,19 +771,18 @@ mod tests {
     fn calibration_error_makes_small_deviations_visible_and_clamps_safely() {
         let rect = CALIBRATION_PLOT;
         assert!(rect.fits_circle(336));
-        // Production text starts at x=90 with a 12-pixel cell pitch. The
-        // sidebar begins at column 31 and must not touch the plot border.
-        let sidebar = Rect { x: 90 + 31 * 12, y: 176, width: 168, height: 224 };
+        // Logical column 23 maps to native column 31 at the 12px text pitch.
+        let sidebar = Rect { x: 120 + 31 * 12, y: 256, width: 128, height: 160 };
         assert!(sidebar.fits_circle(336));
-        assert!(rect.x + rect.width as i32 + 24 < sidebar.x);
+        assert!(rect.x + rect.width as i32 + 24 <= sidebar.x);
         let first = calibration_error_point(rect, -5_000_000, 0,
             -5_000_000, 0, -5_000_000, 5_000_000, 20_000).unwrap();
         let ideal = calibration_error_point(rect, 5_000_000, 12_000_000,
             -5_000_000, 0, -5_000_000, 5_000_000, 20_000).unwrap();
         let sharp = calibration_error_point(rect, 5_000_000, 12_005_000,
             -5_000_000, 0, -5_000_000, 5_000_000, 20_000).unwrap();
-        assert_eq!(first.x, 154);
-        assert_eq!(ideal.x, 429);
+        assert_eq!(first.x, 180);
+        assert_eq!(ideal.x, rect.x + rect.width as i32 - 1);
         assert!(first.y > ideal.y);
         assert!(sharp.y < ideal.y);
         let flat = calibration_error_point(rect, 5_000_000, 11_995_000,
@@ -703,7 +817,7 @@ mod tests {
             -3_000_000, 1_000_000, -5_000_000, 8_000_000).unwrap());
         assert_eq!(live_calibration_point(rect, i32::MAX, i32::MAX,
             -3_000_000, 1_000_000, -5_000_000, 8_000_000).unwrap(),
-            Point { x: 429, y: 252 });
+            Point { x: rect.x + rect.width as i32 - 1, y: rect.y + 62 });
     }
 
     #[test]

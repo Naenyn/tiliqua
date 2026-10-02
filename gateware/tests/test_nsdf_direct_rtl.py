@@ -4,8 +4,9 @@ from amaranth.sim import Simulator
 from nsdf_direct_rtl import NsdfDirect
 
 
-def run_frame(samples,last,stall=True,capacity=None,shared_load_port=False):
-    dut=NsdfDirect(*(capacity or (len(samples),last)),shared_load_port=shared_load_port);result=[];cycles=0
+def run_frame(samples,last,stall=True,capacity=None,shared_load_port=False,pipeline_history=True):
+    dut=NsdfDirect(*(capacity or (len(samples),last)),shared_load_port=shared_load_port,
+                   pipeline_history=pipeline_history);result=[];cycles=0
     async def bench(ctx):
         nonlocal cycles
         ctx.set(dut.length,len(samples));ctx.set(dut.limit,last)
@@ -32,6 +33,17 @@ def run_frame(samples,last,stall=True,capacity=None,shared_load_port=False):
     sim=Simulator(dut);sim.add_clock(1/60e6);sim.add_testbench(bench);sim.run()
     assert [k for k,_ in result]==list(range(last+1))
     return np.array([v for _,v in result]),cycles
+
+
+@pytest.mark.parametrize('shared_load_port',[False,True])
+def test_registered_history_is_bit_exact_and_adds_one_cycle_per_lag(shared_load_port):
+    samples=np.random.default_rng(91).integers(-32768,32768,64)
+    previous,old_cycles=run_frame(samples,31,stall=False,
+        shared_load_port=shared_load_port,pipeline_history=False)
+    current,new_cycles=run_frame(samples,31,stall=False,
+        shared_load_port=shared_load_port,pipeline_history=True)
+    np.testing.assert_array_equal(current,previous)
+    assert new_cycles-old_cycles==32
 
 
 @pytest.mark.parametrize('shared_load_port',[False,True])

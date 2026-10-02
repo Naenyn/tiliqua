@@ -10,12 +10,12 @@ pub fn millivolts_per_octave(p: &Profile) -> Option<i32> {
     }
     let low = points[0];
     let high = points[points.len() - 1];
-    let pitch_span = (high.millicents - low.millicents) as i64;
+    let pitch_span = high.millicents as i64 - low.millicents as i64;
     if pitch_span <= 0 {
         return None;
     }
-    let voltage_span = (high.microvolts - low.microvolts) as i64;
-    Some(((voltage_span * 1_200_000) / (pitch_span * 1_000)) as i32)
+    let voltage_span = high.microvolts as i64 - low.microvolts as i64;
+    i32::try_from((voltage_span * 1_200_000) / (pitch_span * 1_000)).ok()
 }
 
 /// Tolerate normal analogue error while still naming half/double-rate CV
@@ -35,7 +35,7 @@ pub fn advice(p: &Profile) -> &'static str {
     // shifting when the missing end actually reached our voltage boundary.
     if low.microvolts <= -4_999_000 && low.millicents > 1_650_000 && high.millicents >= 13_400_000 {
         "TRY LOWER TUNING; THEN RESCAN"
-    } else if high.microvolts >= 4_999_000
+    } else if high.microvolts >= 7_999_000
         && high.millicents < 13_400_000
         && low.millicents <= 1_650_000
     {
@@ -73,11 +73,20 @@ mod tests {
     fn advice_requires_measured_voltage_boundary_not_just_missing_notes() {
         let p = profile(-5_000_000, 4_000_000, 2_000_000, 13_500_000);
         assert!(advice(&p).starts_with("TRY LOWER"));
-        let p = profile(-4_000_000, 5_000_000, 1_500_000, 12_000_000);
+        let p = profile(-4_000_000, 8_000_000, 1_500_000, 12_000_000);
         assert!(advice(&p).starts_with("TRY HIGHER"));
         let mut p = profile(-4_000_000, 3_000_000, 2_000_000, 13_500_000);
         p.limited_low = true;
         assert_eq!(advice(&p), "LIMITED RANGE; NO SHIFT ADVISED");
+    }
+    #[test]
+    fn five_volts_is_not_the_eight_volt_output_boundary() {
+        let p=profile(-4_000_000,5_000_000,1_500_000,12_000_000);
+        assert!(!advice(&p).starts_with("TRY HIGHER"));
+        let mut p=Profile::new("extremes",i32::MIN,i32::MAX).unwrap();
+        p.push(Point {microvolts:i32::MIN,millicents:i32::MIN}).unwrap();
+        p.push(Point {microvolts:i32::MAX,millicents:i32::MAX}).unwrap();
+        assert_eq!(millivolts_per_octave(&p),Some(1200));
     }
     #[test]
     fn positive_only_cv_input_is_reported_without_retuning_advice() {

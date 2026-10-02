@@ -1,7 +1,10 @@
 //! Small per-output settings, separate from detector state and measured curves.
 //! No armed state is persisted. Pattern masks are snapshots, not mutable links.
+#[cfg(test)]
+#[path="route_group.rs"]
+pub mod route_group;
 pub const SLOTS: u8 = 8;
-pub const LEN: usize = 56;
+pub const LEN: usize = 108;
 pub fn key(slot: u8) -> Option<u32> {
     if (1..=SLOTS).contains(&slot) {
         Some(0x54515331 + slot as u32 - 1)
@@ -17,8 +20,10 @@ pub struct Channel {
     pub root: u8,
     pub transpose: i8,
     pub equal: bool,
-    pub masks: [u16; 2],
+    pub masks: [u16; 8],
+    pub octaves: u8,
     pub quantize: bool,
+    pub scale_slot: u8, // saved interval snapshot provenance, 0 means edited/preset
     pub correction: u8, // 0:none, 1:RAM snapshot, 2..9:slot 1..8
 }
 impl Channel {
@@ -30,16 +35,26 @@ impl Channel {
             root: 0,
             transpose: 0,
             equal: false,
-            masks: [0xfff, 0],
+            masks: [0xfff, 0, 0, 0, 0, 0, 0, 0],
+            octaves: 1,
             quantize: true,
             correction: 0,
+            scale_slot: 0,
         }
     }
+    /// Scale definitions contain intervals; musical offsets belong to the route.
+    pub fn edit_scale<const N:usize>(&mut self,scale:u8,masks:[u16;N]) {
+        if self.scale!=scale || self.masks[..N]!=masks {self.scale_slot=0;}
+        self.scale=scale;self.masks=[0;8];self.masks[..N].copy_from_slice(&masks);
+    }
+    pub fn retune(&mut self,note:u8) {self.zero=note;}
     fn valid(&self) -> bool {
         self.input < 4
             && (12..=108).contains(&self.zero)
-            && self.scale <= 6
+            && self.scale <= 13
+            && self.scale_slot <= 8
             && self.correction <= 9
+            && (1..=8).contains(&self.octaves)
             && self.root < 12
             && (-12..=12).contains(&self.transpose)
             && self.masks.iter().all(|m| m & !0xfff == 0)
@@ -69,6 +84,34 @@ pub fn select(
     *selected = next;
     Some(channels[next as usize])
 }
+#[cfg(not(test))] use crate::route_group;
+pub const GROUP_LEN: usize = LEN + 8;
+pub fn legacy_groups(channels:&[Channel;4])->route_group::Layout {
+    let mut groups=route_group::Layout {inputs:[0,1,2,3],outputs:[0;4]};
+    for (output,c) in channels.iter().enumerate() {groups.outputs[c.input as usize]|=1<<output;}
+    groups
+}
+pub fn encode_group(channels:&[Channel;4],groups:route_group::Layout)->Option<[u8;GROUP_LEN]> {
+    if !groups.valid() {return None;}
+    for (output,c) in channels.iter().enumerate() {
+        if let Some(route)=groups.owner(output as u8) {
+            if c.input!=groups.inputs[route as usize] {return None;}
+        }
+    }
+    let old=encode(channels)?;
+    let mut bytes=[0;GROUP_LEN];bytes[..LEN-4].copy_from_slice(&old[..LEN-4]);
+    bytes[..4].copy_from_slice(b"TQS4");
+    bytes[LEN-4..LEN].copy_from_slice(&groups.inputs);
+    bytes[LEN..LEN+4].copy_from_slice(&groups.outputs);
+    let sum=crc(&bytes[..GROUP_LEN-4]);bytes[GROUP_LEN-4..].copy_from_slice(&sum.to_le_bytes());Some(bytes)
+}
+pub fn decode_group(bytes:&[u8])->Option<([Channel;4],route_group::Layout)> {
+    let channels=decode(bytes)?;
+    let groups=if bytes.len()==GROUP_LEN {
+        route_group::Layout {inputs:bytes[LEN-4..LEN].try_into().ok()?,outputs:bytes[LEN..LEN+4].try_into().ok()?}
+    } else {legacy_groups(&channels)};
+    encode_group(&channels,groups)?;Some((channels,groups))
+}
 fn crc(bytes: &[u8]) -> u32 {
     let mut value = 0xffff_ffffu32;
     for byte in bytes {
@@ -80,69 +123,65 @@ fn crc(bytes: &[u8]) -> u32 {
     !value
 }
 pub fn encode(channels: &[Channel; 4]) -> Option<[u8; LEN]> {
-    if !channels.iter().all(Channel::valid) {
-        return None;
+    if !channels.iter().all(Channel::valid) {return None;}
+    let mut bytes=[0;LEN];bytes[..4].copy_from_slice(b"TQS3");
+    for (i,c) in channels.iter().enumerate() {
+        let b=&mut bytes[4+i*25..4+(i+1)*25];
+        b[..9].copy_from_slice(&[c.input,c.zero,c.scale,c.root,c.transpose as u8,
+            c.equal as u8,c.quantize as u8,c.correction,c.octaves]);
+        for n in 0..8 {b[9+n*2..11+n*2].copy_from_slice(&c.masks[n].to_le_bytes());}
     }
-    let mut bytes = [0; LEN];
-    bytes[..4].copy_from_slice(b"TQS2");
-    for (i, c) in channels.iter().enumerate() {
-        let b = &mut bytes[4 + i * 12..16 + i * 12];
-        b[..6].copy_from_slice(&[
-            c.input,
-            c.zero,
-            c.scale,
-            c.root,
-            c.transpose as u8,
-            c.equal as u8,
-        ]);
-        b[6..8].copy_from_slice(&c.masks[0].to_le_bytes());
-        b[8..10].copy_from_slice(&c.masks[1].to_le_bytes());
-        b[10] = c.quantize as u8;
-        b[11] = c.correction;
-    }
-    let sum = crc(&bytes[..52]);
-    bytes[52..].copy_from_slice(&sum.to_le_bytes());
-    Some(bytes)
+    let sum=crc(&bytes[..LEN-4]);bytes[LEN-4..].copy_from_slice(&sum.to_le_bytes());Some(bytes)
 }
 pub fn decode(bytes: &[u8]) -> Option<[Channel; 4]> {
-    let width = match (bytes.len(), bytes.get(..4)?) {
-        (48, b"TQS1") => 10,
-        (56, b"TQS2") => 12,
-        _ => return None,
+    let width=match (bytes.len(),bytes.get(..4)?) {
+        (48,b"TQS1")=>10,(56,b"TQS2")=>12,(LEN,b"TQS3")=>25,(GROUP_LEN,b"TQS4")=>25,_=>return None,
     };
-    let end = bytes.len() - 4;
-    if crc(&bytes[..end]) != u32::from_le_bytes(bytes[end..].try_into().ok()?) {
-        return None;
-    }
-    let mut channels = DEFAULT;
-    for (i, c) in channels.iter_mut().enumerate() {
-        let b = &bytes[4 + i * width..4 + (i + 1) * width];
-        if b[5] > 1 || (width == 12 && b[10] > 1) {
-            return None;
+    let end=bytes.len()-4;
+    if crc(&bytes[..end])!=u32::from_le_bytes(bytes[end..].try_into().ok()?) {return None;}
+    let mut channels=DEFAULT;
+    for (i,c) in channels.iter_mut().enumerate() {
+        let b=&bytes[4+i*width..4+(i+1)*width];
+        if b[5]>1 || (width==12 && b[10]>1) || (width==25 && b[6]>1) {return None;}
+        c.input=b[0];c.zero=b[1];c.scale=b[2];c.root=b[3];c.transpose=b[4] as i8;c.equal=b[5]!=0;
+        if width==25 {
+            c.quantize=b[6]!=0;c.correction=b[7];c.octaves=b[8];
+            for n in 0..8 {c.masks[n]=u16::from_le_bytes([b[9+n*2],b[10+n*2]]);}
+        } else {
+            c.masks[0]=u16::from_le_bytes([b[6],b[7]]);
+            c.masks[1]=u16::from_le_bytes([b[8],b[9]]);
+            if c.masks[0]==0 {c.masks[0]=c.masks[1];c.masks[1]=0;}
+            c.octaves=if c.masks[1]!=0 {2}else{1};
+            c.quantize=width==10 || b[10]!=0;c.correction=if width==12 {b[11]}else{0};
         }
-        *c = Channel {
-            input: b[0],
-            zero: b[1],
-            scale: b[2],
-            root: b[3],
-            transpose: b[4] as i8,
-            equal: b[5] != 0,
-            masks: [
-                u16::from_le_bytes([b[6], b[7]]),
-                u16::from_le_bytes([b[8], b[9]]),
-            ],
-            quantize: width == 10 || b[10] != 0,
-            correction: if width == 12 { b[11] } else { 0 },
-        };
-        if !c.valid() {
-            return None;
-        }
+        if !c.valid() {return None;}
     }
     Some(channels)
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn grouped_setups_roundtrip_and_legacy_fanout_migrates() {
+        let mut channels=DEFAULT;channels[1].input=0;
+        let groups=legacy_groups(&channels);
+        assert_eq!(groups.outputs,[3,0,4,8]);
+        let bytes=encode_group(&channels,groups).unwrap();
+        assert_eq!(decode_group(&bytes),Some((channels,groups)));
+        assert_eq!(decode_group(&encode(&channels).unwrap()),Some((channels,groups)));
+        let mut bad=groups;bad.outputs[2]|=1;
+        assert!(encode_group(&channels,bad).is_none());
+        bad=groups;bad.inputs[0]=1;assert!(encode_group(&channels,bad).is_none());
+        let mut corrupted=bytes;corrupted[108]^=1;
+        assert!(decode_group(&corrupted).is_none());
+        // A valid checksum does not make duplicate ownership or input mismatch valid.
+        corrupted=bytes;corrupted[110]|=1;
+        let sum=crc(&corrupted[..GROUP_LEN-4]);corrupted[GROUP_LEN-4..].copy_from_slice(&sum.to_le_bytes());
+        assert!(decode_group(&corrupted).is_none());
+        corrupted=bytes;corrupted[104]=1;
+        let sum=crc(&corrupted[..GROUP_LEN-4]);corrupted[GROUP_LEN-4..].copy_from_slice(&sum.to_le_bytes());
+        assert!(decode_group(&corrupted).is_none());
+    }
     #[test]
     fn legacy_setups_migrate_and_new_stages_roundtrip() {
         let mut legacy = [0u8; 48];
@@ -174,7 +213,7 @@ mod tests {
         let mut edited = channels[1];
         edited.input = 0;
         edited.scale = 6;
-        edited.masks = [0xfdb, 0];
+        edited.masks = [0xfdb, 0,0,0,0,0,0,0];
         edited.equal = true;
         assert_eq!(
             select(&mut channels, &mut selected, edited, 2),
@@ -182,7 +221,7 @@ mod tests {
         );
         let mut second = channels[2];
         second.root = 5;
-        second.masks = [1, 16];
+        second.masks = [1,16,0,0,0,0,0,0];
         second.transpose = -12;
         assert_eq!(
             select(&mut channels, &mut selected, second, 1),
@@ -204,7 +243,7 @@ mod tests {
             c.root = i as u8;
             c.transpose = i as i8 - 2;
             c.equal = i % 2 == 0;
-            c.masks = [1 << i, 1 << (11 - i)];
+            c.masks = [1 << i,1 << (11-i),0,0,0,0,0,0];
         }
         let bytes = encode(&channels).unwrap();
         assert_eq!(decode(&bytes), Some(channels));
@@ -214,11 +253,11 @@ mod tests {
             assert_eq!(decode(&bad), None);
             assert_eq!(decode(&bytes[..i]), None);
         }
-        for (field, value) in [(0, 4), (1, 11), (2, 7), (3, 12), (4, 13), (5, 2), (7, 0x10)] {
+        for (field, value) in [(0, 4), (1, 11), (2, 14), (3, 12), (4, 13), (5, 2), (10, 0x10)] {
             let mut bad = bytes;
             bad[4 + field] = value;
-            let sum = crc(&bad[..52]);
-            bad[52..].copy_from_slice(&sum.to_le_bytes());
+            let sum = crc(&bad[..LEN-4]);
+            bad[LEN-4..].copy_from_slice(&sum.to_le_bytes());
             assert_eq!(decode(&bad), None);
         }
         assert_eq!(key(0), None);
@@ -226,6 +265,39 @@ mod tests {
         for i in 1..=8 {
             assert_eq!(key(i), Some(0x54515330 + i as u32));
         }
-        assert!(core::mem::size_of::<[Channel; 4]>() <= 56);
+        assert!(core::mem::size_of::<[Channel; 4]>() <= 112);
+    }
+}
+
+#[cfg(test)] #[path="midi_transpose.rs"] pub mod midi_transpose;
+#[cfg(not(test))] use crate::midi_transpose;
+pub const FULL_LEN:usize=132;
+pub fn encode_full(channels:&[Channel;4],groups:route_group::Layout,midi:[midi_transpose::Config;4])->Option<[u8;FULL_LEN]> {
+    if !midi.iter().all(|c|c.valid()) {return None;}
+    let old=encode_group(channels,groups)?;
+    let mut bytes=[0;FULL_LEN];bytes[..112].copy_from_slice(&old[..112]);bytes[..4].copy_from_slice(b"TQS5");
+    for n in 0..4 {bytes[112+n*3]=midi[n].channel;bytes[113+n*3]=midi[n].base;bytes[114+n*3]=midi[n].hold as u8;bytes[124+n]=channels[n].scale_slot;}
+    let sum=crc(&bytes[..128]);bytes[128..].copy_from_slice(&sum.to_le_bytes());Some(bytes)
+}
+pub fn decode_full(bytes:&[u8])->Option<([Channel;4],route_group::Layout,[midi_transpose::Config;4])> {
+    let mut midi=[midi_transpose::Config::new();4];
+    if bytes.len()!=FULL_LEN {let (c,g)=decode_group(bytes)?;return Some((c,g,midi));}
+    if bytes.get(..4)?!=b"TQS5" || crc(&bytes[..128])!=u32::from_le_bytes(bytes[128..].try_into().ok()?) {return None;}
+    let mut legacy=[0;GROUP_LEN];legacy[..112].copy_from_slice(&bytes[..112]);legacy[..4].copy_from_slice(b"TQS4");
+    let sum=crc(&legacy[..112]);legacy[112..].copy_from_slice(&sum.to_le_bytes());
+    let (mut channels,groups)=decode_group(&legacy)?;
+    for n in 0..4 {midi[n]=midi_transpose::Config {channel:bytes[112+n*3],base:bytes[113+n*3],hold:bytes[114+n*3]!=0};if bytes[114+n*3]>1 {return None;}channels[n].scale_slot=bytes[124+n];}
+    if !midi.iter().all(|c|c.valid()) || !channels.iter().all(Channel::valid) {return None;}
+    Some((channels,groups,midi))
+}
+#[cfg(test)] mod full_tests {
+    use super::*;
+    #[test] fn full_config_roundtrip_and_old_defaults() {
+        let mut c=DEFAULT;c[0].scale_slot=8;let g=route_group::Layout::new();
+        let mut m=[midi_transpose::Config::new();4];m[2]=midi_transpose::Config {channel:16,base:127,hold:true};
+        let bytes=encode_full(&c,g,m).unwrap();assert_eq!(decode_full(&bytes),Some((c,g,m)));
+        for n in 0..FULL_LEN {let mut bad=bytes;bad[n]^=1;assert!(decode_full(&bad).is_none());}
+        let old=decode_full(&encode_group(&DEFAULT,g).unwrap()).unwrap();assert_eq!(old.2,[midi_transpose::Config::new();4]);
+        m[0].channel=17;assert!(encode_full(&c,g,m).is_none());
     }
 }

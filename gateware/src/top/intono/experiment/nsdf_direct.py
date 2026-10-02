@@ -12,11 +12,12 @@ from amaranth.lib.memory import Memory
 
 
 class NsdfDirect(wiring.Component):
-    def __init__(self, frame=674, max_lag=321, shared_load_port=False):
+    def __init__(self, frame=674, max_lag=321, shared_load_port=False, pipeline_history=True):
         if not 1 <= max_lag < frame:
             raise ValueError('lag must fit frame')
         self.frame=frame;self.max_lag=max_lag
         self.shared_load_port=shared_load_port
+        self.pipeline_history=pipeline_history
         self.width=32+(frame-1).bit_length()
         super().__init__({
             'clear':In(1),'load_valid':In(1),'load_ready':Out(1),
@@ -39,7 +40,7 @@ class NsdfDirect(wiring.Component):
         filled=Signal(range(n+1));index=Signal(range(n));retired=Signal(range(n))
         active_n=Signal(range(n+1));active_last=Signal(range(self.max_lag+1))
         config_valid=Signal()
-        issue=Signal();rv=Signal();pv=Signal();inspect=Signal();inspect_valid=Signal()
+        issue=Signal();rv=Signal();mv=Signal();pv=Signal();inspect=Signal();inspect_valid=Signal()
         product=Signal(signed(32));ea=Signal(32);eb=Signal(32)
         total=Signal(signed(w));energy=Signal(w+1)
         denominator=Signal(w+1);numerator=Signal(bits)
@@ -60,10 +61,22 @@ class NsdfDirect(wiring.Component):
             a.en.eq(issue),b.en.eq(issue|inspect),issue.eq(0),
             self.inspect_sample.eq(Mux(inspect_valid & inspect,b.data,0)),
             trial.eq((remainder<<1)|numerator[-1])]
-        m.d.sync += [self.done.eq(0),rv.eq(issue),pv.eq(rv),inspect_valid.eq(inspect)]
+        # Separate the history RAM output/mux from the DSP products. This
+        # removes the routed RAM -> mux -> multiplier critical path without
+        # changing any sample, product, accumulation or emitted score.
+        if self.pipeline_history:
+            av=Signal(signed(16));bv=Signal(signed(16))
+            m.d.sync += [mv.eq(rv),pv.eq(mv)]
+            with m.If(rv):m.d.sync += [av.eq(a.data),bv.eq(b.data)]
+            multiply_valid=mv
+        else:
+            av,bv=a.data,b.data
+            m.d.sync += pv.eq(rv)
+            multiply_valid=rv
+        m.d.sync += [self.done.eq(0),rv.eq(issue),inspect_valid.eq(inspect)]
         with m.If(wr.en):m.d.sync += filled.eq(filled+1)
-        with m.If(rv):
-            m.d.sync += [product.eq(a.data*b.data),ea.eq(a.data*a.data),eb.eq(b.data*b.data)]
+        with m.If(multiply_valid):
+            m.d.sync += [product.eq(av*bv),ea.eq(av*av),eb.eq(bv*bv)]
         with m.If(pv):
             m.d.sync += [total.eq(total+product),energy.eq(energy+ea+eb),retired.eq(retired+1)]
         with m.FSM() as fsm:
@@ -104,5 +117,5 @@ class NsdfDirect(wiring.Component):
                         m.next='PAIRS'
         with m.If(self.clear):
             m.d.sync += [filled.eq(0),self.busy.eq(0),self.valid.eq(0),self.done.eq(0),
-                self.score.eq(0),self.lag.eq(0),self.frame_energy.eq(0),rv.eq(0),pv.eq(0),fsm.state.eq(fsm.encoding['IDLE'])]
+                self.score.eq(0),self.lag.eq(0),self.frame_energy.eq(0),rv.eq(0),mv.eq(0),pv.eq(0),fsm.state.eq(fsm.encoding['IDLE'])]
         return m

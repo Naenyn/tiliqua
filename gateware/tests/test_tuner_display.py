@@ -510,3 +510,228 @@ def test_tuner_display_composites_framebuffer_marker_and_menu():
 
     sim.add_testbench(bench)
     sim.run()
+
+@pytest.mark.parametrize('rotate_left', [False, True])
+@pytest.mark.parametrize('glyph,bold', [('M', False), ('g', True)])
+@pytest.mark.parametrize('legacy_menu_active', [False, True])
+def test_large_ux_text_retains_stride_bank_and_pixel_scale(rotate_left, glyph, bold, legacy_menu_active, column_override=None):
+    from top.intono.font_9x15 import MENU_FONT_NORMAL, MENU_FONT_BOLD
+    font = MENU_FONT_BOLD if bold else MENU_FONT_NORMAL
+    column, row = ((20 if legacy_menu_active else 7), 5) if column_override is None else (column_override,10)
+    contents = [0] * 4096
+    contents[2048 + row * 45 + column] = (ord(glyph) - 32) | (int(bold) << 7) | (0xF9 << 8)
+    tiles = Memory(shape=unsigned(16), depth=4096, init=contents)
+    menu = Memory(shape=unsigned(8), depth=512, init=[])
+    dut = IntonoOverlay(tiles, menu, h_active=720 if rotate_left else 1280,
+                       rotate_left=rotate_left, ascii_text=True,
+                       double_buffered=True, large_text=True)
+    m = Module()
+    m.submodules.dut, m.submodules.tiles, m.submodules.menu = dut, tiles, menu
+    sim = Simulator(m)
+    sim.add_clock(1e-6, domain='dvi')
+    async def bench(ctx):
+        queue = deque()
+        ctx.set(dut.i.de, 1)
+        ctx.set(dut.menu_active, legacy_menu_active)
+        for bank in (0, 1):
+            ctx.set(dut.front_bank, bank)
+            for gy in range(32):
+                for gx in range(12):
+                    hit = bank == 1 and gx < 9 and gy < 15 and bool(
+                        font[(ord(glyph) - 32) * 15 + gy]
+                        & (1 << (8 - gx)))
+                    x, y = 120 + column * 12 + gx, row * 32 + gy
+                    px, py = (719-y, x) if rotate_left else (x+280, y)
+                    ctx.set(dut.i.x, px); ctx.set(dut.i.y, py)
+                    queue.append((px, py, 15 if hit else 0))
+                    await ctx.tick('dvi')
+                    if len(queue) >= dut.LATENCY:
+                        assert (ctx.get(dut.o.x), ctx.get(dut.o.y), ctx.get(dut.o.pixel.intensity)) == queue.popleft()
+        for _ in range(dut.LATENCY - 1):
+            await ctx.tick('dvi')
+            assert (ctx.get(dut.o.x), ctx.get(dut.o.y), ctx.get(dut.o.pixel.intensity)) == queue.popleft()
+    sim.add_testbench(bench)
+    sim.run()
+
+
+def test_compact_ux_font_has_crisp_capitals_and_complete_labels():
+    from top.intono.font_7x10 import UX_FONT_NORMAL, UX_FONT_BOLD
+    assert len(UX_FONT_NORMAL) == len(UX_FONT_BOLD) == 95 * 10
+    for index in range(95):
+        normal = UX_FONT_NORMAL[index * 10:(index + 1) * 10]
+        bold = UX_FONT_BOLD[index * 10:(index + 1) * 10]
+        assert all(0 <= row < 128 for row in normal + bold)
+        if index:
+            assert any(normal), chr(index + 32)
+        if index:
+            assert any(bold), chr(index + 32)
+    for char in 'abcdefghijklmnopqrstuvwxyz':
+        def rows(c):
+            offset = (ord(c) - 32) * 10
+            return UX_FONT_NORMAL[offset:offset + 10]
+        assert rows(char) == rows(char.upper())
+    assert UX_FONT_NORMAL[(ord('M') - 32) * 10:(ord('M') - 31) * 10] == [
+        0, 0x42, 0x66, 0x66, 0x5a, 0x5a, 0x42, 0x42, 0x42, 0x42]
+
+@pytest.mark.parametrize("rotate_left", [False, True])
+def test_keyboard_fills_follow_mask_without_covering_edges_or_text(rotate_left):
+    cells=[0]*4096
+    cells[10*45+6]=(ord("C")-32)|(0x19<<8)
+    tiles=Memory(shape=unsigned(16),depth=4096,init=cells)
+    menu=Memory(shape=unsigned(8),depth=512,init=[])
+    dut=IntonoOverlay(tiles,menu,h_active=720 if rotate_left else 1280,
+        rotate_left=rotate_left,ascii_text=True,large_text=True,double_buffered=True)
+    m=Module();m.submodules.dut=dut;m.submodules.tiles=tiles;m.submodules.menu=menu
+    sim=Simulator(m);sim.add_clock(1e-6,domain="dvi")
+    async def sample(ctx,x,y,tag=None):
+        # Retained raster tag for this sample, including black-key occlusion.
+        pixel=0x49
+        for black_pass in [False,True]:
+            for note,(pos,black) in enumerate([(0,False),(1,True),(1,False),(2,True),
+                    (2,False),(3,False),(4,True),(4,False),(5,True),(5,False),(6,True),(6,False)]):
+                if black!=black_pass:continue
+                left=164+pos*56-(18 if black else 0)
+                width,height=(36,40) if black else (57,72)
+                if left<=x<left+width and 280<=y<280+height:
+                    pixel=0xe0+note if left<x<left+width-1 and 280<y<280+height-1 else 0x49
+        ctx.set(dut.i.pixel.as_value(),pixel if tag is None else tag)
+        px,py=(719-y,x) if rotate_left else (280+x,y)
+        ctx.set(dut.i.x,px);ctx.set(dut.i.y,py)
+        await ctx.tick("dvi").repeat(dut.LATENCY+1)
+        return ctx.get(dut.o.pixel.as_value())
+    async def bench(ctx):
+        ctx.set(dut.i.de,1);ctx.set(dut.i.pixel.as_value(),0x49)
+        ctx.set(dut.keyboard_enable,1)
+        ctx.set(dut.keyboard_second,1)
+        keys=[(0,False),(1,True),(1,False),(2,True),(2,False),(3,False),
+              (4,True),(4,False),(5,True),(5,False),(6,True),(6,False)]
+        for mask in [0,1,0xad6,0xfff]:
+            ctx.set(dut.keyboard_mask,mask)
+            for note,(pos,black) in enumerate(keys):
+                center=164+pos*56+(0 if black else 28)
+                color=(0x79 if black else 0xa9) if mask&(1<<note) else (0x09 if black else 0x39)
+                assert await sample(ctx,center,300 if black else 336)==color
+                left=164+pos*56-(18 if black else 0)
+                assert await sample(ctx,left,300 if black else 336)==0x49
+            assert await sample(ctx,150,300)==0x49
+            assert await sample(ctx,200,280)==0x49
+        # Two published masks remain independent, including empty/full cycles.
+        for ma,mb in [(0,0xfff),(0xfff,0),(0xad6,0x249),(1,2)]:
+            ctx.set(dut.keyboard_mask,ma);ctx.set(dut.keyboard_mask_b,mb)
+            for octave,mask in enumerate([ma,mb]):
+                for note in range(12):
+                    tag=0xe0+octave*16+note
+                    black=note in [1,3,6,8,10]
+                    expected=(0x79 if black else 0xa9) if mask&(1<<note) else (0x09 if black else 0x39)
+                    assert await sample(ctx,200,300+octave*128,tag)==expected
+                    if not black:
+                        body=0xa9 if mask&(1<<note) else 0x39
+                        assert await sample(ctx,200,336+octave*128,tag)==body
+        # Text remains above the filled key, with the selected natural-key dark ink color.
+        ctx.set(dut.keyboard_mask,1)
+        glyph=MENU_FONT_NORMAL[(ord("C")-32)*15:(ord("C")-32+1)*15]
+        gy=next(y for y,bits in enumerate(glyph) if bits)
+        gx=next(x for x in range(9) if glyph[gy]&(1<<(8-x)))
+        assert await sample(ctx,192+gx,320+gy)==0x19
+        ctx.set(dut.keyboard_enable,0)
+        assert await sample(ctx,192,336)==0xe0
+        ctx.set(dut.i.de,0)
+        await ctx.tick("dvi").repeat(dut.LATENCY+1)
+        assert ctx.get(dut.o.pixel.as_value())==0
+    sim.add_testbench(bench);sim.run()
+
+
+@pytest.mark.parametrize("rotate_left", [False, True])
+def test_loading_view_hides_control_outlines_without_hiding_text(rotate_left):
+    from amaranth.lib.memory import Memory
+    from amaranth import unsigned
+    col,row,glyph=18,8,"I"
+    contents=[0]*4096
+    contents[2048+row*45+col]=(ord(glyph)-32)|(1<<7)|(0xF9<<8)
+    tiles=Memory(shape=unsigned(16),depth=4096,init=contents)
+    menu=Memory(shape=unsigned(8),depth=512,init=[])
+    dut=IntonoOverlay(tiles,menu,h_active=1280 if not rotate_left else 720,
+        rotate_left=rotate_left,ascii_text=True,large_text=True,double_buffered=True)
+    m=Module();m.submodules.dut=dut;m.submodules.tiles=tiles;m.submodules.menu=menu
+    sim=Simulator(m);sim.add_clock(1e-6,domain="dvi")
+    async def pixel(ctx,x,y):
+        px,py=(719-y,x) if rotate_left else (x+280,y)
+        ctx.set(dut.i.x,px);ctx.set(dut.i.y,py)
+        await ctx.tick("dvi").repeat(dut.LATENCY+1)
+        return ctx.get(dut.o.pixel.intensity)
+    async def bench(ctx):
+        ctx.set(dut.i.de,1);ctx.set(dut.front_bank,1)
+        gx,gy=next((x,y) for y in range(15) for x in range(9)
+            if MENU_FONT_BOLD[(ord(glyph)-32)*15+y] & (1<<(8-x)))
+        for ready in (0,1,0):
+            ctx.set(dut.ui_ready,ready)
+            assert await pixel(ctx,148+10,90)==(11 if ready else 0)
+            assert await pixel(ctx,120+col*12+gx,row*32+gy)==15
+    sim.add_testbench(bench);sim.run()
+
+
+@pytest.mark.parametrize("bad_pixel,bad_x", [(0xA4,740),(0x29,1279)])
+def test_background_diagnostic_distinguishes_bad_samples_from_composited_colors(bad_pixel,bad_x):
+    """Observe unexpected DMA colors without masking or changing any pixels."""
+    from amaranth.lib.memory import Memory
+    from amaranth import unsigned
+    tiles=Memory(shape=unsigned(16),depth=4096,init=[])
+    menu=Memory(shape=unsigned(8),depth=512,init=[])
+    dut=IntonoOverlay(tiles,menu,h_active=1280,ascii_text=True,
+                     large_text=True,double_buffered=True)
+    m=Module();m.submodules.dut=dut;m.submodules.tiles=tiles;m.submodules.menu=menu
+    sim=Simulator(m);sim.add_clock(1e-6,domain="dvi");sim.add_clock(1.3e-6,domain="sync")
+    async def sample(ctx,pixel,x=740,de=1):
+        ctx.set(dut.i.x,x);ctx.set(dut.i.y,360)
+        ctx.set(dut.i.de,de);ctx.set(dut.i.pixel.as_value(),pixel)
+        await ctx.tick("dvi").repeat(16)
+        return ctx.get(dut.background_errors)
+    async def bench(ctx):
+        for raw in (0,0x29,0x59,0x69,0xFF,0xDB,0xD2,0xD0,0xE0,0xEB,0xF0,0xFB):
+            assert await sample(ctx,raw)==0
+        assert await sample(ctx,0xA4,de=0)==0, "blanking data is irrelevant"
+        expected = 3 if bad_x == 1279 else 1
+        assert await sample(ctx,bad_pixel,x=bad_x)==expected
+        assert ctx.get(dut.o.pixel.as_value())==bad_pixel, "diagnostic must not alter output"
+        assert await sample(ctx,0xA4)==expected, "evidence remains latched"
+        assert await sample(ctx,0)==expected
+        assert await sample(ctx,0x29,x=1279)==3, "incoming and output checks both latch"
+        assert await sample(ctx,0,x=1279)==3
+        for _ in range(5):
+            await sample(ctx,0xA4)
+            await sample(ctx,0)
+        assert ctx.get(dut.background_errors)==3, "evidence must remain set until reset"
+    sim.add_testbench(bench);sim.run()
+
+
+def test_output_diagnostic_detects_overlay_leak_with_clean_background():
+    """A deliberately misplaced text plane isolates the post-overlay flag."""
+    from amaranth.lib.memory import Memory
+    from amaranth import unsigned
+    tiles = Memory(shape=unsigned(16), depth=4096,
+                   init=[(ord("A")-32) | (0xF9 << 8)])
+    menu = Memory(shape=unsigned(8), depth=512, init=[])
+    dut = IntonoOverlay(tiles, menu, h_active=1280, ascii_text=True,
+                       large_text=True, double_buffered=True)
+    dut.UX_TEXT_X = -280  # Inject bad layout: its first glyph is at physical X=0.
+    m = Module(); m.submodules.dut = dut
+    m.submodules.tiles = tiles; m.submodules.menu = menu
+    sim = Simulator(m)
+    sim.add_clock(1e-6, domain="dvi"); sim.add_clock(1.3e-6, domain="sync")
+    async def bench(ctx):
+        ctx.set(dut.i.de, 1)
+        ctx.set(dut.i.pixel.as_value(), 0)
+        for y in range(15):
+            ctx.set(dut.i.y, y)
+            for x in range(9):
+                ctx.set(dut.i.x, x)
+                await ctx.tick("dvi").repeat(16)
+        assert ctx.get(dut.background_errors) == 2
+        ctx.set(dut.i.x, 740)
+        await ctx.tick("dvi").repeat(16)
+        assert ctx.get(dut.background_errors) == 2, "output evidence is sticky"
+    sim.add_testbench(bench); sim.run()
+
+@pytest.mark.parametrize("rotate_left",[False,True])
+def test_octave_scroll_text_reaches_the_rightmost_native_column(rotate_left):
+    test_large_ux_text_retains_stride_bank_and_pixel_scale(rotate_left,"W",False,False,42)

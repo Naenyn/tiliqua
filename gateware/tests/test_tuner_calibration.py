@@ -60,7 +60,7 @@ def test_scale_editor_and_routes_share_configuration_but_only_routes_run():
     assert 'if lane.arm_route(' in main
     assert 'if q.lanes[old].active' in main
     assert 'edited = q.configs[old];' in main
-    assert 'RUN / STOP SELECTED; SETTINGS LOCKED' in main
+    assert '(Page::Play,6) => "RUN/STOP"' in main
     presets=options.split('pub enum ScalePreset {')[1].split('}')[0]
     assert re.findall(r'^\s*(\w+),', presets, re.M)==[
         'Chromatic','Major','Minor','MajorPentatonic','MinorPentatonic','Edo24','Custom2']
@@ -110,3 +110,12 @@ def test_routes_do_not_consume_audio_or_start_a_second_playback_engine():
     assert 'if cal.active() || outputs_running() {' in main
     assert 'return "STOP OUTPUTS BEFORE FLASH READ";' in main
     assert 'BIND CORRECTION ON ROUTE FIRST' in main
+
+
+def test_scale_ui_preview_and_dense_control_regions(tmp_path):
+    compiler = shutil.which("rustc") or str(Path.home()/".cargo/bin/rustc")
+    fixture = Path(__file__).with_name("tuner_scale_ui_fixture.rs")
+    executable = tmp_path/"scale-ui-tests"
+    subprocess.run([compiler,"--edition=2021","--test",str(fixture),"-o",str(executable)],
+                   check=True,capture_output=True,text=True)
+    subprocess.run([str(executable)],check=True,capture_output=True,text=True)

@@ -162,6 +162,7 @@ pub struct PlaybackEngine<P: ProfileStorage> {
     pub scale_id: u8,
     pub root: u8,
     pub transpose: i8,
+    midi_transpose: i8,
     pub equal: bool,
     pub pattern: crate::scale::Pattern,
     quantized_pitch: Option<i32>,
@@ -196,12 +197,17 @@ impl<P: ProfileStorage> PlaybackEngine<P> {
             scale_id: 0,
             root: 0,
             transpose: 0,
+            midi_transpose: 0,
             equal: false,
             pattern: crate::scale::Pattern::empty(),
             quantized_pitch: None,
             last_command: None,
             target_since: 0,
         }
+    }
+    /// Changing MIDI pitch invalidates only note hysteresis, never an in-flight ACK.
+    pub fn set_midi_transpose(&mut self, offset:i8) {
+        if self.midi_transpose!=offset { self.midi_transpose=offset; self.quantized_pitch=None; }
     }
     pub fn arm(
         &mut self,
@@ -384,7 +390,7 @@ impl<P: ProfileStorage> PlaybackEngine<P> {
                 crate::scale::preset(self.scale_id)
             }
             .ok_or(MappingError::InputOverflow)?;
-            let shift = self.transpose as i32 * 100_000;
+            let shift = (self.transpose as i32 + self.midi_transpose as i32) * 100_000;
             let root = (self.zero_note as i32 / 12 * 12 + self.root as i32) * 100_000 + shift;
             scale
                 .quantize_bounded(pitch, root, minimum, maximum)
@@ -471,7 +477,7 @@ impl<P: ProfileStorage> PlaybackEngine<P> {
                 return Some(self.stop("STOPPED - INVALID SCALE"));
             }
             let root = (self.zero_note as i32 / 12 * 12 + self.root as i32) * 100_000;
-            let shift = self.transpose as i32 * 100_000;
+            let shift = (self.transpose as i32 + self.midi_transpose as i32) * 100_000;
             let previous = self.quantized_pitch.and_then(|p| p.checked_sub(shift));
             let target = if self.equal {
                 scale.distribute(pitch, root, previous)
@@ -486,7 +492,14 @@ impl<P: ProfileStorage> PlaybackEngine<P> {
             };
             pitch = target;
         } else if self.chromatic {
-            pitch = chromatic_pitch(pitch, self.quantized_pitch);
+            let shift=self.midi_transpose as i32*100_000;
+            pitch = match chromatic_pitch(pitch, self.quantized_pitch.and_then(|p|p.checked_sub(shift))).checked_add(shift) {
+                Some(p)=>p,None=>return Some(self.stop("STOPPED - SCALE OVERFLOW")),
+            };
+        } else {
+            pitch = match pitch.checked_add(self.midi_transpose as i32*100_000) {
+                Some(p)=>p, None=>return Some(self.stop("STOPPED - SCALE OVERFLOW")),
+            };
         }
         // A held quantized note already has a validated DAC mapping. Reuse it,
         // but continue all freshness, ACK, watchdog and command-token handling.
@@ -773,6 +786,25 @@ mod tests {
         assert_eq!(e.output_uv, 0);
         assert_eq!(e.tick(4, sample(4, 0), ack(command), false), Some(0));
         assert!(!e.active);
+    }
+    #[test]
+    fn midi_offset_composes_with_scale_and_keeps_pending_ack() {
+        let mut e=Engine::new();assert!(e.arm_nominal(0,0,60,4000,0,0));
+        e.scale_id=1;e.transpose=2;e.set_midi_transpose(12);
+        let command=e.tick(1,sample(1,334),0,true).unwrap();assert_eq!(e.pitch,7_600_000);
+        e.set_midi_transpose(-12);
+        assert_eq!(e.tick(2,sample(2,334),0,true),None); // outstanding command still requires ACK
+        let command=e.tick(3,sample(3,334),ack(command),true).unwrap();assert_eq!(e.pitch,5_200_000);
+        e.set_midi_transpose(127);
+        let _=e.tick(4,sample(4,0),ack(command),true).unwrap();
+        assert!(e.active);assert!((-5_000_000..=8_000_000).contains(&e.output_uv));
+    }
+    #[test]
+    fn midi_offset_applies_without_quantization_and_returns_to_zero() {
+        let mut e=Engine::new();assert!(e.arm_nominal(0,0,60,4000,0,0));
+        e.scale_enabled=false;e.chromatic=false;e.set_midi_transpose(-12);
+        let command=e.tick(1,sample(1,0),0,true).unwrap();assert_eq!(e.output_uv,-1_000_000);
+        e.set_midi_transpose(0);e.tick(2,sample(2,0),ack(command),true).unwrap();assert_eq!(e.output_uv,0);
     }
     #[test]
     fn standalone_scales_root_transpose_and_quarter_tones() {

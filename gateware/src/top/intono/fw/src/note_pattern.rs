@@ -9,7 +9,8 @@ pub fn key(slot: u8) -> Option<u32> {
         None
     }
 }
-pub const LEN: usize = 12;
+pub const LEN: usize = 25;
+const LEGACY_LEN: usize = 12;
 fn crc(bytes: &[u8]) -> u32 {
     let mut crc = 0xffff_ffffu32;
     for byte in bytes {
@@ -20,11 +21,12 @@ fn crc(bytes: &[u8]) -> u32 {
     }
     !crc
 }
-pub fn encode(masks: [u16; 2]) -> Option<[u8; LEN]> {
+#[cfg(test)]
+pub fn encode(masks: [u16; 2]) -> Option<[u8; LEGACY_LEN]> {
     if masks.iter().any(|m| m & !0xfff != 0) {
         return None;
     }
-    let mut bytes = [0; LEN];
+    let mut bytes = [0; LEGACY_LEN];
     bytes[..4].copy_from_slice(b"TNP1");
     bytes[4..6].copy_from_slice(&masks[0].to_le_bytes());
     bytes[6..8].copy_from_slice(&masks[1].to_le_bytes());
@@ -33,7 +35,7 @@ pub fn encode(masks: [u16; 2]) -> Option<[u8; LEN]> {
     Some(bytes)
 }
 pub fn decode(bytes: &[u8]) -> Option<[u16; 2]> {
-    if bytes.len() != LEN || &bytes[..4] != b"TNP1" {
+    if bytes.len() != LEGACY_LEN || &bytes[..4] != b"TNP1" {
         return None;
     }
     if crc(&bytes[..8]) != u32::from_le_bytes(bytes[8..].try_into().ok()?) {
@@ -48,6 +50,23 @@ pub fn decode(bytes: &[u8]) -> Option<[u16; 2]> {
     } else {
         Some(masks)
     }
+}
+pub fn encode_span(masks:[u16;8],octaves:u8)->Option<[u8;LEN]> {
+    if !(1..=8).contains(&octaves) || masks.iter().any(|m|m & !0xfff !=0) {return None;}
+    let mut bytes=[0;LEN];bytes[..4].copy_from_slice(b"TNP2");bytes[4]=octaves;
+    for n in 0..8 {bytes[5+n*2..7+n*2].copy_from_slice(&masks[n].to_le_bytes());}
+    let sum=crc(&bytes[..21]);bytes[21..].copy_from_slice(&sum.to_le_bytes());Some(bytes)
+}
+pub fn decode_span(bytes:&[u8])->Option<([u16;8],u8)> {
+    if bytes.len()==LEGACY_LEN {
+        let mut old=decode(bytes)?;
+        if old[0]==0 {old=[old[1],0];}
+        let mut masks=[0;8];masks[..2].copy_from_slice(&old);
+        return Some((masks,if old[1]!=0 {2}else{1}));
+    }
+    if bytes.len()!=LEN || &bytes[..4]!=b"TNP2" || crc(&bytes[..21])!=u32::from_le_bytes(bytes[21..].try_into().ok()?) {return None;}
+    let mut masks=[0;8];for n in 0..8 {masks[n]=u16::from_le_bytes([bytes[5+n*2],bytes[6+n*2]]);}
+    encode_span(masks,bytes[4])?;Some((masks,bytes[4]))
 }
 #[cfg(test)]
 mod tests {
@@ -64,7 +83,7 @@ mod tests {
             let masks = [mask, 0xfff ^ mask];
             let record = encode(masks).unwrap();
             assert_eq!(decode(&record), Some(masks));
-            for index in 0..LEN {
+            for index in 0..LEGACY_LEN {
                 let mut bad = record;
                 bad[index] ^= 1;
                 assert_eq!(decode(&bad), None);

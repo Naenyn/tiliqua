@@ -72,6 +72,8 @@ class TextPlane:
     color: int = 0xD9  # Pixel: low nibble hue, high nibble intensity.
     bold_color: int = 0xF9
     cell_color: bool = False  # Optional bits 8..15 of a character entry.
+    row_stride: int | None = None
+    bank_stride: int | None = None
 
     def __post_init__(self):
         assert self.scale in (1, 2)
@@ -85,6 +87,10 @@ class TextPlane:
         assert self.glyph_height * self.scale <= self.pitch_y
         assert self.glyph_height <= 1 << self.row_bits
         assert self.font_base % (1 << (self.glyph_bits + self.row_bits)) == 0
+        assert self.row_stride is None or self.row_stride >= self.columns
+        if self.bank_stride is not None:
+            assert self.bank_stride >= (self.row_stride or self.columns) * self.rows
+            assert self.bank_stride & (self.bank_stride - 1) == 0
 
 
 @dataclass(frozen=True)
@@ -236,9 +242,10 @@ class TextCompositor(wiring.Component):
 
             # Stage 3: one character fetch per plane, glyph-local coordinates.
             cell = memory.read_port(domain="dvi")
-            address = constant_product(cy2, plane.columns) + cx2
+            address = constant_product(cy2, plane.row_stride or plane.columns) + cx2
             if self.double_buffered:
-                bank_bit = (plane.columns * plane.rows - 1).bit_length()
+                bank_bit = ((plane.bank_stride or
+                             (plane.row_stride or plane.columns) * plane.rows) - 1).bit_length()
                 address = Cat(address[:bank_bit], self.bank)
             m.d.comb += [cell.addr.eq(address), cell.en.eq(valid2)]
             gx3 = Signal(10)

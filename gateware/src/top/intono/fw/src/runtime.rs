@@ -48,7 +48,7 @@ impl RuntimeControls {
                 OperatingMode::Verify
             } else if opts.tracker.page.value == crate::options::Page::Profiles {
                 OperatingMode::Profiles
-            } else if opts.tracker.page.value == crate::options::Page::Play {
+            } else if matches!(opts.tracker.page.value, crate::options::Page::Play | crate::options::Page::RouteMidi) {
                 OperatingMode::Play
             } else if matches!(
                 opts.tracker.page.value,

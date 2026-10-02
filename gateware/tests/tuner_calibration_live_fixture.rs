@@ -17,6 +17,8 @@ mod pitch_units;
 mod scale;
 #[path = "../src/top/intono/fw/src/serial_report.rs"]
 mod serial_report;
+#[path = "../src/top/intono/fw/src/stack_monitor.rs"]
+mod stack_monitor;
 // The same bipolar controller and signed conversion used by the live firmware.
 #[path = "../src/top/intono/fw/src/calibration/bipolar.rs"]
 mod bipolar;
@@ -249,6 +251,9 @@ mod tests {
         let mut out = String::new();
         serial_report::timing(&mut out, &live).unwrap();
         assert!(out.len() < 1024, "timing bytes={}", out.len());
+        // Normal telemetry reserves 1536 bytes. Even maximal timing history
+        // leaves at least 512 for progress and stack/video health lines.
+        assert!(out.len() + 512 <= 1536);
         assert!(out.contains("POLICY=FAST SKIPPED_LOCAL_CHECKS=16"));
         assert!(out.contains("I:4294967295:65535/65535"));
         assert_eq!(out.matches("F:4294967295:65535/65535").count(), MAX_CHECK_TIMINGS - 1);

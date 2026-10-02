@@ -80,6 +80,7 @@ def test_cpu_registers_publish_characters_marker_and_menu_atomically():
         await ctx.tick("sync").repeat(4)
 
     async def bench(ctx):
+        assert ctx.get(dut.overlay.ui_ready) == 0
         ctx.set(dut.overlay.i.x, 100)
         ctx.set(dut.overlay.i.y, 100)
         ctx.set(dut.overlay.i.de, 1)
@@ -102,7 +103,10 @@ def test_cpu_registers_publish_characters_marker_and_menu_atomically():
                       for slot in range(1, 4)]
             for slot, descriptor in enumerate(extras, 1):
                 await write(ctx, 12 + slot * 4, descriptor)
-            await write(ctx, 28, active)
+            keyboard_mask=(0xad6+iteration)&0xfff
+            await write(ctx, 28, active | (keyboard_mask<<1) | (active<<13) | (iteration<<14) | ((15 if iteration==0 else 31 if iteration==1 else iteration+2)<<18) | (1<<23))
+            keyboard_mask_b=(0x249+iteration)&0xfff
+            await write(ctx,32,keyboard_mask_b)
             assert ctx.get(dut.exchange.front_bank) == front_before
             await write(ctx, 8, 1)
             assert (await read_status(ctx)) & 2
@@ -111,7 +115,8 @@ def test_cpu_registers_publish_characters_marker_and_menu_atomically():
             await write(ctx, 4, 0x800 | (2 << 12))
             await write(ctx, 0, 0)
             await write(ctx, 12, 0)
-            await write(ctx, 28, 1-active)
+            await write(ctx, 28, (1-active) | (0xfff<<1) | ((1-active)<<13) | (15<<14) | (15<<18))
+            await write(ctx,32,0xfff)
             for slot in range(1, 4):
                 await write(ctx, 12 + slot * 4, 0)
             await write(ctx, 8, 1)
@@ -125,6 +130,12 @@ def test_cpu_registers_publish_characters_marker_and_menu_atomically():
             assert ctx.get(dut.overlay.marker_valid) == 1
             assert ctx.get(dut.overlay.menu_active) == active
             assert ctx.get(dut.overlay.blank_background) == active
+            assert ctx.get(dut.overlay.keyboard_mask) == keyboard_mask
+            assert ctx.get(dut.overlay.keyboard_mask_b) == keyboard_mask_b
+            assert ctx.get(dut.overlay.keyboard_enable) == active
+            assert ctx.get(dut.overlay.ui_ready) == 1
+            assert ctx.get(dut.overlay.ui_surface) == iteration
+            assert ctx.get(dut.overlay.ui_focus) == (15 if iteration==0 else 31 if iteration==1 else iteration+2)
             assert ctx.get(dut.overlay.marker_lens_base) == 1089
             assert ctx.get(dut.overlay.marker_lens_bank) == 1
             for slot, descriptor in enumerate(extras, 1):

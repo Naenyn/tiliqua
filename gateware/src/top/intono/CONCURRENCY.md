@@ -15,17 +15,21 @@ a competing operation that needs RUN.
   exclusive operation slot. Navigation does not stop the operation; its
   input/output controls remain locked. PROFILES and read-only CHECK are child
   pages; manual REFINE is no longer a normal menu operation.
-- **ROUTES (formerly PLAY):** select OUT 0–3 and any IN 0–3. Select the musical
-  0 V note, correction source, and quantize OFF or SCALE. Each output owns:
-  CV input -> optional scale quantization -> optional measured curve -> DAC.
-- **SCALES:** edits the selected route's scale, root, transpose, mapping and notes.
-  ROUTES and SCALES are two editors of the same output, not competing engines.
-  RUN exists only on ROUTES and requires quantization or correction. Stop before
-  edits. NOTES and SETUPS are reached from SCALES.
-- Several outputs may share one CV input, with independent scales/curves.
-  Stopping one releases only its claim. A scan cannot take that input until
-  every active CV route using it has stopped. Input and output numbers need not
-  match; their reservations are separate.
+- **ROUTES:** four groups, each with one CV input and zero to four exclusively
+  attached outputs. ROUTE selects the group; OUTPUT selects an output to edit or
+  attach. ADD OUT transfers a stopped output from any previous group, REMOVE
+  OUT detaches it. The input and membership of a running group cannot change.
+- **SCALES:** edits the selected physical output's intervals and mapping.
+  Musical key/transpose and correction stay on ROUTES, independently per output.
+- START claims the group's single input and all output jacks atomically. Each
+  member then arms with its own scale/curve. Any failure stops the whole group
+  and releases its claim. STOP and member faults also stop/release the group.
+- Independent groups cannot share inputs or outputs. A group supports fan-out;
+  multiple inputs per group are not supported. CAL input/output selectors skip
+  assigned jacks. Stopped route configurations do not reserve resources.
+- SETUPS stores compact group input/membership alongside per-output settings.
+  TQS4 adds eight bytes to TQS3. TQS1–3 migrate shared-input output chains into
+  one route group per input; recalled groups remain stopped.
 
 One scan at a time is deliberate: it keeps measurement/review state and the UI
 bounded. Applying curves is much cheaper and is supported on all four outputs.
@@ -34,7 +38,7 @@ input roles do not conflict. No second detector or renderer was added.
 
 ## Assigning correction
 
-1. Select output and input on ROUTES.
+1. Select a route group and its input, then select/add the output on ROUTES.
 2. Choose CORRECTION: NONE, RAM, or SLOT 1–8.
 3. With correction enabled, select **BIND** to copy the accepted RAM curve or
    saved slot into that output's immutable runtime snapshot.
@@ -48,7 +52,7 @@ Choosing NONE uses nominal CV regardless of any retained curve.
 
 Saved-slot reads, writes and setup recall require outputs to be stopped to avoid
 flash/cache timing stalls. Prepare/bind the outputs first, then start them
-individually. An accepted RAM profile may be bound to a stopped output while
+by group. An accepted RAM profile may be bound to a stopped output while
 other outputs run. Storage slots and runtime output bindings are different.
 
 The source profile's original audio/output route is not forced onto playback.

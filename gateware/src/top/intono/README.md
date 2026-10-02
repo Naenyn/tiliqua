@@ -12,7 +12,7 @@ The current [oscillator compatibility qualification](OSCILLATOR_QUALIFICATION.md
 records physical tuning/calibration coverage and its limits, including the
 Generate3 CORE/FUNDAMENTAL comparison on the latest detector build.
 
-## Current interface — September 18, 2026
+## Current interface — September 30, 2026
 
 See [automatic calibration](AUTO_CALIBRATION.md) and [routing](CONCURRENCY.md)
 for the current interface. CAL performs measurement, verification and guarded
@@ -21,7 +21,7 @@ refinement automatically, followed by explicit review/accept/save. It supports
 oscillator profile slots. PROFILES and its optional read-only CHECK sit under
 CAL. SCALES edits scales; ROUTES is the only playback RUN page and combines
 optional quantization with optional oscillator correction per output. A route
-needs at least one stage enabled. NOTES/SETUPS sit under SCALES. Child-page
+needs at least one stage enabled. NOTES sits under SCALES; SETUPS sits under ROUTES. Child-page
 headers return to the parent. INTONO (the tuner view), SETTINGS and HELP remain
 top-level pages.
 
@@ -76,13 +76,18 @@ not start output; otherwise unowned outputs remain at commanded calibrated zero.
 
 ## Controls
 
-Press the encoder to open the boxed menu, rotate to navigate, press to edit,
-and press again to finish. The top-level pages are INTONO, CAL, SETTINGS, HELP,
-ROUTES and SCALES. Supporting pages are reached through parent-page buttons.
-The menu hides after five seconds of inactivity. Boot restores saved settings
-but starts navigation at INTONO, with no output armed.
+Controls are always visible on their owning page. Turn the encoder to move the
+bright selection/caret; click a value to edit it, turn to change it, then click
+again to finish. Action buttons act on one click. Select the page header, click,
+and turn to switch among TUNER, CAL, SCALES, ROUTES, OPTIONS and HELP; click to
+finish choosing a page. The four main tabs and OPTIONS/HELP access are visible.
+Supporting pages are entered through parent-page buttons; selecting and clicking
+their header returns to the parent. The active primary tab stays bright and bracketed while controls are selected;
+actions are bracketed and control captions use consistent uppercase lettering.
+The screen controls do not time out. Boot
+restores saved settings but starts at TUNER, with no output armed.
 
-CAL contains input, output, 0v note, policy, graph, run, accept, discard and profiles. RUN
+CAL contains input, output, policy, graph, scan/stop, accept, discard and profiles. SCAN
 performs the automatic procedure described in [AUTO_CALIBRATION.md](AUTO_CALIBRATION.md).
 Initial measurement runs upward with nominal semitone voltage spacing over
 -5..+8 V; valid edge limits can yield a smaller range. The voltage span does not
@@ -90,8 +95,23 @@ guarantee the same number of measurable octaves. AUTO is the default policy.
 FAST uses fewer acquisition estimates for known well-behaved oscillators,
 with the same independent final checks; it may miss brief acquisition variation
 or need more correction afterwards. Broader hardware qualification is still pending.
-The 0v note is the musical reference for
-nominal voltage display, not the oscillator's measured pitch at zero.
+The CAL 0V NOTE readout shows the nearest qualified measured note at zero;
+`--` means no measured reference is available. It is not an editable scan target.
+ARC separates the spiral and all four pitch markers on the left from the focused
+input's note, cents, frequency and Vrms/Vpp readouts on the right. Both retained
+background drawing paths and every marker share the smaller spiral geometry.
+The 11-octave guide still covers the detector range. LINEAR retains four lanes.
+
+The musical override remains on ROUTES.
+
+PROFILES groups the storage slot, SAVE AS name and cursor/character controls above
+SAVE/LOAD and CHECK/BACK. The caret identifies the edited character, including
+trailing spaces. CURRENT identifies the accepted RAM profile, not a preview of
+the selected saved slot. Saving still requires stopped outputs and resolved review.
+CHECK shows current/candidate identity, measured pitch coverage and 0 V note,
+progress, worst signed error, maximum measurement spread and missing checks.
+A grade appears only after the check completes. CHECK/IMPROVE, ACCEPT/DISCARD
+and BACK retain their existing validation and actions.
 
 Review shows measured coverage, checked worst error and cautious tuning advice.
 ACCEPT replaces RAM only; save explicitly in PROFILES. DISCARD keeps the prior
@@ -169,24 +189,60 @@ line distinguishes edited, saved, loaded, missing, and failed records. Loading
 invalid data leaves the current edits intact. Opening NOTES does not stop output;
 edits to an active channel are rejected. Return to SCALES, select
 CUSTOM 2, then use RUN on ROUTES to audition. No new renderer or microtonal-format restriction
-is introduced by this conventional 24-note editor.
+is introduced by this conventional multi-octave editor.
 
-The NOTES page can also collect conventional pitch classes from the dedicated
-TRS MIDI input. Select octave A or B, press LEARN, and tap notes; each fresh
-press toggles its pitch class on or off. Repeated Note Ons while a key remains
+The NOTES page can also edit independent pattern octaves from the dedicated
+TRS MIDI input. Press LEARN BASE and play any note to establish its octave as
+the first pattern octave, then tap notes to toggle them on or off. Repeated Note Ons while a key remains
 held do not retrigger the toggle. Use CLEAR first to start an empty pattern.
 Learning toggles off with another press or on leaving NOTES, never changes a
 running output, and never saves automatically. MIDI input is not yet a USB-C
 host or an imported microtonal-scale editor.
 
 
+SCALES shows the interval pattern relative to C, without applying a route's
+musical key or semitone transpose. Set OCTAVES (1–8, default 1), then turn through the controls to focus the
+keyboard keys, then click a highlighted key to toggle membership. Editing a
+preset selects Custom; **SCALE TOOLS** opens slot/save/load and MIDI facilities.
+ROUTES selects Scale, Key, and Transpose independently for each output. The standard scales use a piano-key preview: included keys are filled
+cyan, with dark note labels. Excluded natural keys are dim and excluded sharps
+are dark. Key fills and labels change together at a video-frame boundary. The
+key outlines are cached, so switching pages does not require drawing them again.
+Custom patterns retain their exact degrees and explicit octave span, including
+empty octaves. Up to two keyboards are visible together; VIEW selects the first
+visible octave. Key navigation stays within that visible pair; use VIEW to
+choose another pair before editing it. A single keyboard is centered vertically. 24 EDO also displays the notes 50 cents above the
+ordinary semitones, marked `+`. Mapping changes how input voltages choose these
+notes, not which notes belong to the scale. Custom NOTES remains a C-based
+interval pattern; the selected key and transpose are applied by the route.
+TOOLS OCT selects the numbered octave for CLEAR OCT and FILL OCT.
+LEARN BASE arms MIDI editing: press any note to set the base to the C of its
+MIDI octave. That press only sets the base. Subsequent fresh presses toggle
+notes in their corresponding pattern octave and reveal it automatically.
+Notes below the base or beyond OCTAVES are ignored. STOP MIDI ends editing; LEARN BASE starts a new learning session. The base defaults to MIDI note 48 (C3), remains
+until reboot, and affects editing only; route Key, Transpose, and oscillator
+calibration stay independent. Save the pattern to retain note edits. Dimmed controls and the
+LOCKED footer identify edits unavailable while that output is running.
+
 SCALES' **output** selector selects independent settings for OUT 0–3:
-scale, root, transpose, mapping, and the two note masks. Input and 0 V note
-are set on ROUTES for that same selected output.
+scale, mapping, octave count, and eight independent note masks. Input, musical Key, Transpose, and
+oscillator 0 V note are set on ROUTES for that same selected output. Editing
+intervals preserves the route's musical offsets.
 Switching output recalls that output's settings in RAM without stopping playback.
 NOTES edits/loads only the selected output's pattern. Pattern slots are reusable
 copies: editing a channel does not modify a saved pattern or another channel.
-ROUTES **RUN starts/stops only the selected output**, using its own configuration.
+ROUTES groups output/input, profile and 0 V note above the applied profile and
+scale summary. APPLY PROFILE installs the selected RAM/slot profile; selecting
+a new source alone does not apply it. The displayed profile name is explicitly
+marked APPLIED, while an unapplied selection shows an apply-first prompt.
+START/STOP, SCALES and SETUPS are grouped below the live feedback. Running route
+settings are dimmed and identify themselves as LOCKED. Pitch/voltage readouts
+are shown only while running; stopped-route fault/action messages remain visible.
+SETUPS shows the current four-output configuration, including scale/key/transpose
+and correction source, rather than suggesting it previews a saved slot. Loading
+a setup leaves outputs off.
+
+ROUTES **START/STOP starts/stops only the selected output**, using its own configuration.
 Two outputs are calculated per 1 ms interrupt, giving each output a 500 Hz update
 rate. Both batches use the same captured input readings, and all four staged
 voltages are committed together at one DAC update boundary. Safety disables
@@ -231,17 +287,30 @@ claim of analog output accuracy or distinguishability of arbitrarily close notes
 ## Routing, correction and quantization
 
 See [CONCURRENCY.md](CONCURRENCY.md) for the current assignment model and test plan.
-ROUTE (formerly PLAY) and QUANT edit the same per-output processing chain.
-Each OUT 0–3 can read any CV input, quantize to its selected scale optionally,
-then apply an independently bound oscillator calibration curve optionally.
-Use CORRECTION NONE for nominal voltage, RAM or SLOT 1–8 plus BIND for correction.
-BIND is explicit and never starts playback. RUN controls only the selected output.
+ROUTES selects one of four route groups. A group takes exactly one CV input
+and feeds any subset of OUT 0–3. Choose ROUTE and INPUT, then choose OUTPUT and
+click ADD OUT or REMOVE OUT. Adding a stopped output transfers it from its
+previous group; an active group's membership and input are locked. The summary
+shows `IN n -> OUT ...`. Empty groups are allowed but cannot start.
+
+Each member output keeps its own scale, musical key, transpose, 0 V note,
+and oscillator profile. OUTPUT selects which member's settings/monitor are
+shown; SCALES edits that physical output's intervals. Choose PROFILE NONE for
+nominal voltage, RAM or SLOT 1–8 plus APPLY PROFILE for correction. Applying a
+profile never starts playback. START/STOP controls the entire selected group.
+All jacks are reserved together; failed starts roll back every member. If a
+member stops on an output fault, the group stops and releases all its jacks.
 
 TUNER is always read-only: all four inputs remain observable, including inputs
-claimed by calibration or CV routes. One calibration/verification
-operation can run alongside independent output routes. Simultaneous scans are
-not supported. Profile flash access and setup recall require stopped outputs.
-Changing route settings requires stopping the affected output; navigation does not.
+claimed by calibration or CV routes. One calibration/verification operation can
+run alongside groups using other jacks. Assigned jacks are dimmed and skipped
+in jack selectors. Stopped configurations do not reserve jacks. Independent
+groups cannot share an input; fan-out belongs within a single group.
+Profile flash access and setup recall require stopped outputs. SETUPS saves all
+four groups and per-output settings, with every output stopped after recall.
+Older saved setups migrate outputs sharing an input into one group (route number
+matches that input), preserving each output's settings. 1–8 octave scales remain
+supported, with one octave as the default.
 
 Oscillator setup guidance for the future module help: at the lowest pitch-CV
 voltage you intend to use, within both the oscillator's supported range and
@@ -256,14 +325,15 @@ knobs can provide a repeatable physical position, but is useful only if the
 resulting pitch is stable, measurable and appropriate for the desired range.
 Record coarse/fine/octave positions and keep them fixed after calibration.
 
-A qualified pitch measured at 0 V is stored with each new profile. BIND defaults
-that route's 0 V note to the nearest musical note and its scale root to the same
-pitch class: an oscillator near D3 becomes D3 at zero input, with D as the root.
+A qualified pitch measured at 0 V is stored with each new profile. Applying it
+sets that route's 0 V note to the nearest musical note: an oscillator near D3
+uses D3 as its voltage reference. The route's musical Key and Transpose remain
+as chosen by the user; calibration does not choose a musical key.
 The exact measured pitch (including cents) anchors nominal fallback beyond the
 curve; it does not offset the already measured correction twice. You may edit
-note/root afterward while stopped. Rebinding reapplies the profile defaults.
+the 0 V note afterward while stopped. Reapplying restores the profile reference.
 Older profiles reuse an existing measured 0 V point. If none exists, binding
-keeps the configured note/root and reports that the measured reference is absent.
+keeps the configured reference and musical key and reports that the measured reference is absent.
 No zero-volt pitch is extrapolated. Updated profile records use TUCP version 5,
 with the same size and legacy versions 1–4 still readable.
 
@@ -299,20 +369,28 @@ four simultaneous cents rulers, each with note, frequency and voltage readings.
 Channel colors are orange, green, cyan and purple for inputs 0–3. The input
 setting (now labeled `focus`) chooses the spiral detail readout,
 not which inputs are acquired. Each cursor maps -50..+50 cents onto its ruler;
-the center is the nearest note. Backgrounds are cached in the two reserved PSRAM buffers. The
-unused view is prepared in small idle-time chunks after boot; if selected before
-ready, `PREPARING VIEW` appears while the old tuner view stays live. Once cached,
-switching does not redraw the backgrounds. Text and cursor switch with the
-background, and the same menu overlays either view. The text-only CAL screen
-uses an atomically published blank backdrop instead of clearing/rebuilding a
-framebuffer. Entering or leaving CAL retains the cached tuner background and
-normally takes one UI update plus a video-frame boundary, not a multi-second
-background preparation. CAL no longer draws the decorative outer border.
+the center is the nearest note. Immutable ARC, LINEAR and circle-only images are prepared at boot in
+three additional PSRAM cache slots. The two scanout buffers retain their existing
+ownership; a needed tuner image is copied into the unused buffer in bounded
+chunks, and CAL copies the circle template before drawing only its graph.
+Pending page/view changes hide the previous background until the complete
+replacement is published. ARC and LINEAR scan their immutable images directly,
+so switching to either needs no background copy or redraw. Text and cursor
+geometry switch with that background. CAL retains its measured response graph and visible controls;
+profile/check panels, SCALES, ROUTES, OPTIONS and HELP use an atomic blank
+backdrop without overwriting the retained graph or tuner background.
 
-The main view uses 9x15 glyphs on a centered, 12-pixel horizontal pitch (previously
-16 pixels). Its 45-column text area spans logical x=90..629, leaving the circular
-edges free. Main-view labels are positioned for this pitch; the established
-OSCIO/SONORO menu geometry and font spacing are unchanged.
+The production view uses the original normal/bold 9x15 font at native scale,
+with 12x32 cell spacing, 40 visible columns and 22 rows. Control regions
+retain their established positions on the 30-column logical layout; glyphs
+are packed more tightly within those regions. This follows hardware
+feedback that the doubled 14x20 trial still looked oversized. Lowercase labels are restored. The retained text-memory stride
+and double-buffer ABI remain unchanged. Controls and centered status fields are
+bounded for the circular viewport; firmware no longer enables the legacy small
+pop-up menu. This first UX pass preserves the channel-linked scale editor and
+existing slot/name controls; richer contextual library panels and independent
+reusable scale editing remain follow-up work. Full help is deferred until before
+the release candidate.
 
 ## Original detector (historical; code removed)
 
@@ -394,3 +472,141 @@ the build directory; use it only after that exact bitstream has been qualified.
 A passing timing report alone does not establish HDMI lock, and a rebuild with
 the same seed can produce a different bitstream, so keep the hardware-verified
 archive when preparing a release.
+
+The interface uses rounded outline tabs and action buttons, with a brighter
+outline for the active page or focused action. Standard-scale piano keys have
+subtly rounded corners; included notes retain their cyan fill. Native font size
+and character spacing are unchanged.
+
+SCALES and SCALE TOOLS display up to two stacked piano keyboards. One-octave
+patterns show only one keyboard. Turn to focus a key (yellow lettering), click
+to toggle it. OCTAVES sets the repeat length independently of note membership;
+VIEW browses adjacent octaves; keyboard focus stops at the visible page edges. On
+SCALE TOOLS, TOOLS OCT chooses the Clear/Fill target. Opening Scale Tools
+from a conventional preset copies its intervals into a Custom pattern.
+SCALES shows untransposed intervals. 24 EDO retains its separate half-semitone
+grids and does not support twelve-key piano editing.
+
+Short configuration fields use one row, such as INPUT: 1 and POLICY: AUTO.
+Long values fall back to two rows, and profile names retain that layout. Font
+size and spacing remain unchanged.
+
+SETUPS shows the current configuration in two rows per output, with I/O and
+scale above profile source and key/transpose/mapping. These summaries describe
+current settings; select LOAD to read the chosen saved slot, with outputs off.
+
+
+### Multi-octave intent clarified (October 1, 2026)
+
+The user intends dàil-style multi-octave scale/chord/arpeggio programming, not
+just a duplicated keyboard preview. Primary reference: [Instruō dàil manual](https://www.instruomodular.com/wp-content/uploads/2024/08/dail-Manual.pdf),
+pages 3, 12 and 17. It describes programming notes spanning multiple octaves
+via MIDI, natural distribution respecting pitch distances, and equal
+distribution dividing the defined octave span evenly among selected notes.
+The manual does not explicitly resolve pattern repetition or out-of-pattern
+boundary behavior; do not infer exact parity from those descriptions alone.
+
+Intono now stores one to eight independent octave masks and an explicit span,
+defaulting to one. Custom patterns repeat every selected span, anchored to
+C-relative interval zero before the route's key/transpose. Empty leading,
+trailing and internal octaves retain their placement. Nearest/EQUAL mapping
+operates on the complete pattern; EQUAL divides the entire span among degrees.
+This specifies Intono's boundary/repetition behavior without claiming exact
+dàil parity. MIDI Learn uses an absolute octave base established by any note through
+LEARN BASE. Subsequent presses map into the independent pattern octaves.
+
+TNP2 note records and TQS3 route setups store the span and all eight masks,
+including hidden edits beyond a reduced span. TNP1 and TQS1/2 loads normalize
+legacy empty halves exactly as the previous engine did, then infer span 1/2.
+Keys/slots stay unchanged and oscillator profiles remain separate.
+
+### Startup and selectors (October 1)
+
+The startup view holds an outer circle, loading dots and INTONO / STARTING text
+until the first complete page snapshot. Control outlines remain disabled until
+that snapshot; selectors now use the same rounded borders as action buttons.
+The current qualified image is `intono-ux-selectors-r5`; future firmware-only
+builds must use this hardware rather than the previous stacked image.
+
+### Background gaps and piano contrast (October 1)
+
+Coordinated scanout clears unavailable background samples instead of holding the
+last pixel across a memory gap. A deliberate-stall simulation verifies this case;
+the reported occasional startup line still needs a physical retest. Selected
+sharp keys use darker cyan than natural keys so chromatic keyboards remain legible.
+
+Current qualified hardware: `intono-ux-gap-r5`, successfully flashed to #1 slot 1.
+
+### Common circle and calibration feedback (October 1)
+
+Routes, options, help and saved-item pages now retain the common circular edge
+using the existing immutable circle image. CAL voltage labels span its horizontal
+axis with endpoint/midpoint values. During acquisition its footer shows the current
+voltage and number of collected points; SEARCHING FOR TONE identifies the quiet
+part of a sweep. CHECKS DISAGREE means the broad check and later repetitions at
+the same target voltage did not agree enough to trust automatic improvement.
+
+Current qualified/flashed image: `intono-ux-circle-r5`. VIDEO BUFFER_GAPS in debug
+status will help distinguish missing background samples from the still-unresolved
+brief horizontal line. The diagnostic saturates at 255 episodes after the reader
+has received its first sample; it does not change acquisition or output timing.
+
+### Output monitor and tuner feedback (October 1, 2026)
+
+ROUTES groups the applied profile, current output pitch, and live input/output
+voltages below OUTPUT MONITOR. Scale, key, and transpose remain in their
+editable controls above, avoiding a second summary of the same settings.
+ARC tuner shows NO SIGNAL when the focused input has no valid pitch; its
+cents readout turns green and bold within ±2 cents. This is a visual tuning
+cue and does not change detection, calibration, or quantization tolerances.
+
+### Route overview and MIDI transposition
+
+Open **ROUTES → ALL ROUTES** to see each physical output's group, input, profile,
+scale/key, and run state together. This also contains setup SAVE/LOAD.
+**MIDI ROUTE** selects a logical route's MIDI channel (OFF by default), zero note
+(C4 by default), and release behavior (HOLD by default, optionally ZERO). Notes
+transpose every output in that group relative to the zero note; RESET clears the
+current transpose. Save a setup to retain these settings. Current MIDI offsets
+and running state are not saved. Scale MIDI learning temporarily pauses route
+transposition. See [October 2 code review](CODE_REVIEW_2026-10-02.md) for validation
+and remaining hardware checks.
+
+### Serial diagnostics
+
+Normal builds retain calibration pass timing/progress, stack watermark and video
+health reports. Detailed raw CV snapshots, scan command/acknowledgement dumps,
+frame ages, tuner/verification evidence, EEPROM/boot reports and boot markers are
+opt-in: set `TILIQUA_INTONO_VERBOSE_DIAGNOSTICS=1` when building firmware. The
+normal default is unset or `0`. Both modes drain serial output without blocking.
+This flag is independent of `TILIQUA_INTONO_NSDF_TRACE`; retain its default
+`continuous-quiet` for production pitch acquisition. Wave/pair experiments and
+repeat diagnostics remain independently opt-in. Output watchdogs and acquisition
+scheduling are always active.
+
+### Mapping belongs to the output route
+
+Choose `MAP: NEAREST` or `MAP: EQUAL` on Routes for the selected output.
+Nearest is the default. Mapping is saved with route setups, alongside the key
+and transpose, and remains unchanged when editing or loading a scale. The
+Scales page now defines only intervals and octave span. Saved scale records
+already contain only masks and span, so their format is unchanged. The hidden
+legacy editor mapping option remains solely to preserve serialized option keys;
+it is no longer used by runtime playback or scale editing.
+
+### Factory scale collection
+
+Twelve common factory interval patterns are available: Chromatic, Major,
+Natural Minor, Major Pentatonic, Minor Pentatonic, Dorian, Mixolydian, Phrygian,
+Lydian, Harmonic Minor, Melodic Minor and Blues. Melodic Minor uses the fixed
+ascending/jazz form in both input directions; Blues is the six-note minor blues
+pattern. Display labels abbreviate longer names to fit one-row route controls.
+The existing 24 EDO option is retained as an additional microtonal option.
+All old preset IDs (0..6, including Custom) remain unchanged; new presets append
+IDs 7..13. Eight user scale slots remain separate, with interval snapshots
+loaded using the existing saved-scale selector. Editing a factory keyboard
+creates a custom interval pattern without changing the factory table.
+
+Reference: [Seaside Modular Proteus manual](https://seaside.digital/manuals/ProteusManual.pdf),
+scale selection on page 9. This is a practical common set, not a measured popularity
+ranking. Proteus supplies the core set; Lydian, melodic minor and blues extend it.

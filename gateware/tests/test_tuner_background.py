@@ -117,3 +117,43 @@ def test_background_ownership_waits_for_reader_acquisition():
 
     sim.add_testbench(bench)
     sim.run()
+
+
+def test_static_guides_switch_atomically_without_changing_cal_draw_bank():
+    dut = SceneExchange(BackgroundLayout(1280, 720), 16)
+    sim = Simulator(dut)
+    sim.add_clock(1.3e-6, domain="sync")
+    sim.add_clock(1e-6, domain="dvi")
+    async def bench(ctx):
+        cal_bank = 0
+        for index, (source, swap) in enumerate([(1, False), (2, False),
+                (0, True), (3, False), (4, False), (5, False), (1, False), (2, False), (0, True)]):
+            old_draw = ctx.get(dut.draw_base)
+            ctx.set(dut.static_source, source)
+            ctx.set(dut.swap_background, swap)
+            ctx.set(dut.payload, index + 1)
+            ctx.set(dut.submit, 1)
+            await ctx.tick("sync")
+            ctx.set(dut.submit, 0)
+            ctx.set(dut.static_source, 3)
+            ctx.set(dut.payload, 999)
+            await ctx.tick("sync").repeat(8)
+            cal_bank ^= swap
+            expected = {1: 0x200000, 2: 0x240000, 3: 0x2C0000, 4: 0x280000, 5: 0x300000}.get(source, cal_bank * 0x40000)
+            assert ctx.get(dut.next_base) == expected
+            assert ctx.get(dut.draw_base) == old_draw
+            ctx.set(dut.acquire, 1)
+            await ctx.tick("sync")
+            ctx.set(dut.acquire, 0)
+            await ctx.tick("dvi").repeat(5)
+            assert ctx.get(dut.busy)
+            assert ctx.get(dut.draw_base) == (1-cal_bank)*0x40000
+            ctx.set(dut.boundary, 1)
+            await ctx.tick("dvi")
+            ctx.set(dut.boundary, 0)
+            assert ctx.get(dut.published) == index + 1
+            await ctx.tick("sync").repeat(5)
+            assert not ctx.get(dut.busy)
+            assert ctx.get(dut.next_base) == expected
+    sim.add_testbench(bench)
+    sim.run()

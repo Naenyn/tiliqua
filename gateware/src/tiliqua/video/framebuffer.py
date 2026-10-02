@@ -86,6 +86,9 @@ class DMAFramebuffer(wiring.Component):
             # Assert while scanout is consuming its reserve and the PSRAM DMA
             # should take precedence over non-real-time framebuffer writers.
             "scanout_urgent": Out(1),
+            # Gap-episode counter, safely crossed back to sync for optional
+            # instrument diagnostics. Saturates at 255 episodes.
+            "scanout_gaps": Out(16),
             # Dynamic timing / modeline information shared with other cores.
             "fbp": In(self.Properties()),
             # Enough information to plot the output of this core to images
@@ -208,9 +211,27 @@ class DMAFramebuffer(wiring.Component):
         # (1 FIFO word is N pixels, extracted byte-by-byte)
         bytecounter = Signal(exact_log2(4//self.bytes_per_pixel))
         last_word   = Signal(32)
+        word_available = fifo.r_rdy if self.frame_exchange is None else (fifo.r_rdy | (bytecounter != 0))
+        if self.frame_exchange is not None:
+            reader_started = Signal()
+            with m.If(dvi_tgen.ctrl.de & word_available):
+                m.d.dvi += reader_started.eq(1)
+            missing = reader_started & dvi_tgen.ctrl_phy.de & ~word_available
+            previous_missing = Signal()
+            gaps = Signal(8)
+            gray, gray_sync = Signal(8), Signal(8)
+            m.d.dvi += previous_missing.eq(missing)
+            with m.If(missing & ~previous_missing & (gaps != 255)):
+                m.d.dvi += gaps.eq(gaps + 1)
+            # Register Gray encoding so the CDC never observes binary carry
+            # transients. At most one bit changes per counted episode.
+            m.d.dvi += gray.eq(gaps ^ (gaps >> 1))
+            m.submodules.gap_ff = FFSynchronizer(gray, gray_sync, o_domain="sync")
+            for bit in range(8):
+                m.d.comb += self.scanout_gaps[bit].eq(gray_sync[bit:].xor())
+            m.d.comb += self.scanout_gaps[8:].eq(0)
         with m.If(phy_vsync_dvi):
             m.d.dvi += bytecounter.eq(0)
-        word_available = fifo.r_rdy if self.frame_exchange is None else (fifo.r_rdy | (bytecounter != 0))
         with m.Elif(dvi_tgen.ctrl.de & word_available):
             m.d.comb += fifo.r_en.eq(bytecounter == 0),
             m.d.dvi += bytecounter.eq(bytecounter+1)
@@ -241,6 +262,14 @@ class DMAFramebuffer(wiring.Component):
             first_input.vsync.eq(dvi_tgen.ctrl_phy.vsync),
         ]
         if self.frame_exchange is not None:
+            # A depleted FIFO used to hold last_word on screen: a bright guide
+            # pixel could become a horizontal streak until memory caught up.
+            # Preserve HDMI timing and overlay coordinates, but blank that
+            # missing background sample. Match the existing one-cycle delay.
+            background_valid = Signal()
+            m.d.dvi += background_valid.eq(dvi_tgen.ctrl.de & word_available)
+            m.d.comb += first_input.pixel.eq(Mux(background_valid,
+                                               last_word[:Pixel.as_shape().size], 0))
             # Align active/sync flags with the registered pixel and coordinates.
             de, hs, vs = Signal(), Signal(), Signal()
             m.d.dvi += [de.eq(dvi_tgen.ctrl_phy.de), hs.eq(dvi_tgen.ctrl_phy.hsync),

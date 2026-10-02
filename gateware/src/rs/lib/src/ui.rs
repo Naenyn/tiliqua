@@ -140,6 +140,13 @@ impl<EncoderT: Encoder,
         self.finish_update(false);
     }
 
+    /// Instrument-specific navigation with the same nonblocking ISR/LED path.
+    pub fn update_encoder_realtime<F>(&mut self, apply_ticks: F)
+    where F: FnOnce(&mut OptionsT, i8) {
+        self.poll_encoder(apply_ticks);
+        self.finish_update(false);
+    }
+
     pub fn update_encoder<F>(&mut self, apply_ticks: F)
     where
         F: FnOnce(&mut OptionsT, i8),

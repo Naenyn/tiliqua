@@ -2,8 +2,13 @@
 //! Intervals are thousandths of a cent relative to a separately supplied root.
 //! Degree zero is implicit in imported Scala files, but explicit in this table.
 pub const MAX_DEGREES: usize = 128;
+// IDs 5 (24 EDO) and 6 (custom) retain their original stored values.
+pub const MAX_SCALE_ID: u8 = 13;
+pub const COMMON_PRESETS: [u8;12] = [0,1,2,3,4,7,8,9,10,11,12,13];
+pub fn has_piano_keys(id:u8)->bool { id<=MAX_SCALE_ID && id!=5 }
 
-/// Immutable presets shared by every channel. IDs are not a storage format.
+
+/// Immutable presets shared by every channel. Preserve IDs used in route setups.
 pub fn preset(id: u8) -> Option<Scale<'static>> {
     let (degrees, period): (&[i32], i32) = match id {
         0 => (
@@ -31,9 +36,24 @@ pub fn preset(id: u8) -> Option<Scale<'static>> {
             ],
             1200000,
         ),
+        7 => (&[0, 200000, 300000, 500000, 700000, 900000, 1000000], 1200000),
+        8 => (&[0, 200000, 400000, 500000, 700000, 900000, 1000000], 1200000),
+        9 => (&[0, 100000, 300000, 500000, 700000, 800000, 1000000], 1200000),
+        10 => (&[0, 200000, 400000, 600000, 700000, 900000, 1100000], 1200000),
+        11 => (&[0, 200000, 300000, 500000, 700000, 800000, 1100000], 1200000),
+        // Ascending/jazz melodic minor: fixed intervals in either CV direction.
+        12 => (&[0, 200000, 300000, 500000, 700000, 900000, 1100000], 1200000),
+        13 => (&[0, 300000, 500000, 600000, 700000, 1000000], 1200000),
         _ => return None,
     };
-    Some(Scale { degrees, period })
+    Some(Scale { degrees: Degrees::Pitch(degrees), period })
+}
+
+/// Conventional keys in an immutable preset; half-semitone degrees stay separate.
+pub fn preset_keys(id:u8)->Option<(u16,u8)> {
+    let scale=preset(id)?;let mut mask=0;
+    for degree in scale.degrees.iter() {if degree%100_000==0 {mask|=1<<(degree/100_000);}}
+    Some((mask,scale.degrees.len() as u8))
 }
 
 #[derive(Debug, PartialEq)]
@@ -85,14 +105,44 @@ pub fn decode<'a>(bytes: &[u8], storage: &'a mut [i32; MAX_DEGREES]) -> Result<S
         *degree = read(12 + i * 4);
     }
     Ok(Scale {
-        degrees: &storage[..count],
+        degrees: Degrees::Pitch(&storage[..count]),
         period,
     })
 }
 
 /// A validated borrowed table. The importer owns storage; channels can share it.
+// Conventional keyboard patterns need only a semitone index (0..95).
+// Imported and microtonal scales retain their exact millicent degrees.
+#[derive(Clone, Copy)]
+enum Degrees<'a> {
+    Pitch(&'a [i32]),
+    Semitone(&'a [u8]),
+}
+impl<'a> Degrees<'a> {
+    fn len(self) -> usize {
+        match self { Self::Pitch(v) => v.len(), Self::Semitone(v) => v.len() }
+    }
+    fn get(self, index: usize) -> i32 {
+        match self { Self::Pitch(v) => v[index], Self::Semitone(v) => v[index] as i32 * 100_000 }
+    }
+    fn binary_search(self, value: &i32) -> Result<usize, usize> {
+        let mut lo = 0;
+        let mut hi = self.len();
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            match self.get(mid).cmp(value) {
+                core::cmp::Ordering::Less => lo = mid + 1,
+                core::cmp::Ordering::Greater => hi = mid,
+                core::cmp::Ordering::Equal => return Ok(mid),
+            }
+        }
+        Err(lo)
+    }
+    fn iter(self) -> impl Iterator<Item = i32> + 'a { (0..self.len()).map(move |i| self.get(i)) }
+}
+
 pub struct Scale<'a> {
-    degrees: &'a [i32],
+    degrees: Degrees<'a>,
     period: i32,
 }
 
@@ -112,20 +162,21 @@ fn cycle_phase(pitch: i64, period: i32) -> (i64, i64) {
 }
 
 /// Small compiled conventional-note pattern, not the microtonal storage format.
-/// An empty half collapses to the other half's pitch classes over one octave.
+/// Stores ordered semitone indices; the explicitly selected span repeats.
 pub struct Pattern {
-    degrees: [i32; 24],
-    count: usize,
+    degrees: [u8; 96],
+    count: u8,
     period: i32,
 }
 impl Pattern {
     pub const fn empty() -> Self {
         Self {
-            degrees: [0; 24],
+            degrees: [0; 96],
             count: 0,
             period: 1_200_000,
         }
     }
+    #[cfg(test)]
     pub fn compile(masks: [u16; 2]) -> Result<Self, Error> {
         if masks.iter().any(|m| m & !0xfff != 0) {
             return Err(Error::InvalidDegrees);
@@ -133,25 +184,34 @@ impl Pattern {
         if masks == [0, 0] {
             return Err(Error::Empty);
         }
-        let mut result = Self::empty();
         let masks = if masks[0] == 0 { [masks[1], 0] } else { masks };
-        result.period = if masks[1] == 0 { 1_200_000 } else { 2_400_000 };
+        return Self::compile_span(&masks, if masks[1] == 0 {1} else {2});
+    }
+    /// Explicit period: silent octaves remain part of the pattern.
+    pub fn compile_span(masks: &[u16], octaves: u8) -> Result<Self, Error> {
+        if octaves == 0 || octaves > 8 || masks.len() < octaves as usize {
+            return Err(Error::InvalidPeriod);
+        }
+        let masks=&masks[..octaves as usize];
+        if masks.iter().any(|m| m & !0xfff != 0) {return Err(Error::InvalidDegrees);}
+        let mut result=Self::empty();
+        result.period=octaves as i32*1_200_000;
         for (octave, mask) in masks.iter().enumerate() {
             for note in 0..12 {
                 if mask & (1 << note) != 0 {
-                    result.degrees[result.count] = (octave as i32 * 12 + note) * 100_000;
+                    result.degrees[result.count as usize] = (octave * 12 + note) as u8;
                     result.count += 1;
                 }
             }
         }
-        Ok(result)
+        if result.count==0 {Err(Error::Empty)} else {Ok(result)}
     }
     pub fn scale(&self) -> Option<Scale<'_>> {
         if self.count == 0 {
             None
         } else {
             Some(Scale {
-                degrees: &self.degrees[..self.count],
+                degrees: Degrees::Semitone(&self.degrees[..self.count as usize]),
                 period: self.period,
             })
         }
@@ -175,7 +235,7 @@ impl<'a> Scale<'a> {
         {
             return Err(Error::InvalidDegrees);
         }
-        Ok(Self { degrees, period })
+        Ok(Self { degrees: Degrees::Pitch(degrees), period })
     }
 
     // The two degrees bracketing a pitch, including across period boundaries.
@@ -186,21 +246,21 @@ impl<'a> Scale<'a> {
         let mut hi = self.degrees.len();
         while lo < hi {
             let mid = (lo + hi) / 2;
-            if self.degrees[mid] as i64 <= phase {
+            if self.degrees.get(mid) as i64 <= phase {
                 lo = mid + 1;
             } else {
                 hi = mid;
             }
         }
         let lower = if lo == 0 {
-            cycle - period + self.degrees[self.degrees.len() - 1] as i64
+            cycle - period + self.degrees.get(self.degrees.len() - 1) as i64
         } else {
-            cycle + self.degrees[lo - 1] as i64
+            cycle + self.degrees.get(lo - 1) as i64
         };
         let upper = if lo == self.degrees.len() {
-            cycle + period + self.degrees[0] as i64
+            cycle + period + self.degrees.get(0) as i64
         } else {
-            cycle + self.degrees[lo] as i64
+            cycle + self.degrees.get(lo) as i64
         };
         (lower, upper)
     }
@@ -218,14 +278,14 @@ impl<'a> Scale<'a> {
             let (cycle, phase) = cycle_phase(prev, self.period);
             if let Ok(index) = self.degrees.binary_search(&(phase as i32)) {
                 let before = if index == 0 {
-                    cycle - self.period as i64 + self.degrees[self.degrees.len() - 1] as i64
+                    cycle - self.period as i64 + self.degrees.get(self.degrees.len() - 1) as i64
                 } else {
-                    cycle + self.degrees[index - 1] as i64
+                    cycle + self.degrees.get(index - 1) as i64
                 };
                 let next = if index + 1 == self.degrees.len() {
-                    cycle + self.period as i64 + self.degrees[0] as i64
+                    cycle + self.period as i64 + self.degrees.get(0) as i64
                 } else {
-                    cycle + self.degrees[index + 1] as i64
+                    cycle + self.degrees.get(index + 1) as i64
                 };
                 let down = prev - before;
                 let up = next - prev;
@@ -304,13 +364,41 @@ impl<'a> Scale<'a> {
         } else {
             (phase * count / period) as usize
         };
-        i32::try_from(cycle + self.degrees[index] as i64 + root as i64).map_err(|_| Error::Overflow)
+        i32::try_from(cycle + self.degrees.get(index) as i64 + root as i64).map_err(|_| Error::Overflow)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn compact_patterns_match_exact_pitch_tables_through_eight_octaves() {
+        assert!(core::mem::size_of::<Pattern>() <= 104);
+        for octaves in 1..=8 {
+            for masks in [[0xfff; 8], [1, 0, 0x800, 0, 0x555, 0, 0, 1],
+                          [0xaaa, 0x555, 0x800, 1, 0x135, 0x246, 0x777, 0x888]] {
+                let pattern = Pattern::compile_span(&masks, octaves).unwrap();
+                let compact = pattern.scale().unwrap();
+                let degrees: std::vec::Vec<i32> = masks[..octaves as usize].iter().enumerate()
+                    .flat_map(|(octave, mask)| (0..12).filter_map(move |note| {
+                        (mask & (1 << note) != 0).then_some((octave as i32 * 12 + note) * 100_000)
+                    })).collect();
+                // Sparse patterns may omit zero; use the original exact-table
+                // representation directly, as the previous compiler did.
+                let reference = Scale { degrees: Degrees::Pitch(&degrees), period: octaves as i32 * 1_200_000 };
+                for root in [-7654321, 0, 6000000] {
+                    for pitch in [-20_000_001, -9_600_001, -1, 0, 55_001, 1_150_000, 9_599_999, 20_000_001, i32::MIN, i32::MAX] {
+                        for previous in [None, Some(root), Some(root + 1_100_000), Some(pitch)] {
+                            assert_eq!(compact.quantize(pitch, root, previous), reference.quantize(pitch, root, previous));
+                            assert_eq!(compact.distribute(pitch, root, previous), reference.distribute(pitch, root, previous));
+                        }
+                        assert_eq!(compact.quantize_bounded(pitch, root, -3_000_000, 10_000_000),
+                                   reference.quantize_bounded(pitch, root, -3_000_000, 10_000_000));
+                    }
+                }
+            }
+        }
+    }
     #[test]
     fn bounded_scale_matches_exhaustive_nearest_degree() {
         let degrees = [0, 17, 43];
@@ -408,7 +496,7 @@ mod tests {
                 let relative = pitch as i64 - root as i64;
                 let cycle = relative.div_euclid(i32::MAX as i64) * i32::MAX as i64;
                 let index = (relative.rem_euclid(i32::MAX as i64) * 2 / i32::MAX as i64) as usize;
-                let expected = i32::try_from(cycle + s.degrees[index] as i64 + root as i64)
+                let expected = i32::try_from(cycle + s.degrees.get(index) as i64 + root as i64)
                     .map_err(|_| Error::Overflow);
                 assert_eq!(s.distribute(pitch, root, None), expected);
             }
@@ -427,7 +515,7 @@ mod tests {
             let p = Pattern::compile(masks).unwrap();
             let s = p.scale().unwrap();
             assert_eq!(s.period, 1_200_000);
-            assert_eq!(s.degrees, &[700_000]);
+            assert_eq!(s.degrees.iter().collect::<std::vec::Vec<_>>(), [700_000]);
             assert_eq!(s.quantize(0, 0, None), Ok(-500_000));
             assert_eq!(s.distribute(0, 0, None), Ok(700_000));
         }
@@ -474,25 +562,49 @@ mod tests {
     }
     #[test]
     fn presets_are_valid_and_represent_expected_intervals() {
-        for id in 0..=5 {
+        for id in (0..=MAX_SCALE_ID).filter(|id| *id!=6) {
             let scale = preset(id).unwrap();
-            assert!(Scale::new(scale.degrees, scale.period).is_ok());
+            assert!(Scale::new(&scale.degrees.iter().collect::<std::vec::Vec<_>>(), scale.period).is_ok());
             for root in [-1_200_000, 0, 300_000, 6_000_000] {
-                for degree in scale.degrees {
+                for degree in scale.degrees.iter() {
                     assert_eq!(scale.quantize(root + degree, root, None), Ok(root + degree));
                 }
             }
         }
         assert!(preset(6).is_none());
         assert_eq!(
-            preset(1).unwrap().degrees,
+            preset(1).unwrap().degrees.iter().collect::<std::vec::Vec<_>>(),
             &[0, 200000, 400000, 500000, 700000, 900000, 1100000]
         );
         assert_eq!(
-            preset(2).unwrap().degrees,
+            preset(2).unwrap().degrees.iter().collect::<std::vec::Vec<_>>(),
             &[0, 200000, 300000, 500000, 700000, 800000, 1000000]
         );
         assert_eq!(preset(5).unwrap().degrees.len(), 24);
+    }
+    #[test]
+    fn common_presets_match_reference_semitones_and_piano_masks() {
+        let expected: &[(u8,&[i32])] = &[
+            (7,&[0,2,3,5,7,9,10]),(8,&[0,2,4,5,7,9,10]),
+            (9,&[0,1,3,5,7,8,10]),(10,&[0,2,4,6,7,9,11]),
+            (11,&[0,2,3,5,7,8,11]),(12,&[0,2,3,5,7,9,11]),
+            (13,&[0,3,5,6,7,10]),
+        ];
+        assert_eq!(COMMON_PRESETS.len(),12);
+        for &(id,semitones) in expected {
+            let scale=preset(id).unwrap();
+            assert_eq!(scale.degrees.iter().collect::<std::vec::Vec<_>>(),
+                semitones.iter().map(|n| n*100_000).collect::<std::vec::Vec<_>>());
+            let mask=semitones.iter().fold(0u16,|m,n|m|(1<<n));
+            assert_eq!(preset_keys(id),Some((mask,semitones.len() as u8)));
+            assert!(has_piano_keys(id));
+            // Notes outside the scale are snapped; enabled notes survive both maps.
+            for &degree in semitones {
+                assert_eq!(scale.quantize(degree*100_000,0,None),Ok(degree*100_000));
+            }
+        }
+        assert!(!has_piano_keys(5));
+        assert!(preset(MAX_SCALE_ID+1).is_none());
     }
     #[test]
     fn rejects_invalid_tables() {

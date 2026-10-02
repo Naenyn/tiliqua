@@ -73,6 +73,7 @@ class IntonoSoc(TiliquaSoc):
         self.tuner_display = IntonoDisplayPeripheral(
             h_active=modeline.h_active,
             rotate_left=round_display,
+            large_text=True,
             scene_layout=BackgroundLayout(modeline.h_active, modeline.v_active))
         # Retained playback profile plus foreground, storage and interrupt
         # frames need more than the old 16-KiB safety budget. 32 KiB leaves
@@ -88,7 +89,8 @@ class IntonoSoc(TiliquaSoc):
         # Enable the opt-in transaction-safe DMA only for this instrument.
         # Ordinary frame commits preserve the background; a future scene writer
         # must initialize/flush the inactive PSRAM buffer before requesting swap.
-        assert self.fw_base - self.psram_base >= 0x200000
+        assert 0x200000 <= self.fw_base - self.psram_base < 0x800000
+        assert self.psram_size >= 0xC00000 + 4096
         self.fb.frame_exchange = self.tuner_display.exchange
         self.fb.serializer_circular_shift = True
         # Pitch belongs exclusively to the NSDF peripheral. This block is now
@@ -120,6 +122,7 @@ class IntonoSoc(TiliquaSoc):
         m = Module()
         m.submodules.tuner_periph = self.tuner_periph
         m.submodules.tuner_display = self.tuner_display
+        m.d.comb += self.tuner_display.scanout_gaps.eq(self.fb.scanout_gaps)
         m.submodules.playback_timer = self.playback_timer
         m.submodules += super().elaborate(platform)
 

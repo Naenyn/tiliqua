@@ -20,6 +20,8 @@ pub enum Page {
     QuantNotes,
     #[strum(disabled)]
     QuantSetups,
+    #[strum(disabled)]
+    RouteMidi,
 }
 // EnumIter excludes child screens, but labels must remain valid for every
 // screen. Deriving IntoStaticStr with `disabled` would panic for a child.
@@ -36,6 +38,7 @@ impl From<Page> for &'static str {
             Page::Quantizer => "SCALES",
             Page::QuantNotes => "NOTES",
             Page::QuantSetups => "SETUPS",
+            Page::RouteMidi => "ROUTE MIDI",
         }
     }
 }
@@ -44,8 +47,10 @@ impl From<Page> for &'static str {
 #[strum(serialize_all = "SCREAMING-KEBAB-CASE")]
 pub enum DisplayMode {
     #[default]
-    #[serde(alias = "Visualizer", alias = "VISUALIZER")]
     Arc,
+    // Retain the original binary settings discriminants; never offered in UI.
+    #[strum(disabled)]
+    Visualizer,
     Linear,
 }
 
@@ -104,8 +109,23 @@ pub enum ScalePreset {
     MinorPentatonic,
     #[strum(serialize = "24 EDO")]
     Edo24,
-    #[strum(serialize = "CUSTOM 2")]
+    #[strum(serialize = "CUSTOM")]
     Custom2,
+    // Append rather than reorder: saved route IDs 0..6 remain compatible.
+    #[strum(serialize = "DORIAN")]
+    Dorian,
+    #[strum(serialize = "MIXOLYD")]
+    Mixolydian,
+    #[strum(serialize = "PHRYGIAN")]
+    Phrygian,
+    #[strum(serialize = "LYDIAN")]
+    Lydian,
+    #[strum(serialize = "HARM MIN")]
+    HarmonicMinor,
+    #[strum(serialize = "MELOD MIN")]
+    MelodicMinor,
+    #[strum(serialize = "BLUES")]
+    Blues,
 }
 
 #[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]
@@ -116,7 +136,7 @@ pub enum Distribution {
     #[strum(serialize = "EQUAL")]
     Equal,
 }
-int_params!(OctaveParams<u8> { step: 1, min: 0, max: 1 });
+int_params!(OctaveParams<u8> { step: 1, min: 0, max: 7 });
 int_params!(PatternSlotParams<u8> { step: 1, min: 1, max: 8 });
 
 #[derive(OptionPage, Clone)]
@@ -127,6 +147,24 @@ pub struct QuantSetupOpts {
     pub save: ButtonOption<OneShotButtonParams>,
     #[option(false)]
     pub load: ButtonOption<OneShotButtonParams>,
+    #[option(false)]
+    pub midi: ButtonOption<OneShotButtonParams>,
+}
+
+#[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]
+pub enum MidiRelease {
+    #[default] #[strum(serialize="HOLD")] Hold,
+    #[strum(serialize="ZERO")] Zero,
+}
+int_params!(MidiChannelParams<u8> { step: 1, min: 0, max: 16 });
+int_params!(MidiNoteParams<u8> { step: 1, min: 0, max: 127 });
+#[derive(OptionPage, Clone)]
+pub struct RouteMidiOpts {
+    #[option(1)] pub route: IntOption<InputParams>,
+    #[option(0)] pub channel: IntOption<MidiChannelParams>,
+    #[option(60)] pub zero: IntOption<MidiNoteParams>,
+    #[option(false)] pub reset: ButtonOption<OneShotButtonParams>,
+    #[option] pub release: EnumOption<MidiRelease>,
 }
 
 #[derive(OptionPage, Clone)]
@@ -149,6 +187,10 @@ pub struct QuantNotesOpts {
     pub load: ButtonOption<OneShotButtonParams>,
     #[option(1)]
     pub slot: IntOption<PatternSlotParams>,
+    #[option(1)]
+    pub octaves: IntOption<PatternSlotParams>,
+    #[option(0)]
+    pub view: IntOption<OctaveParams>,
 }
 
 #[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]
@@ -251,6 +293,23 @@ pub struct PlayOpts {
     pub run: ButtonOption<OneShotButtonParams>,
     #[option(false)]
     pub scales: ButtonOption<OneShotButtonParams>,
+    #[option(false)]
+    pub setups: ButtonOption<OneShotButtonParams>,
+    // Append route selectors to preserve all existing option keys/indices.
+    #[option]
+    pub scale: EnumOption<ScalePreset>,
+    #[option]
+    pub key: EnumOption<ScaleRoot>,
+    #[option(0)]
+    pub transpose: IntOption<TransposeParams>,
+    #[option(1)]
+    pub scale_slot: IntOption<PatternSlotParams>,
+    #[option(1)]
+    pub output_edit: IntOption<InputParams>,
+    #[option(false)]
+    pub assign: ButtonOption<OneShotButtonParams>,
+    #[option]
+    pub mapping: EnumOption<Distribution>,
 }
 
 #[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]
@@ -297,6 +356,7 @@ pub struct QuantizerOpts {
     #[option(0)]
     pub transpose: IntOption<TransposeParams>,
     #[option]
+    // Legacy serialized option/index only; mapping now belongs to PlayOpts.
     pub mapping: EnumOption<Distribution>,
     #[option(false)]
     pub notes: ButtonOption<OneShotButtonParams>,
@@ -304,6 +364,17 @@ pub struct QuantizerOpts {
     pub setups: ButtonOption<OneShotButtonParams>,
     #[option(false)]
     pub routes: ButtonOption<OneShotButtonParams>,
+    // First visible octave of the two-keyboard window.
+    #[option(0)]
+    pub view_octave: IntOption<OctaveParams>,
+    #[option(1)]
+    pub octaves: IntOption<PatternSlotParams>,
+    #[option(1)]
+    pub slot: IntOption<PatternSlotParams>,
+    #[option(false)]
+    pub save: ButtonOption<OneShotButtonParams>,
+    #[option(false)]
+    pub load: ButtonOption<OneShotButtonParams>,
 }
 
 #[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]
@@ -369,4 +440,6 @@ pub struct Opts {
     pub quant_notes: QuantNotesOpts,
     #[page(Page::QuantSetups)]
     pub quant_setups: QuantSetupOpts,
+    #[page(Page::RouteMidi)]
+    pub route_midi: RouteMidiOpts,
 }

@@ -89,7 +89,8 @@ class SceneExchange(wiring.Component):
         self.layout = layout
         super().__init__({
             "submit": In(1), "payload": In(payload_width),
-            "swap_background": In(1), "acquire": In(1), "boundary": In(1),
+            "swap_background": In(1), "static_source": In(3),
+            "acquire": In(1), "boundary": In(1),
             "busy": Out(1), "next_base": Out(22), "draw_base": Out(22),
             "back_bank": Out(1), "front_bank": Out(1),
             "visible_background": Out(1), "published": Out(payload_width),
@@ -101,18 +102,29 @@ class SceneExchange(wiring.Component):
         acquired_dvi, acknowledged_sync = Signal(), Signal()
         held = Signal.like(self.payload)
         held_background, dma_background = Signal(), Signal()
+        held_source, dma_source = Signal(3), Signal(3)
         m.submodules.acquired_ff = FFSynchronizer(acquired, acquired_dvi, o_domain="dvi")
         m.submodules.ack_ff = FFSynchronizer(acknowledged, acknowledged_sync, o_domain="sync")
         selected = Mux(request != acquired, held_background, dma_background)
+        source = Mux(request != acquired, held_source, dma_source)
+        # Immutable images never become CPU draw buffers. Keep CAL bank
+        # ownership independent while tuner or scale guides are scanned directly.
+        base = Mux(source == 1, 0x800000 // 4,
+                   Mux(source == 2, 0x900000 // 4,
+                       Mux(source == 3, 0xB00000 // 4,
+                           Mux(source == 4, 0xA00000 // 4,
+                               Mux(source == 5, 0xC00000 // 4,
+                                   Mux(selected, self.layout.word_bases[1], 0))))))
         m.d.comb += [self.busy.eq(request != acknowledged_sync),
                     self.back_bank.eq(~acknowledged_sync),
-                    self.next_base.eq(Mux(selected, self.layout.word_bases[1], 0)),
+                    self.next_base.eq(base),
                     self.draw_base.eq(Mux(~dma_background, self.layout.word_bases[1], 0))]
         with m.If(self.submit & ~self.busy):
             m.d.sync += [held.eq(self.payload), request.eq(~request),
-                        held_background.eq(dma_background ^ self.swap_background)]
+                        held_background.eq(dma_background ^ self.swap_background),
+                        held_source.eq(self.static_source)]
         with m.If(self.acquire & (request != acquired)):
-            m.d.sync += [dma_background.eq(held_background), acquired.eq(request)]
+            m.d.sync += [dma_background.eq(held_background), dma_source.eq(held_source), acquired.eq(request)]
         with m.If(self.boundary & (acquired_dvi != acknowledged)):
             m.d.dvi += [self.published.eq(held), self.front_bank.eq(acquired_dvi),
                         self.visible_background.eq(held_background),
