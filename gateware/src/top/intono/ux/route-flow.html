@@ -1,0 +1,144 @@
+<div id="intono-route-flow" class="viz-dotted-background">
+  <div class="display" aria-label="Intono route interface prototype">
+    <header><div class="brand">INTONO</div><nav aria-label="Pages"><span>TUNER</span><span>CAL</span><span>SCALES</span><button type="button" data-action="overview" class="active">ROUTES</button></nav></header>
+    <main aria-live="polite"></main>
+    <footer><span class="hint"></span><div><button type="button" data-action="back">BACK</button><button type="button" data-action="run">START</button><button type="button" data-action="edit">EDIT ROUTE</button></div></footer>
+    <div class="shade" hidden></div><section class="editor" role="dialog" aria-modal="true" aria-labelledby="intono-editor-title" hidden></section>
+  </div>
+  <div class="preview-controls"><span>INTERACTIVE PREVIEW</span><button type="button" data-action="previous">← Turn</button><button type="button" data-action="next">Turn →</button><button type="button" data-action="click">Click</button></div>
+</div>
+<style>
+#intono-route-flow { --ink:#a4f1ff; --edge:#287495; --bright:#39d9f2; --dim:#6d9aac; --screen:#071018; color:var(--ink); font-family:Menlo,Consolas,monospace; line-height:1.2; }
+#intono-route-flow * { box-sizing:border-box; }
+#intono-route-flow [hidden] { display:none !important; }
+#intono-route-flow .display { position:relative; max-width:720px; aspect-ratio:1; margin:auto; border:1px solid var(--edge); border-radius:50%; background:var(--screen); overflow:hidden; container-type:inline-size; }
+#intono-route-flow button,#intono-route-flow select,#intono-route-flow input { color:var(--ink); background:#0c1a25; border:1px solid var(--edge); border-radius:8px; padding:8px 10px; font:inherit; }
+#intono-route-flow button { cursor:var(--cursor-interaction,pointer); }
+#intono-route-flow button:hover { border-color:var(--bright); }
+#intono-route-flow button:disabled { opacity:.4; cursor:default; }
+#intono-route-flow button.active,#intono-route-flow button.selected { border-color:var(--bright); color:#e4fdff; background:#102a38; }
+#intono-route-flow header { position:absolute; top:6%; left:18%; width:64%; text-align:center; }
+#intono-route-flow .brand { letter-spacing:.25em; margin-bottom:26px; font-size:20px; }
+#intono-route-flow nav { display:flex; align-items:center; justify-content:space-between; gap:12px; font-size:16px; }
+#intono-route-flow nav span { color:var(--dim); }
+#intono-route-flow main { position:absolute; top:23%; left:14%; width:72%; bottom:19%; font-size:16px; }
+#intono-route-flow h2 { font-size:18px; font-weight:500; text-align:center; letter-spacing:.08em; margin:0 0 18px; }
+#intono-route-flow .route { width:100%; text-align:left; padding:10px 16px; margin-bottom:8px; display:block; }
+#intono-route-flow .route-head { display:flex; justify-content:space-between; gap:8px; }
+#intono-route-flow .route-head small { color:var(--dim); font-size:14px; }
+#intono-route-flow .route-details { display:grid; gap:6px; border-top:1px solid var(--edge); padding-top:10px; margin-top:10px; }
+#intono-route-flow .output-detail { display:grid; grid-template-columns:65px 1fr; gap:0 10px; font-size:14px; }
+#intono-route-flow .output-detail .profile { grid-column:2; color:var(--dim); }
+#intono-route-flow .midi-summary { color:var(--dim); font-size:14px; text-align:center; margin:12px 0; }
+#intono-route-flow footer { position:absolute; bottom:7%; left:22%; width:56%; text-align:center; font-size:14px; }
+#intono-route-flow footer .hint { display:block; margin-bottom:16px; color:var(--dim); }
+#intono-route-flow footer div { display:flex; justify-content:center; gap:10px; }
+#intono-route-flow .shared { display:flex; justify-content:center; gap:18px; margin:0 0 16px; }
+#intono-route-flow .shared button { width:45%; text-align:center; }
+#intono-route-flow .shared small,#intono-route-flow .stage small { display:block; color:var(--dim); margin-bottom:8px; font-size:12px; }
+#intono-route-flow .branch { position:relative; margin:0 0 18px; }
+#intono-route-flow .branch-label { display:flex; justify-content:space-between; color:var(--dim); font-size:14px; margin-bottom:9px; }
+#intono-route-flow .stages { display:grid; grid-template-columns:1.45fr 1fr 1.2fr .7fr; gap:10px; position:relative; }
+#intono-route-flow .stages:before { content:''; position:absolute; top:50%; left:0; width:100%; height:1px; background:var(--edge); }
+#intono-route-flow .stage { position:relative; padding:12px 6px; font-size:14px; min-height:78px; text-align:center; }
+#intono-route-flow .stage .secondary { display:block; font-size:12px; margin-top:8px; color:var(--dim); }
+#intono-route-flow .branch-pages { display:flex; justify-content:center; align-items:center; gap:14px; font-size:14px; }
+#intono-route-flow .shade { position:absolute; inset:0; background:rgba(0,0,0,.75); z-index:2; }
+#intono-route-flow .editor { position:absolute; z-index:3; left:19%; top:24%; width:62%; border:1px solid var(--bright); border-radius:14px; background:#0b1822; padding:22px; font-size:16px; }
+#intono-route-flow .editor h2 { padding-bottom:14px; border-bottom:1px solid var(--edge); }
+#intono-route-flow .field { display:grid; grid-template-columns:1fr 1.3fr; align-items:center; gap:10px; margin:12px 0; }
+#intono-route-flow .field select,#intono-route-flow .field input { width:100%; min-width:0; }
+#intono-route-flow .editor .notice { color:var(--dim); font-size:14px; margin:14px 0; }
+#intono-route-flow .editor .actions { display:flex; gap:12px; justify-content:center; margin-top:20px; }
+#intono-route-flow .preview-controls { display:flex; flex-wrap:wrap; justify-content:center; align-items:center; gap:10px; margin:14px 0; font-size:14px; }
+#intono-route-flow .preview-controls span { color:var(--dim); margin-right:10px; }
+@media(max-width:580px) {
+ #intono-route-flow .display { border-radius:28px; aspect-ratio:auto; min-height:720px; padding:24px 16px; }
+ #intono-route-flow header { position:static; width:100%; }
+ #intono-route-flow main { position:static; width:100%; margin:34px 0; }
+ #intono-route-flow footer { position:static; width:100%; margin-top:26px; }
+ #intono-route-flow .editor { left:4%; width:92%; top:140px; }
+ #intono-route-flow .stages { gap:5px; }
+ #intono-route-flow .stage { font-size:12px; padding:10px 3px; }
+ #intono-route-flow nav { gap:5px; font-size:14px; }
+}
+</style>
+<script>
+(() => {
+  const root=document.getElementById('intono-route-flow');
+  const main=root.querySelector('main'), editor=root.querySelector('.editor'), shade=root.querySelector('.shade');
+  const scales=['Chromatic','Major','Minor','Major pent','Minor pent','Dorian','Mixolydian','Phrygian','Lydian','Harmonic minor','Melodic minor','Blues','24 EDO',...Array.from({length:8},(_,i)=>'User '+(i+1))];
+  const keys=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+  const output=(jack,scale='Major',key='C',profile='Waveplane')=>({jack,scale,key,map:'Nearest',transpose:0,profile,zero:profile==='Nominal CV'?'C4':'C1',enabled:true});
+  const defaults=()=>[
+    {input:0,running:false,outputs:[output(0),output(1,'Minor','A','Nominal CV')],midi:1,base:60,hold:true},
+    {input:2,running:false,outputs:[output(3,'Dorian','D','Acronym')],midi:0,base:60,hold:true},
+    {input:null,running:false,outputs:[],midi:0,base:60,hold:true},
+    {input:null,running:false,outputs:[],midi:0,base:60,hold:true}
+  ];
+  let routes=defaults(),selected=0,page='overview',branchPage=0,modal=null,returnButton=null;
+  const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const sign=n=>(n>=0?'+':'')+n;
+  function save(){ if(window.openai?.setWidgetState) window.openai.setWidgetState({modelContent:{route:selected+1,page,routes},privateContent:{branchPage}}).catch(()=>{}); }
+  function restore(snapshot){if(snapshot?.modelContent?.routes?.length===4){routes=snapshot.modelContent.routes;selected=Math.min(3,Math.max(0,snapshot.modelContent.route-1));page=snapshot.modelContent.page==='flow'?'flow':'overview';branchPage=snapshot.privateContent?.branchPage||0;}}
+  restore(window.openai?.widgetState);
+  function render(){
+    const r=routes[selected];
+    root.querySelector('[data-action="run"]').textContent=r.running?'STOP':'START';
+    root.querySelector('[data-action="run"]').disabled=r.input===null||!r.outputs.length;
+    root.querySelector('[data-action="edit"]').hidden=page==='flow';
+    root.querySelector('[data-action="back"]').hidden=page==='overview';
+    root.querySelector('.hint').hidden=page==='overview';
+    root.querySelector('.hint').textContent=page==='overview'?'TURN: SELECT ROUTE · CLICK: EDIT':'CLICK A STAGE TO EDIT';
+    if(page==='overview') {
+      main.innerHTML='<h2>ROUTES</h2>'+routes.map((r,i)=>`<button type="button" class="route ${i===selected?'selected':''}" data-route="${i}" aria-pressed="${i===selected}"><span class="route-head"><span>ROUTE ${i+1}</span><small>${r.outputs.length?'IN '+r.input+' → OUT '+r.outputs.map(o=>o.jack).join(', '):'EMPTY'} · ${r.running?'RUNNING':r.outputs.length?'STOPPED':'FREE'}</small></span>${i===selected&&r.outputs.length?'<span class="route-details">'+r.outputs.map(o=>`<span class="output-detail"><span>OUT ${o.jack}</span><span>${escape(o.enabled?o.scale:'Bypass')} · ${o.key} · ${o.map}</span><span class="profile">${escape(o.profile)} · ${sign(o.transpose)} st</span></span>`).join('')+'</span>':''}</button>`).join('')+`<div class="midi-summary">${r.midi?'MIDI CH '+r.midi+' · C'+(Math.floor(r.base/12)-1)+' BASE · '+(r.hold?'HOLD LAST':'RELEASE TO ZERO'):'MIDI TRANSPOSE OFF'}</div>`;
+    } else {
+      const pages=Math.max(1,Math.ceil(r.outputs.length/2));branchPage=Math.min(branchPage,pages-1);
+      main.innerHTML=`<h2>ROUTE ${selected+1} · ${r.running?'RUNNING':'STOPPED'}</h2><div class="shared"><button type="button" data-stage="input"><small>CV INPUT</small>${r.input===null?'Choose jack':'IN '+r.input}</button><button type="button" data-stage="midi"><small>MIDI → TRANSPOSE</small>${r.midi?'CH '+r.midi+' · C'+(Math.floor(r.base/12)-1):'OFF'}</button></div>`+
+      r.outputs.slice(branchPage*2,branchPage*2+2).map((o,j)=>`<div class="branch"><div class="branch-label"><span>IN ${r.input} → OUT ${o.jack}</span><span>${r.running?'ACTIVE':'READY'}</span></div><div class="stages"><button type="button" class="stage" data-stage="scale" data-out="${branchPage*2+j}"><small>QUANTIZE →</small>${escape(o.enabled?o.scale:'Bypass')}<span class="secondary">${o.key} · ${o.map}</span></button><button type="button" class="stage" data-stage="transpose" data-out="${branchPage*2+j}"><small>TRANSPOSE →</small>${sign(o.transpose)} st<span class="secondary">+ route MIDI</span></button><button type="button" class="stage" data-stage="calibration" data-out="${branchPage*2+j}"><small>CALIBRATE →</small>${escape(o.profile)}<span class="secondary">0V: ${o.zero}</span></button><button type="button" class="stage" data-stage="output" data-out="${branchPage*2+j}"><small>OUTPUT</small>OUT ${o.jack}</button></div></div>`).join('')+
+      `<div class="branch-pages">${pages>1?`<button type="button" data-action="branch-prev" ${branchPage===0?'disabled':''}>←</button><span>OUTPUTS ${branchPage*2+1}–${Math.min(r.outputs.length,branchPage*2+2)} / ${r.outputs.length}</span><button type="button" data-action="branch-next" ${branchPage===pages-1?'disabled':''}>→</button>`:''}<button type="button" data-stage="add" ${r.running||r.outputs.length===4?'disabled':''}>+ OUTPUT</button></div>`;
+    }
+  }
+  function options(list,value){return list.map(v=>`<option value="${escape(v)}" ${String(v)===String(value)?'selected':''}>${escape(v)}</option>`).join('');}
+  function field(label,name,values,value,disabled=false){return `<label class="field"><span>${label}</span><select name="${name}" ${disabled?'disabled':''}>${options(values,value)}</select></label>`;}
+  function jacks(kind,current){return [0,1,2,3].map(n=>{const used=routes.some((r,i)=>kind==='input'?i!==selected&&r.input===n&&r.outputs.length:r.outputs.some(o=>o.jack===n&&n!==current));return `<option value="${n}" ${n===current?'selected':''} ${used?'disabled':''}>${kind==='input'?'IN':'OUT'} ${n} · ${used?'assigned':n===current?'this route':'free'}</option>`;}).join('');}
+  function open(stage,index=0,trigger=null){
+    modal={stage,index};returnButton=trigger;const r=routes[selected],o=r.outputs[index],locked=r.running;
+    let title='',body='';
+    if(stage==='input'){title='ROUTE '+(selected+1)+' · INPUT';body=`<label class="field"><span>CV jack</span><select name="input" ${locked?'disabled':''}>${r.input===null?'<option value="">Choose input</option>':''}${jacks('input',r.input)}</select></label>`;}
+    if(stage==='midi'){title='ROUTE '+(selected+1)+' · MIDI';body=field('Channel','midi',['Off',...Array.from({length:16},(_,i)=>i+1)],r.midi||'Off')+`<label class="field"><span>Zero note</span><select name="base">${Array.from({length:128},(_,n)=>`<option value="${n}" ${n===r.base?'selected':''}>${keys[n%12]}${Math.floor(n/12)-1}</option>`).join('')}</select></label>`+field('On release','hold',['Hold last','Return to zero'],r.hold?'Hold last':'Return to zero')+'<div class="notice">The zero note adds no shift. Shared by every output in this route.</div>';}
+    if(stage==='scale'){title='OUT '+o.jack+' · QUANTIZATION';body=field('Quantize','enabled',['On','Bypass'],o.enabled?'On':'Bypass',locked)+field('Scale','scale',scales,o.scale,locked)+field('Root key','key',keys,o.key,locked)+field('Mapping','map',['Nearest','Equal'],o.map,locked);}
+    if(stage==='transpose'){title='OUT '+o.jack+' · TRANSPOSE';body=`<label class="field"><span>Manual shift</span><input name="transpose" type="number" min="-12" max="12" value="${o.transpose}" ${locked?'disabled':''}></label><div class="notice">Semitones, plus the shared route MIDI shift.</div>`;}
+    if(stage==='calibration'){title='OUT '+o.jack+' · CALIBRATION';body=field('Profile','profile',['Nominal CV','Waveplane','Acronym','RAM profile',...Array.from({length:8},(_,i)=>'Profile '+(i+1))],o.profile,locked)+field('0V note','zero',['C1','C2','C3','C4','C5'],o.zero,locked)+'<div class="notice">A calibrated profile supplies its measured 0V pitch. Outside its range: nominal CV.</div>';}
+    if(stage==='output'||stage==='add'){title=stage==='add'?'ADD OUTPUT':'OUT '+o.jack+' · ASSIGNMENT';body=`<label class="field"><span>Output jack</span><select name="jack" ${locked?'disabled':''}>${stage==='add'?'<option value="">Choose output</option>':''}${jacks('output',stage==='add'?null:o.jack)}</select></label>`+(stage==='output'?`<button type="button" data-action="remove" ${locked?'disabled':''}>REMOVE OUTPUT</button>`:'');}
+    editor.innerHTML=`<h2 id="intono-editor-title">${title}</h2>${body}${locked&&stage!=='midi'?'<div class="notice">Stop this route to change its assignments.</div>':''}<div class="actions"><button type="button" data-action="done">DONE</button></div>`;
+    editor.hidden=false;shade.hidden=false;root.querySelectorAll("header,main,footer").forEach(el=>el.inert=true);editor.querySelector('select:not(:disabled),input:not(:disabled),button:not(:disabled)').focus();
+  }
+  function close(){const target=returnButton?.dataset;editor.hidden=true;shade.hidden=true;modal=null;root.querySelectorAll("header,main,footer").forEach(el=>el.inert=false);render();if(target?.stage)main.querySelector(`[data-stage="${target.stage}"]${target.out!==undefined?`[data-out="${target.out}"]`:""}`)?.focus();save();}
+  root.addEventListener('change',e=>{
+    if(!modal||!e.target.name)return;const r=routes[selected],o=r.outputs[modal.index],n=e.target.name,v=e.target.value;
+    if(r.running&&modal.stage!=='midi')return;
+    if(n==='midi')r.midi=v==='Off'?0:Number(v);else if(n==='base')r.base=Math.min(127,Math.max(0,Number(v)||0));else if(n==='hold')r.hold=v==='Hold last';
+    else if(n==='input'&&v!=='')r.input=Number(v);
+    else if(n==='jack'&&v!==''){if(modal.stage==='add'){r.outputs.push(output(Number(v),'Chromatic','C','Nominal CV'));if(r.input===null){r.input=[0,1,2,3].find(i=>!routes.some((other,j)=>j!==selected&&other.outputs.length&&other.input===i))??null;}modal.stage='output';modal.index=r.outputs.length-1;branchPage=Math.floor(modal.index/2);open('output',modal.index);}else o.jack=Number(v);}
+    else if(n==='enabled')o.enabled=v==='On';else if(n==='transpose')o.transpose=Math.min(12,Math.max(-12,Number(v)||0));else if(o)o[n]=v;
+    render();save();
+  });
+  function turn(delta){if(modal){const controls=[...editor.querySelectorAll('select:not(:disabled),input:not(:disabled),button:not(:disabled)')];const idx=controls.indexOf(document.activeElement);controls[(idx+delta+controls.length)%controls.length].focus();return;}if(page==='overview'){selected=(selected+delta+4)%4;render();save();}else{const stages=[...main.querySelectorAll('button:not(:disabled)')];const idx=stages.indexOf(document.activeElement);stages[(idx+delta+stages.length)%stages.length]?.focus();}}
+  root.querySelector('.preview-controls').addEventListener('pointerdown',e=>{if(e.target.closest('button'))e.preventDefault();});
+  root.addEventListener('click',e=>{
+    const b=e.target.closest('button');if(!b||b.disabled)return;
+    if(b.dataset.route!==undefined){const i=Number(b.dataset.route);if(i===selected){page='flow';branchPage=0;}else selected=i;render();save();return;}
+    if(b.dataset.stage){open(b.dataset.stage,Number(b.dataset.out||0),b);return;}
+    const a=b.dataset.action;
+    if(a==='done'){close();return;}if(a==='remove'){routes[selected].outputs.splice(modal.index,1);if(!routes[selected].outputs.length)routes[selected].input=null;close();return;}
+    if(a==='previous'||a==='next'){turn(a==='previous'?-1:1);return;}
+    if(a==='click'){if(modal){const active=document.activeElement;if(editor.contains(active)&&active.tagName==='BUTTON')active.click();else editor.querySelector('[data-action="done"]').focus();}else if(page==='overview'){page='flow';branchPage=0;render();save();}else{const active=document.activeElement;if(main.contains(active)&&active.tagName==='BUTTON')active.click();else main.querySelector('button')?.focus();}return;}
+    if(a==='overview'||a==='back')page='overview';if(a==='edit'){page='flow';branchPage=0;}if(a==='run')routes[selected].running=!routes[selected].running;
+    if(a==='branch-prev')branchPage--;if(a==='branch-next')branchPage++;render();save();
+  });
+  root.addEventListener('keydown',e=>{if(e.key==='Escape'){if(modal)close();else{page='overview';render();}e.preventDefault();}else if(!['INPUT','SELECT'].includes(e.target.tagName)&&['ArrowLeft','ArrowRight'].includes(e.key)){turn(e.key==='ArrowLeft'?-1:1);e.preventDefault();}});
+  window.addEventListener('openai:set_globals',e=>{if(e.detail?.globals?.widgetState){restore(e.detail.globals.widgetState);render();}});
+  render();
+})();
+</script>
