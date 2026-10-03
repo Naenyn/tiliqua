@@ -56,7 +56,7 @@ Release ELF compared against the last Configs firmware:
 | Static SRAM (`.data` + `.bss`) | 7,940 bytes | 7,940 bytes |
 | Reserved stack address range | 24,828 bytes | 24,828 bytes |
 | Static calibration runtime in PSRAM | 7,048 bytes | 7,048 bytes |
-| Firmware archive payload | 312,512 bytes | 312,192 bytes |
+| Firmware archive payload | 312,512 bytes | 312,112 bytes |
 
 There is no heap allocation. The reserved stack range is **not** measured free
 stack: main-loop frames and interrupts consume it. Hardware watermark capture
@@ -65,7 +65,7 @@ Profile copies remain explicit bind/load/save operations rather than per-tick
 copies. Scale masks are bounded eight-octave arrays; retaining 1–8 octaves with
 one as default is appropriate. Compiled degree tables have at most 96 notes.
 
-The review saves 320 firmware bytes; 15,488 bytes remain under the 327,680-byte
+The review saves 400 firmware bytes; 15,568 bytes remain under the 327,680-byte
 firmware limit. UI growth remains worth monitoring. FPGA logic is unchanged;
 archive qualification verifies that `top.bit` matches the qualified image.
 
@@ -95,3 +95,8 @@ or PSRAM timing condition. No flashing was attempted overnight.
 with matching `cleanup-firmware.elf` and `cleanup-validation.json` (archive hash,
 source commit, payload size, bitstream identity, and test results). Flash only
 when the user says the rack is ready for testing.
+
+Final firmware source commit: `8b4ebe9e`. Archive SHA-256:
+`feebc311a27d2f077457f602340dc124f991bfda61d338cc20bc956242873d73`.
+The final archive has 312,112 firmware bytes and is verified to contain the same
+FPGA bitstream as the qualified route-groups image. No flash was performed.

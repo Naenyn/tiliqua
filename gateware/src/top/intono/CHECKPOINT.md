@@ -1323,6 +1323,6 @@ Committed the accumulated route/config/MIDI UI work as `49675406`, then reviewed
 math, reservations, persistence, MIDI state, RAM, and foreground rendering work.
 See `CODE_REVIEW_2026-10-03.md` for fixes and validation. Removed unnecessary
 calibration graph scans outside CAL and obsolete route UI paths. Static SRAM
-remains 7,940 bytes; firmware payload is 312,192 bytes. The qualified morning
+remains 7,940 bytes; firmware payload is 312,112 bytes. The qualified morning
 archive is `build/intono-ux-midibase-r5/intono-cleanup-20261003-r5.tar.gz`; its
 matching ELF and validation JSON sit alongside it. Not flashed overnight.
