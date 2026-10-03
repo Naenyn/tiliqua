@@ -1544,18 +1544,6 @@ fn publish_quantizer(display: &pac::TUNER_DISPLAY, text: &mut TextWriter<'_>, me
         write_centered(text,13,if hold {"RELEASE HOLDS LAST NOTE"}else{"RELEASE RETURNS TO ZERO"},28);
         write_centered(text,15,"SAVED WITH ROUTE CONFIG",28);
         write_centered(text,18,"SCALE LEARN PAUSES MIDI",26);
-    } else if page == Page::QuantSetups {
-        let slot=with_app(|app|app.ui.opts.quant_setups.slot.value);
-        let (status_slot,status) = critical_section::with(|cs|*SETUP_STATUS.borrow_ref(cs));
-        let status=if slot == status_slot {status}else{"SELECTED CONFIG SLOT"};
-        let groups=with_app(|app|app.groups);
-        write_centered(text,6,"CURRENT ROUTE ASSIGNMENTS",30);
-        for route in 0..4 {
-            line.clear();ui_route::write_assignment(&mut line,groups,route);
-            ui_text::field(0,8+route as usize*2,40,&line,ui_text::DEFAULT,ui_text::Align::Left,|a,c|text.cell(a,c));
-        }
-        write_centered(text,15,"SAVE INCLUDES ALL FOUR ROUTES",30);
-        write_centered(text,18,status,26);
     } else if page == Page::Quantizer {
         let (masks,quartertones,count)=preview.get_span(c.scale,c.masks,c.octaves);
         write!(line,"{} NOTES / {} OCTAVE{}",count,c.octaves,if c.octaves>1 {"S"}else{""}).ok();
@@ -1759,7 +1747,7 @@ fn publish_calibration(
             pitch_units::write_note(&mut line,(pitch+50_000)/100_000).ok();
         } else { line.push_str("--").ok(); }
         write_text(text,23,9,&line); line.clear();
-        if let Some(profile)=profile {
+        if profile.is_some() {
             let quality=if cal.pending_profile.is_some(){cal.pending_quality}else{cal.profile_quality};
             write_text(text,23,10,quality.grade.label());
             write_text(text,23,11,"WORST");
@@ -2038,7 +2026,6 @@ fn poll_ui_frame(cal: &calibration_live::Live, scan_controls: Option<RuntimeCont
             }
         }
         critical_section::with(|cs| {
-            use strum::IntoEnumIterator;
             let r = OWNERS.borrow_ref(cs);
             if let Some(focus) = r.focus(app.ui.opts.tuner.input.value, app.tuner_focus) {
                 app.ui.opts.tuner.input.value = focus;
@@ -2308,7 +2295,7 @@ fn persist_setup(storage: &mut Option<IntonoPersistence>, save: bool) -> &'stati
     });
     if let Some(kind)=blocked {
         if !save {with_app(|app|critical_section::with(|cs|ROUTE_VIEW.borrow_ref_mut(cs).warn(&mut app.ui.opts,kind)));}
-        return "STOP OPERATIONS BEFORE LOADING";
+        return if save {"STOP OPERATIONS BEFORE SAVING"}else{"STOP OPERATIONS BEFORE LOADING"};
     }
     let slot = with_app(|app| app.ui.opts.quant_setups.slot.value);
     let Some(key) = quantizer_setup::key(slot) else {
@@ -2893,7 +2880,6 @@ fn run(resources: &mut RuntimeResources) -> ! {
     irq::scope(|scope| {
         scope.register(handlers::Interrupt::TIMER0, timer0);
         timer.enable_tick_isr(PLAYBACK_PERIOD_MS, pac::Interrupt::TIMER0);
-        let sample_rate = tuner.info().read().sample_rate().bits();
         let mut frame_ticks = FRAME_PERIOD_TICKS;
         let mut smoothed_midi = [None; 4];
         let mut midi_held = midi_learn::HeldNotes::default();
@@ -3284,11 +3270,18 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 ui_scene::Scene::Spiral
             };
 
-            let plot_profile = calibration_plot_profile(&calibration);
+            // Profile scans and their wide hash arithmetic are only needed
+            // while preparing the calibration scene. Routes and tuner guides
+            // do not depend on the stored profile.
+            let plot_profile = if calibration_prepared {
+                calibration_plot_profile(&calibration)
+            } else { None };
             let plot_range = calibration_plot_range(&calibration, plot_profile);
             let plot_anchor = calibration_plot_anchor(&calibration, plot_profile);
             let graph = ui_frame.controls.calibration_graph;
-            let error_span_mc = calibration_plot_error_span(&calibration, plot_profile);
+            let error_span_mc = if calibration_prepared && graph == CalibrationGraph::Error {
+                calibration_plot_error_span(&calibration, plot_profile)
+            } else { ui_canvas::CAL_ERROR_SPAN_MC };
             let live_points = calibration.acquiring_points();
             let live_first = live_points.and_then(|points| points.first())
                 .map(|point| (point.microvolts, point.millicents));

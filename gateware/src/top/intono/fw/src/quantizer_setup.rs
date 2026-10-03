@@ -1,5 +1,9 @@
 //! Small per-output settings, separate from detector state and measured curves.
 //! No armed state is persisted. Pattern masks are snapshots, not mutable links.
+// Standalone host tests also compile the route reservation dependency.
+#[cfg(test)]
+#[path="ownership.rs"]
+pub mod ownership;
 #[cfg(test)]
 #[path="route_group.rs"]
 pub mod route_group;
