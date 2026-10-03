@@ -1326,3 +1326,12 @@ calibration graph scans outside CAL and obsolete route UI paths. Static SRAM
 remains 7,940 bytes; firmware payload is 312,112 bytes. The qualified morning
 archive is `build/intono-ux-midibase-r5/intono-cleanup-20261003-r5.tar.gz`; its
 matching ELF and validation JSON sit alongside it. Not flashed overnight.
+
+
+## October 3 morning flash
+
+After the user confirmed the rack was powered on, flashed the qualified
+`intono-cleanup-20261003-r5.tar.gz` to Tiliqua #1 slot 1. Archive SHA-256 was
+verified before writing. Erase, write, and FPGA refresh completed successfully;
+`cleanup-flash.json` records the operation. This confirms installation, not yet
+user-visible execution or a hardware smoke test.
