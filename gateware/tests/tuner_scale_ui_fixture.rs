@@ -1,3 +1,5 @@
+#[path="../src/top/intono/fw/src/ownership.rs"] mod ownership;
+#[path="../src/top/intono/fw/src/ui_canvas.rs"] mod ui_canvas;
 #[path="../src/top/intono/fw/src/route_group.rs"] mod route_group;
 #[path="../src/top/intono/fw/src/quantizer_setup.rs"] mod quantizer_setup;
 #[path="../src/top/intono/fw/src/ui_keyboard.rs"] mod ui_keyboard;

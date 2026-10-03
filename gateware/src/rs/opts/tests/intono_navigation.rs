@@ -1,6 +1,8 @@
 //! Use the actual instrument options/navigation, including persisted enum IDs.
 #[path = "../../../top/intono/fw/src/options.rs"]
 mod options;
+#[path = "../../../top/intono/fw/src/route_group.rs"] mod route_group;
+#[path = "../../../top/intono/fw/src/route_ui.rs"] mod route_ui;
 #[path = "../../../top/intono/fw/src/ui_navigation.rs"]
 mod ui_navigation;
 #[path = "../../../top/intono/fw/src/ui_keyboard.rs"] mod ui_keyboard;
@@ -9,6 +11,71 @@ use opts::OptionsEncoderInterface;
 #[path = "../../../top/intono/fw/src/ownership.rs"] mod ownership;
 fn visible_ticks(opts:&mut Opts,ticks:i8) {
     ui_navigation::visible_ticks(opts,ticks,&ownership::Reservations::new());
+}
+
+#[test]
+fn route_cards_open_nodes_without_triggering_option_actions() {
+    let mut o=Opts::default();o.tracker.page.value=Page::Play;
+    let mut v=route_ui::View::new();v.layout=route_group::Layout{inputs:[0,1,2,3],outputs:[1,2,4,8]};let r=ownership::Reservations::new();
+    assert!(v.ticks(&mut o,7,&r));assert_eq!(o.play.output.value,2);
+    assert!(v.click(&mut o,&r));assert_eq!(v.screen,route_ui::Screen::Flow);
+    assert_eq!(o.tracker.selected,Some(0));
+    v.ticks(&mut o,2,&r);v.click(&mut o,&r);
+    assert_eq!(v.pending,Some((route_ui::Stage::Scale,2)));
+    assert!(!o.play.run.poll() && !o.play.assign.poll() && !o.play.bind.poll());
+    v.open_pending(&mut o);assert_eq!(o.tracker.selected,Some(5));
+    v.ticks(&mut o,7,&r);assert_eq!(o.tracker.selected,Some(route_ui::DONE));
+    v.click(&mut o,&r);assert_eq!(v.screen,route_ui::Screen::Flow);
+    assert_eq!(o.tracker.selected,Some(2));assert!(!o.tracker.modify);
+}
+
+#[test]
+fn route_pager_changes_only_the_visible_outputs_and_add_skips_claims() {
+    let mut o=Opts::default();o.tracker.page.value=Page::Play;o.play.output.value=0;o.tracker.selected=Some(10);
+    let mut v=route_ui::View::new();v.layout=route_group::Layout{inputs:[0,1,2,3],outputs:[1,2,4,8]};v.layout.outputs=[15,0,0,0];v.screen=route_ui::Screen::Flow;
+    let mut r=ownership::Reservations::new();
+    assert_eq!(v.outputs(0),[Some(0),Some(1)]);
+    v.click(&mut o,&r);v.ticks(&mut o,1,&r);
+    assert_eq!(v.outputs(0),[Some(2),Some(3)]);v.click(&mut o,&r);
+    v.ticks(&mut o,-1,&r);assert_eq!(o.tracker.selected,Some(8));
+    v.click(&mut o,&r);assert_eq!(v.pending,Some((route_ui::Stage::Destination,3)));
+    v.pending=None;v.layout=route_group::Layout{inputs:[0,1,2,3],outputs:[1,2,4,8]};v.layout.outputs[2]=0;o.tracker.selected=Some(11);
+    assert!(r.claim(ownership::Owner::Calibration,1,2));
+    v.click(&mut o,&r);assert_eq!(v.pending,Some((route_ui::Stage::Add,2)));
+}
+
+#[test]
+fn active_route_fields_lock_but_midi_and_stop_remain_available() {
+    let mut o=Opts::default();o.tracker.page.value=Page::Play;o.play.output.value=0;
+    let mut v=route_ui::View::new();v.layout=route_group::Layout{inputs:[0,1,2,3],outputs:[1,2,4,8]};let mut r=ownership::Reservations::new();
+    assert!(r.claim(ownership::Owner::Quant(0),1,1));
+    v.screen=route_ui::Screen::Editor(route_ui::Stage::Scale);o.tracker.selected=Some(9);
+    v.click(&mut o,&r);assert!(!o.tracker.modify);
+    v.screen=route_ui::Screen::Flow;o.tracker.selected=Some(12);v.click(&mut o,&r);
+    assert!(o.play.run.poll());
+    o.tracker.selected=Some(1);v.click(&mut o,&r);v.open_pending(&mut o);
+    assert!(o.tracker.page.value==Page::RouteMidi);
+    v.click(&mut o,&r);v.ticks(&mut o,1,&r);v.click(&mut o,&r);
+    assert_eq!(o.route_midi.channel.value,1);
+    v.ticks(&mut o,5,&r);assert_eq!(o.tracker.selected,Some(route_ui::DONE));
+    v.click(&mut o,&r);assert!(v.finish_midi);assert!(o.tracker.page.value==Page::Play);
+}
+
+#[test]
+fn grouped_flow_visits_only_visible_groups_and_exposes_manual_shift() {
+    let mut o=Opts::default();o.tracker.page.value=Page::Play;o.play.output.value=0;
+    let mut v=route_ui::View::new();v.layout=route_group::Layout{inputs:[0,1,2,3],outputs:[1,2,4,8]};v.screen=route_ui::Screen::Flow;
+    v.layout.outputs=[3,0,4,8];let r=ownership::Reservations::new();
+    for index in [0,1,2,4,6,8,11,12,13,14] {
+        v.ticks(&mut o,1,&r);assert_eq!(o.tracker.selected,Some(index));
+    }
+    assert!(route_ui::View::fields(route_ui::Stage::Scale).contains(&11));
+    assert_eq!(route_ui::View::fields(route_ui::Stage::Destination),&[3,4,2,13,14,route_ui::DONE]);
+    o.tracker.selected=Some(6);v.click(&mut o,&r);v.open_pending(&mut o);
+    // Mode, preset, key, mapping, then manual shift within the pitch editor.
+    v.ticks(&mut o,4,&r);assert_eq!(o.tracker.selected,Some(11));
+    v.click(&mut o,&r);v.ticks(&mut o,1,&r);v.click(&mut o,&r);
+    assert_eq!(o.play.transpose.value,1);
 }
 
 #[test]
@@ -170,4 +237,90 @@ fn factory_scale_labels_fit_route_and_editor_fields_and_keep_legacy_ids() {
         assert!(name.len()<=9,"{name} exceeds compact route selector");
     }
     assert_eq!(options::ScalePreset::iter().count(),14);
+}
+
+#[test]
+fn stopped_routes_reserve_jacks_in_encoder_selectors() {
+    let mut o=Opts::default();o.tracker.page.value=Page::Play;o.play.output.value=0;
+    let mut v=route_ui::View::new();v.layout=route_group::Layout{inputs:[0,1,2,3],outputs:[1,2,4,8]};let r=ownership::Reservations::new();
+    v.screen=route_ui::Screen::Editor(route_ui::Stage::Input);
+    o.tracker.selected=Some(1);o.tracker.modify=true;
+    v.ticks(&mut o,1,&r);assert_eq!(o.play.input.value,0);
+    v.layout.outputs[1]=0;v.ticks(&mut o,1,&r);assert_eq!(o.play.input.value,1);
+    v.screen=route_ui::Screen::Editor(route_ui::Stage::Add);o.tracker.selected=Some(13);o.play.output_edit.value=0;
+    v.ticks(&mut o,1,&r);assert_eq!(o.play.output_edit.value,1);
+    v.ticks(&mut o,1,&r);assert_eq!(o.play.output_edit.value,0);
+}
+
+#[test]
+fn new_routes_are_empty_and_load_warning_can_jump_or_cancel() {
+    assert_eq!(route_group::Layout::new().outputs,[0;4]);
+    let mut o=Opts::default();o.tracker.page.value=Page::QuantSetups;o.tracker.selected=Some(2);
+    let mut v=route_ui::View::new();let r=ownership::Reservations::new();
+    v.warn(&mut o,route_ui::WarningKind::Running(2));
+    assert_eq!(v.screen,route_ui::Screen::Warning);
+    v.click(&mut o,&r);assert_eq!(o.play.output.value,2);assert_eq!(v.screen,route_ui::Screen::Flow);
+    o.tracker.page.value=Page::QuantSetups;o.tracker.selected=Some(2);
+    v.warn(&mut o,route_ui::WarningKind::Running(1));v.ticks(&mut o,1,&r);v.click(&mut o,&r);
+    assert!(o.tracker.page.value==Page::QuantSetups);assert_eq!(o.tracker.selected,Some(2));
+    v.warn(&mut o,route_ui::WarningKind::Calibration);v.click(&mut o,&r);
+    assert!(o.tracker.page.value==Page::QuantSetups);
+}
+
+#[test]
+fn nominal_profile_has_no_redundant_clear_action_in_navigation() {
+    use route_ui::{Stage,View};
+    assert_eq!(View::fields_for(Stage::Destination,0),&[3,2,13,14,route_ui::DONE]);
+    assert!(View::fields_for(Stage::Destination,1).contains(&4));
+    let mut o=Opts::default();o.tracker.page.value=Page::Play;
+    let mut v=View::new();v.screen=route_ui::Screen::Editor(Stage::Destination);
+    o.tracker.selected=Some(3);v.ticks(&mut o,1,&ownership::Reservations::new());
+    assert_eq!(o.tracker.selected,Some(2));
+}
+
+#[test]
+fn empty_route_opens_on_add_and_skips_hidden_nodes() {
+    let mut o=Opts::default();o.tracker.page.value=Page::Play;o.tracker.selected=Some(0);
+    let mut v=route_ui::View::new();let r=ownership::Reservations::new();
+    v.click(&mut o,&r);assert_eq!(v.screen,route_ui::Screen::Flow);
+    assert_eq!(o.tracker.selected,Some(11));
+    v.ticks(&mut o,1,&r);assert_eq!(o.tracker.selected,Some(13));
+    v.ticks(&mut o,-1,&r);assert_eq!(o.tracker.selected,Some(11));
+    // Another stopped route owns the provisional source; choose a free source.
+    v.layout.outputs[1]=2;v.layout.inputs[1]=o.play.input.value;
+    v.click(&mut o,&r);assert_eq!(v.pending,Some((route_ui::Stage::Add,0)));
+    assert_eq!(o.play.input.value,0);
+    v.open_pending(&mut o);o.tracker.selected=Some(route_ui::DONE);v.click(&mut o,&r);
+    assert_eq!(o.tracker.selected,Some(11));
+}
+
+#[test]
+fn midi_base_learn_is_reachable_as_a_one_shot_action() {
+    let mut o=Opts::default();o.tracker.page.value=Page::RouteMidi;
+    let mut v=route_ui::View::new();v.screen=route_ui::Screen::Editor(route_ui::Stage::Midi);
+    let claims=ownership::Reservations::new();o.tracker.selected=Some(2);
+    v.ticks(&mut o,1,&claims);assert_eq!(o.tracker.selected,Some(5));
+    v.click(&mut o,&claims);assert!(o.route_midi.learn.poll());assert!(!o.route_midi.learn.poll());
+    assert!(!o.tracker.modify);
+}
+
+#[test]
+fn overview_start_is_reachable_without_changing_the_chosen_route() {
+    let mut o=Opts::default();o.tracker.page.value=Page::Play;
+    let mut v=route_ui::View::new();v.layout=route_group::Layout{inputs:[0,1,2,3],outputs:[1,2,4,8]};let r=ownership::Reservations::new();
+    for route in 0..4 {
+        v.ticks(&mut o,1,&r);assert_eq!(o.tracker.selected,Some(route));assert_eq!(o.play.output.value,route as u8);
+        v.ticks(&mut o,1,&r);assert_eq!(o.tracker.selected,Some(4));assert_eq!(o.play.output.value,route as u8);
+        v.click(&mut o,&r);assert!(o.play.run.poll());
+        v.ticks(&mut o,1,&r);assert_eq!(o.tracker.selected,Some(6));
+    }
+}
+#[test]
+fn config_midi_has_route_selection_learn_and_explicit_back() {
+    let mut o=Opts::default();o.tracker.page.value=Page::RouteMidi;
+    let mut v=route_ui::View::new();v.screen=route_ui::Screen::Editor(route_ui::Stage::Midi);v.midi_from_configs=true;
+    let r=ownership::Reservations::new();
+    for index in [0,1,2,5,4,3,6] {v.ticks(&mut o,1,&r);assert_eq!(o.tracker.selected,Some(index));}
+    v.click(&mut o,&r);assert!(o.route_midi.back.poll());assert!(!o.tracker.modify);
+    o.tracker.page.value=Page::QuantSetups;o.tracker.selected=Some(4);o.toggle_modify();assert!(o.quant_setups.back.poll());
 }

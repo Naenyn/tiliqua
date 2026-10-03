@@ -147,6 +147,14 @@ impl<EncoderT: Encoder,
         self.finish_update(false);
     }
 
+    /// Instruments with visible diagram nodes can consume a click before the
+    /// ordinary option editor indexes its selected field.
+    pub fn update_encoder_realtime_custom<F, C>(&mut self, apply_ticks: F, click: C)
+    where F: FnOnce(&mut OptionsT, i8), C: FnOnce(&mut OptionsT) -> bool {
+        self.poll_encoder_custom(apply_ticks, click);
+        self.finish_update(false);
+    }
+
     pub fn update_encoder<F>(&mut self, apply_ticks: F)
     where
         F: FnOnce(&mut OptionsT, i8),
@@ -159,6 +167,11 @@ impl<EncoderT: Encoder,
     where
         F: FnOnce(&mut OptionsT, i8),
     {
+        self.poll_encoder_custom(apply_ticks, |_| false);
+    }
+
+    fn poll_encoder_custom<F, C>(&mut self, apply_ticks: F, click: C)
+    where F: FnOnce(&mut OptionsT, i8), C: FnOnce(&mut OptionsT) -> bool {
         //
         // Consume encoder, update options
         //
@@ -176,7 +189,9 @@ impl<EncoderT: Encoder,
             self.menu_dirty = true;
         }
         if self.encoder.poke_btn() {
-            if self.menu_visible {
+            if click(&mut self.opts) {
+                // The instrument resolved a visible node/action itself.
+            } else if self.menu_visible {
                 self.opts.toggle_modify();
             } else {
                 // A hidden-menu click is a navigation wake-up, not an edit

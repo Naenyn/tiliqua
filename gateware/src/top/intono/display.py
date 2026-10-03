@@ -181,7 +181,7 @@ class IntonoOverlay(wiring.Component):
             raw = self.i.pixel.as_value()
             known = ((raw == 0) | (self.i.pixel.color == 9) |
                      (raw == 0xFF) | (raw == 0xDB) | (raw == 0xD2) |
-                     (raw == 0xD0) |
+                     (raw == 0xD0) | (raw == 0xD4) |
                      ((self.i.pixel.intensity >= 14) & (self.i.pixel.color < 12)))
             bad = self.i.de & ((~known) | ((~active) & (raw != 0)))
             # Sticky evidence is enough to distinguish an incoming bad sample

@@ -37,8 +37,8 @@ impl From<Page> for &'static str {
             Page::Play => "ROUTES",
             Page::Quantizer => "SCALES",
             Page::QuantNotes => "NOTES",
-            Page::QuantSetups => "SETUPS",
-            Page::RouteMidi => "ROUTE MIDI",
+            Page::QuantSetups => "CONFIGS",
+            Page::RouteMidi => "MIDI TRANSPOSE",
         }
     }
 }
@@ -149,22 +149,25 @@ pub struct QuantSetupOpts {
     pub load: ButtonOption<OneShotButtonParams>,
     #[option(false)]
     pub midi: ButtonOption<OneShotButtonParams>,
+    #[option(false)] pub back: ButtonOption<OneShotButtonParams>,
 }
 
 #[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]
 pub enum MidiRelease {
-    #[default] #[strum(serialize="HOLD")] Hold,
-    #[strum(serialize="ZERO")] Zero,
+    #[default] #[strum(serialize="LATCH")] Hold,
+    #[strum(serialize="RESET ON RELEASE")] Zero,
 }
 int_params!(MidiChannelParams<u8> { step: 1, min: 0, max: 16 });
 int_params!(MidiNoteParams<u8> { step: 1, min: 0, max: 127 });
 #[derive(OptionPage, Clone)]
 pub struct RouteMidiOpts {
-    #[option(1)] pub route: IntOption<InputParams>,
+    #[option(0)] pub route: IntOption<InputParams>,
     #[option(0)] pub channel: IntOption<MidiChannelParams>,
     #[option(60)] pub zero: IntOption<MidiNoteParams>,
     #[option(false)] pub reset: ButtonOption<OneShotButtonParams>,
     #[option] pub release: EnumOption<MidiRelease>,
+    #[option(false)] pub learn: ButtonOption<OneShotButtonParams>,
+    #[option(false)] pub back: ButtonOption<OneShotButtonParams>,
 }
 
 #[derive(OptionPage, Clone)]
@@ -277,7 +280,7 @@ pub struct HelpOpts {
 
 #[derive(OptionPage, Clone)]
 pub struct PlayOpts {
-    #[option(1)]
+    #[option(0)]
     pub output: IntOption<InputParams>,
     #[option(1)]
     pub input: IntOption<InputParams>,

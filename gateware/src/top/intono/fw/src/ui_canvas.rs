@@ -360,6 +360,26 @@ pub fn rounded_rectangle(rect: Rect, radius: u8, border: u8, fill: u8,
     true
 }
 
+/// Sparse rounded outline: only perimeter pixels are visited. Route views can
+/// erase/repaint a back bank without walking every interior pixel.
+pub fn rounded_outline(rect:Rect,color:u8,mut emit:impl FnMut(Point,u8))->bool {
+    if rect.corners().is_none() || rect.width<12 || rect.height<12 {return false;}
+    let w=rect.width as i32;let h=rect.height as i32;
+    for y in 0..h {
+        let edge=y.min(h-1-y);
+        let inset=match edge {0=>5,1=>3,2=>2,3|4=>1,_=>0};
+        let previous=match edge.saturating_sub(1) {0=>5,1=>3,2=>2,3|4=>1,_=>0};
+        if edge==0 {
+            for x in inset..w-inset {emit(Point{x:rect.x+x,y:rect.y+y},color);}
+        } else {
+            for x in inset..=previous.max(inset) {
+                emit(Point{x:rect.x+x,y:rect.y+y},color);
+                emit(Point{x:rect.x+w-1-x,y:rect.y+y},color);
+            }
+        }
+    }true
+}
+
 /// Center a single row within the area occupied by the two-row keyboard.
 pub const SINGLE_KEYBOARD_Y_OFFSET: i32 = 64;
 
@@ -476,6 +496,19 @@ fn scale_segment(segment: usize, y: i32, mut emit: impl FnMut(Point, u8)) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sparse_round_outline_erases_exactly_its_pixels_and_preserves_the_interior() {
+        let rect=Rect{x:168,y:218,width:384,height:332};
+        let mut points=std::collections::BTreeSet::new();
+        assert!(rounded_outline(rect,0xd9,|p,c| {
+            assert_eq!(c,0xd9);assert!(p.x>=168 && p.x<552 && p.y>=218 && p.y<550);
+            assert!(p.x<174 || p.x>=546 || p.y<224 || p.y>=544);
+            points.insert((p.x,p.y));
+        }));
+        assert!(points.len()<2*(384+332));
+        assert!(rounded_outline(rect,0,|p,c| {assert_eq!(c,0);assert!(points.remove(&(p.x,p.y)));}));
+        assert!(points.is_empty());
+    }
     #[test]
     fn rounded_primitives_keep_tags_inside_curved_borders() {
         let rect=Rect{x:164,y:344,width:57,height:136};

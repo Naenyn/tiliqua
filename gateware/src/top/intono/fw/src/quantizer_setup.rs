@@ -279,6 +279,16 @@ pub fn encode_full(channels:&[Channel;4],groups:route_group::Layout,midi:[midi_t
     for n in 0..4 {bytes[112+n*3]=midi[n].channel;bytes[113+n*3]=midi[n].base;bytes[114+n*3]=midi[n].hold as u8;bytes[124+n]=channels[n].scale_slot;}
     let sum=crc(&bytes[..128]);bytes[128..].copy_from_slice(&sum.to_le_bytes());Some(bytes)
 }
+/// Diagnose assignments only after authenticating the saved format and CRC.
+pub fn saved_assignment_conflict(bytes:&[u8])->Option<(bool,u8,u8,u8)> {
+    let end=match (bytes.len(),bytes.get(..4)?) {
+        (FULL_LEN,b"TQS5")=>128,(GROUP_LEN,b"TQS4")=>GROUP_LEN-4,_=>return None,
+    };
+    if crc(&bytes[..end])!=u32::from_le_bytes(bytes[end..end+4].try_into().ok()?) {return None;}
+    let g=route_group::Layout {inputs:bytes[LEN-4..LEN].try_into().ok()?,outputs:bytes[LEN..LEN+4].try_into().ok()?};
+    if g.inputs.iter().any(|i|*i>3)||g.outputs.iter().any(|m|m&!15!=0) {return None;}
+    g.conflict()
+}
 pub fn decode_full(bytes:&[u8])->Option<([Channel;4],route_group::Layout,[midi_transpose::Config;4])> {
     let mut midi=[midi_transpose::Config::new();4];
     if bytes.len()!=FULL_LEN {let (c,g)=decode_group(bytes)?;return Some((c,g,midi));}
@@ -292,6 +302,19 @@ pub fn decode_full(bytes:&[u8])->Option<([Channel;4],route_group::Layout,[midi_t
 }
 #[cfg(test)] mod full_tests {
     use super::*;
+    #[test] fn saved_conflict_identifies_jack_and_routes_before_atomic_rejection() {
+        let g=route_group::Layout {inputs:[0,1,2,3],outputs:[1,2,4,8]};
+        let mut bytes=encode_full(&DEFAULT,g,[midi_transpose::Config::new();4]).unwrap();
+        bytes[LEN-3]=0;
+        assert_eq!(saved_assignment_conflict(&bytes),None); // bad CRC is not trusted
+        let sum=crc(&bytes[..128]);bytes[128..].copy_from_slice(&sum.to_le_bytes());
+        assert_eq!(saved_assignment_conflict(&bytes),Some((false,0,0,1)));
+        assert!(decode_full(&bytes).is_none());
+        bytes[LEN-3]=1;bytes[LEN+1]=1;
+        let sum=crc(&bytes[..128]);bytes[128..].copy_from_slice(&sum.to_le_bytes());
+        assert_eq!(saved_assignment_conflict(&bytes),Some((true,0,0,1)));
+        assert!(decode_full(&bytes).is_none());
+    }
     #[test] fn full_config_roundtrip_and_old_defaults() {
         let mut c=DEFAULT;c[0].scale_slot=8;let g=route_group::Layout::new();
         let mut m=[midi_transpose::Config::new();4];m[2]=midi_transpose::Config {channel:16,base:127,hold:true};

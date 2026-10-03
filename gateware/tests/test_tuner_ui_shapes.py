@@ -15,9 +15,9 @@ fn main() {
     use controls::Surface::*;
     for (s,surface) in [Tuner,Calibration,Profiles,Check,Scales,Notes,Setups,Routes,Settings,Help,Midi].iter().enumerate() {
         for n in 0..16 {
-            if let Some(f)=controls::field(*surface,n) {
+            if s!=7 { if let Some(f)=controls::field(*surface,n) {
                 println!("{} {} {} {} {}",s,n,f.column,f.row,f.width);
-            }
+            } }
         }
     }
 }
@@ -27,7 +27,10 @@ fn main() {
     actual={}
     for line in subprocess.check_output([str(binary)],text=True).splitlines():
         s,i,c,r,w=map(int,line.split());actual.setdefault(s,[]).append((i,c,r,w))
-    assert {s:sorted(v) for s,v in actual.items()}=={s:sorted([*ACTIONS.get(s,()),*FIELDS.get(s,())]) for s in set(ACTIONS)|set(FIELDS)}
+    # Routes now retain dynamic cards/flow shapes in the background banks.
+    # Their common tabs/footer still come from this hardware border layer.
+    assert ACTIONS[7]==[] and FIELDS[7]==[]
+    assert {s:sorted(v) for s,v in actual.items()}=={s:sorted([*ACTIONS.get(s,()),*FIELDS.get(s,())]) for s in set(ACTIONS)|set(FIELDS) if s!=7}
     for surface in range(11):
         for row in range(22):
             boxes=descriptors(surface,row)

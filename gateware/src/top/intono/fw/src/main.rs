@@ -27,6 +27,8 @@ mod static_guides { include!(concat!(env!("OUT_DIR"), "/static-guides.rs")); }
 mod ui_controls;
 mod ui_scale;
 mod ui_route;
+mod route_ui;
+mod route_render;
 mod ui_navigation;
 mod ui_keyboard;
 
@@ -126,6 +128,9 @@ fn show_route_settings(opts: &mut options::PlayOpts,c:quantizer_setup::Channel) 
 // already constrained main RAM after the first interrupt.
 static APP: Mutex<RefCell<Option<App>>> = Mutex::new(RefCell::new(None));
 static OWNERS: Mutex<RefCell<Reservations>> = Mutex::new(RefCell::new(Reservations::new()));
+static ROUTE_PAINT: Mutex<RefCell<ui_route::Paint>> = Mutex::new(RefCell::new(ui_route::Paint::new()));
+static ROUTE_HISTORY: Mutex<RefCell<ui_route::History>> = Mutex::new(RefCell::new(ui_route::History::new()));
+static ROUTE_VIEW: Mutex<RefCell<route_ui::View>> = Mutex::new(RefCell::new(route_ui::View::new()));
 
 // Conventional octave-pattern editor; never part of oscillator profiles.
 static QUANT_NOTES: Mutex<RefCell<[u16; 8]>> = Mutex::new(RefCell::new([0xfff,0,0,0,0,0,0,0]));
@@ -135,13 +140,14 @@ static MIDI_BASE_REQUEST: Mutex<RefCell<bool>> = Mutex::new(RefCell::new(false))
 static MIDI_BASE: Mutex<RefCell<u8>> = Mutex::new(RefCell::new(48));
 static MIDI_LEARN: Mutex<RefCell<bool>> = Mutex::new(RefCell::new(false));
 static SETUP_STATUS: Mutex<RefCell<(u8, &'static str)>> =
-    Mutex::new(RefCell::new((1, "SAVE OR LOAD A SETUP")));
+    Mutex::new(RefCell::new((1, "SAVE OR LOAD A CONFIG")));
 type QuantEngine = oscillator_calibration::playback::Engine;
 struct MultiQuant {
     groups: route_group::Layout,
     midi: [midi_transpose::Config;4],
     shifts: [i8;4],
     midi_last: [Option<u8>;4],
+    midi_base_learn: midi_transpose::Learn,
     lanes: [QuantEngine; 4],
     configs: [quantizer_setup::Channel; 4],
     bound: [u8; 4],
@@ -157,6 +163,7 @@ static MULTI_QUANT: Mutex<RefCell<MultiQuant>> = Mutex::new(RefCell::new(MultiQu
     midi: [midi_transpose::Config::new();4],
     shifts: [0;4],
     midi_last: [None;4],
+    midi_base_learn: midi_transpose::Learn::new(),
     lanes: [
         QuantEngine::new(),
         QuantEngine::new(),
@@ -216,6 +223,11 @@ impl MultiQuant {
     }
     fn midi_word(&mut self,word:u32) {
         for route in 0..4 {
+            if let Some(note)=self.midi_base_learn.receive(route as u8,self.midi[route],word) {
+                self.midi[route].base=note;
+                self.midi_last[route]=None;self.transpose_route(route,0);
+                continue;
+            }
             if let Some(offset)=self.midi[route].offset(word) {
                 self.midi_last[route]=Some((word>>8) as u8);self.transpose_route(route,offset);
             } else if self.midi[route].released(word,self.midi_last[route]) {
@@ -250,7 +262,7 @@ impl MultiQuant {
             if !c.quantize && c.correction==0 {reason=Some("CHOOSE SCALE OR CORRECTION");}
             if c.correction!=0 && self.bound[n]!=c.correction {reason=Some("BIND CORRECTION ON ROUTE FIRST");}
         }
-        if reason.is_none() && !r.claim(owner,1<<input,mask) {reason=Some("JACK ASSIGNED - STOP ROUTE");}
+        if reason.is_none() && !r.claim(owner,1<<input,mask) {reason=Some("JACK IN USE - STOP OPERATION");}
         if let Some(reason)=reason {
             for n in 0..4 {if mask&(1<<n)!=0 || (mask==0 && !self.lanes[n].active) {self.lanes[n].status=reason;}}
             return;
@@ -285,6 +297,7 @@ impl App {
         if opts.tuner.display.value == DisplayMode::Visualizer {
             opts.tuner.display.value = DisplayMode::Arc;
         }
+        opts.play.output.value=0;
         let quant_selected = opts.quantizer.output.value.min(3);
         let mut quant_channels = quantizer_setup::DEFAULT;
         // Existing selected-route offsets were saved in the old editor fields.
@@ -310,7 +323,7 @@ impl App {
         Self {
             quant_channels,
             quant_selected,
-            route_selected: quant_selected,
+            route_selected: 0,
             groups: route_group::Layout::new(),
             midi: [midi_transpose::Config::new();4],
             midi_selected: 1,
@@ -323,6 +336,7 @@ impl App {
 
 fn visible_ticks(opts: &mut Opts, ticks: i8) {
     let claims = critical_section::with(|cs| *OWNERS.borrow_ref(cs));
+    if critical_section::with(|cs|ROUTE_VIEW.borrow_ref_mut(cs).ticks(opts,ticks,&claims)) {return;}
     ui_navigation::visible_ticks(opts, ticks, &claims);
 }
 
@@ -363,7 +377,11 @@ fn timer0_handler() {
         // Encoder/options and PMOD LEDs are all CSR-backed and deterministic.
         app.now_ms += PLAYBACK_PERIOD_MS as u64;
         if app.now_ms % TIMER0_ISR_PERIOD_MS as u64 == 0 {
-            app.ui.update_encoder_realtime(visible_ticks);
+            critical_section::with(|cs|ROUTE_VIEW.borrow_ref_mut(cs).layout=app.groups);
+            app.ui.update_encoder_realtime_custom(visible_ticks,|opts|critical_section::with(|cs| {
+                let claims=*OWNERS.borrow_ref(cs);
+                ROUTE_VIEW.borrow_ref_mut(cs).click(opts,&claims)
+            }));
             // The retired root selector index now represents piano-key focus.
             // A click reaches the generic edit flag; consume it as a key action.
             if app.ui.opts.tracker.page.value==Page::Quantizer
@@ -965,8 +983,8 @@ impl MenuSnapshot {
             Page::Play => "ROUTES",
             Page::Quantizer => "SCALES",
             Page::QuantNotes => "NOTES",
-            Page::QuantSetups => "ALL ROUTES",
-            Page::RouteMidi => "ROUTE MIDI",
+            Page::QuantSetups => "CONFIGS",
+            Page::RouteMidi => "MIDI TRANSPOSE",
         };
         let page_bold = opts.selected().is_none();
         let options = opts.view().options();
@@ -993,6 +1011,7 @@ impl MenuSnapshot {
                     (Page::Quantizer, 2) => "key",
                     (Page::Quantizer,8)|(Page::QuantNotes,10)=>"view",
                     (Page::Play, 15) => "map",
+                    (Page::QuantSetups,0)=>"config slot",
                     (Page::Settings, 0) => "a4 ref",
                     (Page::Settings, 1) => "save",
                     (Page::Settings, 2) => "reset",
@@ -1005,6 +1024,8 @@ impl MenuSnapshot {
                     let mut value = OptionString::new();
                     value.push_str("NONE").ok();
                     value
+                } else if page==Page::RouteMidi && index==0 {
+                    let mut value=OptionString::new();write!(value,"{}",opts.route_midi.route.value+1).ok();value
                 } else if page==Page::RouteMidi && index==1 {
                     let mut value=OptionString::new();if opts.route_midi.channel.value==0 {value.push_str("OFF").ok();}else{write!(value,"{}",opts.route_midi.channel.value).ok();}value
                 } else if page==Page::RouteMidi && index==2 {
@@ -1106,6 +1127,10 @@ fn publish_controls(text: &mut TextWriter<'_>, menu: &MenuSnapshot, cal: &calibr
             color: if active {0xF9}else{0x69}, bold: active && menu.page_bold,
         },ui_text::Align::Center,|a,c|text.cell(a,c));
     }
+    if critical_section::with(|cs|ROUTE_VIEW.borrow_ref(cs).handles(page)) {
+        write_centered(text,21,if menu.page_editing {"PAGE EDIT"}else if menu.page_bold {"PAGE"}else{"NAV"},10);
+        return;
+    }
     let selected_output=with_app(|app|app.quant_selected as usize);
     let output_active=critical_section::with(|cs|
         MULTI_QUANT.borrow_ref(cs).lanes[selected_output].active);
@@ -1117,8 +1142,8 @@ fn publish_controls(text: &mut TextWriter<'_>, menu: &MenuSnapshot, cal: &calibr
     let cal_outputs=claims.free_mask(Owner::Calibration,true);
     let (route,groups)=with_app(|app|(app.route_selected,app.groups));
     let route_active=claims.held(Owner::Quant(route));
-    let route_inputs=claims.free_mask(Owner::Quant(route),false);
-    let route_outputs=claims.free_mask(Owner::Quant(route),true);
+    let route_inputs=groups.available(route,false,&claims);
+    let route_outputs=groups.available(route,true,&claims);
     let jack_choice=match (page,selected) {
         (Page::Calibrate,Some(0))=>Some((Owner::Calibration,cal_inputs,cal_input)),
         (Page::Calibrate,Some(1))=>Some((Owner::Calibration,cal_outputs,cal_output)),
@@ -1147,12 +1172,14 @@ fn publish_controls(text: &mut TextWriter<'_>, menu: &MenuSnapshot, cal: &calibr
             (Page::Profiles,1) => "CURSOR",
             (Page::Play,6) => if route_active {"STOP"} else {"START"},
             (Page::Play,7) => "LOAD SCALE",
-            (Page::Play,8) => "ALL ROUTES",
-            (Page::QuantSetups,3) => "MIDI ROUTE",
-            (Page::RouteMidi,2) => "ZERO",
+            (Page::Play,8) => "CONFIGS",
+            (Page::QuantSetups,1) => "SAVE CONFIG",
+            (Page::QuantSetups,2) => "LOAD CONFIG",
+            (Page::QuantSetups,3) => "MIDI TRANSPOSE",
+            (Page::RouteMidi,2) => "BASE NOTE",
             (Page::Play,14) => if groups.owner(selected_output as u8)==Some(route) {"REMOVE OUT"}else{"ADD OUT"},
             (Page::Play,4) => if with_app(|app|app.quant_channels[selected_output].correction)==0 {"CLEAR PROFILE"} else {"APPLY PROFILE"}, (Page::Quantizer,5) => "SCALE TOOLS",
-            (Page::Quantizer,6) => "SETUPS",
+            (Page::Quantizer,6) => "CONFIGS",
             (Page::QuantNotes,3) => "CLEAR OCT",
             (Page::QuantNotes,4) => "FILL OCT",
             (Page::QuantNotes,5) => if critical_section::with(|cs|*MIDI_LEARN.borrow_ref(cs)) {"STOP MIDI"}else{"LEARN BASE"},
@@ -1482,6 +1509,9 @@ fn publish_quantizer(display: &pac::TUNER_DISPLAY, text: &mut TextWriter<'_>, me
     let mut keyboard_mask=0;
     let (page,output,c) = with_app(|app|(app.ui.opts.tracker.page.value,app.quant_selected,
         app.quant_channels[app.quant_selected as usize]));
+    if critical_section::with(|cs|ROUTE_VIEW.borrow_ref(cs).handles(page)) {
+        publish_markers(display,Markers([None;4]),false,menu);return 0;
+    }
     let mut line = String::<64>::new();
     if page == Page::QuantNotes {
         let masks = critical_section::with(|cs|*QUANT_NOTES.borrow_ref(cs));
@@ -1512,35 +1542,20 @@ fn publish_quantizer(display: &pac::TUNER_DISPLAY, text: &mut TextWriter<'_>, me
         write_centered(text,12,"NOTE ON SETS TRANSPOSE",28);
         let hold=with_app(|app|app.midi[route].hold);
         write_centered(text,13,if hold {"RELEASE HOLDS LAST NOTE"}else{"RELEASE RETURNS TO ZERO"},28);
-        write_centered(text,15,"SAVED WITH ROUTE SETUP",28);
+        write_centered(text,15,"SAVED WITH ROUTE CONFIG",28);
         write_centered(text,18,"SCALE LEARN PAUSES MIDI",26);
     } else if page == Page::QuantSetups {
         let slot=with_app(|app|app.ui.opts.quant_setups.slot.value);
         let (status_slot,status) = critical_section::with(|cs|*SETUP_STATUS.borrow_ref(cs));
-        let status=if slot == status_slot {status}else{"SELECTED SETUP SLOT"};
-        let (channels,groups)=with_app(|app|(app.quant_channels,app.groups));
-        for (n,c) in channels.iter().enumerate() {
-            let row=7+n*2;
-            line.clear();
-            if let Some(route)=groups.owner(n as u8) {
-                let active=critical_section::with(|cs|MULTI_QUANT.borrow_ref(cs).lanes[n].active);
-                write!(line,"R{} IN{} > OUT{} {}",route,groups.inputs[route as usize],n,if active {"RUN"}else{"OFF"}).ok();
-            } else {write!(line,"OUT{} FREE",n).ok();}
-            write_centered(text,row as u8,&line,30);line.clear();
-            write_profile_source(&mut line,c.correction);
-            line.push_str(" / ").ok();
-            if !c.quantize {line.push_str("NO SCALE").ok();}
-            else {
-                if c.scale_slot!=0 {write!(line,"S{}",c.scale_slot).ok();}else{line.push_str(scale_label(c.scale)).ok();}
-                write!(line," {} {:+}",NOTE_NAMES[c.root as usize],c.transpose).ok();
-            }
-            write_centered(text,(row+1) as u8,&line,30);
+        let status=if slot == status_slot {status}else{"SELECTED CONFIG SLOT"};
+        let groups=with_app(|app|app.groups);
+        write_centered(text,6,"CURRENT ROUTE ASSIGNMENTS",30);
+        for route in 0..4 {
+            line.clear();ui_route::write_assignment(&mut line,groups,route);
+            ui_text::field(0,8+route as usize*2,40,&line,ui_text::DEFAULT,ui_text::Align::Left,|a,c|text.cell(a,c));
         }
-        // All four route groups remain visible, including groups with no outputs.
-        line.clear();for route in 0..4 {write!(line,"{}:{} ",route,groups.outputs[route].count_ones()).ok();}
-        write_centered(text,15,&line,28);
+        write_centered(text,15,"SAVE INCLUDES ALL FOUR ROUTES",30);
         write_centered(text,18,status,26);
-        write_centered(text,19,"LOAD LEAVES OUTPUTS OFF",26);
     } else if page == Page::Quantizer {
         let (masks,quartertones,count)=preview.get_span(c.scale,c.masks,c.octaves);
         write!(line,"{} NOTES / {} OCTAVE{}",count,c.octaves,if c.octaves>1 {"S"}else{""}).ok();
@@ -1986,17 +2001,30 @@ fn poll_ui_frame(cal: &calibration_live::Live, scan_controls: Option<RuntimeCont
     // The output selector also selects its independent configuration. Capture
     // the old editor before loading the new channel. Never automatically arm.
     with_app(|app| {
-        if app.ui.opts.tracker.page.value==Page::RouteMidi {
+        if app.ui.opts.tracker.page.value==Page::RouteMidi || critical_section::with(|cs|ROUTE_VIEW.borrow_ref(cs).finish_midi) {
             let old=app.midi_selected as usize;
+            // Receive the exact learned MIDI note before publishing UI edits,
+            // so a stale base field cannot overwrite the interrupt's result.
+            if let Some((route,note))=critical_section::with(|cs|MULTI_QUANT.borrow_ref_mut(cs).midi_base_learn.learned.take()) {
+                app.midi[route as usize].base=note;
+                if route as usize==old {app.ui.opts.route_midi.zero.value=note;}
+            }
+            let learn=app.ui.opts.route_midi.learn.poll();
             let config=midi_transpose::Config {channel:app.ui.opts.route_midi.channel.value,base:app.ui.opts.route_midi.zero.value,hold:app.ui.opts.route_midi.release.value==options::MidiRelease::Hold};
             let reset=app.ui.opts.route_midi.reset.poll();
             critical_section::with(|cs| {let mut q=MULTI_QUANT.borrow_ref_mut(cs);
                 if config!=app.midi[old] || reset {q.transpose_route(old,0);q.midi_last[old]=None;}
+                if config.channel!=app.midi[old].channel || app.ui.opts.tracker.page.value!=Page::RouteMidi {q.midi_base_learn.route=None;}
+                if learn && config.channel!=0 {q.midi_base_learn.toggle(old as u8);}
                 app.midi[old]=config;q.midi=app.midi;
             });
             let next=app.ui.opts.route_midi.route.value.min(3);
-            if next!=app.midi_selected {app.midi_selected=next;let c=app.midi[next as usize];app.ui.opts.route_midi.channel.value=c.channel;app.ui.opts.route_midi.zero.value=c.base;
+            critical_section::with(|cs|ROUTE_VIEW.borrow_ref_mut(cs).finish_midi=false);
+            if next!=app.midi_selected {critical_section::with(|cs|MULTI_QUANT.borrow_ref_mut(cs).midi_base_learn.route=None);app.midi_selected=next;let c=app.midi[next as usize];app.ui.opts.route_midi.channel.value=c.channel;app.ui.opts.route_midi.zero.value=c.base;
                 app.ui.opts.route_midi.release.value=if c.hold {options::MidiRelease::Hold}else{options::MidiRelease::Zero};}
+        }
+        if app.ui.opts.tracker.page.value!=Page::RouteMidi {
+            critical_section::with(|cs|MULTI_QUANT.borrow_ref_mut(cs).midi_base_learn.route=None);
         }
         if cal.active() {
             app.ui.opts.calibrate.input.value=cal.input;
@@ -2027,17 +2055,22 @@ fn poll_ui_frame(cal: &calibration_live::Live, scan_controls: Option<RuntimeCont
             let assign=app.ui.opts.play.assign.poll();
             if route_page && !r.held(Owner::Quant(old_route)) {
                 let input=app.ui.opts.play.input.value.min(3);
-                if r.free_mask(Owner::Quant(old_route),false)&(1<<input)!=0 {
+                if app.groups.available(old_route,false,&r)&(1<<input)!=0 {
                     app.groups.inputs[old_route as usize]=input;
                     for n in 0..4 {if app.groups.outputs[old_route as usize]&(1<<n)!=0 {app.quant_channels[n].input=input;}}
                 }
                 if assign {
                     let previous=app.groups.owner(selected);
-                    if previous.is_none_or(|group|!r.held(Owner::Quant(group)))
-                        && r.free_mask(Owner::Quant(old_route),true)&(1<<selected)!=0 {
-                        app.groups.assign(old_route,selected,previous!=Some(old_route));
-                        *SETUP_STATUS.borrow_ref_mut(cs)=(app.ui.opts.quant_setups.slot.value,"EDITED - SAVE SETUP");
-                        app.quant_channels[selected as usize].input=input;
+                    if previous.is_none_or(|group|group==old_route)
+                        && (previous==Some(old_route) || app.groups.available(old_route,true,&r)&(1<<selected)!=0) {
+                        if app.groups.assign(old_route,selected,previous!=Some(old_route)) {
+                        *SETUP_STATUS.borrow_ref_mut(cs)=(app.ui.opts.quant_setups.slot.value,"EDITED - SAVE CONFIG");
+                        app.quant_channels[selected as usize].input=app.groups.inputs[old_route as usize];
+                        let mut q=MULTI_QUANT.borrow_ref_mut(cs);
+                        if q.lanes[selected as usize].status=="ADD AN OUTPUT FIRST" {
+                            q.lanes[selected as usize].status="STOPPED";
+                        }
+                        }
                     }
                 }
             }
@@ -2058,7 +2091,7 @@ fn poll_ui_frame(cal: &calibration_live::Live, scan_controls: Option<RuntimeCont
                 edited.root=app.ui.opts.play.key.value as u8;
                 edited.transpose=app.ui.opts.play.transpose.value;
                 edited.equal=app.ui.opts.play.mapping.value==options::Distribution::Equal;
-            } else if !route_page {
+            } else if matches!(app.ui.opts.tracker.page.value,Page::Quantizer|Page::QuantNotes) {
                 edited =
                     quant_settings(&app.ui.opts.quantizer, *QUANT_NOTES.borrow_ref(cs), edited);
                 if app.ui.opts.tracker.page.value==Page::QuantNotes {
@@ -2066,9 +2099,10 @@ fn poll_ui_frame(cal: &calibration_live::Live, scan_controls: Option<RuntimeCont
                     edited.octaves=app.ui.opts.quant_notes.octaves.value;
                 }
             }
+            if edited.correction==0 && !q.lanes[old].active {q.bound[old]=0;}
             if app.quant_channels[old] != edited {
                 *SETUP_STATUS.borrow_ref_mut(cs) =
-                    (app.ui.opts.quant_setups.slot.value, "EDITED - SAVE SETUP");
+                    (app.ui.opts.quant_setups.slot.value, "EDITED - SAVE CONFIG");
             }
             quantizer_setup::select(
                 &mut app.quant_channels,
@@ -2087,6 +2121,16 @@ fn poll_ui_frame(cal: &calibration_live::Live, scan_controls: Option<RuntimeCont
             show_route_settings(&mut app.ui.opts.play,c);
             app.ui.opts.play.input.value=app.groups.inputs[route as usize];
             *QUANT_NOTES.borrow_ref_mut(cs) = c.masks;
+            let mut view=ROUTE_VIEW.borrow_ref_mut(cs);view.layout=app.groups;view.clamp_window(route);
+            if assign && app.groups.owner(selected)==Some(route) && view.screen==route_ui::Screen::Editor(route_ui::Stage::Add) {
+                view.screen=route_ui::Screen::Flow;app.ui.opts.tracker.selected=Some(2);app.ui.opts.tracker.modify=false;
+            }
+            if view.open_pending(&mut app.ui.opts)==Some(route_ui::Stage::Midi) {
+                app.midi_selected=route;app.ui.opts.route_midi.route.value=route;
+                let config=app.midi[route as usize];app.ui.opts.route_midi.channel.value=config.channel;
+                app.ui.opts.route_midi.zero.value=config.base;
+                app.ui.opts.route_midi.release.value=if config.hold {options::MidiRelease::Hold}else{options::MidiRelease::Zero};
+            }
         })
     });
     with_app(|app| {
@@ -2166,6 +2210,10 @@ fn poll_ui_frame(cal: &calibration_live::Live, scan_controls: Option<RuntimeCont
             Some(Page::QuantNotes)
         } else if app.ui.opts.play.setups.poll() || app.ui.opts.quantizer.setups.poll() {
             Some(Page::QuantSetups)
+        } else if app.ui.opts.quant_setups.back.poll() {
+            Some(Page::Play)
+        } else if app.ui.opts.route_midi.back.poll() {
+            Some(Page::QuantSetups)
         } else if app.ui.opts.quant_setups.midi.poll() {
             Some(Page::RouteMidi)
         } else if app.ui.opts.quantizer.routes.poll() {
@@ -2176,8 +2224,9 @@ fn poll_ui_frame(cal: &calibration_live::Live, scan_controls: Option<RuntimeCont
             None
         };
         if let Some(page) = destination {
+            if matches!(page,Page::Play|Page::QuantSetups|Page::RouteMidi) {critical_section::with(|cs| {let mut v=ROUTE_VIEW.borrow_ref_mut(cs);v.midi_from_configs=page==Page::RouteMidi;v.screen=if v.midi_from_configs {route_ui::Screen::Editor(route_ui::Stage::Midi)}else{route_ui::Screen::Overview};v.pending=None;v.window=0;});}
             app.ui.opts.tracker.page.value = page;
-            app.ui.opts.tracker.selected = Some(if page==Page::QuantNotes {ui_keyboard::KEYBOARD}else{0});
+            app.ui.opts.tracker.selected = Some(if page==Page::QuantNotes {ui_keyboard::KEYBOARD}else if page==Page::Play {app.route_selected as usize}else{0});
             if page==Page::RouteMidi {
                 app.midi_selected=app.route_selected;
                 app.ui.opts.route_midi.route.value=app.route_selected;
@@ -2252,15 +2301,21 @@ type IntonoPersistence = FlashOptionsPersistence<SPIFlash0, 1100>;
 
 #[inline(never)]
 fn persist_setup(storage: &mut Option<IntonoPersistence>, save: bool) -> &'static str {
-    if critical_section::with(|cs| MULTI_QUANT.borrow_ref(cs).running) {
-        return "STOP OUTPUT FIRST";
+    let blocked=critical_section::with(|cs| {
+        let r=OWNERS.borrow_ref(cs);
+        if r.held(Owner::Calibration) {Some(route_ui::WarningKind::Calibration)}
+        else {(0..4).find(|n|r.held(Owner::Quant(*n))).map(route_ui::WarningKind::Running)}
+    });
+    if let Some(kind)=blocked {
+        if !save {with_app(|app|critical_section::with(|cs|ROUTE_VIEW.borrow_ref_mut(cs).warn(&mut app.ui.opts,kind)));}
+        return "STOP OPERATIONS BEFORE LOADING";
     }
     let slot = with_app(|app| app.ui.opts.quant_setups.slot.value);
     let Some(key) = quantizer_setup::key(slot) else {
-        return "INVALID SETUP SLOT";
+        return "INVALID CONFIG SLOT";
     };
     if with_app(|app| app.ui.opts.all().any(|o| o.key().value() == key)) {
-        return "SETUP KEY CONFLICT";
+        return "CONFIG KEY CONFLICT";
     }
     let Some(storage) = storage.as_mut() else {
         return "NO FLASH STORAGE";
@@ -2269,23 +2324,25 @@ fn persist_setup(storage: &mut Option<IntonoPersistence>, save: bool) -> &'stati
     if save {
         let (channels,groups,midi) = with_app(|app| (app.quant_channels,app.groups,app.midi));
         let Some(bytes) = quantizer_setup::encode_full(&channels,groups,midi) else {
-            return "INVALID SETUP";
+            return "INVALID CONFIG";
         };
         if storage.save_key(key, &bytes).is_err() {
-            return "SETUP SAVE FAILED";
+            return "CONFIG SAVE FAILED";
         }
         match storage.load_key(key, &mut check) {
-            Ok(Some(n)) if n == bytes.len() && check[..n] == bytes => "SETUP SAVED",
-            _ => "SETUP READBACK FAILED",
+            Ok(Some(n)) if n == bytes.len() && check[..n] == bytes => "CONFIG SAVED",
+            _ => "CONFIG READBACK FAILED",
         }
     } else {
         let bytes = match storage.load_key(key, &mut check) {
             Ok(Some(n)) => &check[..n],
-            Ok(None) => return "NO SAVED SETUP",
-            Err(_) => return "SETUP LOAD FAILED",
+            Ok(None) => return "NO SAVED CONFIG",
+            Err(_) => return "CONFIG LOAD FAILED",
         };
         let Some((channels,groups,midi)) = quantizer_setup::decode_full(bytes) else {
-            return "INVALID SAVED SETUP";
+            let kind=quantizer_setup::saved_assignment_conflict(bytes).map(|(out,jack,a,b)|route_ui::WarningKind::SavedConflict(out,jack,a,b)).unwrap_or(route_ui::WarningKind::InvalidSetup);
+            with_app(|app|critical_section::with(|cs|ROUTE_VIEW.borrow_ref_mut(cs).warn(&mut app.ui.opts,kind)));
+            return "INVALID SAVED CONFIG";
         };
         with_app(|app| {
             app.quant_channels = channels;
@@ -2296,13 +2353,13 @@ fn persist_setup(storage: &mut Option<IntonoPersistence>, save: bool) -> &'stati
                 app.ui.opts.quant_notes.octaves.value=current.octaves;
             show_route_settings(&mut app.ui.opts.play,current);
             critical_section::with(|cs| {
-                let mut q=MULTI_QUANT.borrow_ref_mut(cs);q.bound=[0;4];q.groups=groups;q.midi=midi;for route in 0..4 {q.transpose_route(route,0);q.midi_last[route]=None;}
+                let mut q=MULTI_QUANT.borrow_ref_mut(cs);q.bound=[0;4];q.groups=groups;q.midi=midi;q.midi_base_learn=midi_transpose::Learn::new();for route in 0..4 {q.transpose_route(route,0);q.midi_last[route]=None;}
                 *QUANT_NOTES.borrow_ref_mut(cs) = current.masks;
                 *NOTE_STATUS.borrow_ref_mut(cs) =
-                    (app.ui.opts.quant_notes.slot.value, "NOTES FROM SETUP");
+                    (app.ui.opts.quant_notes.slot.value, "NOTES FROM CONFIG");
             });
         });
-        "SETUP LOADED - STOPPED"
+        "CONFIG LOADED"
     }
 }
 
@@ -3153,7 +3210,6 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 critical_section::with(|cs| *NOTE_STATUS.borrow_ref_mut(cs) = (slot, status));
             }
             if (ui_frame.save_setup || ui_frame.load_setup)
-                && !calibration.active()
                 && with_app(|app| app.ui.opts.tracker.page.value == Page::QuantSetups)
             {
                 let status = persist_setup(persistence, ui_frame.save_setup);
@@ -3186,6 +3242,22 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 name_editor = oscillator_calibration::name::Editor::new();
             }
 
+            let route_page=with_app(|app|app.ui.opts.tracker.page.value);
+            let route_view_active=critical_section::with(|cs|ROUTE_VIEW.borrow_ref(cs).handles(route_page));
+            let (mut history,activity,pitches)=critical_section::with(|cs| {
+                let q=MULTI_QUANT.borrow_ref(cs);
+                (*ROUTE_HISTORY.borrow_ref(cs),q.lanes.iter().enumerate().fold(0u8,|m,(n,l)|m|((l.active as u8)<<n)),
+                    core::array::from_fn::<_,4,_>(|n|q.lanes[n].pitch))
+            });
+            history.sample(ui_frame.now_ms,pitches,activity);
+            critical_section::with(|cs|*ROUTE_HISTORY.borrow_ref_mut(cs)=history);
+            let entering_or_leaving=critical_section::with(|cs| {
+                let mut paint=ROUTE_PAINT.borrow_ref_mut(cs);
+                if paint.resident==route_view_active {return false;}
+                paint.resident=route_view_active;paint.copied=[0;2];paint.banks=[ui_route::Drawing::new();2];true
+            });
+            if entering_or_leaving {backgrounds.invalidate_calibration();}
+            let mut route_background_ready=false;
             let calibration_view = matches!(
                 ui_frame.controls.mode,
                 runtime::OperatingMode::Calibrator
@@ -3247,7 +3319,18 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     ROUND_DISPLAY,
                 );
 
-                match backgrounds.step(
+                if route_view_active {
+                    let words=video_size.0 as usize*video_size.1 as usize/4;
+                    let first=critical_section::with(|cs|ROUTE_PAINT.borrow_ref(cs).copied[bank]);
+                    if first<words {
+                        let end=(first+ui_route::CLEAR_WORDS_PER_TICK).min(words);
+                        // No guide raster is needed here: sequential writes
+                        // avoid reading the entire blank circle cache first.
+                        canvas.clear_words(first,end);
+                        if end==words {canvas.draw_border();canvas.finish();route_background_ready=true;}
+                        critical_section::with(|cs|ROUTE_PAINT.borrow_ref_mut(cs).copied[bank]=end);
+                    } else {route_background_ready=true;}
+                } else {match backgrounds.step(
                     bank,
                     prepare_scene,
                     video_size.0 as usize * video_size.1 as usize / 4,
@@ -3288,7 +3371,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                             || (calibration_prepared && calibration_plot_dirty)
                             || (calibration_prepared && live_updated);
                     }
-                }
+                }}
             }
 
             let direct_tuner = requested_scene != ui_scene::Scene::Calibration;
@@ -3369,7 +3452,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                             }
                             calibration.toggle_automatic(&tuner, controls, ui_frame.now_ms);
                         } else {
-                            calibration.status = "JACK ASSIGNED - STOP ROUTE";
+                            calibration.status = "JACK IN USE - STOP OPERATION";
                         }
                     }
                 }
@@ -3455,7 +3538,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     continue;
                 }
                 let frame = tuner_display.frame().read();
-                if frame.busy().bit() {
+                if frame.busy().bit() || (route_view_active && !route_background_ready) {
                     continue;
                 }
                 if swap_background || change_tuner {
@@ -3538,6 +3621,22 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 }
 
                 let menu = snapshot_menu(save_feedback.message());
+                if route_view_active {
+                    let drawing=route_render::publish(&mut text,&menu);
+                    let bank=frame.background_back().bit() as usize;
+                    let old=critical_section::with(|cs|ROUTE_PAINT.borrow_ref(cs).banks[bank]);
+                    let mut canvas=BackgroundCanvas::new(PSRAM_FB_BASE+bank*0x100000,video_size.0,video_size.1,ROUND_DISPLAY);
+                    for (shapes,erase) in [(&old,true),(&drawing,false)] {
+                        for shape in shapes.shapes[..shapes.len as usize].iter().copied() {
+                            let color=if erase {0}else{shape.color};
+                            if shape.solid {for y in shape.y..shape.y+shape.h {for x in shape.x..shape.x+shape.w {canvas.put_panel_pixel(x as i32,y as i32,color);}}}
+                            else {ui_canvas::rounded_outline(shape.rect(),color,|p,c|canvas.put_panel_pixel(p.x,p.y,c));}
+                        }
+                    }
+                    canvas.finish();
+                    critical_section::with(|cs|ROUTE_PAINT.borrow_ref_mut(cs).banks[bank]=drawing);
+                    swap_background=true;
+                }
                 publish_controls(&mut text,&menu,&calibration);
                 // Commit LAST: characters, marker geometry/color and menu
                 // visibility are immutable until the hardware acknowledges them.
@@ -3556,12 +3655,12 @@ fn run(resources: &mut RuntimeResources) -> ! {
                         w.keyboard_second().bit(with_app(|app|app.quant_channels[app.quant_selected as usize].octaves>1));
                         w.ui_ready().bit(true);
                         unsafe {w.keyboard_mask().bits((keyboard_mask&0xfff) as u16);
-                            w.ui_surface().bits(surface(page) as u8);
+                            w.ui_surface().bits(if route_view_active {ui_controls::Surface::Routes as u8}else{surface(page) as u8});
                             w.ui_focus().bits(menu.entries.iter().position(|e|e.as_ref().is_some_and(|e|e.selected)).unwrap_or(31) as u8);
                         } w});
                 tuner_display.keyboard_b().write(|w| unsafe {w.mask().bits((keyboard_mask>>12) as u16)});
                 tuner_display.frame().write(|w| {
-                    unsafe { w.background_source().bits(if circle_view {4} else if piano_view {if with_app(|app|app.quant_channels[app.quant_selected as usize].octaves)==1 {5}else{3}} else {match scene {
+                    unsafe { w.background_source().bits(if route_view_active {0} else if circle_view {4} else if piano_view {if with_app(|app|app.quant_channels[app.quant_selected as usize].octaves)==1 {5}else{3}} else {match scene {
                         ui_scene::Scene::Spiral => 1,
                         ui_scene::Scene::Linear => 2,
                         ui_scene::Scene::Calibration => 0,

@@ -56,8 +56,8 @@ pub fn field(surface: Surface, index: usize) -> Option<Field> {
             2=>(4,7,10,false),3=>(16,7,10,true),4=>(10,9,10,false),_=>return None,
         },
         Surface::Setups => match index {
-            0 => (10,5,10,false), 1 => (4,16,10,true),
-            2 => (16,16,10,true),3 => (10,17,10,true), _ => return None,
+            0 => (8,5,14,false), 1 => (4,16,10,true),
+            2 => (16,16,10,true),3 => (7,17,16,true),4 => (10,19,10,true), _ => return None,
         },
         Surface::Profiles => match index {
             0 => (10,5,10,false),

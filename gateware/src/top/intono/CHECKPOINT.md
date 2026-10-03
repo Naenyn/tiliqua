@@ -1172,3 +1172,146 @@ SHA256 `f2b73656cb0705d2d09cb1435c80e30f0f757e23515198563f4aa240342d696a`.
 
 Successfully flashed Tiliqua #1 slot 1; erase/write completed and Refresh DONE.
 Runtime smoke test pending.
+
+
+## Routes flow integration — 2026-10-02
+
+Branch `codex/intono-route-flow` now contains the firmware implementation of the
+card overview and route flow, following `ux/route-flow.html`. Selected cards expand;
+all four outputs fit in an expanded card. The definition shows two output chains
+at a time with an explicit pager. Centered stage editors reuse existing persisted
+options, explicit Apply Profile / Load User Scale actions, and active jack locks.
+MIDI is shared per route; scale/key/map/shift/profile remain per output. Eight green
+bars show approximately one second of actual output-pitch history at 8 Hz.
+
+Sparse rounded outlines reuse the double-buffered background banks. Each bank
+receives the common circle once upon entry, then erases/repaints only retained
+shapes. Text and background publish together. No additional FPGA block RAM.
+A foreground synchronization correction also prevents MIDI/setup pages from
+writing stale scale-editor settings back into a stopped output.
+
+Qualified and flashed to Tiliqua #1, slot 1:
+`build/intono-ux-midibase-r5/intono-route-flow-20261002-r5.tar.gz`.
+SHA256 `db7dbede4a36a156b59c4b282a56aee5c18d77be3f0ed6a7d6c59e8239576b80`.
+Matching symbols `route-flow-firmware.elf`; evidence `route-flow-validation.json`
+and `route-flow-flash.json`. Firmware 304280 / 327680 bytes; static SRAM 7876;
+remaining stack region 24892. Compiled run closure 8128 bytes (160 above prior),
+route renderer 976 bytes. These are allocations, not a new runtime stack watermark.
+
+FPGA: COMB 20837/24288, FF 12121/24288, RAM 46/56, MULT 14/28. All final timing
+checks pass: serializer 432.90/371.33 MHz, pixel 85.96/74.25 MHz, audio
+67.18/49.15 MHz, CPU 65.78/60 MHz. Tests: 26 actual-option/navigation,
+78 scale/canvas/history, 255 calibration/playback host, 69 Python display/layout/
+calibration regressions. Updated obsolete option/layout assertions to the current
+persisted fields and dynamic route shapes.
+
+Physical follow-up: launch Intono, exercise card expansion, each stage editor,
+three/four-output paging, MIDI edits, occupied jacks, Start/Stop, saved-scale load,
+profile apply, and calibration after leaving Routes. Check legibility and capture
+stack/video health during use. Hardware flashing succeeded; screen interaction
+has not yet been observed on the rack.
+
+
+### Route presentation polish — 2026-10-02
+
+Following rack photos, cards now use aligned route/assignment/status columns,
+output badges, a header separator, and aligned scale/key/map/profile details.
+Flow nodes allocate extra width to scales and profiles, with native-cell padding
+so CHROMATIC does not cross its border. A separate dotted MIDI connection feeds
+the shift stages. Editors use labels beside independently outlined values.
+
+Flashed slot 1: `intono-route-polish-20261002-r5.tar.gz`, SHA256
+`74f80bd2e008f6deb97c5fc28da31ceb51800defd374d744919f8756e5701b4a`.
+Firmware-only rebuild against the byte-identical, previously qualified FPGA
+bitstream. Matching `route-polish-firmware.elf`, `route-polish-flash.json`,
+`route-polish-validation.json`. Static/stack allocations unchanged (7876/24892);
+run/presenter compiled frames unchanged (8128/976).
+
+Added actual-presenter host capture test `opts/tests/intono_route_render.rs`:
+45 presenter/dependency tests and 26 encoder tests pass. Dense four-output cards,
+two-branch flow and editor captures were inspected with native 9x15 glyphs;
+shapes fit the circle and leave spare capacity in the bounded 48-shape list.
+Raster preview script `/tmp/render-intono-route-capture.py`; captures
+`/tmp/intono-route-{overview,flow,editor}.{txt,png}`. These use test state; rack
+appearance and interaction remain to be verified by the user.
+
+
+### Grouped flow — 2026-10-02
+
+Output branches now contain two spacious, clickable groups: Pitch (scale, key,
+mapping, manual/MIDI shifts) and Output (jack, profile, 0V reference, live note).
+Manual transpose is included in the Pitch editor; profile and jack assignment
+share the Output editor. Flow focus skips the removed narrow boxes. A single
+visible branch is vertically centered, including the final page of a three-output
+route; two branches remain stacked. Wider connections include directional arrows.
+CV and MIDI retain separate ports and all existing run/claim locks remain.
+
+Flashed Tiliqua #1 slot 1: `intono-route-groups-20261002-r5.tar.gz`; SHA256
+`b9171e32c17b2391323c578f7b6cac958ecf5316a2db659f139557fce9eb4fc2`.
+Firmware-only rebuild with verified identical FPGA bitstream. Matching symbols
+`route-groups-firmware.elf`, qualification `route-groups-validation.json` and
+`route-groups-flash.json`. SRAM/stack region remains 7876/24892 bytes. Tests:
+27 navigation and 45 presenter/dependency checks pass. Native-glyph captures
+of single/two-output flow and both editors inspected; rack appearance pending.
+
+### 2026-10-02 — reserve configured route jacks immediately
+
+- Route selectors now combine persisted route assignments with runtime claims. A stopped route retains its input/output reservations; removing its last output releases its source reservation. Empty route source selectors are placeholders until an output is assigned.
+- Output assignment no longer transfers a destination from another stopped route. Remove it from that route first. Input sharing between nonempty routes is also rejected, including conflicting saved layouts.
+- Calibration continues to use runtime claims only: stopped routes' jacks may be borrowed without modifying their configurations. Starting a conflicting route during a scan fails with `JACK IN USE - STOP OPERATION`.
+- Editor legends mark this route's assigned jacks with `*`, dim unavailable numbers, and ADD OUTPUT is disabled when no unassigned destination remains.
+- Validation: 29 actual navigation tests, 46 actual presenter tests, 86 scale/setup/ownership fixture tests passed. Firmware 305824/327680 bytes; SRAM 7876 bytes and stack reservation 24892 bytes unchanged. FPGA bitstream identical to qualified route-groups build.
+- Archive: `build/intono-ux-midibase-r5/intono-route-reservations-20261002-r5.tar.gz`; SHA256 `983e854ac5ed7f05dc2a3d63f771877789c0d4552bfe4a3cd31ae617ae3531bd`. Matching ELF and validation/flash records retained beside archive.
+
+### 2026-10-02 — empty routes and actionable setup load warnings
+
+- New/default route layouts contain no outputs and reserve no sources. Choosing a source is provisional until the first output is added. Saved valid layouts retain their assignments.
+- Setup slots store the whole four-route configuration. Loading replaces it atomically after full decoding/validation; stopped assignments in the current setup do not conflict with a replacement. There is no individual-route load action.
+- Running-route load attempts show a centered `CAN'T LOAD SETUP` dialog with the route number, `GO TO ROUTE n`, and `CANCEL`. The jump opens that route's flow; cancel restores the setup page/focus. Neither action stops routes or applies the rejected load.
+- Calibration blocks setup loading with explicit stop-scan feedback rather than silently ignoring the request. Invalid saved setups retain the current setup. CRC-authenticated duplicate assignments are diagnosed by jack type/number and both saved route numbers; malformed/checksum-invalid data gets a generic invalid-file dialog.
+- Regression validation: 30 navigation, 46 presenter, 87 scale/setup/ownership tests pass, including input/output duplicate diagnostics, corrupted CRC, empty defaults, modal jump/cancel and temporary calibration reservations. Actual presenter warning capture inspected.
+- Built and flashed Tiliqua #1 slot 1, Refresh DONE. Archive `build/intono-ux-midibase-r5/intono-route-load-dialogs-20261002-r5.tar.gz`; SHA256 `e3e4b2c2ae31a4bf4af8a6dbaf327196d2ab73bf39134012086a1bd1a8343310`. Firmware 308064/327680 bytes, static SRAM 7892 bytes, reserved stack 24876 bytes. FPGA image byte-identical to qualified route-groups build. Matching ELF/validation/flash records retained.
+
+### 2026-10-03 — route editor cleanup and transition latency
+
+- Output/profile and input editors remove the `FREE / DIM: ASSIGNED` heading, move jack numbers up, then show `* ASSIGNED TO THIS ROUTE` and `DIM = ASSIGNED` on separate lines. Pitch editor omits the click/turn tutorial.
+- Selecting profile NONE clears the stopped output's bound-profile indicator and uses nominal CV. Redundant CLEAR PROFILE action is absent from both rendering and encoder navigation; selecting a real source retains APPLY PROFILE.
+- Routes initializes on Route 1 independently of the scale editor's selected output and previously saved route selector. PlayOpts defaults to route index zero.
+- Route background preparation clears the existing back buffer in bounded 32768-word chunks and draws the build-time border coordinates directly, rather than copying the whole circle cache in 4096-word chunks. First complete bank can publish on its final preparation tick. At 1280x720 this reduces 57 preparation steps to eight. No new framebuffer or SRAM. Wall-clock latency needs hardware observation; operation timers remain interruptible and foreground services run between chunks.
+- Tests: 31 actual navigation, 46 presenter, 87 scale/setup fixture tests passed. Presenter captures inspected; diff whitespace checks clean. Firmware 308152/327680 bytes; SRAM 7892 bytes and stack 24876 bytes unchanged. FPGA bitstream identical to qualified route-groups build.
+- Archive `build/intono-ux-midibase-r5/intono-route-tidy-20261003-r5.tar.gz`, SHA256 `a9f86dd2636b375d328b01299a8ddd467e29cebd9bd29fdccdc2d6cc9ca303fa`. Matching ELF and validation/flash records retained beside archive.
+
+### 2026-10-03 — focused empty-route creation
+
+- Opening an empty route focuses a centered ADD OUTPUT button immediately. CV/MIDI nodes and START remain hidden until an output exists; BACK/SETUPS remain accessible.
+- Empty flow encoder order is ADD OUTPUT, BACK, SETUPS; it cannot focus hidden nodes. Cancelling ADD returns to the focused centered button.
+- ADD selects a free provisional input if another route/calibration has reserved the old placeholder. A successful output assignment closes the ADD dialog and opens the normal diagram focused on its first pitch group.
+- Validation: 32 navigation and 46 real presenter tests pass, including empty-route initial focus, hidden-node skipping and source conflict fallback. Actual empty-route presenter capture inspected. Firmware 308856/327680 bytes; FPGA bitstream identical to qualified route-groups build.
+- Archive `build/intono-ux-midibase-r5/intono-route-empty-20261003-r5.tar.gz`, SHA256 `36f159bff6db779da971552af1636e157ffa181058ead3f592ac0c4ba757ee9b`; matching ELF and validation/flash records retained beside archive.
+
+### 2026-10-03 — distinguish route context from encoder focus
+
+- Overview route card border and title emphasis now follow `tracker.selected`, rather than highlighting the remembered route during page-tab navigation. Expanded details retain their route context when focusing action buttons, but only the control under encoder focus is highlighted.
+- Actual presenter regression checks all four card borders with page navigation, first-card focus and START-button focus. 32 navigation and 46 presenter tests pass; FPGA unchanged.
+- Archive `build/intono-ux-midibase-r5/intono-route-focus-20261003-r5.tar.gz`, SHA256 `29544fc4ada8c76d848b6f7959d880803ceb1dfabc198ac3d2215e80090eafbd`. Firmware 308816 bytes. Matching ELF and validation/flash records retained.
+
+### 2026-10-03 — clear obsolete empty-route warning
+
+- A successful output assignment clears the lane's stale `ADD AN OUTPUT FIRST` status. The route presenter additionally suppresses that specific warning when the route has an output, while retaining profile/load and real output fault feedback.
+- Regression validation: 32 navigation and 47 presenter/dependency tests pass; includes obsolete-requirement suppression and preservation of unrelated errors. FPGA unchanged.
+- Archive `build/intono-ux-midibase-r5/intono-route-status-20261003-r5.tar.gz`, SHA256 `85ca9ce96cfbb4404f46a717e85d174856a696bcd7f79afa33cb83bac24de12a`. Firmware 308960 bytes. Matching ELF and validation/flash records retained. Flash completion is separate from verifying Intono was relaunched.
+
+### MIDI transpose wording and base-note learn — 2026-10-03
+- Route flow uses MIDI TRANSPOSE. Popup renames ZERO to BASE NOTE, release choices to LATCH / RESET ON RELEASE, and reset action to RESET TRANSPOSE; current offset is visible beside these controls.
+- LEARN BASE NOTE arms a one-shot capture of the exact next note on the selected route MIDI channel (not its octave). Note-off/zero-velocity and other channels are ignored. Capturing establishes zero transpose; CANCEL LEARN or leaving the popup cancels capture. Channel OFF disables learn. Existing setup persistence stores the learned base through the unchanged MIDI configuration format.
+- Interrupt capture uses compact fixed state and hands the learned note to foreground before UI configuration synchronization, avoiding a stale field overwriting it. Other routes continue normal MIDI handling.
+- Host validation: 33 navigation and 52 presenter/dependency tests passed, including capture/channel/cancel tests and popup geometry. Firmware 310480 / 327680 bytes; qualified FPGA unchanged.
+- Archive: intono-midi-ux-20261003-r5.tar.gz, SHA256 e62b647f907c324bf9b8d3f7a63b8b30c1e11ce00823576bf7b56f093a6766e4. Device execution still requires hardware confirmation after slot reload.
+
+### Configs navigation and route Start — 2026-10-03
+- Removed redundant EDIT ROUTE from overview. Encoder order follows each highlighted route with START/STOP and CONFIGS before proceeding to the next card, preserving the chosen route when starting. Empty routes skip the disabled Start action.
+- SETUPS renamed CONFIGS in user-facing labels and feedback; binary storage keys/formats unchanged. Configs has an explicit BACK, SAVE CONFIG / LOAD CONFIG, and a readable Current route assignments summary listing all outputs per route with one-based route numbering. Live RUN/OFF and LOAD LEAVES OUTPUTS OFF removed; run state is not persisted.
+- Configs / MIDI TRANSPOSE now uses the retained firmware presenter, with a route selector (Route 1–4), channel, exact learned base note, release policy, reset, live offset and explicit BACK. This fixes the old standalone MIDI page's incomplete generic controls. Flow MIDI popup retains DONE. Capture cancels on changing MIDI routes.
+- Configs controls are also drawn by the firmware presenter, so the added Back button and wider MIDI action have matching outlines without changing FPGA geometry. Back to overview restores focus to the remembered route.
+- Validation: 35 navigation, 53 presenter/dependency, 91 scale/setup/geometry tests passed; real presenter captures inspected for Configs and MIDI with longest release wording. Firmware 312512 / 327680 bytes. FPGA bitstream identical to qualified route-groups image.
+- Archive intono-configs-20261003-r5.tar.gz, SHA256 5a79d4ed004ea9a107b98fc828b1748a2546578cb270b274c1bc34fce5787d40. Flash record configs-flash.json; application execution requires user confirmation after reload if refresh does not restart it.

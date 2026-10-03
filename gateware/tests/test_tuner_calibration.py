@@ -11,7 +11,7 @@ def test_calibration_menu_overrides_match_option_order():
     options = (firmware / "options.rs").read_text()
     fields = re.findall(r"pub (\w+):", options.split("pub struct CalibrateOpts {")[1].split("}")[0])
     assert fields == ["input", "output", "zero_note", "policy", "graph", "run", "accept", "discard", "profiles"]
-    snapshot = (firmware / "main.rs").read_text().split("impl MenuSnapshot {")[1].split("#[inline(never)]")[0]
+    snapshot = (firmware / "main.rs").read_text().split("impl MenuSnapshot {")[1].split("fn snapshot_menu")[0]
     overrides = {int(index): label for index, label in re.findall(
         r'\(Page::Calibrate, (\d+)\) => "([^"]+)"', snapshot)}
     assert [overrides.get(i, field) for i, field in enumerate(fields)] == [
@@ -32,12 +32,12 @@ def test_live_calibration_protocol_and_profile_math(tmp_path):
 def test_all_menu_pages_fit_without_hidden_scrolling():
     firmware = Path(__file__).parents[1] / "src/top/intono/fw/src"
     main = (firmware / "main.rs").read_text()
-    assert "entries: [Option<MenuEntrySnapshot>; 9]" in main
-    snapshot = main.split("impl MenuSnapshot {")[1].split("#[inline(never)]")[0]
+    assert "entries: [Option<MenuEntrySnapshot>; 16]" in main
+    snapshot = main.split("impl MenuSnapshot {")[1].split("fn snapshot_menu")[0]
     assert "let index = row;" in snapshot
     options = (firmware / "options.rs").read_text()
     for name, body in re.findall(r"pub struct (\w+Opts) \{(.*?)\n\}", options, re.S):
-        assert len(re.findall(r"pub \w+:", body)) <= 9, name
+        assert len(re.findall(r"pub \w+:", body)) <= 16, name
     display = (firmware.parents[1] / "display.py").read_text()
     constants = {key: int(value) for key, value in re.findall(
         r"\b(MENU_Y|MENU_H|MENU_TEXT_Y|MENU_ROW_PITCH) = (\d+)", display)}
@@ -49,21 +49,22 @@ def test_scale_editor_and_routes_share_configuration_but_only_routes_run():
     firmware = Path(__file__).parents[1] / "src/top/intono/fw/src"
     options=(firmware/'options.rs').read_text()
     fields=re.findall(r'pub (\w+):',options.split('pub struct QuantizerOpts {')[1].split('}')[0])
-    assert fields==['output','scale','root','transpose','mapping','notes','setups','routes']
+    assert fields==['output','scale','root','transpose','mapping','notes','setups','routes','view_octave','octaves','slot','save','load']
     main=(firmware/'main.rs').read_text()
     assert '(Page::Play, 2) => "0v note"' in main
     assert 'page == Page::Play && index == 2' in main
     assert 'Page::Quantizer => "SCALES"' in main
     assert 'Page::Play => "ROUTES"' in main
-    assert '!c.quantize && c.correction == 0' in main
+    assert re.search(r'!c\.quantize\s*&&\s*c\.correction\s*==\s*0',main)
     assert 'quantizer.run' not in main
     assert 'if lane.arm_route(' in main
     assert 'if q.lanes[old].active' in main
     assert 'edited = q.configs[old];' in main
-    assert '(Page::Play,6) => "RUN/STOP"' in main
+    assert '(Page::Play,6) => if route_active {"STOP"} else {"START"}' in main
     presets=options.split('pub enum ScalePreset {')[1].split('}')[0]
     assert re.findall(r'^\s*(\w+),', presets, re.M)==[
-        'Chromatic','Major','Minor','MajorPentatonic','MinorPentatonic','Edo24','Custom2']
+        'Chromatic','Major','Minor','MajorPentatonic','MinorPentatonic','Edo24','Custom2',
+        'Dorian','Mixolydian','Phrygian','Lydian','HarmonicMinor','MelodicMinor','Blues']
     assert 'Page::Quantizer' in (firmware/'runtime.rs').read_text()
 
 
@@ -85,14 +86,14 @@ def test_note_slots_fit_menu_and_legacy_slot_is_preserved():
     firmware=Path(__file__).parents[1]/'src/top/intono/fw/src'
     options=(firmware/'options.rs').read_text()
     fields=re.findall(r'pub (\w+):',options.split('pub struct QuantNotesOpts {')[1].split('}')[0])
-    assert fields==['octave','note','toggle','clear','fill','learn','save','load','slot']
+    assert fields==['octave','note','toggle','clear','fill','learn','save','load','slot','octaves','view']
     assert 'min: 1, max: 8' in options
     record=(firmware/'note_pattern.rs').read_text()
     assert 'KEY + slot as u32 - 1' in record
     main=(firmware/'main.rs').read_text()
     assert 'note_pattern::key(slot)' in main
     assert 'slot == status_slot' in main
-    assert 'entries: [Option<MenuEntrySnapshot>; 9]' in main
+    assert 'entries: [Option<MenuEntrySnapshot>; 16]' in main
     display=(firmware.parent.parent/'display.py').read_text()
     def geometry(name):
         return int(re.search(rf'{name} = (\d+)', display).group(1))
@@ -105,7 +106,8 @@ def test_routes_do_not_consume_audio_or_start_a_second_playback_engine():
     assert 'static PLAYBACK:' not in main
     assert 'Owner::Play' not in main
     assert 'Owner::Tuner' not in main
-    assert 'r.claim(Owner::Quant(n as u8), 1 << c.input, 1 << n)' in main
+    assert 'let owner=Owner::Quant(route as u8);' in main
+    assert 'r.claim(owner,1<<input,mask)' in main
     assert 'r.focus(app.ui.opts.tuner.input.value, app.tuner_focus)' in main
     assert 'if cal.active() || outputs_running() {' in main
     assert 'return "STOP OUTPUTS BEFORE FLASH READ";' in main
