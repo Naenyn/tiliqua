@@ -28,7 +28,7 @@ pub fn field(surface: Surface, index: usize) -> Option<Field> {
             3 => return None, // transpose belongs to the route
             4 => return None, // mapping is a route property
             5 => (16,16,12,true),
-            9 => (4,6,10,false), 8 => (29,10,3,false),
+            9 => (4,16,10,false), 8 => (29,10,3,false),
             10 => (4,18,10,false), 11 => (16,18,6,true),
             12 => (24,18,6,true), _ => return None,
         },

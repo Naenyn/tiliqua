@@ -644,7 +644,10 @@ def test_keyboard_fills_follow_mask_without_covering_edges_or_text(rotate_left):
                         assert await sample(ctx,center,yy-3,tag)==(0xa9 if included else (0x09 if black else 0xf9))
                     ctx.set(dut.keyboard_focus,octave*16+note)
                     left=202 if black else 164
-                    assert await sample(ctx,left+2,yy,tag)==0xdb
+                    assert await sample(ctx,left+1,yy,tag)==0x09
+                    assert await sample(ctx,left+2,yy,tag)==0xd2
+                    assert await sample(ctx,left+3,yy,tag)==0xd2
+                    assert await sample(ctx,left+4,yy,tag)==0x09
                     ctx.set(dut.keyboard_focus,31)
                     assert await sample(ctx,left+2,yy,tag)==0xa9
         ctx.set(dut.keyboard_second,1)

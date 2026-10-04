@@ -206,7 +206,7 @@ keyboard keys, then click a highlighted key to toggle membership. Editing a
 preset selects Custom; **SCALE TOOLS** opens slot/save/load and MIDI facilities.
 ROUTES selects Scale, Key, and Transpose independently for each output. The standard scales use a piano-key preview: included keys are filled
 blue, without on-key labels. Excluded natural keys are white and excluded sharps
-are black. Membership and the cream focus outline update at a video-frame boundary. The
+are black. Membership and the yellow focus outline with a dark halo update at a video-frame boundary. The
 key outlines are cached, so switching pages does not require drawing them again.
 Custom patterns retain their exact degrees and explicit octave span, including
 empty octaves. Up to two keyboards are visible together; VIEW selects the first
@@ -479,7 +479,7 @@ subtly rounded corners; included notes retain their cyan fill. Native font size
 and character spacing are unchanged.
 
 SCALES and SCALE TOOLS display up to two stacked piano keyboards. One-octave
-patterns show only one keyboard. Turn to focus a key (cream outline), click
+patterns show only one keyboard. Turn to focus a key (yellow outline with a dark halo), click
 to toggle it. OCTAVES sets the repeat length independently of note membership;
 VIEW browses adjacent octaves; keyboard focus stops at the visible page edges. On
 SCALE TOOLS, TOOLS OCT chooses the Clear/Fill target. Opening Scale Tools

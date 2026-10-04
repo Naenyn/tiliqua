@@ -27,7 +27,7 @@ pub fn window(view:u8,span:u8,_key:Option<u8>)->u8 {
     view.min(span.saturating_sub(2))
 }
 pub fn next_span(selected:Option<usize>,key:u8,forward:bool,span:u8,view:u8,tools:bool)->(Option<usize>,u8) {
-    let order:&[usize]=if tools {&[8,9,KEYBOARD,10,0,5,3,4,6,7]}else{&[0,1,9,KEYBOARD,8,5,10,11,12]};
+    let order:&[usize]=if tools {&[8,9,KEYBOARD,10,0,5,3,4,6,7]}else{&[0,1,KEYBOARD,8,9,5,10,11,12]};
     let first=window(view,span,None)*12;
     let last=(first+24).min(span*12)-1;
     let key=key.clamp(first,last);
@@ -63,11 +63,11 @@ mod tests {
     #[test]
     fn saved_scale_controls_follow_the_visible_keyboard_and_tools() {
         let mut state=(Some(KEYBOARD),11);
-        for control in [8,5,10,11,12] {
+        for control in [8,9,5,10,11,12] {
             state=next_span(state.0,state.1,true,1,0,false);
             assert_eq!(state.0,Some(control));
         }
-        for control in [11,10,5,8,KEYBOARD] {
+        for control in [11,10,5,9,8,KEYBOARD] {
             state=next_span(state.0,state.1,false,1,0,false);
             assert_eq!(state.0,Some(control));
         }

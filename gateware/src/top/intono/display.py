@@ -228,8 +228,14 @@ class IntonoOverlay(wiring.Component):
             rx=Signal(signed(12));ry=Signal(signed(12))
             m.d.comb += [rx.eq(x-lefts[note]),ry.eq(y-key_top)]
             cursor=(state["keyboard_focus"]==Cat(note,self.i.pixel.intensity==15))
-            edge=(rx==2)|(rx==Mux(black,33,54))|(ry==2)|(ry==Mux(black,37,69))
-            fill_color=Mux(cursor&edge,0xDB,Mux(selected,0xA9,Mux(black,0x09,0xF9)))
+            # A two-pixel yellow ring with a dark halo on both sides stays
+            # visible on white, black, and blue keys without changing membership.
+            right=Mux(black,35,56);bottom=Mux(black,39,71)
+            edge=(rx<=4)|(rx>=right-4)|(ry<=4)|(ry>=bottom-4)
+            yellow=(rx>=2)&(rx<=right-2)&(ry>=2)&(ry<=bottom-2)&(
+                (rx<=3)|(rx>=right-3)|(ry<=3)|(ry>=bottom-3))
+            fill_color=Mux(cursor&edge,Mux(yellow,0xD2,0x09),
+                           Mux(selected,0xA9,Mux(black,0x09,0xF9)))
         else:
             fill, fill_color = Const(0), Const(0,8)
         fills = [fill] + [Signal() for _ in range(4)]

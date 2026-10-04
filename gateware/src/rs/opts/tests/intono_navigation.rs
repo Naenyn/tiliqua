@@ -137,9 +137,12 @@ fn route_setup_storage_is_reached_from_routes_not_scale_editing() {
 fn octave_count_defaults_to_one_and_keyboard_navigation_stays_in_the_selected_view() {
     let mut opts=Opts::default();opts.tracker.page.value=Page::Quantizer;
     assert_eq!(opts.quantizer.octaves.value,1);
-    for index in [0,1,9] {visible_ticks(&mut opts,1);assert_eq!(opts.tracker.selected,Some(index));}
+    for index in [0,1] {visible_ticks(&mut opts,1);assert_eq!(opts.tracker.selected,Some(index));}
+    visible_ticks(&mut opts,12);assert_eq!(opts.tracker.selected,Some(2));
+    for index in [8,9] {visible_ticks(&mut opts,1);assert_eq!(opts.tracker.selected,Some(index));}
     opts.toggle_modify();visible_ticks(&mut opts,2);opts.toggle_modify();
     assert_eq!(opts.quantizer.octaves.value,3);
+    visible_ticks(&mut opts,-26);assert_eq!(opts.tracker.selected,Some(1));
     for key in 0..24 {
         visible_ticks(&mut opts,1);assert_eq!(opts.tracker.selected,Some(2));
         assert_eq!(opts.quant_notes.octave.value*12+opts.quant_notes.note.value as u8,key);
@@ -152,7 +155,7 @@ fn octave_count_defaults_to_one_and_keyboard_navigation_stays_in_the_selected_vi
     assert_eq!(opts.quant_notes.octave.value,2);
     for _ in 0..23 {visible_ticks(&mut opts,-1);assert_eq!(opts.tracker.selected,Some(2));assert_eq!(opts.quantizer.view_octave.value,1);}
     assert_eq!(opts.quant_notes.octave.value,1);
-    visible_ticks(&mut opts,-1);assert_eq!(opts.tracker.selected,Some(9));
+    visible_ticks(&mut opts,-1);assert_eq!(opts.tracker.selected,Some(1));
     // Changing length clamps both focus and the window without wrapping.
     opts.tracker.selected=Some(9);opts.toggle_modify();visible_ticks(&mut opts,-7);opts.toggle_modify();
     assert_eq!(opts.quantizer.octaves.value,1);

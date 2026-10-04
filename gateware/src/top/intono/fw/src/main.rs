@@ -1497,7 +1497,6 @@ fn publish_quantizer(display: &pac::TUNER_DISPLAY, text: &mut TextWriter<'_>, me
         let base=critical_section::with(|cs|*MIDI_BASE.borrow_ref(cs));
         write!(line,"MIDI BASE: C{}",base as i32/12-1).ok();
         write_centered(text,6,&line,28);
-        write_centered(text,7,"BLUE = INCLUDED INTERVAL",28);
         let view=with_app(|app|app.ui.opts.quant_notes.view.value as usize);
         for row in 0..(c.octaves as usize).min(2) {
             let octave=view+row;
@@ -1521,7 +1520,8 @@ fn publish_quantizer(display: &pac::TUNER_DISPLAY, text: &mut TextWriter<'_>, me
     } else if page == Page::Quantizer {
         let (masks,quartertones,count)=preview.get_span(c.scale,c.masks,c.octaves);
         write!(line,"{} NOTES / {} OCTAVE{}",count,c.octaves,if c.octaves>1 {"S"}else{""}).ok();
-        write_centered(text,7,if quartertones {&line}else{"BLUE = INCLUDED INTERVAL"},28);line.clear();
+        if quartertones {write_centered(text,7,&line,28);}
+        line.clear();
         let (key_focused,view)=with_app(|app|(
             app.ui.opts.tracker.selected==Some(ui_keyboard::KEYBOARD),
             app.ui.opts.quantizer.view_octave.value as usize));
