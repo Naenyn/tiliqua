@@ -97,7 +97,7 @@ fn field_emit(column:usize,row:usize,width:usize,value:&str,style:Style,align:Al
         };
         emit(
             (row * COLUMNS + column + offset) as u16,
-            cell(character, style) | (shift << 16),
+            cell(character, style) | (if character == ' ' { 0 } else { shift << 16 }),
         );
     }
 }
@@ -158,7 +158,7 @@ pub fn inline_field(column:usize,row:usize,width:usize,label:&str,value:&str,
         let character=if offset>=padding && offset<padding+count {
             chars.next().unwrap_or(' ')
         } else {' '};
-        emit((row*COLUMNS+start+offset) as u16,cell(character,style) | (shift<<16));
+        emit((row*COLUMNS+start+offset) as u16,cell(character,style) | (if character == ' ' { 0 } else { shift<<16 }));
     }
     true
 }
@@ -196,13 +196,27 @@ mod tests {
             let mut ink=Vec::new();
             let mut offset=0;
             field(column,3,width,label,DEFAULT,Align::Center,|a,c| {
-                offset=match c>>16 {1=>2,2=>8,_=>0};
-                if c&127!=0 {ink.push(a as i32%45);}
+                if c&127!=0 {
+                    offset=match c>>16 {1=>2,2=>8,_=>0};
+                    ink.push(a as i32%45);
+                }
             });
             let text_center_twice=ink[0]*12+(ink.last().unwrap()*12+9)+offset*2;
             let field_center_twice=(column*24+width*12) as i32;
             assert!((text_center_twice-field_center_twice).abs()<=1,"{label}");
         }
+    }
+
+    #[test]
+    fn blank_padding_cannot_carry_an_offset_into_a_later_label() {
+        for width in 4..20 {
+            field(0,0,width,"A B",DEFAULT,Align::Center,|_,c| {
+                if c&127==0 { assert_eq!(c>>16,0); }
+            });
+        }
+        assert!(inline_field(3,5,9,"SLOT","8",DEFAULT,|_,c| {
+            if c&127==0 { assert_eq!(c>>16,0); }
+        }));
     }
 
     #[test]

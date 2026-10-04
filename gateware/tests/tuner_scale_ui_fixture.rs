@@ -213,8 +213,10 @@ fn controls_center_longest_labels_and_values_in_pixel_bounds() {
         assert!(count<=end-start,"{surface:?} {label}: {value}");
         let mut first=None;let mut last=0;let mut offset=0;
         let mut sample=|a:u16,c:u32| {
-            if c&127!=0 {first.get_or_insert(a as i32%45);last=a as i32%45;}
-            offset=match c>>16 {1=>2,2=>8,_=>0};
+            if c&127!=0 {
+                first.get_or_insert(a as i32%45);last=a as i32%45;
+                offset=match c>>16 {1=>2,2=>8,_=>0};
+            }
         };
         if f.action {
             ui_text::ux_field(f.column as usize,f.row as usize,f.width as usize,
