@@ -1485,3 +1485,24 @@ Tiliqua #1 slot 1; write and Refresh DONE confirmed. SHA-256:
 `9263043757eb0ea367ab529a6996fa784d9969dc0d4bed37ad0b37119770bbf9`.
 Matching `pitch-firmware.elf`, `pitch-validation.json`, and `pitch-flash.json`
 retained. Physical visual confirmation pending.
+
+## 2026-10-04 — exact linear tuner axis labels
+
+Moved -50 / 0 / +50 to y=160..174, one row above the first channel's readout.
+Their ink centers are exactly x=152 / 360 / 568, matching the ruler endpoints
+and zero mark. Four normal 9x15 glyphs are embedded in the immutable guide;
+three preparation segments draw the labels once into the existing LINEAR
+cache. Removed the old row-4 text labels. Rulers, cursor mapping, channel text,
+FPGA logic and memory allocation are unchanged.
+
+Source `4970daa2`; 42 navigation/preferences and 55 presenter/geometry checks
+pass, including exact ink-center and vertical-spacing assertions. Built with
+--fw-only and verified archive top.bit is identical to the qualified seed-20
+pitch build. Firmware 309,296 bytes; existing timing/resource qualification
+retained in axis-validation.json.
+
+Flashed `build/intono-ui-axis-r5/intono-ui-axis-20261004-r5.tar.gz` to Tiliqua #1
+slot 1; write and Refresh DONE confirmed. SHA-256:
+`cef5b327f3cdc44fa72686c4ddc1ab0bc48e1802656e056343659f454362fcec`.
+Matching axis-firmware.elf, axis-validation.json and axis-flash.json retained.
+Physical visual check pending.
