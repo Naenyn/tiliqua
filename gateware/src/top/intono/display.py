@@ -234,9 +234,10 @@ class IntonoOverlay(wiring.Component):
             edge=(rx<=4)|(rx>=right-4)|(ry<=4)|(ry>=bottom-4)
             # Key radius is four pixels. Insetting the ring by two leaves
             # radius two: scanline insets 4,3,2 match the retained key curve.
-            near_y=Mux(ry<bottom-ry,ry,bottom-ry)
-            inset=Mux(near_y==2,4,Mux(near_y==3,3,2))
-            outer=(near_y>=2)&(rx>=inset)&(rx<=right-inset)
+            row2=(ry==2)|(ry==Mux(black,37,69))
+            row3=(ry==3)|(ry==Mux(black,36,68))
+            inset=Mux(row2,4,Mux(row3,3,2))
+            outer=(ry>=2)&(ry<=bottom-2)&(rx>=inset)&(rx<=right-inset)
             inner=(rx>=4)&(rx<=right-4)&(ry>=4)&(ry<=bottom-4)
             yellow=outer & ~inner
             fill_color=Mux(cursor&edge,Mux(yellow,0xD2,0x09),
