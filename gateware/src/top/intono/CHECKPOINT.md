@@ -1393,3 +1393,26 @@ to Tiliqua #1 slot 1; write and Refresh DONE confirmed. SHA-256:
 `cd152cb18bb7be26b7ebb370f46063e13e768fcee0a42f68a28f1db5dcb20c97`.
 Matching `chrome-firmware.elf`, `chrome-validation.json`, and `chrome-flash.json`
 are retained in that build directory. Physical layout confirmation is pending.
+
+## 2026-10-03 — footer separator and linear tuner alignment
+
+Moved the footer separator to y=631, above Options/Help and clear of the
+row-19 controls. Linear tuner rulers/markers now share y=231/327/423/519:
+96-pixel spacing and exactly 32 pixels between each ruler and the upper/lower
+glyph centers. Text rows are shared constants in ui_canvas, including clearing
+reserved channels. Source `4a391a83`; 39 navigation/preferences, 54 presenter,
+and 7 display/frame simulation checks pass.
+
+Seed 19 routing was unusually congested and was stopped. The same synthesized
+design routed successfully with seed 20, passing serializer 425.35/371.33 MHz,
+pixels 88.49/74.25, audio 69.29/49.15, CPU 66.35/60. Packed that complete
+placement with native ecppack and the project's ArchiveBuilder; verified the
+archive contains the exact qualified bitstream and matching firmware.
+
+Flashed `build/intono-ui-linear-r5/intono-ui-linear-20261003-r5.tar.gz` to
+Tiliqua #1 slot 1; write and Refresh DONE confirmed. Firmware 308,240 bytes,
+static SRAM 7,940; COMB 21,142/24,288, FF 12,128/24,288, BRAM 47/56, DSP 14/28.
+SHA-256 `339409755cd8a5faa32723ebc572598e4132b42882315f1538526d8665a9016c`.
+Matching `linear-firmware.elf`, `linear-validation.json`, `linear-flash.json`,
+and original seed-20 placement/timing files retained. Physical visual check
+remains pending.
