@@ -33,6 +33,18 @@ except ImportError:
     from background import SceneExchange
 
 
+def arc_pitch_text_coordinates(x, y, enabled):
+    """Magnify the primary Arc note 2x using its existing character cells.
+
+    Only text lookup coordinates change: background, markers and scan timing
+    retain their original positions. The 30-pixel glyph fits between PITCH
+    and cents, and four 24-pixel cells accommodate sharps and octave numbers.
+    """
+    inside = enabled & (x >= 492) & (x < 588) & (y >= 216) & (y < 246)
+    return (Mux(inside, 492 + ((x - 492) >> 1), x),
+            Mux(inside, 224 + ((y - 216) >> 1), y))
+
+
 # A deliberately small 5x7 font. Unsupported characters render as spaces.
 # Rows are encoded most-significant pixel first.
 FONT = {
@@ -192,8 +204,11 @@ class IntonoOverlay(wiring.Component):
             m.submodules.background_error_ff = FFSynchronizer(seen, crossed, o_domain="sync")
             m.d.comb += self.background_errors[0].eq(crossed)
 
-        xs = [x] + [Signal.like(x) for _ in range(4)]
-        ys = [y] + [Signal.like(y) for _ in range(4)]
+        text_x, text_y = (arc_pitch_text_coordinates(x, y,
+                            state["ui_ready"] & (state["ui_surface"] == 0))
+                          if self.large_text else (x, y))
+        xs = [text_x] + [Signal.like(x) for _ in range(4)]
+        ys = [text_y] + [Signal.like(y) for _ in range(4)]
         for n in range(4):
             m.d.dvi += [xs[n+1].eq(xs[n]), ys[n+1].eq(ys[n])]
 

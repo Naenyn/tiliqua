@@ -80,8 +80,18 @@ class RoundedBorders(wiring.Component):
         inner=Array(Const(4-isqrt(16-(4-min(y,23-y))**2),4) if min(y,23-y)<4 else Const(0,4)
                     for y in range(24))
         off2=Signal(4);inner_off2=Signal(4)
-        shape_y=Mux((surface1==0)&(row1==4),ly1-4,ly1)
-        m.d.dvi += [off2.eq(outer[shape_y]),inner_off2.eq(inner[shape_y-2]+2)]
+        # Arc input text occupies y=128..142. A 21-pixel outline at
+        # y=125..145 gives equal three-pixel padding and clears the rule.
+        compact1=(surface1==0)&(row1==4)
+        shape_y=Mux(compact1,ly1-3,ly1)
+        compact_outer=Array(Const(4-isqrt(16-(4-min(y,20-y))**2),4) if min(y,20-y)<4 else Const(0,4)
+                            for y in range(21))
+        compact_inner=Array(Const(2-isqrt(4-(2-min(y,16-y))**2),4) if min(y,16-y)<2 else Const(0,4)
+                            for y in range(17))
+        compact2=Signal()
+        m.d.dvi += [compact2.eq(compact1),
+                    off2.eq(Mux(compact1,compact_outer[shape_y],outer[shape_y])),
+                    inner_off2.eq(Mux(compact1,compact_inner[shape_y-2],inner[shape_y-2])+2)]
         hits=[];colors=[]
         for n in range(4):
             descriptor=port.data[n*22:(n+1)*22]
@@ -94,8 +104,8 @@ class RoundedBorders(wiring.Component):
                          Mux(row1==20,((surface1==8+index)|((surface1==13)&(index==0))),index==focus1))
             m.d.dvi += [rx2.eq(x1-left),width2.eq(width),ly2.eq(shape_y),active2.eq(active1 & (width!=0) & ~((surface1==14)&(row1==4)&(index==0))),
                         selected2.eq(selected),tab2.eq((row1==3)|(row1==20))]
-            inside=(ly2<28)&(rx2>=off2)&(rx2<width2-off2)
-            inset=(ly2>=2)&(ly2<26)&(rx2>=inner_off2)&(rx2<width2-inner_off2)
+            inside=(ly2<Mux(compact2,21,28))&(rx2>=off2)&(rx2<width2-off2)
+            inset=(ly2>=2)&(ly2<Mux(compact2,19,26))&(rx2>=inner_off2)&(rx2<width2-inner_off2)
             hit3=Signal();color3=Signal(8)
             m.d.dvi += [hit3.eq(active2 & inside & ~inset),
                         color3.eq(Mux(selected2,Mux(tab2,0xB9,0xF9),0x49))]

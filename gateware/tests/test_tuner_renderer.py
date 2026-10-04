@@ -166,3 +166,53 @@ def test_instrument_scenes_use_one_text_pipeline(scene, menu_enabled):
 
     sim.add_testbench(bench)
     sim.run()
+
+
+def test_arc_primary_note_is_double_size_without_moving_other_text_or_scan():
+    from amaranth import signed
+    from top.intono.display import arc_pitch_text_coordinates
+
+    plane = TextPlane(120, 0, 45, 22, pitch_x=12, pitch_y=32, cell_color=True)
+    contents = text_cells(plane, [(31, 6, 'PITCH', 0xD9, False),
+                                  (31, 7, 'C#10', 0xF9, True),
+                                  (31, 8, '-32.4c', 0xB9, False),
+                                  (25, 2, 'NAV', 0xD9, False)])
+    memory = Memory(shape=unsigned(16), depth=len(contents), init=contents)
+    font = atlas()
+    dut = TextCompositor([memory], [plane], font)
+    m = Module()
+    m.submodules.dut = dut
+    m.submodules.cells = memory
+    x, y, arc = Signal(signed(12)), Signal(signed(12)), Signal()
+    tx, ty = arc_pitch_text_coordinates(x, y, arc)
+    m.d.comb += [dut.x.eq(tx), dut.y.eq(ty)]
+    sim = Simulator(m)
+    sim.add_clock(1e-6, domain='dvi')
+
+    async def bench(ctx):
+        ctx.set(dut.enable, 1)
+        queue = deque()
+        for enabled in (True, False):
+            ctx.set(arc, enabled)
+            for yy in [*range(64, 79), *range(192, 207), *range(214, 248), *range(256, 271)]:
+                for xx in range(418, 600):
+                    sx, sy = xx, yy
+                    if enabled and 492 <= xx < 588 and 216 <= yy < 246:
+                        sx, sy = 492 + (xx - 492) // 2, 224 + (yy - 216) // 2
+                    bg = 0x39 if (xx + yy) % 19 == 0 else 0
+                    expected = reference_pixel(sx, sy, bg, 1, [plane], [None], [contents], font)
+                    ctx.set(x, xx); ctx.set(y, yy)
+                    ctx.set(dut.i.x, xx + 280); ctx.set(dut.i.y, yy)
+                    ctx.set(dut.i.de, 1); ctx.set(dut.i.pixel.as_value(), bg)
+                    queue.append((xx + 280, yy, expected))
+                    await ctx.tick('dvi')
+                    if len(queue) >= dut.LATENCY:
+                        actual = tuple(ctx.get(value) for value in (dut.o.x, dut.o.y, dut.o.pixel.as_value()))
+                        assert actual == queue.popleft(), (enabled, xx, yy, actual)
+            # Drain before switching the page mode, as at a frame boundary.
+            for _ in range(dut.LATENCY - 1):
+                await ctx.tick('dvi')
+                actual = tuple(ctx.get(value) for value in (dut.o.x, dut.o.y, dut.o.pixel.as_value()))
+                assert actual == queue.popleft()
+    sim.add_testbench(bench)
+    sim.run()

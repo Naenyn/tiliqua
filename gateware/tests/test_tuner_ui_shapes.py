@@ -68,8 +68,12 @@ def test_border_pixels_and_focus_match_rounded_reference():
                 # All corner pixels, straight sides, centers, and outside rows.
                 for yy in [-1,0,1,2,3,4,5,6,13,21,22,23,24,25,26,27,28]:
                     for xx in [-1,0,1,2,3,4,5,6,7,width//2,width-8,width-7,width-6,width-5,width-4,width-3,width-2,width-1,width]:
-                        want=inside(xx,yy,width,28,6) and not inside(xx-2,yy-2,width-4,24,4)
-                        hit,color=await sample(ctx,left+xx,row*32-6+yy+(4 if surface==0 and row==4 else 0))
+                        compact=surface==0 and row==4
+                        height,radius=(21,4) if compact else (28,6)
+                        if compact and yy==-1:
+                            continue  # y=124 belongs to the separately tested header rule.
+                        want=inside(xx,yy,width,height,radius) and not inside(xx-2,yy-2,width-4,height-4,radius-2)
+                        hit,color=await sample(ctx,left+xx,row*32-6+yy+(3 if compact else 0))
                         # Adjacent boxes never overlap; sampled outside pixels
                         # are deliberately at most one pixel beyond this box.
                         assert hit==want,(surface,row,xx,yy,hit,want)

@@ -1129,7 +1129,8 @@ fn publish_controls(text: &mut TextWriter<'_>, menu: &MenuSnapshot, cal: &calibr
         },ui_text::Align::Center,|a,c|text.cell(a,c));
     }
     if critical_section::with(|cs|ROUTE_VIEW.borrow_ref(cs).handles(page)) {
-        write_centered(text,21,if menu.page_editing {"PAGE EDIT"}else if menu.page_bold {"PAGE"}else{"NAV"},10);
+        ui_text::field(25,2,10,if menu.page_editing {"PAGE EDIT"}else if menu.page_bold {"PAGE"}else{"NAV"},
+            ui_text::DEFAULT,ui_text::Align::Left,|a,c|text.cell(a,c));
         return;
     }
     let selected_output=with_app(|app|app.quant_selected as usize);
@@ -1161,9 +1162,10 @@ fn publish_controls(text: &mut TextWriter<'_>, menu: &MenuSnapshot, cal: &calibr
     let scale_locked=with_app(|app|app.ui.opts.tracker.selected.is_some_and(quant_locked));
     let cal_locked=cal.active() && page==Page::Calibrate &&
         with_app(|app|matches!(app.ui.opts.tracker.selected,Some(0|1|3)));
-    write_centered(text, 21, if cal_locked || scale_locked { "LOCKED" } else if menu.page_editing { "PAGE EDIT" }
+    ui_text::field(25,2,10, if cal_locked || scale_locked { "LOCKED" } else if menu.page_editing { "PAGE EDIT" }
         else if menu.entries.iter().flatten().any(|entry|entry.editing) { "EDIT" }
-        else if menu.page_bold { "PAGE" } else { "NAV" }, 10);
+        else if menu.page_bold { "PAGE" } else { "NAV" },
+        ui_text::DEFAULT,ui_text::Align::Left,|a,c|text.cell(a,c));
     for (index, entry) in menu.entries.iter().enumerate() {
         let Some(entry) = entry else { continue };
         if page==Page::Tuner && index==0 {continue;}
@@ -1230,7 +1232,7 @@ fn publish_controls(text: &mut TextWriter<'_>, menu: &MenuSnapshot, cal: &calibr
             write_centered(text,19,"ASSIGNED",28);
         }
         if free==0 || (claims.held(owner) && selected!=Some(13)) {
-            write_centered(text,21,"ASSIGNED",12);
+            ui_text::field(25,2,10,"ASSIGNED",ui_text::DEFAULT,ui_text::Align::Left,|a,c|text.cell(a,c));
         }
     }
 }
