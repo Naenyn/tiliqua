@@ -141,7 +141,7 @@ static MIDI_BASE_REQUEST: Mutex<RefCell<bool>> = Mutex::new(RefCell::new(false))
 static MIDI_BASE: Mutex<RefCell<u8>> = Mutex::new(RefCell::new(48));
 static MIDI_LEARN: Mutex<RefCell<bool>> = Mutex::new(RefCell::new(false));
 static SETUP_STATUS: Mutex<RefCell<(u8, &'static str)>> =
-    Mutex::new(RefCell::new((1, "SAVE OR LOAD A CONFIG")));
+    Mutex::new(RefCell::new((1, "")));
 type QuantEngine = oscillator_calibration::playback::Engine;
 struct MultiQuant {
     groups: route_group::Layout,
@@ -1168,6 +1168,8 @@ fn publish_controls(text: &mut TextWriter<'_>, menu: &MenuSnapshot, cal: &calibr
         let Some(entry) = entry else { continue };
         let Some(field) = ui_controls::field(surface(page),index) else { continue };
         let label = match (page,index) {
+            (Page::Calibrate,0) => "IN",
+            (Page::Calibrate,1) => "OUT",
             (Page::Calibrate,5) => if cal.active() { "STOP" } else if cal.can_continue_automatic() { "RESUME" } else { "SCAN" }, (Page::Calibrate,8) => "PROFILES",
             (Page::Verify,0) => "CHECK",
             (Page::Profiles,1) => "CURSOR",
@@ -3645,7 +3647,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                         w.keyboard_second().bit(with_app(|app|app.quant_channels[app.quant_selected as usize].octaves>1));
                         w.ui_ready().bit(true);
                         unsafe {w.keyboard_mask().bits((keyboard_mask&0xfff) as u16);
-                            w.ui_surface().bits(if route_view_active {ui_controls::Surface::Routes as u8}else{surface(page) as u8});
+                            w.ui_surface().bits(if route_view_active {match page {Page::QuantSetups=>11,Page::RouteMidi=>12,Page::Settings=>13,_=>7}}else{surface(page) as u8});
                             w.ui_focus().bits(menu.entries.iter().position(|e|e.as_ref().is_some_and(|e|e.selected)).unwrap_or(31) as u8);
                         } w});
                 tuner_display.keyboard_b().write(|w| unsafe {w.mask().bits((keyboard_mask>>12) as u16)});

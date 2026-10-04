@@ -59,11 +59,11 @@ def test_border_pixels_and_focus_match_rounded_reference():
         return ctx.get(dut.hit),ctx.get(dut.color)
     async def bench(ctx):
         ctx.set(dut.active,1)
-        for surface,row in [(0,3),(0,18),(1,5),(1,6),(1,16),(2,14),(3,19),(4,5),(4,6),(4,16),(4,18),(5,18),(7,9),(8,20),(10,3),(10,5),(10,7)]:
+        for surface,row in [(0,3),(0,18),(1,5),(1,6),(1,16),(2,14),(3,19),(4,5),(4,6),(4,16),(4,18),(5,18),(7,9),(8,20),(10,3),(10,5),(10,7),(11,3),(12,3),(13,20)]:
             ctx.set(dut.surface,surface)
             for left,width,index in descriptors(surface,row):
                 ctx.set(dut.focus,index)
-                selected= index==({0:0,1:1,2:1,3:1,4:2,5:2,6:3,7:3,10:3}.get(surface,-1)) if row==3 else (surface==8+index if row==20 else True)
+                selected= index==({0:0,1:1,2:1,3:1,4:2,5:2,6:3,7:3,10:3,11:3,12:3}.get(surface,-1)) if row==3 else ((surface==8+index or (surface==13 and index==0)) if row==20 else True)
                 expected_color=(0xB9 if row in (3,20) else 0xF9) if selected else 0x49
                 # All corner pixels, straight sides, centers, and outside rows.
                 for yy in [-1,0,1,2,3,4,5,6,13,21,22,23,24,25,26,27,28]:
@@ -76,4 +76,32 @@ def test_border_pixels_and_focus_match_rounded_reference():
                         if want:assert color==expected_color
         ctx.set(dut.active,0)
         hit,_=await sample(ctx,174,506);assert hit==0
+    sim.add_testbench(bench);sim.run()
+
+
+def test_page_indicators_and_separators_follow_parent_page():
+    dut=RoundedBorders();sim=Simulator(dut);sim.add_clock(1e-6,domain='dvi')
+    async def bench(ctx):
+        ctx.set(dut.active,1)
+        for surface,page in enumerate([0,1,1,1,2,2,3,3,4,5,3,3,3,4]):
+            ctx.set(dut.surface,surface)
+            for index in range(6):
+                center=330+index*12
+                if index!=page:center+=-4 if index<page else 4
+                ctx.set(dut.x,center);ctx.set(dut.y,70)
+                await ctx.tick('dvi').repeat(4)
+                assert ctx.get(dut.hit)==(index==page),(surface,index)
+                if index==page:assert ctx.get(dut.color)==0xB9
+                ctx.set(dut.y,62)
+                await ctx.tick('dvi').repeat(4)
+                assert ctx.get(dut.hit)==1
+            for y,left,right in [(124,144,576),(666,228,492)]:
+                for x in [left-1,left,(left+right)//2,right-1,right]:
+                    ctx.set(dut.x,x);ctx.set(dut.y,y)
+                    await ctx.tick('dvi').repeat(4)
+                    assert ctx.get(dut.hit)==(left<=x<right)
+            ctx.set(dut.active,0);ctx.set(dut.x,330+page*12);ctx.set(dut.y,70)
+            await ctx.tick('dvi').repeat(4)
+            assert ctx.get(dut.hit)==0
+            ctx.set(dut.active,1)
     sim.add_testbench(bench);sim.run()

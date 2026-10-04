@@ -5,7 +5,9 @@ from amaranth.lib.memory import Memory
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 
-# Surface IDs match firmware ui_controls::Surface. (option, col, row, width)
+# Surface IDs 0..10 match firmware ui_controls::Surface. IDs 11/12/13
+# identify retained Configs/MIDI/Preferences views without legacy field borders.
+# Descriptors are (option, col, row, width).
 ACTIONS = {
     1: [(5,3,16,7),(6,11,16,8),(7,20,16,8),(8,8,18,14)],
     2: [(3,4,14,10),(4,16,14,10),(5,4,16,10),(6,16,16,10)],
@@ -22,7 +24,7 @@ ACTIONS = {
 # including profile selection, fit one row with room between the two columns.
 FIELDS = {
     0: [(0,4,18,10),(1,16,18,10)],
-    1: [(0,4,5,10),(1,16,5,10),(3,4,6,10),(4,16,6,10)],
+    1: [(0,4,5,6),(1,11,5,6),(3,9,6,14),(4,18,5,12)],
     2: [(0,10,5,10),(1,4,10,10),(2,16,10,10)],
     4: [(0,4,5,10),(1,16,5,14),(9,4,6,10),(8,29,10,3),(10,4,18,10)],
     5: [(8,4,5,10),(9,16,5,10),(10,29,10,3),(0,4,16,10)],
@@ -65,9 +67,11 @@ class RoundedBorders(wiring.Component):
         memory=Memory(shape=unsigned(88),depth=352,init=words,attrs={"ram_style":"block"})
         port=memory.read_port(domain="dvi");m.submodules.geometry=memory
         row=(self.y+6)[5:10]
-        m.d.comb += [port.addr.eq(Cat(row,self.surface)),port.en.eq(self.active)]
-        x1=Signal(10);ly1=Signal(5);row1=Signal(5);active1=Signal();surface1=Signal(4);focus1=Signal(5)
-        m.d.dvi += [x1.eq(self.x),ly1.eq((self.y+6)[:5]),row1.eq(row),active1.eq(self.active & (self.surface<11)),
+        # Retained views reuse the common-only Routes geometry ROM entry.
+        geometry_surface=Mux(self.surface>=11,7,self.surface)
+        m.d.comb += [port.addr.eq(Cat(row,geometry_surface)),port.en.eq(self.active)]
+        y1=Signal(signed(12));x1=Signal(10);ly1=Signal(5);row1=Signal(5);active1=Signal();surface1=Signal(4);focus1=Signal(5)
+        m.d.dvi += [y1.eq(self.y),x1.eq(self.x),ly1.eq((self.y+6)[:5]),row1.eq(row),active1.eq(self.active & (self.surface<14)),
                     surface1.eq(self.surface),focus1.eq(self.focus)]
         # Compute curve insets once per scanline before the per-box tests.
         outer=Array(Const(6-isqrt(36-(6-min(y,27-y))**2),4) if min(y,27-y)<6 else Const(0,4)
@@ -84,8 +88,8 @@ class RoundedBorders(wiring.Component):
             rx2=Signal(10)
             width2=Signal(8);ly2=Signal(5);active2=Signal();selected2=Signal();tab2=Signal()
             category=Mux(surface1==0,0,Mux(surface1<=3,1,Mux(surface1<=5,2,3)))
-            selected=Mux(row1==3,((surface1<8)|(surface1==10))&(index==category),
-                         Mux(row1==20,(surface1==8+index),index==focus1))
+            selected=Mux(row1==3,((surface1<8)|((surface1>=10)&(surface1<=12)))&(index==category),
+                         Mux(row1==20,((surface1==8+index)|((surface1==13)&(index==0))),index==focus1))
             m.d.dvi += [rx2.eq(x1-left),width2.eq(width),ly2.eq(ly1),active2.eq(active1 & (width!=0)),
                         selected2.eq(selected),tab2.eq((row1==3)|(row1==20))]
             inside=(ly2<28)&(rx2>=off2)&(rx2<width2-off2)
@@ -94,6 +98,33 @@ class RoundedBorders(wiring.Component):
             m.d.dvi += [hit3.eq(active2 & inside & ~inset),
                         color3.eq(Mux(selected2,Mux(tab2,0xB9,0xF9),0x49))]
             hits.append(hit3);colors.append(color3)
+        # Six boxes follow the visible navigation order, including subpages.
+        page=Mux(self.surface==0,0,Mux(self.surface<=3,1,Mux(self.surface<=5,2,
+             Mux((self.surface==8)|(self.surface==13),4,Mux(self.surface==9,5,3)))))
+        pager_words=[0]*(8*256)
+        for current in range(6):
+            for index in range(6):
+                center=360-5*6+index*12
+                if index==current:
+                    for x in range(center-9,center+10):pager_words[current*256+(x&255)]|=4
+                else:
+                    center+=-4 if index<current else 4
+                    for x in range(center-5,center+6):
+                        pager_words[current*256+(x&255)]|=1 | (2 if x<center-3 or x>=center+4 else 0)
+        pager=Memory(shape=unsigned(3),depth=len(pager_words),init=pager_words,attrs={"ram_style":"block"})
+        pager_port=pager.read_port(domain="dvi");m.submodules.pager=pager
+        m.d.comb += [pager_port.addr.eq(Cat(self.x[:8],page)),pager_port.en.eq(self.active)]
+        # Match the border layer's four-cycle latency, including the ROM read.
+        chrome_hit2=Signal();chrome_color2=Signal(8)
+        current=pager_port.data[2]&(y1>=60)&(y1<81)
+        other=pager_port.data[0]&(y1>=62)&(y1<78)&(pager_port.data[1]|(y1<64)|(y1>=76))
+        pager_hit=(x1>=256)&(x1<512)&(current|other)
+        separator=((y1==124)&(x1>=144)&(x1<576))|((y1==666)&(x1>=228)&(x1<492))
+        m.d.dvi += [chrome_hit2.eq(active1&(pager_hit|separator)),
+                    chrome_color2.eq(Mux(pager_hit&current,0xB9,0x49))]
+        chrome_hit3=Signal();chrome_color3=Signal(8)
+        m.d.dvi += [chrome_hit3.eq(chrome_hit2),chrome_color3.eq(chrome_color2)]
+        hits.append(chrome_hit3);colors.append(chrome_color3)
         color=Signal(8);m.d.comb += color.eq(0x49)
         for hit,c in zip(hits,colors):
             with m.If(hit):m.d.comb += color.eq(c)

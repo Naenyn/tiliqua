@@ -13,9 +13,9 @@ pub fn center_width(row: u8, requested: usize) -> usize {
 pub fn field(surface: Surface, index: usize) -> Option<Field> {
     let (column, row, width, action) = match surface {
         Surface::Calibration => match index {
-            0 => (4, 5, 10, false), 1 => (16, 5, 10, false),
+            0 => (4, 5, 6, false), 1 => (11, 5, 6, false),
             2 => return None, // measured reference, not an editable scan target
-            3 => (4, 6, 10, false), 4 => (16, 6, 10, false),
+            3 => (9, 6, 14, false), 4 => (18, 5, 12, false),
             5 => (3, 16, 7, true), 6 => (11, 16, 8, true),
             7 => (20, 16, 8, true), 8 => (8, 18, 14, true), _ => return None,
         },

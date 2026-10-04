@@ -192,15 +192,6 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
             ui_route::write_assignment(&mut s, groups, route);
             left(text, 120, 8 + route * 2, 480, &s, 0xB9, false);
         }
-        label(
-            text,
-            120,
-            15,
-            480,
-            "SAVE INCLUDES ALL FOUR ROUTES",
-            0x89,
-            false,
-        );
         button(
             &mut d,
             text,
@@ -241,7 +232,7 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
             if status_slot == slot {
                 status
             } else {
-                "SELECTED CONFIG SLOT"
+                ""
             },
             0x89,
             false,

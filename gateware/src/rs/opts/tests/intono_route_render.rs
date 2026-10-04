@@ -24,7 +24,7 @@ static APP:Mutex<RefCell<Option<App>>>=Mutex::new(RefCell::new(None));
 fn with_app<T>(f:impl FnOnce(&App)->T)->T{critical_section::with(|cs|f(APP.borrow_ref(cs).as_ref().unwrap()))}
 static ROUTE_VIEW:Mutex<RefCell<route_ui::View>>=Mutex::new(RefCell::new(route_ui::View::new()));
 static ROUTE_HISTORY:Mutex<RefCell<ui_route::History>>=Mutex::new(RefCell::new(ui_route::History::new()));
-static SETUP_STATUS:Mutex<RefCell<(u8,&'static str)>>=Mutex::new(RefCell::new((1,"SAVE OR LOAD A CONFIG")));
+static SETUP_STATUS:Mutex<RefCell<(u8,&'static str)>>=Mutex::new(RefCell::new((1,"")));
 static OWNERS:Mutex<RefCell<ownership::Reservations>>=Mutex::new(RefCell::new(ownership::Reservations::new()));
 #[derive(Clone,Copy)]struct Lane {active:bool,pitch:i32,status:&'static str}
 struct Quant {lanes:[Lane;4],bound:[u8;4],shifts:[i8;4],midi_base_learn:midi_transpose::Learn}
