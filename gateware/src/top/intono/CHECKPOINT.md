@@ -1636,3 +1636,17 @@ FPGA is byte-identical to the qualified scale-layout build; all timings PASS.
 Archive: `build/intono-ui-bounded-nav-r5/intono-ui-bounded-nav-8d69a142-r5.tar.gz`.
 SHA256: `158e2aee1ae0d36aa9c659c66bad21218730e33fce523b354e704020a143b57f`.
 Flashed Tiliqua #1 slot 1, verified `Refresh: DONE`. Saved data preserved.
+
+## 2026-10-04 — rounded scale keyboard cursor
+
+The yellow two-pixel selection ring now follows the radius-four key corners,
+with its dark contrast border retained. Direct scanline comparisons avoid an
+extra subtraction on the pixel path. No scale or navigation behavior changed.
+
+Source `a5c7ca76`, seed 21. All 51 display checks passed; the two keyboard pixel
+checks passed again after simplifying the equivalent corner logic. Final timing:
+serializer 425.35 MHz, pixel 74.33 MHz, audio 67.73 MHz, CPU 65.09 MHz: all PASS.
+Resources: COMB 21425/24288, FF 12192/24288, BRAM 47/56, DSP 14/28.
+Archive: `build/intono-ui-rounded-key-fast-r5/intono-ui-rounded-key-fast-a5c7ca76-r5.tar.gz`.
+SHA256: `588aaac75544d828aebcefb8c22a8a48978d70e41a7b9492b3aacffd37ce8ef5`.
+Flashed Tiliqua #1 slot 1, verified `Refresh: DONE`. Saved data preserved.
