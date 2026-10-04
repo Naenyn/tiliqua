@@ -1588,3 +1588,24 @@ to the previous whole-key-highlight build; all four timing checks remain PASS.
 Archive: `build/intono-ui-scale-order-r5/intono-ui-scale-order-d9758472-r5.tar.gz`.
 SHA256: `5e34e8c7ffb44c213b3caf4f1e68b0abe72ca9e0f0b7ba7fe0126d8fb25eec6c`.
 Flashed Tiliqua #1, slot 1; verified `Refresh: DONE`. Saved data preserved.
+
+
+## 2026-10-04 — scale-editor cursor and layout (built, NOT flashed)
+
+Selected keys now have a two-pixel yellow (D2) ring with a dark (09) halo on
+both sides. This replaces the magenta DB cursor and remains distinct on white,
+black, and included blue keys. Output/Preset remain above the keyboards;
+Octaves moved beside Scale Tools below them. Removed the included-interval
+legend from SCALES and SCALE TOOLS. Navigation follows the moved controls.
+
+Source: `52717ad2`. All 98 host and 51 display checks passed. Full r5 seed-21
+build passed all clocks: serializer 438.21/371.33 MHz, pixels 80.80/74.25 MHz,
+audio 66.19/49.15 MHz, CPU 66.66/60 MHz. Firmware 311320/327680 bytes.
+Resources: COMB 21253/24288, FF 12192/24288, BRAM 47/56, DSP 14/28.
+Archive: `build/intono-ui-scale-layout-r5/intono-ui-scale-layout-52717ad2-r5.tar.gz`.
+SHA256: `6bf9cee5ec83d5382af2a2e152fe7b919d457773bc342ece78bbb80e51770764`.
+Validation and ELF retained in the same build directory. Do not rebuild the
+qualified bitstream when flashing tomorrow; use this exact verified archive.
+User shut off rack and requested build only: no flash or device access attempted.
+Last flashed image remains `intono-ui-scale-order-d9758472-r5.tar.gz`.
+Hardware HDMI and visual confirmation are pending tomorrow's test.
