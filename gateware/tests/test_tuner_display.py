@@ -590,8 +590,8 @@ def test_keyboard_fills_follow_mask_without_covering_edges_or_text(rotate_left):
             for note,(pos,black) in enumerate([(0,False),(1,True),(1,False),(2,True),
                     (2,False),(3,False),(4,True),(4,False),(5,True),(5,False),(6,True),(6,False)]):
                 if black!=black_pass:continue
-                left=164+pos*56-(18 if black else 0)
-                width,height=(36,40) if black else (57,72)
+                left=165+pos*56-(18 if black else 0)
+                width,height=(35,48) if black else (55,88)
                 if left<=x<left+width and 280<=y<280+height:
                     pixel=0xe0+note if left<x<left+width-1 and 280<y<280+height-1 else 0x49
         ctx.set(dut.i.pixel.as_value(),pixel if tag is None else tag)
@@ -611,7 +611,7 @@ def test_keyboard_fills_follow_mask_without_covering_edges_or_text(rotate_left):
                 center=164+pos*56+(0 if black else 28)
                 color=0xa9 if mask&(1<<note) else (0x09 if black else 0xf9)
                 assert await sample(ctx,center,300 if black else 336)==color
-                left=164+pos*56-(18 if black else 0)
+                left=165+pos*56-(18 if black else 0)
                 assert await sample(ctx,left,300 if black else 336)==0x49
             assert await sample(ctx,150,300)==0x49
             assert await sample(ctx,200,280)==0x49
@@ -643,14 +643,14 @@ def test_keyboard_fills_follow_mask_without_covering_edges_or_text(rotate_left):
                         assert await sample(ctx,center,yy,tag)==(0xa9 if included else (0x09 if black else 0xf9))
                         assert await sample(ctx,center,yy-3,tag)==(0xa9 if included else (0x09 if black else 0xf9))
                     ctx.set(dut.keyboard_focus,octave*16+note)
-                    left=202 if black else 164
+                    left=203 if black else 165
                     assert await sample(ctx,left+1,yy,tag)==0x09
                     assert await sample(ctx,left+2,yy,tag)==0xd2
                     assert await sample(ctx,left+3,yy,tag)==0xd2
                     assert await sample(ctx,left+4,yy,tag)==0x09
                     # Rounded corners match an inset of the retained radius-4
                     # keys, mirrored on all four corners and both key sizes.
-                    width,height=(36,40) if black else (57,72)
+                    width,height=(35,48) if black else (55,88)
                     top=280+offset
                     for cy in (2,3,4):
                         for cx in (2,3,4):

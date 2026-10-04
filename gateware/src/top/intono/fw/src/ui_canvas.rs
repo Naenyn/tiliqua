@@ -391,8 +391,8 @@ pub fn piano_key(note: usize) -> Option<(Rect, bool)> {
         5=>(3,false),6=>(4,true),7=>(4,false),8=>(5,true),9=>(5,false),
         10=>(6,true),11=>(6,false),_=>return None,
     };
-    Some((Rect {x:164+position*56-if black {18}else{0},y:280,
-        width:if black {36}else{57},height:if black {40}else{72}},black))
+    Some((Rect {x:165+position*56-if black {18}else{0},y:280,
+        width:if black {35}else{55},height:if black {48}else{88}},black))
 }
 
 /// Native 12px character-cell label footprint within each key.
@@ -600,7 +600,7 @@ mod tests {
             assert!(row*32>key.y as usize && row*32+14<(key.y+key.height as i32) as usize);
         }
         let (key,_)=piano_key(0).unwrap();
-        assert_eq!(key.y+SINGLE_KEYBOARD_Y_OFFSET+key.height as i32/2,380);
+        assert_eq!(key.y+SINGLE_KEYBOARD_Y_OFFSET+key.height as i32/2,388);
     }
     #[test]
     fn segmented_grids_and_traces_are_bounded_and_reject_invalid_work() {
