@@ -30,7 +30,7 @@ impl Scene {
     pub const fn segments(self) -> usize {
         match self {
             Self::Spiral => 2048 + 12 + SPIRAL_OCTAVES * SPIRAL_STEPS,
-            Self::Linear => 2048 + 4 * 22,
+            Self::Linear => 2048 + 4 * 22 + 3,
             Self::Calibration => 2048 + CAL_GRID_SEGMENTS + 1 + CAL_CURVE_SEGMENTS,
         }
     }

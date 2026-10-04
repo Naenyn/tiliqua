@@ -711,9 +711,16 @@ impl BackgroundCanvas {
                 let (x1,y1) = static_guides::BORDER.point(segment+1);
                 self.line(x0 as i32, y0 as i32, x1 as i32, y1 as i32, 0x29);
             } else if scene == ui_scene::Scene::Linear {
-                ui_canvas::four_lane_scale_segment(segment - 2048, |p, c| {
-                    self.put_panel_pixel(p.x, p.y, c)
-                });
+                let index = segment - 2048;
+                if index < 4 * 22 {
+                    ui_canvas::four_lane_scale_segment(index, |p, c| {
+                        self.put_panel_pixel(p.x, p.y, c)
+                    });
+                } else {
+                    ui_canvas::linear_axis_label_segment(index - 4 * 22, |p, c| {
+                        self.put_panel_pixel(p.x, p.y, c)
+                    });
+                }
             } else if scene == ui_scene::Scene::Calibration {
                 const PLOT: ui_canvas::Rect = ui_canvas::CALIBRATION_PLOT;
                 let index = segment - 2048;
@@ -947,10 +954,6 @@ fn write_static_text(text: &mut TextWriter<'_>, scene: ui_scene::Scene, preparin
             (6,16,"G"),(2,14,"G#"),(0,11,"A"),(2,8,"A#"),(6,6,"B")] {
             write_text(text, column, row, label);
         }
-    } else {
-        write_text(text, 4, 4, "-50");
-        write_text(text, 14, 4, "0");
-        write_text(text, 23, 4, "+50");
     }
     if preparing { write_centered(text, 16, "PREPARING VIEW", 24); }
 }

@@ -425,6 +425,39 @@ pub const LINEAR_LEVEL_ROWS: [usize; 4] = [8, 11, 14, 17];
 // between the two glyph centers, with identical spacing for every channel.
 pub const LINEAR_LANES: [i32; 4] = [231, 327, 423, 519];
 
+/// Fixed axis labels sit one text row above the first channel readout.
+pub const LINEAR_AXIS_Y: i32 = 160;
+// Same normal 9x15 face as the text overlay, restricted to +, -, 0 and 5.
+// These immutable labels belong in the cached guide, so their ink can be
+// centered on the ruler's exact pixel positions rather than a text-cell grid.
+const LINEAR_AXIS_GLYPHS: [[u16; 15]; 4] = [
+    [0x000, 0x000, 0x000, 0x000, 0x010, 0x010, 0x010, 0x0fe, 0x010, 0x010, 0x010, 0x000, 0x000, 0x000, 0x000],
+    [0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x0fe, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000],
+    [0x000, 0x000, 0x038, 0x044, 0x082, 0x082, 0x082, 0x082, 0x082, 0x082, 0x044, 0x038, 0x000, 0x000, 0x000],
+    [0x000, 0x000, 0x0fe, 0x080, 0x080, 0x0bc, 0x0c2, 0x002, 0x002, 0x002, 0x082, 0x07c, 0x000, 0x000, 0x000],
+];
+
+pub fn linear_axis_label_segment(segment: usize, mut emit: impl FnMut(Point, u8)) {
+    let (center, glyphs): (i32, &[usize]) = match segment {
+        0 => (LINEAR_LEFT as i32, &[1, 3, 2]),
+        1 => ((LINEAR_LEFT as i32 + LINEAR_RIGHT as i32) / 2, &[2]),
+        2 => (LINEAR_RIGHT as i32, &[0, 3, 2]),
+        _ => return,
+    };
+    let width = (glyphs.len() as i32 - 1) * 12 + 9;
+    let left = center - width / 2;
+    for (column, glyph) in glyphs.iter().enumerate() {
+        for (row, bits) in LINEAR_AXIS_GLYPHS[*glyph].iter().enumerate() {
+            for x in 0..9 {
+                if bits & (1 << (8 - x)) != 0 {
+                    emit(Point { x: left + column as i32 * 12 + x,
+                                 y: LINEAR_AXIS_Y + row as i32 }, 0xD9);
+                }
+            }
+        }
+    }
+}
+
 /// One-pixel cursor resolution without quantizing to the whole-cent label.
 /// Reject non-finite input before casting; never turn a bad estimate into a
 /// plausible zero-cent indication. Only the drawing is clamped to the ruler.
@@ -636,6 +669,21 @@ mod tests {
             assert!((LINEAR_LEFT..=LINEAR_RIGHT).contains(&value));
             previous = value;
         }
+    }
+
+    #[test]
+    fn linear_axis_label_ink_is_centered_over_endpoint_and_zero_marks() {
+        for (segment, center) in [LINEAR_LEFT as i32, 360, LINEAR_RIGHT as i32].iter().enumerate() {
+            let mut pixels = Vec::new();
+            linear_axis_label_segment(segment, |p, c| pixels.push((p, c)));
+            let left = pixels.iter().map(|(p, _)| p.x).min().unwrap();
+            let right = pixels.iter().map(|(p, _)| p.x).max().unwrap();
+            assert_eq!(left + right, 2 * center);
+            assert!(pixels.iter().all(|(p, c)| *c == 0xD9 &&
+                (LINEAR_AXIS_Y..LINEAR_AXIS_Y + 15).contains(&p.y)));
+        }
+        assert_eq!(LINEAR_AXIS_Y + 32, LINEAR_LABEL_ROWS[0] as i32 * 32);
+        linear_axis_label_segment(3, |_, _| panic!("invalid label"));
     }
 
     #[test]
