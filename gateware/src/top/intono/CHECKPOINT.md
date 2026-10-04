@@ -1532,3 +1532,24 @@ to Tiliqua #1 slot 1; write and Refresh DONE confirmed. SHA-256:
 95acb4468093e58695ba98bc5850710eeec3bc3f2481249cce0f0489a61153e0.
 Matching selection-firmware.elf, selection-validation.json, and
 selection-flash.json retained. Physical visual confirmation pending.
+
+## 2026-10-04 — calibration profile slot preview
+
+Profiles reads the selected slot on entry, slot changes, and after saving.
+SAVED shows its stored name (or EMPTY SLOT / READ FAILED / INVALID PROFILE),
+separately from RAM and SAVE RAM AS. Browsing never recalls a curve, changes
+I/O, or replaces the name editor. Load remains explicit. The preview reads
+through the existing journal, with legacy fallback only for absent records,
+and shares bounded header/checksum validation with profile decoding. No curve
+is allocated for the preview; only a 24-character cached label is retained.
+
+Source d5f55c24; all eight calibration test groups pass, including live
+calibration/profile math and new metadata corruption/truncation checks. Firmware
+311,776 bytes. Built firmware-only and verified top.bit byte-for-byte against
+the previously qualified/flashed selection image; FPGA timing/resources retained.
+
+Flashed build/intono-ui-profile-browser-r5/intono-ui-profile-browser-20261004-r5.tar.gz
+to Tiliqua #1 slot 1; write and Refresh DONE confirmed. User storage preserved.
+SHA-256: fd9a7b95937b5e77fecb723802e2abdf926d035b3ee904ea541d4d46ca2e7825.
+Matching profile-browser-firmware.elf, profile-browser-validation.json and
+profile-browser-flash.json retained. Physical visual confirmation pending.
