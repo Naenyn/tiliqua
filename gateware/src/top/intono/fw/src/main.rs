@@ -10,6 +10,7 @@ mod measurement_snapshot;
 mod midi_learn;
 mod midi_transpose;
 mod note_pattern;
+mod preferences;
 mod nsdf_guard;
 mod nsdf_select;
 mod nsdf_trace;
@@ -1013,8 +1014,8 @@ impl MenuSnapshot {
                     (Page::Play, 15) => "map",
                     (Page::QuantSetups,0)=>"config slot",
                     (Page::Settings, 0) => "a4 ref",
-                    (Page::Settings, 1) => "save",
-                    (Page::Settings, 2) => "reset",
+                    (Page::Settings, 1) => "save preferences",
+                    (Page::Settings, 2) => "reset preferences",
                     _ => option.name(),
                 };
                 let value = if page == Page::Tuner
@@ -2269,17 +2270,13 @@ fn poll_ui_frame(cal: &calibration_live::Live, scan_controls: Option<RuntimeCont
     })
 }
 
-/// Saving is deliberately isolated from the real-time loop. `Opts` is cloned
-/// only for an explicit save request, never on every 5-ms wakeup.
-#[inline(never)]
-fn snapshot_options_for_save() -> Opts {
-    with_app(|app| app.ui.opts.clone())
+/// Capture only the small preference record on an explicit save request.
+fn snapshot_preferences() -> preferences::Preferences {
+    with_app(|app| preferences::Preferences::capture(&app.ui.opts))
 }
-
-#[inline(never)]
-fn reset_options() {
+fn reset_preferences() {
     with_app(|app| {
-        app.ui.opts = Opts::default();
+        preferences::Preferences::default().apply(&mut app.ui.opts);
         app.ui.external_modify();
     });
 }
@@ -2797,7 +2794,7 @@ fn startup() -> RuntimeResources {
         let default = window.start..window.start.saturating_add(8192);
         match IntonoPersistence::with_reserved_buffer(spiflash, default, window) {
             Ok(mut storage) => {
-                storage.load_options(&mut opts).ok();
+                preferences::load(&mut storage, &mut opts).ok();
                 Some(storage)
             }
             Err(_) => {
@@ -3207,9 +3204,9 @@ fn run(resources: &mut RuntimeResources) -> ! {
             }
             if ui_frame.save && !calibration.active() && !outputs_running() {
                 let result = if let Some(storage) = persistence.as_mut() {
-                    let opts = snapshot_options_for_save();
-                    if storage.save_options(&opts).is_ok() {
-                        "saved"
+                    let prefs = snapshot_preferences();
+                    if preferences::save(storage, prefs).is_ok() {
+                        "preferences saved"
                     } else {
                         "failed"
                     }
@@ -3219,13 +3216,13 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 save_feedback.show(result);
             }
             if ui_frame.wipe && !calibration.active() && !outputs_running() {
-                save_feedback = feedback::Feedback::default();
-                if let Some(storage) = persistence.as_mut() {
-                    let opts = snapshot_options_for_save();
-                    storage.erase_options(&opts).ok();
-                }
-                reset_options();
-                name_editor = oscillator_calibration::name::Editor::new();
+                let result = if let Some(storage) = persistence.as_mut() {
+                    if preferences::save(storage, preferences::Preferences::default()).is_ok() {
+                        "preferences reset"
+                    } else { "reset not saved" }
+                } else { "reset / no flash" };
+                reset_preferences();
+                save_feedback.show(result);
             }
 
             let route_page=with_app(|app|app.ui.opts.tracker.page.value);

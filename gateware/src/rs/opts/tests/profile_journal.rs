@@ -39,6 +39,9 @@ type Journal=FlashOptionsPersistence<Flash,384>;
 fn open(flash:&Flash)->Journal {Journal::with_buffer(flash.clone(),0..8192)}
 const KEY:u32=0x54555031;
 
+#[path="../../../top/intono/fw/src/ownership.rs"] mod ownership;
+#[path="../../../top/intono/fw/src/options.rs"] mod options;
+#[path="../../../top/intono/fw/src/preferences.rs"] mod preferences;
 #[path="../../../top/intono/fw/src/note_pattern.rs"] mod tuner_notes;
 #[path="../../../top/intono/fw/src/quantizer_setup.rs"] mod tuner_setup;
 #[test] fn tuner_note_record_survives_gc_without_changing_profiles() {
@@ -52,7 +55,7 @@ const KEY:u32=0x54555031;
         let bytes=tuner_notes::encode([mask,0xfff^mask]).unwrap();
         storage.save_key(tuner_notes::key((mask%8+1) as u8).unwrap(),&bytes).unwrap();
         let mut channels=tuner_setup::DEFAULT;
-        channels[0].masks=[mask,0xfff^mask];
+        channels[0].masks=[mask,0xfff^mask,0,0,0,0,0,0];channels[0].octaves=2;
         storage.save_key(tuner_setup::key((mask%8+1) as u8).unwrap(),&tuner_setup::encode(&channels).unwrap()).unwrap();
     }
     let mut storage=ExpandedJournal::with_reserved_buffer(f.clone(),0..8192,0..24576).unwrap();
@@ -63,7 +66,7 @@ const KEY:u32=0x54555031;
         assert_eq!(tuner_notes::decode(&bytes[..n]),Some([mask,0xfff^mask]));
         let mut setup=[0;tuner_setup::LEN+1];
         let n=storage.load_key(tuner_setup::key(slot).unwrap(),&mut setup).unwrap().unwrap();
-        let mut expected=tuner_setup::DEFAULT;expected[0].masks=[mask,0xfff^mask];
+        let mut expected=tuner_setup::DEFAULT;expected[0].masks=[mask,0xfff^mask,0,0,0,0,0,0];expected[0].octaves=2;
         assert_eq!(tuner_setup::decode(&setup[..n]),Some(expected));
     }
     for option in 0..64 {
@@ -261,4 +264,25 @@ int_params!(Params<u8>{step:1,min:0,max:10});
     assert_eq!(storage.load_key(opts.settings.value.key().value(),&mut buf).unwrap(),None);
     let fresh=blank();let mut legacy=FlashOptionsPersistence::new(fresh,0..8192);
     legacy.save_key(42,&[7]).unwrap();assert_eq!(legacy.load_key(42,&mut buf).unwrap(),Some(1));
+}
+
+#[test]
+fn preference_updates_and_reset_preserve_profiles_scales_and_route_configs() {
+    let f=expanded_flash();
+    let mut storage=ExpandedJournal::with_reserved_buffer(f.clone(),0..8192,0..24576).unwrap();
+    storage.save_key_in(8192..24576,KEY,&[42;1008]).unwrap();
+    let profile_bytes=f.0.borrow().bytes[8192..].to_vec();
+    let scale=tuner_notes::encode([0x091,0x221]).unwrap();
+    let config=tuner_setup::encode(&tuner_setup::DEFAULT).unwrap();
+    let scale_key=tuner_notes::key(1).unwrap();let config_key=tuner_setup::key(1).unwrap();
+    storage.save_key(scale_key,&scale).unwrap();storage.save_key(config_key,&config).unwrap();
+    let mut o=options::Opts::default();
+    for i in 0..200 {o.settings.reference.value=400+i%81;preferences::save(&mut storage,preferences::Preferences::capture(&o)).unwrap();}
+    preferences::save(&mut storage,preferences::Preferences::default()).unwrap();
+    let mut reopened=ExpandedJournal::with_reserved_buffer(f.clone(),0..8192,0..24576).unwrap();
+    let mut loaded=options::Opts::default();preferences::load(&mut reopened,&mut loaded).unwrap();
+    assert_eq!(loaded.settings.reference.value,440);
+    let mut b=[0;1100];let n=reopened.load_key(scale_key,&mut b).unwrap().unwrap();assert_eq!(&b[..n],scale);
+    let n=reopened.load_key(config_key,&mut b).unwrap().unwrap();assert_eq!(&b[..n],config);
+    assert_eq!(&f.0.borrow().bytes[8192..],profile_bytes);
 }

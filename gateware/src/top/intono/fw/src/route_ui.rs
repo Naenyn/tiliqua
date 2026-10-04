@@ -72,7 +72,7 @@ impl View {
         o.tracker.modify = false;
     }
     pub fn handles(&self, page: Page) -> bool {
-        page == Page::QuantSetups
+        matches!(page, Page::QuantSetups | Page::Settings)
             || page == Page::Play
             || (page == Page::RouteMidi && self.screen == Screen::Editor(Stage::Midi))
     }
@@ -139,7 +139,9 @@ impl View {
         (order, len)
     }
     pub fn ticks(&mut self, o: &mut Opts, ticks: i8, claims: &Reservations) -> bool {
-        if o.tracker.page.value == Page::QuantSetups || !self.handles(o.tracker.page.value) {
+        if matches!(o.tracker.page.value, Page::QuantSetups | Page::Settings)
+            || !self.handles(o.tracker.page.value)
+        {
             return false;
         }
         if o.tracker.selected.is_none() && o.tracker.modify && self.screen == Screen::Overview {
@@ -248,7 +250,9 @@ impl View {
         true
     }
     pub fn click(&mut self, o: &mut Opts, claims: &Reservations) -> bool {
-        if o.tracker.page.value == Page::QuantSetups || !self.handles(o.tracker.page.value) {
+        if matches!(o.tracker.page.value, Page::QuantSetups | Page::Settings)
+            || !self.handles(o.tracker.page.value)
+        {
             return false;
         }
         if self.screen == Screen::Warning {

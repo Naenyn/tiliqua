@@ -1344,3 +1344,22 @@ once, following the visual order. Reverse traversal follows the same sequence;
 an empty route skips Start/Stop. Shared actions retain the last browsed route;
 each route flow retains its own Start/Stop. Regression coverage replaces the
 old per-card action traversal expectation.
+
+
+## October 3 instrument preferences
+
+Options now offers full-width Save preferences and Reset preferences buttons.
+Only A4 reference, tuner input/display, and calibration input/output/0V note,
+policy and graph are persisted in a bounded 20-byte IPF1 record with CRC.
+Defaults are explicitly written, so reset cannot revive stale preferences.
+Profiles, scales, route configs, MIDI settings and editor selections remain
+independent; reset updates only preference fields in the live options. Boot
+loads only the new preference record, or migrates the eight permitted fields
+from legacy Options keys when that record is absent. A damaged new record does
+not resurrect legacy selections. One-shot actions and saved page are ignored.
+
+Validation: 39 option/navigation/preference tests, 53 presenter/dependency tests,
+and 39 real flash-journal/dependency tests pass, including record isolation,
+corruption rejection, migration, default reset and GC coexistence. Inspected
+the actual preferences presenter capture. Older journal fixtures were updated
+for the current eight-octave record/dependency layout.

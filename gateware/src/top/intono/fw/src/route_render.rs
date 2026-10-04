@@ -133,6 +133,52 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
     let running = active & groups.outputs[route] != 0;
     let mut d = ui_route::Drawing::new();
     let mut s = String::<64>::new();
+    if with_app(|a| a.ui.opts.tracker.page.value) == options::Page::Settings {
+        if let Some(entry) = menu.entries[0].as_ref() {
+            left(text, 216, 6, 144, "A4 REF", 0x89, false);
+            button(
+                &mut d,
+                text,
+                360,
+                6,
+                144,
+                &entry.value,
+                selected == Some(0),
+                false,
+            );
+        }
+        button(
+            &mut d,
+            text,
+            216,
+            8,
+            288,
+            "SAVE PREFERENCES",
+            selected == Some(1),
+            false,
+        );
+        button(
+            &mut d,
+            text,
+            216,
+            10,
+            288,
+            "RESET PREFERENCES",
+            selected == Some(2),
+            false,
+        );
+        label(text, 144, 12, 432, "A4 / TUNER / CALIBRATION", 0x89, false);
+        label(
+            text,
+            144,
+            13,
+            432,
+            "PROFILES / SCALES / CONFIGS KEPT",
+            0x89,
+            false,
+        );
+        return d;
+    }
     if with_app(|a| a.ui.opts.tracker.page.value) == options::Page::QuantSetups {
         label(text, 168, 4, 384, "CONFIGS", 0xF9, true);
         if let Some(entry) = menu.entries[0].as_ref() {

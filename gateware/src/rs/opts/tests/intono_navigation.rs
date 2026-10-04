@@ -331,3 +331,19 @@ fn config_midi_has_route_selection_learn_and_explicit_back() {
     v.click(&mut o,&r);assert!(o.route_midi.back.poll());assert!(!o.tracker.modify);
     o.tracker.page.value=Page::QuantSetups;o.tracker.selected=Some(4);o.toggle_modify();assert!(o.quant_setups.back.poll());
 }
+
+#[path = "../../../top/intono/fw/src/preferences.rs"]
+mod preferences;
+
+#[test]
+fn preferences_use_generic_navigation_and_one_shot_actions() {
+    let mut o=Opts::default();o.tracker.page.value=Page::Settings;
+    let mut v=route_ui::View::new();let claims=ownership::Reservations::new();
+    assert!(v.handles(Page::Settings));
+    for index in 0..3 {
+        assert!(!v.ticks(&mut o,1,&claims));visible_ticks(&mut o,1);
+        assert_eq!(o.tracker.selected,Some(index));
+    }
+    assert!(!v.click(&mut o,&claims));o.toggle_modify();assert!(o.settings.wipe_opts.poll());
+    o.tracker.selected=Some(1);o.toggle_modify();assert!(o.settings.save_opts.poll());
+}
