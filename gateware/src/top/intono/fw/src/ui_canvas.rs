@@ -381,7 +381,7 @@ pub fn rounded_outline(rect:Rect,color:u8,mut emit:impl FnMut(Point,u8))->bool {
 }
 
 /// Center a single row within the area occupied by the two-row keyboard.
-pub const SINGLE_KEYBOARD_Y_OFFSET: i32 = 64;
+pub const SINGLE_KEYBOARD_Y_OFFSET: i32 = 96;
 
 /// One octave of piano keys, within the standard scale panel.
 /// Black keys overlay the shared white-key boundaries, as on a keyboard.
@@ -391,8 +391,8 @@ pub fn piano_key(note: usize) -> Option<(Rect, bool)> {
         5=>(3,false),6=>(4,true),7=>(4,false),8=>(5,true),9=>(5,false),
         10=>(6,true),11=>(6,false),_=>return None,
     };
-    Some((Rect {x:165+position*56-if black {18}else{0},y:280,
-        width:if black {35}else{55},height:if black {48}else{88}},black))
+    Some((Rect {x:165+position*56-if black {18}else{0},y:248,
+        width:if black {35}else{55},height:if black {56}else{104}},black))
 }
 
 /// Native 12px character-cell label footprint within each key.
@@ -400,20 +400,20 @@ pub fn piano_label(note: usize) -> Option<(usize,usize,usize)> {
     let (key,black)=piano_key(note)?;
     let center=key.x+key.width as i32/2;
     Some((if black {(center-124)/12}else{(center-120)/12-1} as usize,
-        if black {9}else{10},if black {2}else{3}))
+        if black {8}else{9},if black {2}else{3}))
 }
 
 /// Second octave shares horizontal geometry and native text spacing.
 pub fn octave_key(note:usize,octave:usize) -> Option<(Rect,bool)> {
     if octave>1 {return None;}
     let (mut key,black)=piano_key(note)?;
-    key.y+=octave as i32*128;
+    key.y+=octave as i32*144;
     Some((key,black))
 }
 pub fn octave_label(note:usize,octave:usize) -> Option<(usize,usize,usize)> {
     if octave>1 {return None;}
     let (column,row,width)=piano_label(note)?;
-    Some((column,row+octave*4,width))
+    Some((column,row+octave*5,width))
 }
 
 /// Circular-safe linear cents ruler, shared by the retained view and tests.
@@ -600,7 +600,7 @@ mod tests {
             assert!(row*32>key.y as usize && row*32+14<(key.y+key.height as i32) as usize);
         }
         let (key,_)=piano_key(0).unwrap();
-        assert_eq!(key.y+SINGLE_KEYBOARD_Y_OFFSET+key.height as i32/2,388);
+        assert_eq!(key.y+SINGLE_KEYBOARD_Y_OFFSET+key.height as i32/2,396);
     }
     #[test]
     fn segmented_grids_and_traces_are_bounded_and_reject_invalid_work() {

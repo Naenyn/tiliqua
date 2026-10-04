@@ -1501,7 +1501,7 @@ fn publish_quantizer(display: &pac::TUNER_DISPLAY, text: &mut TextWriter<'_>, me
         for row in 0..(c.octaves as usize).min(2) {
             let octave=view+row;
             line.clear();write!(line,"OCTAVE {} / {} NOTES",octave+1,masks[octave].count_ones()).ok();
-            write_centered(text,8+row as u8*4+if c.octaves==1 {2}else{0},&line,28);
+            write_centered(text,7+row as u8*4+if c.octaves==1 {3}else{0},&line,28);
             keyboard_mask|=(masks[octave] as u32)<<(row*12);
         }
         let slot=with_app(|app|app.ui.opts.quant_notes.slot.value);
@@ -1530,7 +1530,7 @@ fn publish_quantizer(display: &pac::TUNER_DISPLAY, text: &mut TextWriter<'_>, me
                 let octave=view+row;
                 line.clear();let count=masks[octave].count_ones();
                 write!(line,"OCTAVE {} / {} NOTE{}",octave+1,count,if count==1 {""}else{"S"}).ok();
-                write_centered(text,8+row as u8*4+if c.octaves==1 {2}else{0},&line,28);
+                write_centered(text,7+row as u8*4+if c.octaves==1 {3}else{0},&line,28);
                 keyboard_mask|=(masks[octave] as u32)<<(row*12);
             }
         } else {

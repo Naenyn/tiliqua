@@ -591,9 +591,9 @@ def test_keyboard_fills_follow_mask_without_covering_edges_or_text(rotate_left):
                     (2,False),(3,False),(4,True),(4,False),(5,True),(5,False),(6,True),(6,False)]):
                 if black!=black_pass:continue
                 left=165+pos*56-(18 if black else 0)
-                width,height=(35,48) if black else (55,88)
-                if left<=x<left+width and 280<=y<280+height:
-                    pixel=0xe0+note if left<x<left+width-1 and 280<y<280+height-1 else 0x49
+                width,height=(35,56) if black else (55,104)
+                if left<=x<left+width and 248<=y<248+height:
+                    pixel=0xe0+note if left<x<left+width-1 and 248<y<248+height-1 else 0x49
         ctx.set(dut.i.pixel.as_value(),pixel if tag is None else tag)
         px,py=(719-y,x) if rotate_left else (280+x,y)
         ctx.set(dut.i.x,px);ctx.set(dut.i.y,py)
@@ -610,11 +610,11 @@ def test_keyboard_fills_follow_mask_without_covering_edges_or_text(rotate_left):
             for note,(pos,black) in enumerate(keys):
                 center=164+pos*56+(0 if black else 28)
                 color=0xa9 if mask&(1<<note) else (0x09 if black else 0xf9)
-                assert await sample(ctx,center,300 if black else 336)==color
+                assert await sample(ctx,center,272 if black else 336)==color
                 left=165+pos*56-(18 if black else 0)
-                assert await sample(ctx,left,300 if black else 336)==0x49
+                assert await sample(ctx,left,272 if black else 336)==0x49
             assert await sample(ctx,150,300)==0x49
-            assert await sample(ctx,200,280)==0x49
+            assert await sample(ctx,200,248)==0x49
         # Two published masks remain independent, including empty/full cycles.
         for ma,mb in [(0,0xfff),(0xfff,0),(0xad6,0x249),(1,2)]:
             ctx.set(dut.keyboard_mask,ma);ctx.set(dut.keyboard_mask_b,mb)
@@ -623,19 +623,19 @@ def test_keyboard_fills_follow_mask_without_covering_edges_or_text(rotate_left):
                     tag=0xe0+octave*16+note
                     black=note in [1,3,6,8,10]
                     expected=0xa9 if mask&(1<<note) else (0x09 if black else 0xf9)
-                    assert await sample(ctx,200,300+octave*128,tag)==expected
+                    assert await sample(ctx,200,300+octave*144,tag)==expected
                     if not black:
                         body=expected
-                        assert await sample(ctx,200,336+octave*128,tag)==body
+                        assert await sample(ctx,200,336+octave*144,tag)==body
         # Membership and cursor are independent of piano identity, in each
         # visible octave and in the centered single-octave geometry.
         for second in (0,1):
             ctx.set(dut.keyboard_second,second)
             for octave in range(2 if second else 1):
-                offset=octave*128+(0 if second else 64)
+                offset=octave*144+(0 if second else 96)
                 for note,black in ((0,False),(1,True)):
                     center=192 if note==0 else 220
-                    yy=(312 if black else 344)+offset
+                    yy=(288 if black else 328)+offset
                     tag=0xe0+octave*16+note
                     for included in (False,True):
                         ctx.set(dut.keyboard_mask,(1<<note) if included else 0)
@@ -650,8 +650,8 @@ def test_keyboard_fills_follow_mask_without_covering_edges_or_text(rotate_left):
                     assert await sample(ctx,left+4,yy,tag)==0x09
                     # Rounded corners match an inset of the retained radius-4
                     # keys, mirrored on all four corners and both key sizes.
-                    width,height=(35,48) if black else (55,88)
-                    top=280+offset
+                    width,height=(35,56) if black else (55,104)
+                    top=248+offset
                     for cy in (2,3,4):
                         for cx in (2,3,4):
                             inset=4 if cy==2 else 3 if cy==3 else 2
