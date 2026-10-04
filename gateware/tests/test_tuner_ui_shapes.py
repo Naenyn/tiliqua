@@ -59,7 +59,7 @@ def test_border_pixels_and_focus_match_rounded_reference():
         return ctx.get(dut.hit),ctx.get(dut.color)
     async def bench(ctx):
         ctx.set(dut.active,1)
-        for surface,row in [(0,3),(0,18),(1,5),(1,6),(1,16),(2,14),(3,19),(4,5),(4,6),(4,16),(4,18),(5,18),(7,9),(8,20),(10,3),(10,5),(10,7),(11,3),(12,3),(13,20),(14,3),(14,18)]:
+        for surface,row in [(0,3),(0,4),(0,18),(1,5),(1,6),(1,16),(2,14),(3,19),(4,5),(4,6),(4,16),(4,18),(5,18),(7,9),(8,20),(10,3),(10,5),(10,7),(11,3),(12,3),(13,20),(14,3),(14,18)]:
             ctx.set(dut.surface,surface)
             for left,width,index in descriptors(surface,row):
                 ctx.set(dut.focus,index)
@@ -69,7 +69,7 @@ def test_border_pixels_and_focus_match_rounded_reference():
                 for yy in [-1,0,1,2,3,4,5,6,13,21,22,23,24,25,26,27,28]:
                     for xx in [-1,0,1,2,3,4,5,6,7,width//2,width-8,width-7,width-6,width-5,width-4,width-3,width-2,width-1,width]:
                         want=inside(xx,yy,width,28,6) and not inside(xx-2,yy-2,width-4,24,4)
-                        hit,color=await sample(ctx,left+xx,row*32-6+yy)
+                        hit,color=await sample(ctx,left+xx,row*32-6+yy+(4 if surface==0 and row==4 else 0))
                         # Adjacent boxes never overlap; sampled outside pixels
                         # are deliberately at most one pixel beyond this box.
                         assert hit==want,(surface,row,xx,yy,hit,want)
@@ -110,11 +110,11 @@ def test_page_indicators_and_separators_follow_parent_page():
 def test_linear_focus_outline_is_hidden_but_view_remains():
     dut=RoundedBorders();sim=Simulator(dut);sim.add_clock(1e-6,domain='dvi')
     async def bench(ctx):
-        ctx.set(dut.active,1);ctx.set(dut.y,570)
+        ctx.set(dut.active,1)
         for surface,focus_visible in [(0,True),(14,False)]:
             ctx.set(dut.surface,surface)
-            ctx.set(dut.x,200);await ctx.tick('dvi').repeat(4)
+            ctx.set(dut.y,126);ctx.set(dut.x,300);await ctx.tick('dvi').repeat(4)
             assert ctx.get(dut.hit)==focus_visible
-            ctx.set(dut.x,400);await ctx.tick('dvi').repeat(4)
+            ctx.set(dut.y,570);ctx.set(dut.x,300);await ctx.tick('dvi').repeat(4)
             assert ctx.get(dut.hit)==1
     sim.add_testbench(bench);sim.run()

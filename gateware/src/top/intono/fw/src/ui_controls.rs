@@ -20,7 +20,7 @@ pub fn field(surface: Surface, index: usize) -> Option<Field> {
             7 => (20, 16, 8, true), 8 => (8, 18, 14, true), _ => return None,
         },
         Surface::Tuner => match index {
-            0 => (4, 18, 10, false), 1 => (16, 18, 10, false), _ => return None,
+            0 => (8, 4, 15, false), 1 => (10, 18, 10, false), _ => return None,
         },
         Surface::Scales => match index {
             0 => (4,5,10,false), 1 => (16,5,14,false),

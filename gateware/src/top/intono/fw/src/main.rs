@@ -1166,7 +1166,7 @@ fn publish_controls(text: &mut TextWriter<'_>, menu: &MenuSnapshot, cal: &calibr
         else if menu.page_bold { "PAGE" } else { "NAV" }, 10);
     for (index, entry) in menu.entries.iter().enumerate() {
         let Some(entry) = entry else { continue };
-        if page==Page::Tuner && index==0 && with_app(|app|app.ui.opts.tuner.display.value)==DisplayMode::Linear {continue;}
+        if page==Page::Tuner && index==0 {continue;}
         let Some(field) = ui_controls::field(surface(page),index) else { continue };
         let label = match (page,index) {
             (Page::Calibrate,0) => "IN",
@@ -1363,16 +1363,6 @@ fn publish_tuner(
                         |address, cell| text.cell(address, cell),
                     );
                 }
-            } else {
-                ui_text::ux_field(
-                    8 + channel * 4,
-                    4,
-                    2,
-                    "",
-                    ui_text::DEFAULT,
-                    ui_text::Align::Left,
-                    |address, cell| text.cell(address, cell),
-                );
             }
             smoothed_channels[channel] = None;
             continue;
@@ -1431,24 +1421,6 @@ fn publish_tuner(
                 ui_text::Align::Center,
                 |address, cell| text.cell(address, cell),
             );
-        } else {
-            let mut label: String<4> = String::new();
-            write!(
-                label,
-                "{}{}",
-                if input as usize == channel { ">" } else { " " },
-                channel
-            )
-            .ok();
-            ui_text::ux_field(
-                8 + channel * 4,
-                4,
-                2,
-                &label,
-                style,
-                ui_text::Align::Left,
-                |address, cell| text.cell(address, cell),
-            );
         }
         if channel != input as usize {
             markers[slot] = other_channel_marker(
@@ -1459,6 +1431,19 @@ fn publish_tuner(
                 &mut smoothed_channels[channel],
             );
             slot += 1;
+        }
+    }
+    if !linear {
+        ui_text::ux_field(5,4,2,"IN",ui_text::Style {color:0x89,bold:false},
+            ui_text::Align::Left,|address,cell|text.cell(address,cell));
+        for channel in 0..4usize {
+            let available=reservations.tuner_available(channel as u8);
+            let focused=available && input as usize==channel;
+            let mut label:String<4>=String::new();
+            write!(label,"{}{}",if focused {">"}else{" "},channel).ok();
+            ui_text::ux_field(8+channel*4,4,2,&label,ui_text::Style {
+                color:if available {0xC0|CHANNEL_HUES[channel]}else{0x69},bold:focused,
+            },ui_text::Align::Left,|address,cell|text.cell(address,cell));
         }
     }
     publish_markers(display, Markers(markers), false, menu_active);

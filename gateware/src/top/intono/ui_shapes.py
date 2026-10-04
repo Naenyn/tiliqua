@@ -24,7 +24,7 @@ ACTIONS = {
 # Compact editable fields share the action outline style. All route selectors,
 # including profile selection, fit one row with room between the two columns.
 FIELDS = {
-    0: [(0,4,18,10),(1,16,18,10)],
+    0: [(0,8,4,15),(1,10,18,10)],
     1: [(0,4,5,6),(1,11,5,6),(3,9,6,14),(4,18,5,12)],
     2: [(0,10,5,10),(1,4,10,10),(2,16,10,10)],
     4: [(0,4,5,10),(1,16,5,14),(9,4,6,10),(8,29,10,3),(10,4,18,10)],
@@ -80,7 +80,8 @@ class RoundedBorders(wiring.Component):
         inner=Array(Const(4-isqrt(16-(4-min(y,23-y))**2),4) if min(y,23-y)<4 else Const(0,4)
                     for y in range(24))
         off2=Signal(4);inner_off2=Signal(4)
-        m.d.dvi += [off2.eq(outer[ly1]),inner_off2.eq(inner[ly1-2]+2)]
+        shape_y=Mux((surface1==0)&(row1==4),ly1-4,ly1)
+        m.d.dvi += [off2.eq(outer[shape_y]),inner_off2.eq(inner[shape_y-2]+2)]
         hits=[];colors=[]
         for n in range(4):
             descriptor=port.data[n*22:(n+1)*22]
@@ -91,7 +92,7 @@ class RoundedBorders(wiring.Component):
             category=Mux((surface1==0)|(surface1==14),0,Mux(surface1<=3,1,Mux(surface1<=5,2,3)))
             selected=Mux(row1==3,((surface1<8)|((surface1>=10)&(surface1<=12))|(surface1==14))&(index==category),
                          Mux(row1==20,((surface1==8+index)|((surface1==13)&(index==0))),index==focus1))
-            m.d.dvi += [rx2.eq(x1-left),width2.eq(width),ly2.eq(ly1),active2.eq(active1 & (width!=0) & ~((surface1==14)&(row1==18)&(index==0))),
+            m.d.dvi += [rx2.eq(x1-left),width2.eq(width),ly2.eq(shape_y),active2.eq(active1 & (width!=0) & ~((surface1==14)&(row1==4)&(index==0))),
                         selected2.eq(selected),tab2.eq((row1==3)|(row1==20))]
             inside=(ly2<28)&(rx2>=off2)&(rx2<width2-off2)
             inset=(ly2>=2)&(ly2<26)&(rx2>=inner_off2)&(rx2<width2-inner_off2)

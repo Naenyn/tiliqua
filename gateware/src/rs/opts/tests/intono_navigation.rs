@@ -368,3 +368,13 @@ fn linear_tuner_skips_focus_and_restores_it_in_arc() {
     visible_ticks(&mut o,1);assert_eq!(o.tracker.selected,Some(0));
     visible_ticks(&mut o,1);assert_eq!(o.tracker.selected,Some(1));
 }
+
+#[test]
+fn tuner_input_list_wraps_and_can_observe_assigned_inputs() {
+    let mut o=Opts::default();o.tracker.selected=Some(0);o.toggle_modify();
+    let mut claims=ownership::Reservations::new();
+    assert!(claims.claim(ownership::Owner::Calibration,2,1));
+    ui_navigation::visible_ticks(&mut o,1,&claims);assert_eq!(o.tuner.input.value,1);
+    ui_navigation::visible_ticks(&mut o,-1,&claims);assert_eq!(o.tuner.input.value,0);
+    ui_navigation::visible_ticks(&mut o,-1,&claims);assert_eq!(o.tuner.input.value,3);
+}
