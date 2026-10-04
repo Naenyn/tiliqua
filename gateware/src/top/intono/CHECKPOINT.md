@@ -1363,3 +1363,11 @@ and 39 real flash-journal/dependency tests pass, including record isolation,
 corruption rejection, migration, default reset and GC coexistence. Inspected
 the actual preferences presenter capture. Older journal fixtures were updated
 for the current eight-octave record/dependency layout.
+
+Qualified and flashed `intono-preferences-20261003-r5.tar.gz` to Tiliqua #1
+slot 1; erase/write/refresh completed. Firmware source `55433363`, 308,288 bytes
+(static SRAM still 7,940 bytes). FPGA bitstream is identical to the previous
+qualified route-order image. SHA-256:
+`659da158533fb6bca2ec1d52824e8c2109acd631c6d12069a056d2da7d2b25e4`.
+Matching ELF, validation and flash records have the `preferences-` prefix.
+Physical boot and save/reset smoke tests remain pending.
