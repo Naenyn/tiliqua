@@ -73,6 +73,7 @@ fn button(
     focus: bool,
     locked: bool,
 ) {
+    debug_assert!(value.chars().count() <= width as usize / 12, "button label exceeds its bounds: {}", value);
     let filled=focus && !locked && d.editing;
     if filled {d.rounded_fill(x,row as u16*32-6,width,28);}else{d.outline(x, row as u16 * 32 - 6, width, 28, focus && !locked);}
     label(

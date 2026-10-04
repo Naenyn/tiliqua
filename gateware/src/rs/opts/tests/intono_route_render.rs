@@ -29,8 +29,8 @@ static OWNERS:Mutex<RefCell<ownership::Reservations>>=Mutex::new(RefCell::new(ow
 #[derive(Clone,Copy)]struct Lane {active:bool,pitch:i32,status:&'static str}
 struct Quant {lanes:[Lane;4],bound:[u8;4],shifts:[i8;4],midi_base_learn:midi_transpose::Learn}
 static MULTI_QUANT:Mutex<RefCell<Quant>>=Mutex::new(RefCell::new(Quant {lanes:[Lane{active:true,pitch:6_000_000,status:"STOPPED"};4],bound:[0;4],shifts:[0;4],midi_base_learn:midi_transpose::Learn::new()}));
-struct TextWriter<'a>{cells:&'a mut [u16;2025]}
-impl TextWriter<'_>{fn cell(&mut self,a:u16,c:u16){self.cells[a as usize]=c;}}
+struct TextWriter<'a>{cells:&'a mut [u32;2025]}
+impl TextWriter<'_>{fn cell(&mut self,a:u16,c:u32){self.cells[a as usize]=c;}}
 struct Entry {value:std::string::String}
 struct MenuSnapshot {entries:[Option<Entry>;16]}
 const NOTE_NAMES:[&str;12]=["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
@@ -61,7 +61,7 @@ fn capture_dense_views_with_bounded_geometry(){
         critical_section::with(|cs| {let mut a=APP.borrow_ref_mut(cs);let a=a.as_mut().unwrap();a.groups.outputs=[0;4];a.ui.opts.tracker.selected=Some(5);a.ui.opts.tracker.modify=editing;});
         let mut cells=[0;2025];let d=route_render::publish(&mut TextWriter{cells:&mut cells},&menu);
         assert_eq!(d.shapes[..d.len as usize].iter().any(|s|s.kind==ui_route::ShapeKind::RoundedFill),editing);
-        assert_eq!(cells.iter().any(|c|c&127!=0 && (c>>8)==0x09),editing);
+        assert_eq!(cells.iter().any(|c|c&127!=0 && ((c>>8)&255)==0x09),editing);
     }
     critical_section::with(|cs|APP.borrow_ref_mut(cs).as_mut().unwrap().ui.opts.tracker.modify=false);
     // The remembered/expanded route is not the encoder focus on the page tabs.

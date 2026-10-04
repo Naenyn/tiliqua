@@ -13,7 +13,7 @@ from top.intono.top import IntonoSoc
 
 
 def test_blank_backdrop_keeps_text_and_restores_cached_pixels():
-    tiles=Memory(shape=unsigned(16),depth=4096,init=[(ord("A")-32)|(0xF9<<8)])
+    tiles=Memory(shape=unsigned(18),depth=4096,init=[(ord("A")-32)|(0xF9<<8)])
     menu=Memory(shape=unsigned(8),depth=512,init=[])
     dut=IntonoOverlay(tiles,menu,h_active=720,ascii_text=True,double_buffered=True)
     m=Module();m.submodules.dut=dut;m.submodules.tiles=tiles;m.submodules.menu=menu
@@ -37,7 +37,7 @@ def test_blank_backdrop_keeps_text_and_restores_cached_pixels():
 
 @pytest.mark.parametrize("rotate_left", [False, True])
 def test_settings_first_letter_has_clear_left_border_padding(rotate_left):
-    tiles = Memory(shape=unsigned(16), depth=4096, init=[])
+    tiles = Memory(shape=unsigned(18), depth=4096, init=[])
     menu = Memory(shape=unsigned(8), depth=512,
                   init=[128 + ord(c)-32 for c in "SETTINGS"])
     dut = IntonoOverlay(tiles, menu, h_active=720 if rotate_left else 1280,
@@ -69,7 +69,7 @@ def test_settings_first_letter_has_clear_left_border_padding(rotate_left):
 
 @pytest.mark.parametrize("rotate_left", [False, True])
 def test_production_four_colored_markers(rotate_left):
-    tiles = Memory(shape=unsigned(16), depth=4096, init=[])
+    tiles = Memory(shape=unsigned(18), depth=4096, init=[])
     menu = Memory(shape=unsigned(8), depth=512, init=[])
     dut = IntonoOverlay(tiles, menu, h_active=720 if rotate_left else 1280,
                        rotate_left=rotate_left, ascii_text=True, double_buffered=True)
@@ -206,7 +206,7 @@ def test_tuner_display_elaborates():
 @pytest.mark.parametrize("rotate_left", [False, True])
 def test_compact_main_text_pitch_and_margins(rotate_left):
     cells = [(n + 33) | ((n % 2) << 7) | (0xD9 << 8) for n in range(45)]
-    tiles = Memory(shape=unsigned(16), depth=4096, init=cells)
+    tiles = Memory(shape=unsigned(18), depth=4096, init=cells)
     menu = Memory(shape=unsigned(8), depth=512, init=[])
     dut = IntonoOverlay(tiles, menu, h_active=720 if rotate_left else 1280,
                        rotate_left=rotate_left, ascii_text=True)
@@ -520,7 +520,7 @@ def test_large_ux_text_retains_stride_bank_and_pixel_scale(rotate_left, glyph, b
     column, row = ((20 if legacy_menu_active else 7), 5) if column_override is None else (column_override,10)
     contents = [0] * 4096
     contents[2048 + row * 45 + column] = (ord(glyph) - 32) | (int(bold) << 7) | (0xF9 << 8)
-    tiles = Memory(shape=unsigned(16), depth=4096, init=contents)
+    tiles = Memory(shape=unsigned(18), depth=4096, init=contents)
     menu = Memory(shape=unsigned(8), depth=512, init=[])
     dut = IntonoOverlay(tiles, menu, h_active=720 if rotate_left else 1280,
                        rotate_left=rotate_left, ascii_text=True,
@@ -578,7 +578,7 @@ def test_keyboard_fills_follow_mask_without_covering_edges_or_text(rotate_left):
     cells=[0]*4096
     cells[10*45+6]=(ord("C")-32)|(0x19<<8)
     cells[11*45+10]=cells[11*45+39]=(ord("O")-32)|(0xa9<<8)
-    tiles=Memory(shape=unsigned(16),depth=4096,init=cells)
+    tiles=Memory(shape=unsigned(18),depth=4096,init=cells)
     menu=Memory(shape=unsigned(8),depth=512,init=[])
     dut=IntonoOverlay(tiles,menu,h_active=720 if rotate_left else 1280,
         rotate_left=rotate_left,ascii_text=True,large_text=True,double_buffered=True)
@@ -696,7 +696,7 @@ def test_loading_view_hides_control_outlines_without_hiding_text(rotate_left):
     col,row,glyph=18,8,"I"
     contents=[0]*4096
     contents[2048+row*45+col]=(ord(glyph)-32)|(1<<7)|(0xF9<<8)
-    tiles=Memory(shape=unsigned(16),depth=4096,init=contents)
+    tiles=Memory(shape=unsigned(18),depth=4096,init=contents)
     menu=Memory(shape=unsigned(8),depth=512,init=[])
     dut=IntonoOverlay(tiles,menu,h_active=1280 if not rotate_left else 720,
         rotate_left=rotate_left,ascii_text=True,large_text=True,double_buffered=True)
@@ -723,7 +723,7 @@ def test_background_diagnostic_distinguishes_bad_samples_from_composited_colors(
     """Observe unexpected DMA colors without masking or changing any pixels."""
     from amaranth.lib.memory import Memory
     from amaranth import unsigned
-    tiles=Memory(shape=unsigned(16),depth=4096,init=[])
+    tiles=Memory(shape=unsigned(18),depth=4096,init=[])
     menu=Memory(shape=unsigned(8),depth=512,init=[])
     dut=IntonoOverlay(tiles,menu,h_active=1280,ascii_text=True,
                      large_text=True,double_buffered=True)
@@ -756,7 +756,7 @@ def test_output_diagnostic_detects_overlay_leak_with_clean_background():
     """A deliberately misplaced text plane isolates the post-overlay flag."""
     from amaranth.lib.memory import Memory
     from amaranth import unsigned
-    tiles = Memory(shape=unsigned(16), depth=4096,
+    tiles = Memory(shape=unsigned(18), depth=4096,
                    init=[(ord("A")-32) | (0xF9 << 8)])
     menu = Memory(shape=unsigned(8), depth=512, init=[])
     dut = IntonoOverlay(tiles, menu, h_active=1280, ascii_text=True,

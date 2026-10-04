@@ -893,7 +893,7 @@ struct TextWriter<'a> {
 
 impl TextWriter<'_> {
     #[inline(never)]
-    fn cell(&mut self, address: u16, cell: u16) {
+    fn cell(&mut self, address: u16, cell: u32) {
         self.display
             .tile_write()
             .write(|w| unsafe { w.bits(address as u32 | ((cell as u32) << 12)) });

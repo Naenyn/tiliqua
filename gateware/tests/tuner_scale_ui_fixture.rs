@@ -52,7 +52,7 @@ fn setup_summaries_fit_longest_route_labels_without_truncation() {
 
 #[test]
 fn compact_scale_controls_fit_longest_values_above_both_keyboards() {
-    for (index,label,value) in [(0,">OUTPUT","3"),(1,">PRESET","CHROMATIC")] {
+    for (index,label,value) in [(0,"OUTPUT","3"),(1,"PRESET","CHROMATIC")] {
         let f=ui_controls::field(ui_controls::Surface::Scales,index).unwrap();
         assert!(ui_text::inline_field(f.column as usize,f.row as usize,f.width as usize,
             label,value,ui_text::DEFAULT,|a,_|assert_eq!(a as usize/45,f.row as usize)));

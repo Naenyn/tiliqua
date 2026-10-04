@@ -16,7 +16,7 @@ impl Occupied {
         }
     }
 
-    pub fn record(&mut self, address: u16, value: u16) {
+    pub fn record(&mut self, address: u16, value: u32) {
         let address = address as usize;
         if address >= COLUMNS * ROWS {
             return;
@@ -29,7 +29,7 @@ impl Occupied {
         }
     }
 
-    pub fn clear(&mut self, mut emit: impl FnMut(u16, u16)) {
+    pub fn clear(&mut self, mut emit: impl FnMut(u16, u32)) {
         for (index, word) in self.bits.iter_mut().enumerate() {
             while *word != 0 {
                 let bit = word.trailing_zeros() as usize;
@@ -67,7 +67,7 @@ pub fn field(
     value: &str,
     style: Style,
     align: Align,
-    mut emit: impl FnMut(u16, u16),
+    mut emit: impl FnMut(u16, u32),
 ) {
     field_emit(column,row,width,value,style,align,&mut emit);
 }
@@ -75,7 +75,7 @@ pub fn field(
 // emission closure. The bounded drawing behavior stays identical.
 #[inline(never)]
 fn field_emit(column:usize,row:usize,width:usize,value:&str,style:Style,align:Align,
-    emit:&mut dyn FnMut(u16,u16)) {
+    emit:&mut dyn FnMut(u16,u32)) {
     if column >= COLUMNS || row >= ROWS {
         return;
     }
@@ -83,10 +83,11 @@ fn field_emit(column:usize,row:usize,width:usize,value:&str,style:Style,align:Al
     let count = value.chars().take(width).count();
     let padding = match align {
         Align::Left => 0,
-        // Glyph ink is narrower than its cell; round spare half-cells right.
-        Align::Center => (width - count + 1) / 2,
+        // Pixel offsets below finish centering between the character cells.
+        Align::Center => (width - count) / 2,
         Align::Right => width - count,
     };
+    let shift = if matches!(align, Align::Center) { center_shift(width, count) } else { 0 };
     let mut characters = value.chars().take(count);
     for offset in 0..width {
         let character = if offset >= padding && offset < padding + count {
@@ -96,22 +97,30 @@ fn field_emit(column:usize,row:usize,width:usize,value:&str,style:Style,align:Al
         };
         emit(
             (row * COLUMNS + column + offset) as u16,
-            cell(character, style),
+            cell(character, style) | (shift << 16),
         );
     }
 }
 
-pub fn cell(character: char, style: Style) -> u16 {
-    let glyph = if (' '..='~').contains(&character) {
-        character as u16 - 32
-    } else {
-        // One replacement per Unicode character, not per UTF-8 byte.
-        b'?' as u16 - 32
-    };
-    glyph | ((style.bold as u16) << 7) | ((style.color as u16) << 8)
+/// Two extra cell bits select 0, 2, or 8 pixels of horizontal offset.
+/// A 9px glyph in a 12px cell has a 3px unused tail. Round its ideal
+/// half-pixel center consistently, including odd numbers of spare cells.
+pub const fn center_shift(width: usize, count: usize) -> u32 {
+    if (width - count) % 2 == 0 { 1 } else { 2 }
 }
 
-pub fn text(column: usize, row: usize, value: &str, style: Style, mut emit: impl FnMut(u16, u16)) {
+/// Glyph/style occupy the low 16 bits; centered fields add offset bits 16..17.
+pub fn cell(character: char, style: Style) -> u32 {
+    let glyph = if (' '..='~').contains(&character) {
+        character as u32 - 32
+    } else {
+        // One replacement per Unicode character, not per UTF-8 byte.
+        b'?' as u32 - 32
+    };
+    glyph | ((style.bold as u32) << 7) | ((style.color as u32) << 8)
+}
+
+pub fn text(column: usize, row: usize, value: &str, style: Style, mut emit: impl FnMut(u16, u32)) {
     if column >= COLUMNS || row >= ROWS {
         return;
     }
@@ -128,7 +137,7 @@ pub fn text(column: usize, row: usize, value: &str, style: Style, mut emit: impl
 pub const UX_COLUMNS: usize = 43;
 pub const fn ux_column(column: usize) -> usize { (column * 4 + 1) / 3 }
 pub fn ux_field(column: usize, row: usize, width: usize, value: &str,
-    style: Style, align: Align, emit: impl FnMut(u16,u16)) {
+    style: Style, align: Align, emit: impl FnMut(u16,u32)) {
     if column >= 32 || row >= 22 { return; }
     let start = ux_column(column);
     let end = ux_column((column + width).min(32));
@@ -137,23 +146,24 @@ pub fn ux_field(column: usize, row: usize, width: usize, value: &str,
 /// A label/value pair occupies exactly one row, or emits nothing if it cannot fit.
 #[inline(never)]
 pub fn inline_field(column:usize,row:usize,width:usize,label:&str,value:&str,
-    style:Style,mut emit:impl FnMut(u16,u16)) -> bool {
+    style:Style,mut emit:impl FnMut(u16,u32)) -> bool {
     if column>=32 || row>=22 {return false;}
     let start=ux_column(column);let end=ux_column((column+width).min(32));
     let count=label.chars().count()+2+value.chars().count();
     if count>end-start {return false;}
-    let padding=(end-start-count+1)/2;
+    let padding=(end-start-count)/2;
+    let shift=center_shift(end-start,count);
     let mut chars=label.chars().chain(": ".chars()).chain(value.chars());
     for offset in 0..end-start {
         let character=if offset>=padding && offset<padding+count {
             chars.next().unwrap_or(' ')
         } else {' '};
-        emit((row*COLUMNS+start+offset) as u16,cell(character,style));
+        emit((row*COLUMNS+start+offset) as u16,cell(character,style) | (shift<<16));
     }
     true
 }
 pub fn ux_text(column: usize, row: usize, value: &str, style: Style,
-    emit: impl FnMut(u16,u16)) {
+    emit: impl FnMut(u16,u32)) {
     if column >= 32 || row >= 22 { return; }
     let start=ux_column(column);
     let mut emit=emit;
@@ -184,12 +194,14 @@ mod tests {
         for (column,width,label) in [(2,9,"TUNER"),(11,9,"CAL"),(20,9,"SCALES"),
             (29,9,"ROUTES"),(11,9,"OPTIONS"),(23,5,"HELP"),(5,16,"CLEAR PROFILE")] {
             let mut ink=Vec::new();
+            let mut offset=0;
             field(column,3,width,label,DEFAULT,Align::Center,|a,c| {
+                offset=match c>>16 {1=>2,2=>8,_=>0};
                 if c&127!=0 {ink.push(a as i32%45);}
             });
-            let text_center_twice=ink[0]*12+(ink.last().unwrap()*12+9);
+            let text_center_twice=ink[0]*12+(ink.last().unwrap()*12+9)+offset*2;
             let field_center_twice=(column*24+width*12) as i32;
-            assert!((text_center_twice-field_center_twice).abs()<=9,"{label}");
+            assert!((text_center_twice-field_center_twice).abs()<=1,"{label}");
         }
     }
 
@@ -208,7 +220,7 @@ mod tests {
     fn sparse_clear_preserves_bank_independence_and_shorter_fields() {
         assert_eq!(core::mem::size_of::<Occupied>(), 256);
         let mut banks = [Occupied::new(), Occupied::new()];
-        let mut hardware = [[0u16; COLUMNS * ROWS]; 2];
+        let mut hardware = [[0u32; COLUMNS * ROWS]; 2];
         for bank in 0..2 {
             for value in ["A#1", "B1"] {
                 field(20, 22, 5, value, DEFAULT, Align::Center, |a, c| {
@@ -260,7 +272,7 @@ mod tests {
     #[test]
     fn alternating_scenes_and_banks_leave_no_previous_labels() {
         let mut occupied = [Occupied::new(), Occupied::new()];
-        let mut hardware = [[0u16; COLUMNS * ROWS]; 2];
+        let mut hardware = [[0u32; COLUMNS * ROWS]; 2];
         for frame in 0..200 {
             let bank = frame % 2;
             let linear = (frame / 2) % 2 == 1;
@@ -270,7 +282,7 @@ mod tests {
                 erased += 1;
             });
             assert!(erased <= 120);
-            let mut expected = [0u16; COLUMNS * ROWS];
+            let mut expected = [0u32; COLUMNS * ROWS];
             for (row, width, value) in [
                 (
                     if linear { 13 } else { 20 },
@@ -338,9 +350,9 @@ mod tests {
             for color in [0, 0xD9, 0xF1, 0xF5, 0xFA, 0xFE] {
                 for bold in [false, true] {
                     let encoded = cell(character, Style { color, bold });
-                    assert_eq!(encoded & 127, character as u16 - 32);
-                    assert_eq!((encoded >> 7) & 1, bold as u16);
-                    assert_eq!(encoded >> 8, color as u16);
+                    assert_eq!(encoded & 127, character as u32 - 32);
+                    assert_eq!((encoded >> 7) & 1, bold as u32);
+                    assert_eq!(encoded >> 8, color as u32);
                 }
             }
         }

@@ -371,7 +371,7 @@ class IntonoOverlay(wiring.Component):
         planes = [
             (TextPlane(self.UX_TEXT_X, 0, self.UX_COLUMNS, self.UX_ROWS,
                        pitch_x=self.UX_PITCH_X, pitch_y=self.UX_PITCH_Y,
-                       scale=1, cell_color=True, row_stride=self.COLS, bank_stride=2048)
+                       scale=1, cell_color=True, pixel_offsets=True, row_stride=self.COLS, bank_stride=2048)
              if self.large_text else
              TextPlane(self.MAIN_TEXT_X, 0, self.COLS, self.ROWS,
                        pitch_x=self.MAIN_TEXT_PITCH, cell_color=True) if self.ascii_text else
@@ -433,6 +433,7 @@ class Peripheral(wiring.Component):
         glyph: csr.Field(csr.action.W, unsigned(7))
         bold: csr.Field(csr.action.W, unsigned(1))
         color: csr.Field(csr.action.W, unsigned(8))
+        text_offset: csr.Field(csr.action.W, unsigned(2))
 
     class MarkerShape(csr.Register, access="w"):
         # Firmware selects one explicit EBR and supplies its local sprite base,
@@ -477,7 +478,7 @@ class Peripheral(wiring.Component):
     def __init__(self, *, h_active=1280, rotate_left=False, scene_layout=None, large_text=False):
         self.scene_layout = scene_layout
         self.tile_memory = Memory(
-            shape=unsigned(16), depth=4096, init=[])
+            shape=unsigned(18), depth=4096, init=[])
         # Bits 0..6 select printable ASCII; bit 7 selects the bold face used
         # by draw_options for the active page or option.
         self.menu_memory = Memory(
@@ -562,7 +563,8 @@ class Peripheral(wiring.Component):
             tile_w.addr.eq(Cat(self._tile_write.f.address.w_data[:11], exchange.back_bank)),
             tile_w.data.eq(Cat(self._tile_write.f.glyph.w_data,
                                self._tile_write.f.bold.w_data,
-                               self._tile_write.f.color.w_data)),
+                               self._tile_write.f.color.w_data,
+                               self._tile_write.f.text_offset.w_data)),
             tile_w.en.eq(
                 self._tile_write.element.w_stb &
                 ~exchange.busy & (self._tile_write.f.address.w_data[:11] < 2025) &

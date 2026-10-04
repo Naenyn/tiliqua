@@ -216,3 +216,38 @@ def test_arc_primary_note_is_double_size_without_moving_other_text_or_scan():
                 assert actual == queue.popleft()
     sim.add_testbench(bench)
     sim.run()
+
+
+@pytest.mark.parametrize("offset", [0, 2, 8])
+def test_pixel_centered_text_preserves_cross_cell_ink_and_scan_latency(offset):
+    plane = TextPlane(0, 0, 12, 1, pitch_x=12, pitch_y=32,
+                      cell_color=True, pixel_offsets=True)
+    cells = text_cells(plane, [(2, 0, "SAVE LOAD", 0xB9, True)])
+    code = {0: 0, 2: 1, 8: 2}[offset]
+    cells = [c | (code << 16) for c in cells]
+    memory = Memory(shape=unsigned(18), depth=len(cells), init=cells)
+    font = atlas()
+    dut = TextCompositor([memory], [plane], font)
+    m = Module(); m.submodules.dut = dut; m.submodules.cells = memory
+    sim = Simulator(m); sim.add_clock(1e-6, domain="dvi")
+    async def bench(ctx):
+        ctx.set(dut.enable, 1)
+        queue = deque()
+        # Independent reference translates the complete glyph run in pixels,
+        # rather than reproducing the renderer's neighbor-cell selection.
+        unshifted = [c & 0xFFFF for c in cells]
+        for y in range(16):
+            for x in range(144):
+                expected = reference_pixel(x-offset, y, 0, 1, [plane], [None], [unshifted], font)
+                ctx.set(dut.x, x); ctx.set(dut.y, y)
+                ctx.set(dut.i.x, x); ctx.set(dut.i.y, y); ctx.set(dut.i.de, 1)
+                queue.append((x, y, expected))
+                await ctx.tick("dvi")
+                if len(queue) >= dut.LATENCY:
+                    actual = tuple(ctx.get(v) for v in (dut.o.x, dut.o.y, dut.o.pixel.as_value()))
+                    assert actual == queue.popleft(), (offset, x, y, actual)
+        for _ in range(dut.LATENCY-1):
+            await ctx.tick("dvi")
+            actual = tuple(ctx.get(v) for v in (dut.o.x, dut.o.y, dut.o.pixel.as_value()))
+            assert actual == queue.popleft()
+    sim.add_testbench(bench); sim.run()

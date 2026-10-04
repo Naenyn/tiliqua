@@ -72,6 +72,7 @@ class TextPlane:
     color: int = 0xD9  # Pixel: low nibble hue, high nibble intensity.
     bold_color: int = 0xF9
     cell_color: bool = False  # Optional bits 8..15 of a character entry.
+    pixel_offsets: bool = False  # Cell bits 16..17: 0px, 2px, or 8px.
     row_stride: int | None = None
     bank_stride: int | None = None
 
@@ -173,7 +174,7 @@ class TextCompositor(wiring.Component):
             assert memory.depth >= plane.columns * plane.rows
             if double_buffered:
                 assert memory.depth >= 2 << (plane.columns * plane.rows - 1).bit_length()
-            required_width = 16 if plane.cell_color else max(
+            required_width = 18 if plane.pixel_offsets else 16 if plane.cell_color else max(
                 plane.glyph_bits, 0 if plane.bold_bit is None else plane.bold_bit + 1)
             assert Shape.cast(memory.shape).width >= required_width
             address_bits = plane.glyph_bits + plane.row_bits + (plane.bold_bit is not None)
@@ -256,12 +257,29 @@ class TextCompositor(wiring.Component):
             m.d.dvi += [gx3.eq((rx2 - constant_product(cx2, plane.pitch_x)) >> (plane.scale - 1)),
                         gy3.eq((ry2 - constant_product(cy2, plane.pitch_y)) >> (plane.scale - 1)),
                         valid3.eq(valid2), covered3.eq(covered2), backdrop3.eq(backdrop2)]
-            glyph = cell.data[:plane.glyph_bits]
-            bold = cell.data[plane.bold_bit] if plane.bold_bit is not None else Const(0)
+            data = cell.data
+            glyph_x = gx3
+            if plane.pixel_offsets:
+                # Read the preceding cell as well: an 8px offset carries the
+                # glyph's last five pixels across the 12px cell boundary.
+                # Keep both reads in the existing stage, without extra latency.
+                previous = memory.read_port(domain="dvi")
+                previous_address = constant_product(cy2, plane.row_stride or plane.columns) + cx2 - 1
+                if self.double_buffered:
+                    previous_address = Cat(previous_address[:bank_bit], self.bank)
+                m.d.comb += [previous.addr.eq(previous_address), previous.en.eq(valid2 & (cx2 != 0))]
+                has_previous3 = Signal()
+                m.d.dvi += has_previous3.eq(cx2 != 0)
+                offset = Mux(cell.data[16:18] == 1, 2, Mux(cell.data[16:18] == 2, 8, 0))
+                carry = has_previous3 & (previous.data[16:18] == 2) & (gx3 < 5)
+                data = Mux(carry, previous.data, cell.data)
+                glyph_x = Mux(carry, gx3 + 4, gx3 - offset)
+            glyph = data[:plane.glyph_bits]
+            bold = data[plane.bold_bit] if plane.bold_bit is not None else Const(0)
             address = plane.font_base | Cat(gy3[:plane.row_bits], glyph, bold)
-            color = cell.data[8:16] if plane.cell_color else Mux(bold, plane.bold_color, plane.color)
-            candidates.append((valid3 & (gx3 < plane.glyph_width) & (gy3 < plane.glyph_height),
-                               covered3, backdrop3, address, plane.glyph_width - 1 - gx3, color))
+            color = data[8:16] if plane.cell_color else Mux(bold, plane.bold_color, plane.color)
+            candidates.append((valid3 & (glyph_x >= 0) & (glyph_x < plane.glyph_width) & (gy3 < plane.glyph_height),
+                               covered3, backdrop3, address, plane.glyph_width - 1 - glyph_x, color))
 
         # Stage 4: choose the frontmost layer BEFORE the shared font lookup.
         address3 = Signal(range(len(self.font_rows)))
