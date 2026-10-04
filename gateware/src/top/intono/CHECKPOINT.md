@@ -1573,3 +1573,18 @@ Archive: `build/intono-ui-key-colors-r5/intono-ui-key-colors-1b8799b8-r5.tar.gz`
 SHA256: `b9c800f3f11e5eb5bf331d26e4659647a0887b9da7886e624494e6173e233fc6`.
 Flashed Tiliqua #1 (E46534A193222B21), slot 1; `Refresh: DONE` verified.
 User storage was not erased. Hardware visual confirmation remains with the user.
+
+
+## 2026-10-04 — wrapping scale preset navigation
+
+Custom appears last in encoder browsing on SCALES and the route pitch editor.
+Chromatic counterclockwise wraps to Custom; Custom clockwise wraps to Chromatic.
+UI order is separated from persisted preset IDs, preserving all existing records.
+Navigation handles multi-tick movement and retains ordinary behavior elsewhere.
+
+Source: `d9758472`. Host tests: 43 navigation + 55 route/render, all passed.
+Firmware: 311416/327680 bytes. Qualified seed-21 FPGA image is byte-identical
+to the previous whole-key-highlight build; all four timing checks remain PASS.
+Archive: `build/intono-ui-scale-order-r5/intono-ui-scale-order-d9758472-r5.tar.gz`.
+SHA256: `5e34e8c7ffb44c213b3caf4f1e68b0abe72ca9e0f0b7ba7fe0126d8fb25eec6c`.
+Flashed Tiliqua #1, slot 1; verified `Refresh: DONE`. Saved data preserved.
