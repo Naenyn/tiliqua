@@ -1437,3 +1437,24 @@ to Tiliqua #1 slot 1; write and Refresh DONE confirmed. SHA-256:
 `78ac84e017fd6cb1e2747247bd732d77192d3e7e756fcd26b1990a7a00bd0020`.
 Matching `controls-firmware.elf`, `controls-validation.json` and
 `controls-flash.json` retained. Physical navigation confirmation pending.
+
+## 2026-10-04 — top input-list focus editing
+
+ARC now labels the top input list IN (with padding). Option 0 selects the list;
+click enters edit, rotation wraps focus through inputs, click finishes. The
+outline sits four pixels lower than ordinary row-4 controls to clear the top
+separator. FOCUS no longer appears at the bottom. VIEW is centered in both
+ARC and LINEAR. LINEAR still omits the input selector. Saved input preference
+and measurement behavior are retained; passive tuner observation remains
+available on assigned inputs.
+
+Source `5e25d116`; 42 navigation/preferences, 54 presenter and 8 display/frame
+checks pass. Seed 20 qualifies all clocks: serializer 425.35/371.33 MHz,
+pixels 82.96/74.25, audio 67.45/49.15, CPU 66.66/60. Firmware 308,848 bytes;
+FPGA COMB 21,726/24,288, FF 12,128/24,288, BRAM 47/56, DSP 14/28.
+
+Flashed `build/intono-ui-input-list-r5/intono-ui-input-list-20261004-r5.tar.gz`
+to Tiliqua #1 slot 1; write and Refresh DONE confirmed. SHA-256:
+`8a74a75144bff0a444b23b5d26dc43794572a8cd4a32de34e3e84bc759866416`.
+Matching `input-list-firmware.elf`, `input-list-validation.json`, and
+`input-list-flash.json` retained. Physical interaction confirmation pending.
