@@ -1650,3 +1650,20 @@ Resources: COMB 21425/24288, FF 12192/24288, BRAM 47/56, DSP 14/28.
 Archive: `build/intono-ui-rounded-key-fast-r5/intono-ui-rounded-key-fast-a5c7ca76-r5.tar.gz`.
 SHA256: `588aaac75544d828aebcefb8c22a8a48978d70e41a7b9492b3aacffd37ce8ef5`.
 Flashed Tiliqua #1 slot 1, verified `Refresh: DONE`. Saved data preserved.
+
+## 2026-10-04 — taller and more separated scale keys
+
+Both visible keyboards gain 16 pixels of natural-key height (72 to 88),
+with accidentals extended proportionally (40 to 48). Natural keys narrow
+by two pixels (57 to 55), accidentals by one (36 to 35), with the same
+56-pixel pitch and centered natural keys. Rounded cursor geometry matches.
+The centered single-octave view uses the same dimensions.
+
+Source `2a8389c4`, seed 21. All 56 retained canvas/route checks and both
+keyboard pixel checks passed, including both display orientations. Firmware
+311136/327680 bytes. Final clocks all PASS: serializer 425.35 MHz, pixel
+77.71 MHz, audio 69.54 MHz, CPU 65.74 MHz. COMB 21228/24288,
+FF 12192/24288, BRAM 47/56, DSP 14/28.
+Archive: `build/intono-ui-taller-keys-r5/intono-ui-taller-keys-2a8389c4-r5.tar.gz`.
+SHA256: `8e2982e22731a5f3c806ec878e96ee1fa3a7dc6b7383a81bd45ddd90e023ec3a`.
+Flashed Tiliqua #1 slot 1, verified `Refresh: DONE`. Saved data preserved.
