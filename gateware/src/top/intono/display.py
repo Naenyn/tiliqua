@@ -232,8 +232,13 @@ class IntonoOverlay(wiring.Component):
             # visible on white, black, and blue keys without changing membership.
             right=Mux(black,35,56);bottom=Mux(black,39,71)
             edge=(rx<=4)|(rx>=right-4)|(ry<=4)|(ry>=bottom-4)
-            yellow=(rx>=2)&(rx<=right-2)&(ry>=2)&(ry<=bottom-2)&(
-                (rx<=3)|(rx>=right-3)|(ry<=3)|(ry>=bottom-3))
+            # Key radius is four pixels. Insetting the ring by two leaves
+            # radius two: scanline insets 4,3,2 match the retained key curve.
+            near_y=Mux(ry<bottom-ry,ry,bottom-ry)
+            inset=Mux(near_y==2,4,Mux(near_y==3,3,2))
+            outer=(near_y>=2)&(rx>=inset)&(rx<=right-inset)
+            inner=(rx>=4)&(rx<=right-4)&(ry>=4)&(ry<=bottom-4)
+            yellow=outer & ~inner
             fill_color=Mux(cursor&edge,Mux(yellow,0xD2,0x09),
                            Mux(selected,0xA9,Mux(black,0x09,0xF9)))
         else:

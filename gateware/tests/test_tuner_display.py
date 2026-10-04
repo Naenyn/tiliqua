@@ -648,6 +648,17 @@ def test_keyboard_fills_follow_mask_without_covering_edges_or_text(rotate_left):
                     assert await sample(ctx,left+2,yy,tag)==0xd2
                     assert await sample(ctx,left+3,yy,tag)==0xd2
                     assert await sample(ctx,left+4,yy,tag)==0x09
+                    # Rounded corners match an inset of the retained radius-4
+                    # keys, mirrored on all four corners and both key sizes.
+                    width,height=(36,40) if black else (57,72)
+                    top=280+offset
+                    for cy in (2,3,4):
+                        for cx in (2,3,4):
+                            inset=4 if cy==2 else 3 if cy==3 else 2
+                            expected=0xd2 if cx>=inset and not (cx>=4 and cy>=4) else 0x09
+                            for xx in (cx,width-1-cx):
+                                for yyy in (cy,height-1-cy):
+                                    assert await sample(ctx,left+xx,top+yyy,tag)==expected
                     ctx.set(dut.keyboard_focus,31)
                     assert await sample(ctx,left+2,yy,tag)==0xa9
         ctx.set(dut.keyboard_second,1)
