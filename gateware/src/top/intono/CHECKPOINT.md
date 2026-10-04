@@ -1506,3 +1506,29 @@ slot 1; write and Refresh DONE confirmed. SHA-256:
 `cef5b327f3cdc44fa72686c4ddc1ab0bc48e1802656e056343659f454362fcec`.
 Matching axis-firmware.elf, axis-validation.json and axis-flash.json retained.
 Physical visual check pending.
+
+## 2026-10-04 — explicit navigation and scale membership cues
+
+PAGE fills the current tab cyan with dark ink. NAV retains a quiet current-tab
+outline and bright focus outline. EDIT fills the active value with contrasting
+ink, including sparse route, MIDI, preference, and config editors. Header mode
+uses PAGE/NAV/EDIT; removed the unused page-edit snapshot flag.
+
+Piano naturals/accidentals keep constant light/dark bodies. Each key has an
+explicit + (in scale) or - (skipped), explained above the keyboards. A separate
+cream outline identifies the navigated key; click toggles membership. Membership
+and cursor publish atomically with the frame in the existing 32-bit backdrop
+register. No new framebuffer, block RAM, or DSP allocation.
+
+Source f5eb02f5; 42 navigation/preferences, 55 presenter/geometry, and 50 display
+checks pass (including one/two-octave, rotated/unrotated, mode fill, and atomic
+publication checks). Seed 21 final timing: serializer 449.03/371.33 MHz,
+pixels 77.51/74.25, audio 69.54/49.15, CPU 66.64/60. Alternate seed 20 also
+passed and its files are retained. Firmware 310,080 bytes; COMB 21,430/24,288,
+FF 12,194/24,288, BRAM 47/56, DSP 14/28.
+
+Flashed build/intono-ui-selection-r5/intono-ui-selection-20261004-r5.tar.gz
+to Tiliqua #1 slot 1; write and Refresh DONE confirmed. SHA-256:
+95acb4468093e58695ba98bc5850710eeec3bc3f2481249cce0f0489a61153e0.
+Matching selection-firmware.elf, selection-validation.json, and
+selection-flash.json retained. Physical visual confirmation pending.
