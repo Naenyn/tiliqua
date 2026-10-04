@@ -1719,3 +1719,29 @@ CPU 68.01 MHz. COMB 21715/24288, FF 12213/24288, BRAM 47/56, DSP 14/28.
 Archive: `build/intono-ui-centered-r5/intono-ui-centered-f473cb1a-r5.tar.gz`.
 SHA256: `d51376a5e6bd0f36f40a3146ec385a7eaf6f10f7cf72299de4228f5ee5cfb2d8`.
 Flashed Tiliqua #1 slot 1, verified `Refresh: DONE`. Saved data preserved.
+
+## 2026-10-04 — pixel-centered control text
+
+All centered fields now position their nine-pixel glyphs at pixel resolution,
+including inline label/value selectors and retained route dialog buttons.
+Odd/even spare-cell counts produce the same half-pixel rounding, fixing the
+Scales Save/Load offset without moving the already-balanced button rows.
+Longest-value checks cover compact controls, and retained buttons assert label
+fit in host/debug builds. Blank padding has no glyph offset, so later unshifted
+labels cannot inherit a neighboring padding offset.
+
+Hardware source `67179044`; final firmware source `8e8a807b`, seed 21.
+The first non-pipelined build missed DVI timing and was never flashed.
+The qualified image adds a character/offset register stage: native overlay
+latency is ten pixel clocks. CPU text occupancy remains 256 bytes per bank.
+Firmware 311360/327680 bytes. Final clocks all PASS: serializer 431.78 MHz,
+pixel 88.68 MHz, audio 67.33 MHz, CPU 66.56 MHz. COMB 21543/24288,
+FF 12246/24288, BRAM 51/56, DSP 14/28.
+
+Checks: 44 navigation, 57 retained route/text, 104 scale/layout, 45 final
+display/renderer tests (including pixel-offset glyph carry and scan latency);
+the five shape checks passed in the preceding combined run.
+Archive: `build/intono-ui-text-center-pipe-r5/intono-ui-text-center-pipe-8e8a807b-r5.tar.gz`.
+SHA256: `cf3f0133e5b6e600d035c8ffba97e3ea3575cbb1987e49b1e274b7454b6ed5ea`.
+Flashed Tiliqua #1 slot 1, verified `Refresh: DONE`. Saved data preserved.
+Use this qualified hardware for subsequent firmware-only builds.

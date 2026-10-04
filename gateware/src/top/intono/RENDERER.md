@@ -1862,3 +1862,24 @@ temporary before operation. The current main-loop frame falls from 16,384 to
 rejects executable/data overlap with runtime storage or runtime overlap with
 framebuffer caches at +8 MiB. Inspect compiled frames when growing UI/operation
 state; static-data guards do not account for nested calls or interrupt frames.
+
+### Pixel-centered controls (2026-10-04)
+
+The UX text plane now uses 18-bit cells. Glyph, bold, and color remain bits
+0..15; bits 16..17 select offsets 0, 2, or 8 pixels (codes 0, 1, 2).
+The existing TileWrite CSR carries these at bits 28..29, leaving addresses
+and earlier registers unchanged. Centered firmware fields use floor cell
+padding plus the pixel offset; blank cells always use zero offset.
+
+A second character read handles the five pixels that can carry from an
+8-pixel-offset glyph into the next cell, with a guard against row/bank wrap.
+Both reads use the same acknowledged front bank. Offset and bank selection
+are registered before the font ROM, preserving timing: the native compositor
+is six clocks and the production overlay ten. Non-offset planes retain the
+five-clock compositor. No CPU framebuffer or occupancy allocation was added;
+the additional read uses four FPGA BRAM blocks (51/56 total).
+
+The qualified baseline is `build/intono-ui-text-center-pipe-r5`, hardware
+`67179044`, final firmware `8e8a807b`. Do not pair this firmware with earlier
+16-bit text hardware or the failed unpipelined text-center build. See the
+checkpoint for archive hash, final clock results, and verified flash.
