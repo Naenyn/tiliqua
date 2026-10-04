@@ -1458,3 +1458,30 @@ to Tiliqua #1 slot 1; write and Refresh DONE confirmed. SHA-256:
 `8a74a75144bff0a444b23b5d26dc43794572a8cd4a32de34e3e84bc759866416`.
 Matching `input-list-firmware.elf`, `input-list-validation.json`, and
 `input-list-flash.json` retained. Physical interaction confirmation pending.
+
+## 2026-10-04 — shared header status and primary pitch typography
+
+PAGE/NAV/EDIT (and locked/assigned status) now appears to the right of the six
+page indicators, at native column 25, row 2. The footer no longer displays it.
+ARC input selector uses a 21-pixel rounded outline at y=125..145, centered on
+the 15-pixel text at y=128..142 and clear of the header separator. Other
+controls retain their existing geometry.
+
+ARC primary note/octave renders at twice the normal size (18x30 glyphs, 24px
+pitch), between PITCH and cents. A bounded text-coordinate remap samples the
+existing note cells/font; markers, backgrounds, scan sidebands, frame latency,
+other pages, and RAM allocation are unchanged.
+
+Source `18c1bdce`; 42 navigation/preferences, 54 presenter, 16 display/frame/font
+and 34 integrated overlay checks pass. Seed 20 routed slowly but qualifies all
+clocks: serializer 453.72/371.33 MHz, pixels 87.63/74.25, audio 68.99/49.15,
+CPU 66.25/60. An alternate seed 21 also completed and passed; retained its
+placement/timing files, but used seed 20 for its greater timing margin.
+Firmware 308,928 bytes; FPGA COMB 21,356/24,288, FF 12,155/24,288, BRAM 47/56,
+DSP 14/28.
+
+Flashed `build/intono-ui-pitch-r5/intono-ui-pitch-20261004-r5.tar.gz` to
+Tiliqua #1 slot 1; write and Refresh DONE confirmed. SHA-256:
+`9263043757eb0ea367ab529a6996fa784d9969dc0d4bed37ad0b37119770bbf9`.
+Matching `pitch-firmware.elf`, `pitch-validation.json`, and `pitch-flash.json`
+retained. Physical visual confirmation pending.
