@@ -74,7 +74,7 @@ pub fn encode(
     Ok(end + 4)
 }
 
-pub fn decode(data: &[u8]) -> Result<Recalled, Error> {
+fn header(data: &[u8]) -> Result<(u8, usize, &str), Error> {
     if data.len() < 56 || data.len() > MAX_BYTES || &data[..4] != b"TUCP" {
         return Err(Error::Invalid);
     }
@@ -107,6 +107,21 @@ pub fn decode(data: &[u8]) -> Result<Recalled, Error> {
         return Err(Error::Checksum);
     }
     let name = core::str::from_utf8(&data[12..12 + name_len]).map_err(|_| Error::Invalid)?;
+    if name.trim().is_empty() || !name.bytes().all(|b| (b' '..=b'~').contains(&b)) {
+        return Err(Error::Invalid);
+    }
+    Route::new(data[5], data[6]).map_err(|_| Error::Invalid)?;
+    Ok((version, count, name))
+}
+
+/// Browse the saved label without allocating or recalling a calibration curve.
+/// Uses the same bounded header and checksum validation as a full load.
+pub fn stored_name(data: &[u8]) -> Result<&str, Error> {
+    header(data).map(|(_, _, name)| name)
+}
+
+pub fn decode(data: &[u8]) -> Result<Recalled, Error> {
+    let (version, count, name) = header(data)?;
     let route = Route::new(data[5], data[6]).map_err(|_| Error::Invalid)?;
     let mut profile = Profile::new(
         name,
@@ -216,12 +231,26 @@ mod tests {
         let (bytes, n) = record();
         let r = decode(&bytes[..n]).unwrap();
         assert_eq!(r.profile.name(), "Generate 3");
+        assert_eq!(stored_name(&bytes[..n]), Ok("Generate 3"));
         assert_eq!(r.route, Route::new(2, 3).unwrap());
         assert_eq!(r.zero_note, 48);
         assert_eq!(r.profile.points().len(), 25);
         assert_eq!(r.profile.voltage_for_pitch(6599600), Ok(83000));
         assert_eq!(key(0), None);
         assert_eq!(key(SLOTS + 1), None);
+    }
+    #[test]
+    fn preview_rejects_truncation_corruption_and_invalid_names() {
+        let (mut bytes, n) = record();
+        for end in 0..n { assert!(stored_name(&bytes[..end]).is_err()); }
+        bytes[12] ^= 1;
+        assert_eq!(stored_name(&bytes[..n]), Err(Error::Checksum));
+        let name_len=bytes[8] as usize;
+        bytes[12..12+name_len].fill(b' ');
+        let checksum=crc(&bytes[..n-4]);
+        bytes[n-4..n].copy_from_slice(&checksum.to_le_bytes());
+        assert_eq!(stored_name(&bytes[..n]), Err(Error::Invalid));
+        assert!(decode(&bytes[..n]).is_err());
     }
     #[test]
     fn version_three_roundtrips_positive_only_eight_volt_profile_and_reads_v2() {

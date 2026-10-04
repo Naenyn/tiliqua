@@ -1679,7 +1679,7 @@ pub fn write_playback_status(
 fn publish_calibration(
     display: &pac::TUNER_DISPLAY, text: &mut TextWriter<'_>,
     cal: &calibration_live::Live, controls: RuntimeControls, value: ChannelMeasurement,
-    menu_active: bool, plot_ready: bool, _profile_slot: u8, name_position: u8, profile_name: &str, profile_status: &str,
+    menu_active: bool, plot_ready: bool, _profile_slot: u8, name_position: u8, profile_name: &str, profile_status: &str, saved_name: &str,
 ) {
     let mut line=String::<64>::new();
     let profile=calibration_plot_profile(cal);
@@ -1687,14 +1687,16 @@ fn publish_calibration(
         write_centered(text,4,profile.map_or("CALIBRATION",|p|p.name()),26);
     }
     if controls.mode==runtime::OperatingMode::Profiles {
-        write_centered(text,7,"SAVE AS",24);
+        ui_text::field(4,6,7,"SAVED:",ui_text::Style {color:0x89,bold:false},ui_text::Align::Left,|a,c|text.cell(a,c));
+        ui_text::field(11,6,24,saved_name,ui_text::DEFAULT,ui_text::Align::Left,|a,c|text.cell(a,c));
+        write_centered(text,7,"SAVE RAM AS",24);
         // Fixed native-cell name origin keeps the cursor over the character,
         // including the trailing spaces used to extend a short name.
         ui_text::field(8,8,24,profile_name,ui_text::DEFAULT,ui_text::Align::Left,|a,c|text.cell(a,c));
         ui_text::field(8+name_position.saturating_sub(1).min(23) as usize,9,1,"^",
             ui_text::Style {color:0xF9,bold:true},ui_text::Align::Left,|a,c|text.cell(a,c));
         if let Some(p)=cal.profile.as_ref() {
-            write!(line,"CURRENT: {}",p.name()).ok();
+            write!(line,"RAM: {}",p.name()).ok();
             write_centered(text,12,&line,28); line.clear();
             write!(line,"{} POINTS / {}",p.points().len(),cal.profile_quality.grade.label()).ok();
             write_centered(text,13,&line,28); line.clear();
@@ -2492,6 +2494,26 @@ fn install_route_curve(
     })
 }
 
+// One flash read when entering Profiles, changing slots, or saving. Never
+// touches live calibration, output bindings, or the editable RAM profile name.
+#[inline(never)]
+fn preview_profile(storage: &mut Option<IntonoPersistence>, slot:u8) -> String<24> {
+    let mut label=String::<24>::new();
+    let mut read = || -> Result<(), &'static str> {
+        let key=profile_key(slot).ok_or("INVALID SLOT")?;
+        let storage=storage.as_mut().ok_or("NO STORAGE")?;
+        let mut bytes=[0;oscillator_calibration::storage::MAX_BYTES+1];
+        let result=match storage.load_key_in(expanded_window(storage),key,&mut bytes) {
+            Ok(None)=>storage.load_key(key,&mut bytes), other=>other,
+        };
+        let len=result.map_err(|_|"READ FAILED")?.ok_or("EMPTY SLOT")?;
+        let name=oscillator_calibration::storage::stored_name(&bytes[..len]).map_err(|_|"INVALID PROFILE")?;
+        label.push_str(name).map_err(|_|"INVALID NAME")
+    };
+    if let Err(status)=read() {label.clear();label.push_str(status).ok();}
+    label
+}
+
 #[inline(never)]
 fn save_profile(
     storage: &mut Option<IntonoPersistence>,
@@ -2892,6 +2914,8 @@ fn run(resources: &mut RuntimeResources) -> ! {
         let mut name_editor = oscillator_calibration::name::Editor::new();
         let mut profile_status = "SAVE / LOAD: OUTPUT MUST BE OFF";
         let mut profile_status_slot = 1;
+        let mut preview_slot = 0;
+        let mut saved_profile_name = String::<24>::new();
         // Each character bank must receive a changed menu once. Closing the
         // menu hides it; it does not destroy the retained contents of either bank.
         let mut save_feedback = feedback::Feedback::default();
@@ -3127,7 +3151,13 @@ fn run(resources: &mut RuntimeResources) -> ! {
             refine |= ui_frame.refine;
             accept_refinement |= ui_frame.accept_refinement;
             discard_refinement |= ui_frame.discard_refinement;
+            if ui_frame.controls.mode != runtime::OperatingMode::Profiles {preview_slot=0;}
             if ui_frame.controls.mode == runtime::OperatingMode::Profiles {
+                if preview_slot != ui_frame.profile_slot || ui_frame.save_profile {
+                    preview_slot=ui_frame.profile_slot;
+                    // Save refreshes the label after the write below.
+                    if !ui_frame.save_profile {saved_profile_name=preview_profile(persistence,preview_slot);}
+                }
                 if ui_frame.profile_slot != profile_status_slot {
                     profile_status_slot = ui_frame.profile_slot;
                     profile_status = "SAVE / LOAD: OUTPUT MUST BE OFF";
@@ -3148,6 +3178,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                         ui_frame.controls.zero_note,
                         name_editor.name(),
                     );
+                    saved_profile_name=preview_profile(persistence,preview_slot);
                 } else if ui_frame.load_profile {
                     let (status, zero) = load_profile(
                         persistence,
@@ -3570,6 +3601,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                             ui_frame.name_position,
                             name_editor.name(),
                             profile_status,
+                            &saved_profile_name,
                         );
                     }
                 } else {
