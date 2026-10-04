@@ -392,7 +392,7 @@ pub fn piano_key(note: usize) -> Option<(Rect, bool)> {
         10=>(6,true),11=>(6,false),_=>return None,
     };
     Some((Rect {x:165+position*56-if black {18}else{0},y:248,
-        width:if black {35}else{55},height:if black {56}else{104}},black))
+        width:if black {35}else{55},height:if black {54}else{100}},black))
 }
 
 /// Native 12px character-cell label footprint within each key.
@@ -407,7 +407,7 @@ pub fn piano_label(note: usize) -> Option<(usize,usize,usize)> {
 pub fn octave_key(note:usize,octave:usize) -> Option<(Rect,bool)> {
     if octave>1 {return None;}
     let (mut key,black)=piano_key(note)?;
-    key.y+=octave as i32*144;
+    key.y+=octave as i32*140;
     Some((key,black))
 }
 pub fn octave_label(note:usize,octave:usize) -> Option<(usize,usize,usize)> {
@@ -600,7 +600,7 @@ mod tests {
             assert!(row*32>key.y as usize && row*32+14<(key.y+key.height as i32) as usize);
         }
         let (key,_)=piano_key(0).unwrap();
-        assert_eq!(key.y+SINGLE_KEYBOARD_Y_OFFSET+key.height as i32/2,396);
+        assert_eq!(key.y+SINGLE_KEYBOARD_Y_OFFSET+key.height as i32/2,394);
     }
     #[test]
     fn segmented_grids_and_traces_are_bounded_and_reject_invalid_work() {

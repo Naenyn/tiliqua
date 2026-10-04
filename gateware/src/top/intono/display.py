@@ -224,7 +224,7 @@ class IntonoOverlay(wiring.Component):
             fill = active & state["keyboard_enable"] & tagged
             # Excluded keys are white/black; included intervals share blue.
             lefts=Array(Const(n,10) for n in (165,203,221,259,277,333,371,389,427,445,483,501))
-            key_top=248+Mux(self.i.pixel.intensity==15,144,0)+Mux(state["keyboard_second"],0,96)
+            key_top=248+Mux(self.i.pixel.intensity==15,140,0)+Mux(state["keyboard_second"],0,96)
             rx=Signal(signed(12));ry=Signal(signed(12))
             m.d.comb += [rx.eq(x-lefts[note]),ry.eq(y-key_top)]
             cursor=(state["keyboard_focus"]==Cat(note,self.i.pixel.intensity==15))
@@ -237,12 +237,12 @@ class IntonoOverlay(wiring.Component):
             rx,ry,black,cursor,selected,fill=rx1,ry1,black1,cursor1,selected1,fill1
             # A two-pixel yellow ring with a dark halo on both sides stays
             # visible on white, black, and blue keys without changing membership.
-            right=Mux(black,34,54);bottom=Mux(black,55,103)
+            right=Mux(black,34,54);bottom=Mux(black,53,99)
             edge=(rx<=4)|(rx>=right-4)|(ry<=4)|(ry>=bottom-4)
             # Key radius is four pixels. Insetting the ring by two leaves
             # radius two: scanline insets 4,3,2 match the retained key curve.
-            row2=(ry==2)|(ry==Mux(black,53,101))
-            row3=(ry==3)|(ry==Mux(black,52,100))
+            row2=(ry==2)|(ry==Mux(black,51,97))
+            row3=(ry==3)|(ry==Mux(black,50,96))
             inset=Mux(row2,4,Mux(row3,3,2))
             outer=(ry>=2)&(ry<=bottom-2)&(rx>=inset)&(rx<=right-inset)
             inner=(rx>=4)&(rx<=right-4)&(ry>=4)&(ry<=bottom-4)
@@ -390,8 +390,14 @@ class IntonoOverlay(wiring.Component):
         m.submodules.text = text = TextCompositor(
             memories, planes, atlas, panels=panels,
             double_buffered=self.double_buffered)
+        text_y = ys[4]
+        if self.large_text:
+            # Native text rows are 32 pixels apart. Move only the second
+            # octave caption down 12 pixels, leaving the side pager untouched.
+            caption = state["keyboard_second"] & ((state["ui_surface"] == 4) | (state["ui_surface"] == 5)) & (xs[4] < 560) & (ys[4] >= 352) & (ys[4] < 384)
+            text_y = Mux(caption, ys[4] - 12, ys[4])
         m.d.comb += [
-            text.i.eq(marked), text.x.eq(xs[4]), text.y.eq(ys[4]),
+            text.i.eq(marked), text.x.eq(xs[4]), text.y.eq(text_y),
             text.enable.eq(Const(1) if self.large_text else Cat(Const(1), state["menu_active"])),
             text.bank.eq(self.front_bank),
             self.o.eq(text.o),

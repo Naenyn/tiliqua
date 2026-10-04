@@ -577,6 +577,7 @@ def test_compact_ux_font_has_crisp_capitals_and_complete_labels():
 def test_keyboard_fills_follow_mask_without_covering_edges_or_text(rotate_left):
     cells=[0]*4096
     cells[10*45+6]=(ord("C")-32)|(0x19<<8)
+    cells[11*45+10]=cells[11*45+39]=(ord("O")-32)|(0xa9<<8)
     tiles=Memory(shape=unsigned(16),depth=4096,init=cells)
     menu=Memory(shape=unsigned(8),depth=512,init=[])
     dut=IntonoOverlay(tiles,menu,h_active=720 if rotate_left else 1280,
@@ -591,7 +592,7 @@ def test_keyboard_fills_follow_mask_without_covering_edges_or_text(rotate_left):
                     (2,False),(3,False),(4,True),(4,False),(5,True),(5,False),(6,True),(6,False)]):
                 if black!=black_pass:continue
                 left=165+pos*56-(18 if black else 0)
-                width,height=(35,56) if black else (55,104)
+                width,height=(35,54) if black else (55,100)
                 if left<=x<left+width and 248<=y<248+height:
                     pixel=0xe0+note if left<x<left+width-1 and 248<y<248+height-1 else 0x49
         ctx.set(dut.i.pixel.as_value(),pixel if tag is None else tag)
@@ -623,16 +624,16 @@ def test_keyboard_fills_follow_mask_without_covering_edges_or_text(rotate_left):
                     tag=0xe0+octave*16+note
                     black=note in [1,3,6,8,10]
                     expected=0xa9 if mask&(1<<note) else (0x09 if black else 0xf9)
-                    assert await sample(ctx,200,300+octave*144,tag)==expected
+                    assert await sample(ctx,200,300+octave*140,tag)==expected
                     if not black:
                         body=expected
-                        assert await sample(ctx,200,336+octave*144,tag)==body
+                        assert await sample(ctx,200,336+octave*140,tag)==body
         # Membership and cursor are independent of piano identity, in each
         # visible octave and in the centered single-octave geometry.
         for second in (0,1):
             ctx.set(dut.keyboard_second,second)
             for octave in range(2 if second else 1):
-                offset=octave*144+(0 if second else 96)
+                offset=octave*140+(0 if second else 96)
                 for note,black in ((0,False),(1,True)):
                     center=192 if note==0 else 220
                     yy=(288 if black else 328)+offset
@@ -650,7 +651,7 @@ def test_keyboard_fills_follow_mask_without_covering_edges_or_text(rotate_left):
                     assert await sample(ctx,left+4,yy,tag)==0x09
                     # Rounded corners match an inset of the retained radius-4
                     # keys, mirrored on all four corners and both key sizes.
-                    width,height=(35,56) if black else (55,104)
+                    width,height=(35,54) if black else (55,100)
                     top=248+offset
                     for cy in (2,3,4):
                         for cx in (2,3,4):
@@ -668,6 +669,18 @@ def test_keyboard_fills_follow_mask_without_covering_edges_or_text(rotate_left):
         gy=next(y for y,bits in enumerate(glyph) if bits)
         gx=next(x for x in range(9) if glyph[gy]&(1<<(8-x)))
         assert await sample(ctx,192+gx,320+gy)==0x19
+        # The second caption shares the first caption's nine-pixel key gap;
+        # its row shift must not move the side pager or other page text.
+        glyph=MENU_FONT_NORMAL[(ord("O")-32)*15:(ord("O")-32+1)*15]
+        gy=next(y for y,bits in enumerate(glyph) if bits)
+        gx=next(x for x in range(9) if glyph[gy]&(1<<(8-x)))
+        for surface in (4,5):
+            ctx.set(dut.ui_surface,surface)
+            assert await sample(ctx,240+gx,364+gy,0x49)==0xa9
+            assert await sample(ctx,240+gx,352+gy,0x49)==0x49
+            assert await sample(ctx,588+gx,352+gy,0x49)==0xa9
+        ctx.set(dut.ui_surface,0)
+        assert await sample(ctx,240+gx,352+gy,0x49)==0xa9
         ctx.set(dut.keyboard_enable,0)
         assert await sample(ctx,192,336)==0xe0
         ctx.set(dut.i.de,0)
