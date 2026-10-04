@@ -104,7 +104,7 @@ class IntonoOverlay(wiring.Component):
     FRAME_FIELDS = ("marker_x", "marker_y", "marker_hue", "marker_lens_base",
                     "marker_lens_bank", "marker_valid", "marker_visualizer", "menu_active",
                     "marker1", "marker2", "marker3", "blank_background", "keyboard_mask", "keyboard_mask_b", "keyboard_enable", "keyboard_second", "ui_surface", "ui_focus", "ui_ready", "ui_mode", "keyboard_focus")
-    LATENCY = 4 + TextCompositor.LATENCY
+    LATENCY = 4 + 6  # Maximum; instances without pixel-offset text use nine clocks.
     PANEL_W = 720
     PANEL_H = 720
     COLS = 45
@@ -139,6 +139,7 @@ class IntonoOverlay(wiring.Component):
         self.double_buffered = double_buffered
         self.ascii_text = ascii_text
         self.large_text = large_text
+        self.LATENCY = 4 + (6 if large_text else TextCompositor.LATENCY)
         super().__init__({
             "i": In(ScanPixel),
             "o": Out(ScanPixel),

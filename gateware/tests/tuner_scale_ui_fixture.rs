@@ -104,7 +104,7 @@ fn explicit_span_preserves_empty_octaves_and_pages_every_key() {
     let legacy=note_pattern::encode([0,4]).unwrap();
     assert_eq!(note_pattern::decode_span(&legacy).unwrap(),([4,0,0,0,0,0,0,0],1));
     for span in 1u8..=8 {for view in 0..=span.saturating_sub(2) {
-        let mut state=(Some(9),view*12);
+        let mut state=(Some(1),view*12);
         let first=view*12;let end=(first+24).min(span*12);
         for key in first..end {
             state=ui_keyboard::next_span(state.0,state.1,true,span,view,false);
@@ -117,7 +117,7 @@ fn explicit_span_preserves_empty_octaves_and_pages_every_key() {
             state=ui_keyboard::next_span(state.0,state.1,false,span,view,false);
             assert_eq!(state,(Some(ui_keyboard::KEYBOARD),key));
         }
-        assert_eq!(ui_keyboard::next_span(state.0,state.1,false,span,view,false).0,Some(9));
+        assert_eq!(ui_keyboard::next_span(state.0,state.1,false,span,view,false).0,Some(1));
     }}
     let mut routes=quantizer_setup::DEFAULT;
     routes[0].octaves=8;routes[0].masks=[1,2,4,8,16,32,64,128];
@@ -182,5 +182,49 @@ fn expanded_factory_presets_preview_edit_and_reload_without_losing_route_mapping
         assert_eq!(quantizer_setup::decode(&bytes),Some(channels));
         let record=note_pattern::encode_span(masks,3).unwrap();
         assert_eq!(note_pattern::decode_span(&record),Some((masks,3)));
+    }
+}
+
+#[test]
+fn controls_center_longest_labels_and_values_in_pixel_bounds() {
+    use ui_controls::Surface::*;
+    // Longest displayed choices, including temporary action captions.
+    for (surface,index,label,value) in [
+        (Calibration,0,"IN","3"),(Calibration,1,"OUT","3"),
+        (Calibration,4,"GRAPH","PITCH"),(Calibration,3,"POLICY","FORGIVING"),
+        (Calibration,5,"RESUME",""),(Calibration,6,"ACCEPT",""),
+        (Calibration,7,"DISCARD",""),(Calibration,8,"PROFILES",""),
+        (Tuner,1,"VIEW","LINEAR"),
+        (Scales,0,"OUTPUT","3"),(Scales,1,"PRESET","CHROMATIC"),
+        (Scales,9,"OCTAVES","8"),(Scales,5,"SCALE TOOLS",""),
+        (Scales,10,"SLOT","8"),(Scales,11,"SAVE",""),(Scales,12,"LOAD",""),
+        (Notes,8,"SLOT","8"),(Notes,9,"OCTAVES","8"),
+        (Notes,0,"TOOLS OCT","8"),(Notes,3,"CLEAR OCT",""),
+        (Notes,4,"FILL OCT",""),(Notes,5,"LEARN BASE",""),
+        (Notes,6,"SAVE",""),(Notes,7,"LOAD",""),(Notes,11,"BACK",""),
+        (Profiles,0,"SLOT","8"),(Profiles,1,"CURSOR","255"),
+        (Profiles,3,"LOAD",""),(Profiles,4,"SAVE",""),
+        (Check,0,"CHECK",""),(Check,1,"STOP",""),(Help,0,"SCROLL","255"),
+    ] {
+        let f=ui_controls::field(surface,index).unwrap();
+        let start=ui_text::ux_column(f.column as usize);
+        let end=ui_text::ux_column((f.column+f.width) as usize);
+        let count=label.len()+if f.action {0}else{2+value.len()};
+        assert!(count<=end-start,"{surface:?} {label}: {value}");
+        let mut first=None;let mut last=0;let mut offset=0;
+        let mut sample=|a:u16,c:u32| {
+            if c&127!=0 {first.get_or_insert(a as i32%45);last=a as i32%45;}
+            offset=match c>>16 {1=>2,2=>8,_=>0};
+        };
+        if f.action {
+            ui_text::ux_field(f.column as usize,f.row as usize,f.width as usize,
+                label,ui_text::DEFAULT,ui_text::Align::Center,&mut sample);
+        } else {
+            assert!(ui_text::inline_field(f.column as usize,f.row as usize,f.width as usize,
+                label,value,ui_text::DEFAULT,&mut sample));
+        }
+        let left=first.unwrap()*12+offset;let right=last*12+offset+9;
+        assert_eq!(left+right,(start+end) as i32*12+1,"{surface:?} {label}");
+        assert!(left>=start as i32*12 && right<=end as i32*12);
     }
 }

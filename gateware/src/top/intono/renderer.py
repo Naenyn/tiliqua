@@ -153,7 +153,7 @@ def divide_coordinate(value, divisor):
 
 
 class TextCompositor(wiring.Component):
-    """Five pixel clocks, including blanking and all timing sidebands.
+    """Five pixel clocks; six with pixel offsets. All sidebands follow.
 
     Character memories are owned/written by the caller. A plane may contain
     8-bit glyph/bold entries or 16-bit glyph/bold/color entries. Panel and text
@@ -166,11 +166,14 @@ class TextCompositor(wiring.Component):
     def __init__(self, memories, planes, font_rows, *, panels=None, double_buffered=False):
         self.memories = tuple(memories)
         self.planes = tuple(planes)
+        self.LATENCY = 6 if any(plane.pixel_offsets for plane in self.planes) else 5
         self.font_rows = tuple(font_rows)
         self.panels = tuple(panels or [None] * len(planes))
         self.double_buffered = double_buffered
         assert len(memories) == len(planes) == len(self.panels) > 0
         for memory, plane in zip(memories, planes):
+            if plane.pixel_offsets:
+                assert plane.pitch_x == 12 and plane.scale == 1
             assert memory.depth >= plane.columns * plane.rows
             if double_buffered:
                 assert memory.depth >= 2 << (plane.columns * plane.rows - 1).bit_length()
@@ -189,7 +192,7 @@ class TextCompositor(wiring.Component):
 
     def elaborate(self, platform):
         m = Module()
-        scans = [self.i] + [Signal(ScanPixel, name=f"scan{n}") for n in range(1, 6)]
+        scans = [self.i] + [Signal(ScanPixel, name=f"scan{n}") for n in range(1, self.LATENCY + 1)]
         for previous, following in zip(scans, scans[1:]):
             m.d.dvi += following.eq(previous)
 
@@ -271,9 +274,21 @@ class TextCompositor(wiring.Component):
                 has_previous3 = Signal()
                 m.d.dvi += has_previous3.eq(cx2 != 0)
                 offset = Mux(cell.data[16:18] == 1, 2, Mux(cell.data[16:18] == 2, 8, 0))
-                carry = has_previous3 & (previous.data[16:18] == 2) & (gx3 < 5)
+                carry = has_previous3 & (previous.data[16:18] == 2) & (gx3[:4] < 5)
                 data = Mux(carry, previous.data, cell.data)
-                glyph_x = Mux(carry, gx3 + 4, gx3 - offset)
+                # Valid local coordinates are modulo 12. Bound the correction
+                # arithmetic to five signed bits instead of a wide carry chain.
+                glyph_x = Signal(signed(5))
+                m.d.comb += glyph_x.eq(Mux(carry, gx3[:4] + 4, gx3[:4] - offset))
+            if self.LATENCY == 6:
+                # A dedicated register separates character RAM/bank selection
+                # and offset arithmetic from the shared synchronous font ROM.
+                data4 = Signal.like(data); gx4 = Signal.like(glyph_x); gy4 = Signal.like(gy3)
+                valid4 = Signal(); covered4 = Signal(); backdrop4 = Signal(8)
+                m.d.dvi += [data4.eq(data), gx4.eq(glyph_x), gy4.eq(gy3),
+                            valid4.eq(valid3), covered4.eq(covered3), backdrop4.eq(backdrop3)]
+                data, glyph_x, gy3 = data4, gx4, gy4
+                valid3, covered3, backdrop3 = valid4, covered4, backdrop4
             glyph = data[:plane.glyph_bits]
             bold = data[plane.bold_bit] if plane.bold_bit is not None else Const(0)
             address = plane.font_base | Cat(gy3[:plane.row_bits], glyph, bold)
@@ -311,11 +326,11 @@ class TextCompositor(wiring.Component):
         background5 = Signal(8)
         m.d.dvi += [foreground5.eq(hit4 & font_r.data.bit_select(bit4, 1)),
                     color5.eq(color4), cover5.eq(cover4), background5.eq(background4)]
-        m.d.comb += self.o.eq(scans[5])
+        m.d.comb += self.o.eq(scans[self.LATENCY])
         with m.If(cover5):
             m.d.comb += self.o.pixel.eq(background5)
         with m.If(foreground5):
             m.d.comb += self.o.pixel.eq(color5)
-        with m.If(~scans[5].de):
+        with m.If(~scans[self.LATENCY].de):
             m.d.comb += self.o.pixel.eq(0)
         return m
