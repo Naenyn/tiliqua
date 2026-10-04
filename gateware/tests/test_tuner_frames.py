@@ -104,7 +104,7 @@ def test_cpu_registers_publish_characters_marker_and_menu_atomically():
             for slot, descriptor in enumerate(extras, 1):
                 await write(ctx, 12 + slot * 4, descriptor)
             keyboard_mask=(0xad6+iteration)&0xfff
-            await write(ctx, 28, active | (keyboard_mask<<1) | (active<<13) | (iteration<<14) | ((15 if iteration==0 else 31 if iteration==1 else iteration+2)<<18) | (1<<23))
+            await write(ctx, 28, active | (keyboard_mask<<1) | (active<<13) | (iteration<<14) | ((15 if iteration==0 else 31 if iteration==1 else iteration+2)<<18) | (1<<23) | ((iteration%3)<<25) | ((16+iteration)<<27))
             keyboard_mask_b=(0x249+iteration)&0xfff
             await write(ctx,32,keyboard_mask_b)
             assert ctx.get(dut.exchange.front_bank) == front_before
@@ -134,6 +134,8 @@ def test_cpu_registers_publish_characters_marker_and_menu_atomically():
             assert ctx.get(dut.overlay.keyboard_mask_b) == keyboard_mask_b
             assert ctx.get(dut.overlay.keyboard_enable) == active
             assert ctx.get(dut.overlay.ui_ready) == 1
+            assert ctx.get(dut.overlay.ui_mode) == iteration%3
+            assert ctx.get(dut.overlay.keyboard_focus) == 16+iteration
             assert ctx.get(dut.overlay.ui_surface) == iteration
             assert ctx.get(dut.overlay.ui_focus) == (15 if iteration==0 else 31 if iteration==1 else iteration+2)
             assert ctx.get(dut.overlay.marker_lens_base) == 1089

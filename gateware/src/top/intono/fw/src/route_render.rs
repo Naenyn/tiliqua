@@ -73,7 +73,8 @@ fn button(
     focus: bool,
     locked: bool,
 ) {
-    d.outline(x, row as u16 * 32 - 6, width, 28, focus && !locked);
+    let filled=focus && !locked && d.editing;
+    if filled {d.rounded_fill(x,row as u16*32-6,width,28);}else{d.outline(x, row as u16 * 32 - 6, width, 28, focus && !locked);}
     label(
         text,
         x,
@@ -82,6 +83,8 @@ fn button(
         value,
         if locked {
             0x49
+        } else if filled {
+            0x09
         } else if focus {
             0xF9
         } else {
@@ -132,6 +135,7 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
     });
     let running = active & groups.outputs[route] != 0;
     let mut d = ui_route::Drawing::new();
+    d.editing=editing && selected.is_some();
     let mut s = String::<64>::new();
     if with_app(|a| a.ui.opts.tracker.page.value) == options::Page::Settings {
         if let Some(entry) = menu.entries[0].as_ref() {
@@ -183,8 +187,7 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
         label(text, 168, 4, 384, "CONFIGS", 0xF9, true);
         if let Some(entry) = menu.entries[0].as_ref() {
             left(text, 240, 5, 144, "CONFIG SLOT", 0x89, false);
-            d.outline(384, 154, 96, 28, selected == Some(0));
-            label(text, 384, 5, 96, &entry.value, 0xB9, selected == Some(0));
+            button(&mut d,text,384,5,96,&entry.value,selected==Some(0),false);
         }
         label(text, 120, 6, 480, "CURRENT ROUTE ASSIGNMENTS", 0x89, false);
         for route in 0..4 {
@@ -303,16 +306,7 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
                 );
             } else {
                 left(text, 192, row, 120, name, 0x89, false);
-                d.outline(312, row as u16 * 32 - 6, 216, 28, selected == Some(index));
-                label(
-                    text,
-                    312,
-                    row,
-                    216,
-                    &entry.value,
-                    if selected == Some(index) { 0xF9 } else { 0xB9 },
-                    selected == Some(index),
-                );
+                button(&mut d,text,312,row,216,&entry.value,selected==Some(index),locked);
             }
         }
         write!(s, "ROUTE {} TRANSPOSE: {:+} ST", route + 1, shift).ok();
@@ -808,28 +802,7 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
                     );
                 } else {
                     left(text, 192, row, 120, label_name, 0x89, false);
-                    d.outline(
-                        312,
-                        row as u16 * 32 - 6,
-                        216,
-                        28,
-                        selected == Some(index) && !locked,
-                    );
-                    label(
-                        text,
-                        312,
-                        row,
-                        216,
-                        &entry.value,
-                        if locked {
-                            0x49
-                        } else if selected == Some(index) {
-                            0xF9
-                        } else {
-                            0xB9
-                        },
-                        selected == Some(index),
-                    );
+                    button(&mut d,text,312,row,216,&entry.value,selected==Some(index),locked);
                 }
             }
             if matches!(stage, Stage::Input | Stage::Add | Stage::Destination) {

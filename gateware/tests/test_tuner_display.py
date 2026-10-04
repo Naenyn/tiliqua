@@ -609,7 +609,7 @@ def test_keyboard_fills_follow_mask_without_covering_edges_or_text(rotate_left):
             ctx.set(dut.keyboard_mask,mask)
             for note,(pos,black) in enumerate(keys):
                 center=164+pos*56+(0 if black else 28)
-                color=(0x79 if black else 0xa9) if mask&(1<<note) else (0x09 if black else 0x39)
+                color=(0x29 if black else 0xa9)
                 assert await sample(ctx,center,300 if black else 336)==color
                 left=164+pos*56-(18 if black else 0)
                 assert await sample(ctx,left,300 if black else 336)==0x49
@@ -622,11 +622,32 @@ def test_keyboard_fills_follow_mask_without_covering_edges_or_text(rotate_left):
                 for note in range(12):
                     tag=0xe0+octave*16+note
                     black=note in [1,3,6,8,10]
-                    expected=(0x79 if black else 0xa9) if mask&(1<<note) else (0x09 if black else 0x39)
+                    expected=(0x29 if black else 0xa9)
                     assert await sample(ctx,200,300+octave*128,tag)==expected
                     if not black:
-                        body=0xa9 if mask&(1<<note) else 0x39
+                        body=0xa9
                         assert await sample(ctx,200,336+octave*128,tag)==body
+        # Membership and cursor are independent of piano identity, in each
+        # visible octave and in the centered single-octave geometry.
+        for second in (0,1):
+            ctx.set(dut.keyboard_second,second)
+            for octave in range(2 if second else 1):
+                offset=octave*128+(0 if second else 64)
+                for note,black in ((0,False),(1,True)):
+                    center=192 if note==0 else 220
+                    yy=(312 if black else 344)+offset
+                    tag=0xe0+octave*16+note
+                    for included in (False,True):
+                        ctx.set(dut.keyboard_mask,(1<<note) if included else 0)
+                        ctx.set(dut.keyboard_mask_b,(1<<note) if included else 0)
+                        assert await sample(ctx,center,yy,tag)==(0xf9 if black else 0x19)
+                        assert await sample(ctx,center,yy-3,tag)==((0xf9 if black else 0x19) if included else (0x29 if black else 0xa9))
+                    ctx.set(dut.keyboard_focus,octave*16+note)
+                    left=202 if black else 164
+                    assert await sample(ctx,left+2,yy,tag)==0xdb
+                    ctx.set(dut.keyboard_focus,31)
+                    assert await sample(ctx,left+2,yy,tag)==(0x29 if black else 0xa9)
+        ctx.set(dut.keyboard_second,1)
         # Text remains above the filled key, with the selected natural-key dark ink color.
         ctx.set(dut.keyboard_mask,1)
         glyph=MENU_FONT_NORMAL[(ord("C")-32)*15:(ord("C")-32+1)*15]
@@ -665,7 +686,7 @@ def test_loading_view_hides_control_outlines_without_hiding_text(rotate_left):
             if MENU_FONT_BOLD[(ord(glyph)-32)*15+y] & (1<<(8-x)))
         for ready in (0,1,0):
             ctx.set(dut.ui_ready,ready)
-            assert await pixel(ctx,148+10,90)==(11 if ready else 0)
+            assert await pixel(ctx,148+10,90)==(6 if ready else 0)
             assert await pixel(ctx,120+col*12+gx,row*32+gy)==15
     sim.add_testbench(bench);sim.run()
 

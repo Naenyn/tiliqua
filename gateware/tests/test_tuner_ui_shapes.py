@@ -64,7 +64,7 @@ def test_border_pixels_and_focus_match_rounded_reference():
             for left,width,index in descriptors(surface,row):
                 ctx.set(dut.focus,index)
                 selected= index==({0:0,1:1,2:1,3:1,4:2,5:2,6:3,7:3,10:3,11:3,12:3,14:0}.get(surface,-1)) if row==3 else ((surface==8+index or (surface==13 and index==0)) if row==20 else True)
-                expected_color=(0xB9 if row in (3,20) else 0xF9) if selected else 0x49
+                expected_color=(0x69 if row in (3,20) else 0xF9) if selected else 0x49
                 # All corner pixels, straight sides, centers, and outside rows.
                 for yy in [-1,0,1,2,3,4,5,6,13,21,22,23,24,25,26,27,28]:
                     for xx in [-1,0,1,2,3,4,5,6,7,width//2,width-8,width-7,width-6,width-5,width-4,width-3,width-2,width-1,width]:
@@ -121,4 +121,27 @@ def test_linear_focus_outline_is_hidden_but_view_remains():
             assert ctx.get(dut.hit)==focus_visible
             ctx.set(dut.y,570);ctx.set(dut.x,300);await ctx.tick('dvi').repeat(4)
             assert ctx.get(dut.hit)==1
+    sim.add_testbench(bench);sim.run()
+
+
+def test_page_navigation_and_value_edit_have_distinct_fills():
+    dut=RoundedBorders();sim=Simulator(dut);sim.add_clock(1e-6,domain="dvi")
+    async def sample(ctx,x,y):
+        ctx.set(dut.x,x);ctx.set(dut.y,y)
+        await ctx.tick("dvi").repeat(5)
+        return ctx.get(dut.hit),ctx.get(dut.color)
+    async def bench(ctx):
+        ctx.set(dut.active,1);ctx.set(dut.surface,0);ctx.set(dut.focus,1)
+        for mode in range(3):
+            ctx.set(dut.mode,mode)
+            hit,color=await sample(ctx,198,103)
+            assert hit==(mode==0)
+            if hit:assert color==0xB9
+            hit,color=await sample(ctx,198,90)
+            assert hit and color==(0xB9 if mode==0 else 0x69)
+            hit,color=await sample(ctx,360,580)
+            assert hit==(mode==2)
+            if hit:assert color==0xF9
+        ctx.set(dut.surface,13);ctx.set(dut.mode,0)
+        assert (await sample(ctx,300,647))==(1,0xB9)
     sim.add_testbench(bench);sim.run()

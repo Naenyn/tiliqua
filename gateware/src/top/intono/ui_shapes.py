@@ -50,7 +50,7 @@ def descriptors(surface, row):
 class RoundedBorders(wiring.Component):
     def __init__(self):
         super().__init__({"x":In(signed(12)),
-            "y":In(signed(12)),"active":In(1),"surface":In(4),"focus":In(5),
+            "y":In(signed(12)),"active":In(1),"surface":In(4),"focus":In(5),"mode":In(2,init=1),
             "hit":Out(1),"color":Out(8)})
 
     def elaborate(self, platform):
@@ -71,9 +71,9 @@ class RoundedBorders(wiring.Component):
         # Retained views reuse the common-only Routes geometry ROM entry.
         geometry_surface=Mux(self.surface==14,0,Mux(self.surface>=11,7,self.surface))
         m.d.comb += [port.addr.eq(Cat(row,geometry_surface)),port.en.eq(self.active)]
-        y1=Signal(signed(12));x1=Signal(10);ly1=Signal(5);row1=Signal(5);active1=Signal();surface1=Signal(4);focus1=Signal(5)
+        y1=Signal(signed(12));x1=Signal(10);ly1=Signal(5);row1=Signal(5);active1=Signal();surface1=Signal(4);focus1=Signal(5);mode1=Signal(2)
         m.d.dvi += [y1.eq(self.y),x1.eq(self.x),ly1.eq((self.y+6)[:5]),row1.eq(row),active1.eq(self.active & (self.surface<15)),
-                    surface1.eq(self.surface),focus1.eq(self.focus)]
+                    surface1.eq(self.surface),focus1.eq(self.focus),mode1.eq(self.mode)]
         # Compute curve insets once per scanline before the per-box tests.
         outer=Array(Const(6-isqrt(36-(6-min(y,27-y))**2),4) if min(y,27-y)<6 else Const(0,4)
                     for y in range(28))
@@ -98,17 +98,17 @@ class RoundedBorders(wiring.Component):
             left,width,index=descriptor[:10],descriptor[10:18],descriptor[18:22]
             # Negative relative coordinates wrap above 255, outside every box.
             rx2=Signal(10)
-            width2=Signal(8);ly2=Signal(5);active2=Signal();selected2=Signal();tab2=Signal()
+            width2=Signal(8);ly2=Signal(5);active2=Signal();selected2=Signal();tab2=Signal();mode2=Signal(2)
             category=Mux((surface1==0)|(surface1==14),0,Mux(surface1<=3,1,Mux(surface1<=5,2,3)))
             selected=Mux(row1==3,((surface1<8)|((surface1>=10)&(surface1<=12))|(surface1==14))&(index==category),
                          Mux(row1==20,((surface1==8+index)|((surface1==13)&(index==0))),index==focus1))
             m.d.dvi += [rx2.eq(x1-left),width2.eq(width),ly2.eq(shape_y),active2.eq(active1 & (width!=0) & ~((surface1==14)&(row1==4)&(index==0))),
-                        selected2.eq(selected),tab2.eq((row1==3)|(row1==20))]
+                        selected2.eq(selected),tab2.eq((row1==3)|(row1==20)),mode2.eq(mode1)]
             inside=(ly2<Mux(compact2,21,28))&(rx2>=off2)&(rx2<width2-off2)
             inset=(ly2>=2)&(ly2<Mux(compact2,19,26))&(rx2>=inner_off2)&(rx2<width2-inner_off2)
             hit3=Signal();color3=Signal(8)
-            m.d.dvi += [hit3.eq(active2 & inside & ~inset),
-                        color3.eq(Mux(selected2,Mux(tab2,0xB9,0xF9),0x49))]
+            m.d.dvi += [hit3.eq(active2 & inside & (~inset | (selected2 & Mux(tab2,mode2==0,mode2==2)))),
+                        color3.eq(Mux(selected2,Mux(tab2,Mux(mode2==0,0xB9,0x69),0xF9),0x49))]
             hits.append(hit3);colors.append(color3)
         # Six boxes follow the visible navigation order, including subpages.
         page=Mux((self.surface==0)|(self.surface==14),0,Mux(self.surface<=3,1,Mux(self.surface<=5,2,

@@ -103,7 +103,7 @@ FONT_INIT = [row for char in FONT_CHARS for row in (*FONT[char], 0)]
 class IntonoOverlay(wiring.Component):
     FRAME_FIELDS = ("marker_x", "marker_y", "marker_hue", "marker_lens_base",
                     "marker_lens_bank", "marker_valid", "marker_visualizer", "menu_active",
-                    "marker1", "marker2", "marker3", "blank_background", "keyboard_mask", "keyboard_mask_b", "keyboard_enable", "keyboard_second", "ui_surface", "ui_focus", "ui_ready")
+                    "marker1", "marker2", "marker3", "blank_background", "keyboard_mask", "keyboard_mask_b", "keyboard_enable", "keyboard_second", "ui_surface", "ui_focus", "ui_ready", "ui_mode", "keyboard_focus")
     LATENCY = 4 + TextCompositor.LATENCY
     PANEL_W = 720
     PANEL_H = 720
@@ -154,7 +154,7 @@ class IntonoOverlay(wiring.Component):
             "front_bank": In(1),
             "blank_background": In(1),
             "keyboard_mask": In(12), "keyboard_mask_b": In(12), "keyboard_enable": In(1), "keyboard_second": In(1),
-            "ui_surface": In(4), "ui_focus": In(5), "ui_ready": In(1, init=1),
+            "ui_surface": In(4), "ui_focus": In(5), "ui_ready": In(1, init=1), "ui_mode": In(2, init=1), "keyboard_focus": In(5, init=31),
             # Additional arcs: x10/y10/orientation5/hue4/valid1. Slot zero
             # retains the legacy ABI and its optional visualizer halo.
             "marker1": In(30), "marker2": In(30), "marker3": In(30),
@@ -223,7 +223,17 @@ class IntonoOverlay(wiring.Component):
             selected = mask.bit_select(note,1)
             fill = active & state["keyboard_enable"] & tagged
             # Solid fills keep natural and accidental keys visually distinct.
-            fill_color = Mux(selected,Mux(black,0x79,0xA9),Mux(black,0x09,0x39))
+            # Piano identity is constant; membership is an explicit plus/minus.
+            lefts=Array(Const(n,10) for n in (164,202,220,258,276,332,370,388,426,444,482,500))
+            centers=Array(Const(n,10) for n in (192,220,248,276,304,360,388,416,444,472,500,528))
+            key_top=280+Mux(self.i.pixel.intensity==15,128,0)+Mux(state["keyboard_second"],0,64)
+            dx=Signal(signed(12));dy=Signal(signed(12));rx=Signal(signed(12));ry=Signal(signed(12))
+            m.d.comb += [dx.eq(x-centers[note]),dy.eq(y-key_top-Mux(black,32,64)),
+                         rx.eq(x-lefts[note]),ry.eq(y-key_top)]
+            mark=((dx>=-4)&(dx<=4)&(dy==0)) | (selected&(dx==0)&(dy>=-4)&(dy<=4))
+            cursor=(state["keyboard_focus"]==Cat(note,self.i.pixel.intensity==15))
+            edge=(rx==2)|(rx==Mux(black,33,54))|(ry==2)|(ry==Mux(black,37,69))
+            fill_color=Mux(cursor&edge,0xDB,Mux(mark,Mux(black,0xF9,0x19),Mux(black,0x29,0xA9)))
         else:
             fill, fill_color = Const(0), Const(0,8)
         fills = [fill] + [Signal() for _ in range(4)]
@@ -234,7 +244,7 @@ class IntonoOverlay(wiring.Component):
         if self.large_text:
             m.submodules.borders = borders = RoundedBorders()
             m.d.comb += [borders.x.eq(x),borders.y.eq(y),borders.active.eq(active & state["ui_ready"]),
-                        borders.surface.eq(state["ui_surface"]),borders.focus.eq(state["ui_focus"])]
+                        borders.surface.eq(state["ui_surface"]),borders.focus.eq(state["ui_focus"]),borders.mode.eq(state["ui_mode"])]
 
         # One row-wide atlas, fetched in blanking rather than once per pixel.
         # Rotate bitmap samples as well as marker positions for the round panel.
@@ -432,6 +442,8 @@ class Peripheral(wiring.Component):
         ui_focus: csr.Field(csr.action.W, unsigned(5))
         ui_ready: csr.Field(csr.action.W, unsigned(1))
         keyboard_second: csr.Field(csr.action.W, unsigned(1))
+        ui_mode: csr.Field(csr.action.W, unsigned(2))
+        keyboard_focus: csr.Field(csr.action.W, unsigned(5))
 
     class KeyboardB(csr.Register, access="w"):
         mask: csr.Field(csr.action.W, unsigned(12))
@@ -502,7 +514,9 @@ class Peripheral(wiring.Component):
                          self.staging["keyboard_second"].eq(self._backdrop.f.keyboard_second.w_data),
                          self.staging["ui_surface"].eq(self._backdrop.f.ui_surface.w_data),
                          self.staging["ui_focus"].eq(self._backdrop.f.ui_focus.w_data),
-                         self.staging["ui_ready"].eq(self._backdrop.f.ui_ready.w_data)]
+                         self.staging["ui_ready"].eq(self._backdrop.f.ui_ready.w_data),
+                         self.staging["ui_mode"].eq(self._backdrop.f.ui_mode.w_data),
+                         self.staging["keyboard_focus"].eq(self._backdrop.f.keyboard_focus.w_data)]
 
         with m.If(self._keyboard_b.element.w_stb & ~exchange.busy):
             m.d.sync += self.staging["keyboard_mask_b"].eq(self._keyboard_b.f.mask.w_data)

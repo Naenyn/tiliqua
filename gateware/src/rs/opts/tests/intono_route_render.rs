@@ -50,11 +50,20 @@ fn capture_dense_views_with_bounded_geometry(){
         assert!((d.len as usize)<ui_route::MAX_SHAPES,"{name} exhausted geometry capacity");
         for s in &d.shapes[..d.len as usize]{assert!(s.rect().fits_circle(360),"{name} shape outside circle");}
         let mut dump=std::string::String::new();
-        for s in &d.shapes[..d.len as usize]{writeln!(dump,"S {} {} {} {} {} {}",s.x,s.y,s.w,s.h,s.color,s.solid as u8).unwrap();}
+        for s in &d.shapes[..d.len as usize]{writeln!(dump,"S {} {} {} {} {} {}",s.x,s.y,s.w,s.h,s.color,s.kind as u8).unwrap();}
         for (a,c) in cells.iter().enumerate(){if c&127!=0 {writeln!(dump,"T {a} {c}").unwrap();}}
         std::fs::write(format!("/tmp/intono-route-{name}.txt"),dump).unwrap();
     }
     critical_section::with(|cs|APP.borrow_ref_mut(cs).as_mut().unwrap().ui.opts.tracker.page.value=options::Page::Play);
+    // Filled editing controls use contrasting ink and restore outlines on exit.
+    critical_section::with(|cs|ROUTE_VIEW.borrow_ref_mut(cs).screen=route_ui::Screen::Editor(route_ui::Stage::Scale));
+    for editing in [false,true] {
+        critical_section::with(|cs| {let mut a=APP.borrow_ref_mut(cs);let a=a.as_mut().unwrap();a.groups.outputs=[0;4];a.ui.opts.tracker.selected=Some(5);a.ui.opts.tracker.modify=editing;});
+        let mut cells=[0;2025];let d=route_render::publish(&mut TextWriter{cells:&mut cells},&menu);
+        assert_eq!(d.shapes[..d.len as usize].iter().any(|s|s.kind==ui_route::ShapeKind::RoundedFill),editing);
+        assert_eq!(cells.iter().any(|c|c&127!=0 && (c>>8)==0x09),editing);
+    }
+    critical_section::with(|cs|APP.borrow_ref_mut(cs).as_mut().unwrap().ui.opts.tracker.modify=false);
     // The remembered/expanded route is not the encoder focus on the page tabs.
     critical_section::with(|cs|ROUTE_VIEW.borrow_ref_mut(cs).screen=route_ui::Screen::Overview);
     for focus in [None,Some(0),Some(4)] {

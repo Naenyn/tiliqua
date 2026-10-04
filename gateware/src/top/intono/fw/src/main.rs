@@ -968,7 +968,6 @@ struct MenuEntrySnapshot {
 struct MenuSnapshot {
     page_label: &'static str,
     page_bold: bool,
-    page_editing: bool,
     // All controls are displayed on the page; retain stable option indices.
     entries: [Option<MenuEntrySnapshot>; 16],
 }
@@ -1079,7 +1078,6 @@ impl MenuSnapshot {
         Self {
             page_label,
             page_bold,
-            page_editing: page_bold && opts.modify(),
             entries,
         }
     }
@@ -1120,7 +1118,7 @@ fn publish_controls(text: &mut TextWriter<'_>, menu: &MenuSnapshot, cal: &calibr
         let mut tab=String::<12>::new();
         tab.push_str(label).ok();
         ui_text::field(column,3,width,&tab,ui_text::Style {
-            color: if active { 0xF9 } else { 0x69 }, bold: active,
+            color: if active && menu.page_bold {0x09} else if active { 0xB9 } else { 0x69 }, bold: active,
         },ui_text::Align::Center,|a,c|text.cell(a,c));
     }
     if matches!(page,Page::Settings|Page::Help|Page::Profiles|Page::Verify|Page::QuantNotes|Page::QuantSetups) {
@@ -1128,11 +1126,11 @@ fn publish_controls(text: &mut TextWriter<'_>, menu: &MenuSnapshot, cal: &calibr
     }
     for (column,label,active) in [(8,"OPTIONS",page==Page::Settings),(17,"HELP",page==Page::Help)] {
         ui_text::ux_field(column,20,label.len(),label,ui_text::Style {
-            color: if active {0xF9}else{0x69}, bold: active && menu.page_bold,
+            color: if active && menu.page_bold {0x09}else if active {0xB9}else{0x69}, bold: active && menu.page_bold,
         },ui_text::Align::Center,|a,c|text.cell(a,c));
     }
     if critical_section::with(|cs|ROUTE_VIEW.borrow_ref(cs).handles(page)) {
-        ui_text::field(25,2,10,if menu.page_editing {"PAGE EDIT"}else if menu.page_bold {"PAGE"}else{"NAV"},
+        ui_text::field(25,2,10,if menu.page_bold {"PAGE"}else if with_app(|a|a.ui.opts.tracker.modify) {"EDIT"}else{"NAV"},
             ui_text::DEFAULT,ui_text::Align::Left,|a,c|text.cell(a,c));
         return;
     }
@@ -1165,7 +1163,7 @@ fn publish_controls(text: &mut TextWriter<'_>, menu: &MenuSnapshot, cal: &calibr
     let scale_locked=with_app(|app|app.ui.opts.tracker.selected.is_some_and(quant_locked));
     let cal_locked=cal.active() && page==Page::Calibrate &&
         with_app(|app|matches!(app.ui.opts.tracker.selected,Some(0|1|3)));
-    ui_text::field(25,2,10, if cal_locked || scale_locked { "LOCKED" } else if menu.page_editing { "PAGE EDIT" }
+    ui_text::field(25,2,10, if cal_locked || scale_locked { "LOCKED" } else if menu.page_bold { "PAGE" }
         else if menu.entries.iter().flatten().any(|entry|entry.editing) { "EDIT" }
         else if menu.page_bold { "PAGE" } else { "NAV" },
         ui_text::DEFAULT,ui_text::Align::Left,|a,c|text.cell(a,c));
@@ -1203,7 +1201,7 @@ fn publish_controls(text: &mut TextWriter<'_>, menu: &MenuSnapshot, cal: &calibr
         };
         let locked=(cal.active() && page==Page::Calibrate && matches!(index,0|1|3)) || quant_locked(index)
             || assigned || (page==Page::Calibrate && index==5 && !cal.active() && !cal_free);
-        let style = ui_text::Style { color: if locked {0x69} else if entry.selected { 0xF9 } else { 0xB9 }, bold:entry.selected };
+        let style = ui_text::Style { color: if locked {0x69} else if entry.editing {0x09} else if entry.selected { 0xF9 } else { 0xB9 }, bold:entry.selected };
         let mut label_text = String::<32>::new();
         // Focus outline and EDIT footer already distinguish selection/editing.
         // Avoid an extra prefix that shifts or wraps compact selector labels.
@@ -1447,7 +1445,7 @@ fn publish_tuner(
             let mut label:String<4>=String::new();
             write!(label,"{}{}",if focused {">"}else{" "},channel).ok();
             ui_text::ux_field(8+channel*4,4,2,&label,ui_text::Style {
-                color:if available {0xC0|CHANNEL_HUES[channel]}else{0x69},bold:focused,
+                color:if with_app(|a|a.ui.opts.tracker.selected==Some(0) && a.ui.opts.tracker.modify) {0x09}else if available {0xC0|CHANNEL_HUES[channel]}else{0x69},bold:focused,
             },ui_text::Align::Left,|address,cell|text.cell(address,cell));
         }
     }
@@ -1476,15 +1474,15 @@ fn publish_note_grid(text: &mut TextWriter<'_>, mask: u16, row: usize,
 }
 
 #[inline(never)]
-fn publish_piano_notes(text: &mut TextWriter<'_>,mask:u16,octave:usize,single:bool,focused:Option<usize>) {
+fn publish_piano_notes(text: &mut TextWriter<'_>,_mask:u16,octave:usize,single:bool,focused:Option<usize>) {
     for note in 0..12 {
-        let selected=mask&(1<<note)!=0;
+        let black=matches!(note,1|3|6|8|10);
         let (column,mut row,width)=ui_canvas::octave_label(note,octave).unwrap();
         if single {row+=ui_canvas::SINGLE_KEYBOARD_Y_OFFSET as usize/32;}
         let mut label=String::<6>::new();
         label.push_str(NOTE_NAMES[note]).ok();
-        let style=ui_text::Style {color:if focused==Some(note) {0xF5} else if selected {0x19}else{0xD9},
-            bold:selected||focused==Some(note)};
+        let style=ui_text::Style {color:if black {0xD9}else{0x19},
+            bold:focused==Some(note)};
         ui_text::field(column,row,width,&label,style,ui_text::Align::Center,|a,c|text.cell(a,c));
     }
 }
@@ -1515,7 +1513,7 @@ fn publish_quantizer(display: &pac::TUNER_DISPLAY, text: &mut TextWriter<'_>, me
         let base=critical_section::with(|cs|*MIDI_BASE.borrow_ref(cs));
         write!(line,"MIDI BASE: C{}",base as i32/12-1).ok();
         write_centered(text,6,&line,28);
-        write_centered(text,7,"TURN: KEY / CLICK: TOGGLE",28);
+        write_centered(text,7,"+ = IN SCALE / - = SKIPPED",28);
         let view=with_app(|app|app.ui.opts.quant_notes.view.value as usize);
         for row in 0..(c.octaves as usize).min(2) {
             let octave=view+row;
@@ -1528,7 +1526,7 @@ fn publish_quantizer(display: &pac::TUNER_DISPLAY, text: &mut TextWriter<'_>, me
         let slot=with_app(|app|app.ui.opts.quant_notes.slot.value);
         let (status_slot,status) = critical_section::with(|cs|*NOTE_STATUS.borrow_ref(cs));
         let status=if slot == status_slot {status}else{"SELECTED SCALE SLOT"};
-        write_centered(text,19,status,26);
+        write_centered(text,19,if key_focused {"CLICK: TOGGLE OUTLINED KEY"}else{status},26);
     } else if page == Page::RouteMidi {
         let route=with_app(|app|app.midi_selected as usize);
         let offset=critical_section::with(|cs|MULTI_QUANT.borrow_ref(cs).shifts[route]);
@@ -1541,7 +1539,7 @@ fn publish_quantizer(display: &pac::TUNER_DISPLAY, text: &mut TextWriter<'_>, me
     } else if page == Page::Quantizer {
         let (masks,quartertones,count)=preview.get_span(c.scale,c.masks,c.octaves);
         write!(line,"{} NOTES / {} OCTAVE{}",count,c.octaves,if c.octaves>1 {"S"}else{""}).ok();
-        write_centered(text,7,&line,28);line.clear();
+        write_centered(text,7,if quartertones {&line}else{"+ = IN SCALE / - = SKIPPED"},28);line.clear();
         let (key_focused,focused_octave,focused_note,view)=with_app(|app|(
             app.ui.opts.tracker.selected==Some(ui_keyboard::KEYBOARD),
             app.ui.opts.quant_notes.octave.value as usize,app.ui.opts.quant_notes.note.value as usize,
@@ -1563,7 +1561,7 @@ fn publish_quantizer(display: &pac::TUNER_DISPLAY, text: &mut TextWriter<'_>, me
         }
         let slot=with_app(|app|app.ui.opts.quantizer.slot.value);
         let (status_slot,status)=critical_section::with(|cs|*NOTE_STATUS.borrow_ref(cs));
-        write_centered(text,19,if slot==status_slot {status}else{"SELECT SLOT / LOAD OR SAVE"},28);
+        write_centered(text,19,if key_focused {"CLICK: TOGGLE OUTLINED KEY"}else if slot==status_slot {status}else{"SELECT SLOT / LOAD OR SAVE"},28);
     } else {
         let (status, input_uv, output_uv, active, pitch, running, bound, name) = critical_section::with(|cs| {
             let q=MULTI_QUANT.borrow_ref(cs); let lane=&q.lanes[output as usize];
@@ -3612,7 +3610,8 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     for (shapes,erase) in [(&old,true),(&drawing,false)] {
                         for shape in shapes.shapes[..shapes.len as usize].iter().copied() {
                             let color=if erase {0}else{shape.color};
-                            if shape.solid {for y in shape.y..shape.y+shape.h {for x in shape.x..shape.x+shape.w {canvas.put_panel_pixel(x as i32,y as i32,color);}}}
+                            if shape.kind==ui_route::ShapeKind::RoundedFill {ui_canvas::rounded_rectangle(shape.rect(),6,color,color,|p,c|canvas.put_panel_pixel(p.x,p.y,c));}
+                            else if shape.kind==ui_route::ShapeKind::Rectangle {for y in shape.y..shape.y+shape.h {for x in shape.x..shape.x+shape.w {canvas.put_panel_pixel(x as i32,y as i32,color);}}}
                             else {ui_canvas::rounded_outline(shape.rect(),color,|p,c|canvas.put_panel_pixel(p.x,p.y,c));}
                         }
                     }
@@ -3639,6 +3638,14 @@ fn run(resources: &mut RuntimeResources) -> ! {
                         w.ui_ready().bit(true);
                         unsafe {w.keyboard_mask().bits((keyboard_mask&0xfff) as u16);
                             w.ui_surface().bits(if route_view_active {match page {Page::QuantSetups=>11,Page::RouteMidi=>12,Page::Settings=>13,_=>7}}else if page==Page::Tuner && with_app(|app|app.ui.opts.tuner.display.value)==DisplayMode::Linear {14}else{surface(page) as u8});
+                            w.ui_mode().bits(if menu.page_bold {0}else if with_app(|a|a.ui.opts.tracker.modify) {2}else{1});
+                            w.keyboard_focus().bits(with_app(|a| {
+                                let o=a.ui.opts.quant_notes.octave.value as usize;
+                                let view=if page==Page::QuantNotes {a.ui.opts.quant_notes.view.value}else{a.ui.opts.quantizer.view_octave.value} as usize;
+                                if piano_view && a.ui.opts.tracker.selected==Some(ui_keyboard::KEYBOARD) && o>=view && o<view+2 {
+                                    ((o-view) as u8)*16+a.ui.opts.quant_notes.note.value as u8
+                                }else{31}
+                            }));
                             w.ui_focus().bits(menu.entries.iter().position(|e|e.as_ref().is_some_and(|e|e.selected)).unwrap_or(31) as u8);
                         } w});
                 tuner_display.keyboard_b().write(|w| unsafe {w.mask().bits((keyboard_mask>>12) as u16)});

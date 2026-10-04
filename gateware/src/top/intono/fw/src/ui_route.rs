@@ -55,9 +55,12 @@ impl History {
     }
 }
 #[derive(Clone,Copy,PartialEq,Eq)]
-pub struct Shape { pub x:u16,pub y:u16,pub w:u16,pub h:u16,pub color:u8,pub solid:bool }
+#[repr(u8)]
+pub enum ShapeKind {Outline,Rectangle,RoundedFill}
+#[derive(Clone,Copy,PartialEq,Eq)]
+pub struct Shape { pub x:u16,pub y:u16,pub w:u16,pub h:u16,pub color:u8,pub kind:ShapeKind }
 impl Shape {
-    pub const EMPTY:Self=Self{x:0,y:0,w:0,h:0,color:0,solid:false};
+    pub const EMPTY:Self=Self{x:0,y:0,w:0,h:0,color:0,kind:ShapeKind::Outline};
     pub fn rect(self)->crate::ui_canvas::Rect {crate::ui_canvas::Rect{x:self.x as i32,y:self.y as i32,width:self.w,height:self.h}}
 }
 pub const MAX_SHAPES:usize=48;
@@ -68,12 +71,16 @@ pub const CLEAR_WORDS_PER_TICK:usize=32768;
 /// Twelve-pixel gutters also align with the native text cell pitch.
 pub const FLOW_NODES:[(u16,u16);4]=[(132,144),(288,84),(384,120),(516,72)];
 #[derive(Clone,Copy)]
-pub struct Drawing {pub shapes:[Shape;MAX_SHAPES],pub len:u8}
+pub struct Drawing {pub shapes:[Shape;MAX_SHAPES],pub len:u8,pub editing:bool}
 impl Drawing {
-    pub const fn new()->Self{Self{shapes:[Shape::EMPTY;MAX_SHAPES],len:0}}
+    pub const fn new()->Self{Self{shapes:[Shape::EMPTY;MAX_SHAPES],len:0,editing:false}}
     pub fn add(&mut self,x:u16,y:u16,w:u16,h:u16,color:u8,solid:bool){
         if self.len as usize>=MAX_SHAPES || w==0 || h==0 || x as u32+w as u32>720 || y as u32+h as u32>720 {return;}
-        self.shapes[self.len as usize]=Shape{x,y,w,h,color,solid};self.len+=1;
+        self.shapes[self.len as usize]=Shape{x,y,w,h,color,kind:if solid {ShapeKind::Rectangle}else{ShapeKind::Outline}};self.len+=1;
+    }
+    pub fn rounded_fill(&mut self,x:u16,y:u16,w:u16,h:u16){
+        let old=self.len;self.add(x,y,w,h,0xF9,false);
+        if self.len>old {self.shapes[old as usize].kind=ShapeKind::RoundedFill;}
     }
     pub fn outline(&mut self,x:u16,y:u16,w:u16,h:u16,selected:bool){self.add(x,y,w,h,if selected {0xD9}else{0x49},false);}
 }
