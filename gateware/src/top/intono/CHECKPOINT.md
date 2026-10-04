@@ -1701,3 +1701,21 @@ FF 12214/24288, BRAM 47/56, DSP 14/28.
 Archive: `build/intono-ui-key-padding-r5/intono-ui-key-padding-d6b846f1-r5.tar.gz`.
 SHA256: `436f7df74aca492faa593fb948e2aac51e52330ebbc8c8f94cbe99feafc89150`.
 Flashed Tiliqua #1 slot 1, verified `Refresh: DONE`. Saved data preserved.
+
+## 2026-10-04 — Scale Tools Back and horizontal control audit
+
+Scale Tools adds Back after Save/Load, returning to Scales. Appended action
+index preserves existing option indices. Scales Output/Preset, Octaves/Tools,
+and Slot/Save/Load rows now share the keyboard centerline and outer bounds.
+Tools Save/Load/Back is centered as a group. Calibration selector/policy/action
+rows and tuner input outline also centered. Profiles, verification, configs,
+help, and route frames already centered; side pager and settings Reset retain
+intentional alignment with their associated controls.
+
+Source `f473cb1a`, seed 21. 44 navigation, 56 route/retained, 39 display/shape,
+and four standalone control geometry checks passed. Firmware 311336/327680 bytes.
+Final clocks all PASS: serializer 439.75 MHz, pixel 85.79 MHz, audio 69.92 MHz,
+CPU 68.01 MHz. COMB 21715/24288, FF 12213/24288, BRAM 47/56, DSP 14/28.
+Archive: `build/intono-ui-centered-r5/intono-ui-centered-f473cb1a-r5.tar.gz`.
+SHA256: `d51376a5e6bd0f36f40a3146ec385a7eaf6f10f7cf72299de4228f5ee5cfb2d8`.
+Flashed Tiliqua #1 slot 1, verified `Refresh: DONE`. Saved data preserved.
