@@ -1166,6 +1166,7 @@ fn publish_controls(text: &mut TextWriter<'_>, menu: &MenuSnapshot, cal: &calibr
         else if menu.page_bold { "PAGE" } else { "NAV" }, 10);
     for (index, entry) in menu.entries.iter().enumerate() {
         let Some(entry) = entry else { continue };
+        if page==Page::Tuner && index==0 && with_app(|app|app.ui.opts.tuner.display.value)==DisplayMode::Linear {continue;}
         let Some(field) = ui_controls::field(surface(page),index) else { continue };
         let label = match (page,index) {
             (Page::Calibrate,0) => "IN",
@@ -3647,7 +3648,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                         w.keyboard_second().bit(with_app(|app|app.quant_channels[app.quant_selected as usize].octaves>1));
                         w.ui_ready().bit(true);
                         unsafe {w.keyboard_mask().bits((keyboard_mask&0xfff) as u16);
-                            w.ui_surface().bits(if route_view_active {match page {Page::QuantSetups=>11,Page::RouteMidi=>12,Page::Settings=>13,_=>7}}else{surface(page) as u8});
+                            w.ui_surface().bits(if route_view_active {match page {Page::QuantSetups=>11,Page::RouteMidi=>12,Page::Settings=>13,_=>7}}else if page==Page::Tuner && with_app(|app|app.ui.opts.tuner.display.value)==DisplayMode::Linear {14}else{surface(page) as u8});
                             w.ui_focus().bits(menu.entries.iter().position(|e|e.as_ref().is_some_and(|e|e.selected)).unwrap_or(31) as u8);
                         } w});
                 tuner_display.keyboard_b().write(|w| unsafe {w.mask().bits((keyboard_mask>>12) as u16)});

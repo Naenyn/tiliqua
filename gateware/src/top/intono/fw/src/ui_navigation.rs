@@ -35,10 +35,12 @@ pub fn visible_ticks(opts: &mut Opts, ticks: i8, claims: &crate::ownership::Rese
             opts.tracker.selected=selected;
             opts.quant_notes.octave.value=key/12;
             opts.quant_notes.note.value=crate::options::ScaleRoot::iter().nth((key%12) as usize).unwrap();
-        } else if opts.tracker.page.value==Page::Play && !opts.tracker.modify {
+        } else if matches!(opts.tracker.page.value,Page::Play|Page::Calibrate|Page::Tuner) && !opts.tracker.modify {
             // Follow the on-screen order without changing persisted option indices.
             let order: &[usize] = match opts.tracker.page.value {
-                Page::Quantizer => &[0,1,2,4,5,7],
+                Page::Calibrate => &[0,1,4,3,5,6,7,8],
+                Page::Tuner if opts.tuner.display.value==crate::options::DisplayMode::Linear => &[1],
+                Page::Tuner => &[0,1],
                 _ => &[0,1,13,14,9,10,3,2,11,12,4,5,15,6,7,8],
             };
             let index=opts.tracker.selected.and_then(|s|order.iter().position(|n|*n==s));

@@ -90,7 +90,7 @@ fn encoder_moves_between_visible_controls_and_skips_measured_reference() {
     opts.toggle_modify(); visible_ticks(&mut opts,1);
     assert!(opts.tracker.page.value==Page::Calibrate);
     opts.toggle_modify(); visible_ticks(&mut opts,3);
-    assert_eq!(opts.tracker.selected,Some(3));
+    assert_eq!(opts.tracker.selected,Some(4));
     visible_ticks(&mut opts,-1);
     assert_eq!(opts.tracker.selected,Some(1));
     assert_eq!(opts.calibrate.zero_note.value,60);
@@ -346,4 +346,25 @@ fn preferences_use_generic_navigation_and_one_shot_actions() {
     }
     assert!(!v.click(&mut o,&claims));o.toggle_modify();assert!(o.settings.wipe_opts.poll());
     o.tracker.selected=Some(1);o.toggle_modify();assert!(o.settings.save_opts.poll());
+}
+
+#[test]
+fn calibration_navigation_follows_visual_order_in_both_directions() {
+    let mut o=Opts::default();o.tracker.page.value=Page::Calibrate;
+    for index in [0,1,4,3,5,6,7,8] {
+        visible_ticks(&mut o,1);assert_eq!(o.tracker.selected,Some(index));
+    }
+    for index in [7,6,5,3,4,1,0] {
+        visible_ticks(&mut o,-1);assert_eq!(o.tracker.selected,Some(index));
+    }
+    visible_ticks(&mut o,-1);assert_eq!(o.tracker.selected,None);
+}
+#[test]
+fn linear_tuner_skips_focus_and_restores_it_in_arc() {
+    let mut o=Opts::default();o.tuner.display.value=DisplayMode::Linear;
+    visible_ticks(&mut o,1);assert_eq!(o.tracker.selected,Some(1));
+    visible_ticks(&mut o,-1);assert_eq!(o.tracker.selected,None);
+    o.tuner.display.value=DisplayMode::Arc;
+    visible_ticks(&mut o,1);assert_eq!(o.tracker.selected,Some(0));
+    visible_ticks(&mut o,1);assert_eq!(o.tracker.selected,Some(1));
 }

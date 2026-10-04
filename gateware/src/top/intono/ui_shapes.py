@@ -7,6 +7,7 @@ from amaranth.lib.wiring import In, Out
 
 # Surface IDs 0..10 match firmware ui_controls::Surface. IDs 11/12/13
 # identify retained Configs/MIDI/Preferences views without legacy field borders.
+# ID 14 is the linear tuner, which omits the arc-only FOCUS control.
 # Descriptors are (option, col, row, width).
 ACTIONS = {
     1: [(5,3,16,7),(6,11,16,8),(7,20,16,8),(8,8,18,14)],
@@ -44,7 +45,7 @@ def descriptors(surface, row):
         return [(120+column(c)*12-4,(column(c+w)-column(c))*12+8,index)
                 for index,c,w in ((0,8,7),(1,17,4))]
     return [(120+column(c)*12-4,(column(c+w)-column(c))*12+8,index)
-            for index,c,r,w in (*ACTIONS.get(surface,()),*FIELDS.get(surface,())) if r==row]
+            for index,c,r,w in (*ACTIONS.get(surface,()),*(FIELDS[0][1:] if surface==14 else FIELDS.get(surface,()))) if r==row]
 
 class RoundedBorders(wiring.Component):
     def __init__(self):
@@ -68,10 +69,10 @@ class RoundedBorders(wiring.Component):
         port=memory.read_port(domain="dvi");m.submodules.geometry=memory
         row=(self.y+6)[5:10]
         # Retained views reuse the common-only Routes geometry ROM entry.
-        geometry_surface=Mux(self.surface>=11,7,self.surface)
+        geometry_surface=Mux(self.surface==14,0,Mux(self.surface>=11,7,self.surface))
         m.d.comb += [port.addr.eq(Cat(row,geometry_surface)),port.en.eq(self.active)]
         y1=Signal(signed(12));x1=Signal(10);ly1=Signal(5);row1=Signal(5);active1=Signal();surface1=Signal(4);focus1=Signal(5)
-        m.d.dvi += [y1.eq(self.y),x1.eq(self.x),ly1.eq((self.y+6)[:5]),row1.eq(row),active1.eq(self.active & (self.surface<14)),
+        m.d.dvi += [y1.eq(self.y),x1.eq(self.x),ly1.eq((self.y+6)[:5]),row1.eq(row),active1.eq(self.active & (self.surface<15)),
                     surface1.eq(self.surface),focus1.eq(self.focus)]
         # Compute curve insets once per scanline before the per-box tests.
         outer=Array(Const(6-isqrt(36-(6-min(y,27-y))**2),4) if min(y,27-y)<6 else Const(0,4)
@@ -87,10 +88,10 @@ class RoundedBorders(wiring.Component):
             # Negative relative coordinates wrap above 255, outside every box.
             rx2=Signal(10)
             width2=Signal(8);ly2=Signal(5);active2=Signal();selected2=Signal();tab2=Signal()
-            category=Mux(surface1==0,0,Mux(surface1<=3,1,Mux(surface1<=5,2,3)))
-            selected=Mux(row1==3,((surface1<8)|((surface1>=10)&(surface1<=12)))&(index==category),
+            category=Mux((surface1==0)|(surface1==14),0,Mux(surface1<=3,1,Mux(surface1<=5,2,3)))
+            selected=Mux(row1==3,((surface1<8)|((surface1>=10)&(surface1<=12))|(surface1==14))&(index==category),
                          Mux(row1==20,((surface1==8+index)|((surface1==13)&(index==0))),index==focus1))
-            m.d.dvi += [rx2.eq(x1-left),width2.eq(width),ly2.eq(ly1),active2.eq(active1 & (width!=0)),
+            m.d.dvi += [rx2.eq(x1-left),width2.eq(width),ly2.eq(ly1),active2.eq(active1 & (width!=0) & ~((surface1==14)&(row1==18)&(index==0))),
                         selected2.eq(selected),tab2.eq((row1==3)|(row1==20))]
             inside=(ly2<28)&(rx2>=off2)&(rx2<width2-off2)
             inset=(ly2>=2)&(ly2<26)&(rx2>=inner_off2)&(rx2<width2-inner_off2)
@@ -99,7 +100,7 @@ class RoundedBorders(wiring.Component):
                         color3.eq(Mux(selected2,Mux(tab2,0xB9,0xF9),0x49))]
             hits.append(hit3);colors.append(color3)
         # Six boxes follow the visible navigation order, including subpages.
-        page=Mux(self.surface==0,0,Mux(self.surface<=3,1,Mux(self.surface<=5,2,
+        page=Mux((self.surface==0)|(self.surface==14),0,Mux(self.surface<=3,1,Mux(self.surface<=5,2,
              Mux((self.surface==8)|(self.surface==13),4,Mux(self.surface==9,5,3)))))
         pager_words=[0]*(8*256)
         for current in range(6):
