@@ -1609,3 +1609,14 @@ qualified bitstream when flashing tomorrow; use this exact verified archive.
 User shut off rack and requested build only: no flash or device access attempted.
 Last flashed image remains `intono-ui-scale-order-d9758472-r5.tar.gz`.
 Hardware HDMI and visual confirmation are pending tomorrow's test.
+
+
+## 2026-10-04 — prepared scale-layout image flashed
+
+At the user's rack-ready request, flashed the exact previously qualified
+`intono-ui-scale-layout-52717ad2-r5.tar.gz` archive to Tiliqua #1
+(E46534A193222B21), slot 1. SHA256 verified against the build-only checkpoint;
+all four timing checks retained. `Refresh: DONE` verified, saved data preserved.
+Hardware visual confirmation remains pending. Explained current display targets:
+1280x720p60 unrotated HDMI and separate 720x720p60r2 rotated round-panel builds;
+there is currently no universal runtime-switchable display image.
