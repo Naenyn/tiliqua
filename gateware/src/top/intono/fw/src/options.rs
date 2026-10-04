@@ -209,6 +209,8 @@ pub struct QuantNotesOpts {
     pub octaves: IntOption<PatternSlotParams>,
     #[option(0)]
     pub view: IntOption<OctaveParams>,
+    #[option(false)]
+    pub back: ButtonOption<OneShotButtonParams>,
 }
 
 #[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]

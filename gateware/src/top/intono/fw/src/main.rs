@@ -2168,6 +2168,8 @@ fn poll_ui_frame(cal: &calibration_live::Live, scan_controls: Option<RuntimeCont
             Some(Page::Profiles)
         } else if app.ui.opts.quantizer.notes.poll() {
             Some(Page::QuantNotes)
+        } else if app.ui.opts.quant_notes.back.poll() {
+            Some(Page::Quantizer)
         } else if app.ui.opts.play.setups.poll() || app.ui.opts.quantizer.setups.poll() {
             Some(Page::QuantSetups)
         } else if app.ui.opts.quant_setups.back.poll() {

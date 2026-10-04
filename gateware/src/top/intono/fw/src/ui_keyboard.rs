@@ -1,7 +1,7 @@
 //! Keyboard focus shares the existing toggle action index, preserving option keys.
 //! Walk only the visible keys before moving to the surrounding controls.
 pub const KEYBOARD: usize = 2;
-const ORDER: [usize; 8] = [8, KEYBOARD, 0, 3, 4, 6, 7, 5];
+const ORDER: [usize; 9] = [8, KEYBOARD, 0, 3, 4, 6, 7, 11, 5];
 pub fn next(selected: Option<usize>, key: u8, forward: bool) -> (Option<usize>, u8) {
     next_in_order(&ORDER,selected,key,forward)
 }
@@ -27,7 +27,7 @@ pub fn window(view:u8,span:u8,_key:Option<u8>)->u8 {
     view.min(span.saturating_sub(2))
 }
 pub fn next_span(selected:Option<usize>,key:u8,forward:bool,span:u8,view:u8,tools:bool)->(Option<usize>,u8) {
-    let order:&[usize]=if tools {&[8,9,KEYBOARD,10,0,5,3,4,6,7]}else{&[0,1,KEYBOARD,8,9,5,10,11,12]};
+    let order:&[usize]=if tools {&[8,9,KEYBOARD,10,0,5,3,4,6,7,11]}else{&[0,1,KEYBOARD,8,9,5,10,11,12]};
     let first=window(view,span,None)*12;
     let last=(first+24).min(span*12)-1;
     let key=key.clamp(first,last);
@@ -76,8 +76,8 @@ mod tests {
     #[test]
     fn controls_remain_reachable_and_endpoints_do_not_wrap() {
         let mut state=(Some(KEYBOARD),23);
-        for control in [0,3,4,6,7,5,5] {state=next(state.0,state.1,true);assert_eq!(state.0,Some(control));}
-        for control in [7,6,4,3,0] {state=next(state.0,state.1,false);assert_eq!(state.0,Some(control));}
+        for control in [0,3,4,6,7,11,5,5] {state=next(state.0,state.1,true);assert_eq!(state.0,Some(control));}
+        for control in [11,7,6,4,3,0] {state=next(state.0,state.1,false);assert_eq!(state.0,Some(control));}
         assert_eq!(next(None,0,false),(None,0));
     }
 }

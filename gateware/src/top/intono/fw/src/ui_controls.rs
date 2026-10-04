@@ -13,31 +13,31 @@ pub fn center_width(row: u8, requested: usize) -> usize {
 pub fn field(surface: Surface, index: usize) -> Option<Field> {
     let (column, row, width, action) = match surface {
         Surface::Calibration => match index {
-            0 => (4, 5, 6, false), 1 => (11, 5, 6, false),
+            0 => (3, 5, 6, false), 1 => (10, 5, 6, false),
             2 => return None, // measured reference, not an editable scan target
-            3 => (9, 6, 14, false), 4 => (18, 5, 12, false),
-            5 => (3, 16, 7, true), 6 => (11, 16, 8, true),
-            7 => (20, 16, 8, true), 8 => (8, 18, 14, true), _ => return None,
+            3 => (8, 6, 14, false), 4 => (17, 5, 10, false),
+            5 => (3, 16, 7, true), 6 => (12, 16, 7, true),
+            7 => (20, 16, 7, true), 8 => (8, 18, 14, true), _ => return None,
         },
         Surface::Tuner => match index {
-            0 => (8, 4, 15, false), 1 => (10, 18, 10, false), _ => return None,
+            0 => (8, 4, 14, false), 1 => (10, 18, 10, false), _ => return None,
         },
         Surface::Scales => match index {
-            0 => (4,5,10,false), 1 => (16,5,14,false),
+            0 => (3,5,9,false), 1 => (14,5,13,false),
             2 => return None, // keyboard focus; no separate root editor
             3 => return None, // transpose belongs to the route
             4 => return None, // mapping is a route property
-            5 => (16,16,12,true),
-            9 => (4,16,10,false), 8 => (29,10,3,false),
-            10 => (4,18,10,false), 11 => (16,18,6,true),
-            12 => (24,18,6,true), _ => return None,
+            5 => (15,16,12,true),
+            9 => (3,16,10,false), 8 => (29,10,3,false),
+            10 => (3,18,7,false), 11 => (12,18,7,true),
+            12 => (20,18,7,true), _ => return None,
         },
         Surface::Notes => match index {
             8 => (4,5,10,false), 9 => (16,5,10,false), 10 => (29,10,3,false), // keys themselves own the hidden toggle action
             1 | 2 => return None,
             0 => (4,16,10,false), // octave target for Clear/Fill
             3 => (4,17,10,true), 4 => (16,17,10,true),
-            6 => (4,18,7,true), 7 => (12,18,7,true),
+            6 => (3,18,7,true), 7 => (12,18,7,true), 11 => (20,18,7,true),
             5 => (16,16,10,true), _ => return None,
         },
         Surface::Routes => match index {
@@ -95,6 +95,25 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+    #[test]
+    fn balanced_control_rows_share_the_keyboard_centerline() {
+        for (surface,indices) in [
+            (Surface::Scales,&[0,1][..]),(Surface::Scales,&[9,5][..]),
+            (Surface::Scales,&[10,11,12][..]),(Surface::Notes,&[6,7,11][..]),
+            (Surface::Calibration,&[0,1,4][..]),(Surface::Calibration,&[3][..]),
+            (Surface::Calibration,&[5,6,7][..]),(Surface::Tuner,&[0][..]),
+        ] {
+            let mut left=i32::MAX;let mut right=0;
+            for index in indices {
+                let f=field(surface,*index).unwrap();
+                let column=|c:u8| (c as i32*4+1)/3;
+                let x=120+column(f.column)*12-4;
+                let width=(column(f.column+f.width)-column(f.column))*12+8;
+                left=left.min(x);right=right.max(x+width);
+            }
+            assert_eq!(left+right,720,"{surface:?}");
         }
     }
     #[test]
