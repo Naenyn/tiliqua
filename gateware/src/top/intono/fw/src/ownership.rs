@@ -64,6 +64,10 @@ impl Reservations {
         (1..=4).map(|n| if forward { (current + n) % 4 } else { (current + 4 - n) % 4 })
             .find(|jack| free & (1 << jack) != 0)
     }
+    /// Encoder browsing stops at either end, skipping unavailable jacks.
+    pub fn next_free_bounded(&self, owner: Owner, output: bool, current: u8, forward: bool) -> Option<u8> {
+        next_available_bounded(self.free_mask(owner, output), current, forward)
+    }
     #[inline(never)]
     pub fn normalize(&self, owner: Owner, output: bool, current: u8) -> Option<u8> {
         if current < 4 && self.free_mask(owner, output) & (1 << current) != 0 { Some(current) }
@@ -100,9 +104,28 @@ impl Reservations {
             .find(|input| self.tuner_available(*input))
     }
 }
+/// Shared non-wrapping traversal for tuner, calibration, and route selectors.
+pub fn next_available_bounded(free: u8, current: u8, forward: bool) -> Option<u8> {
+    (1..=3).filter_map(|distance| if forward {
+        current.checked_add(distance).filter(|next| *next < 4)
+    } else { current.checked_sub(distance) })
+        .find(|next| free & (1 << next) != 0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn encoder_jack_search_skips_assignments_without_crossing_an_endpoint() {
+        for free in 0..16 {
+            for current in 0..4 {
+                let upper=(current+1..4).find(|jack| free & (1<<jack)!=0);
+                let lower=(0..current).rev().find(|jack| free & (1<<jack)!=0);
+                assert_eq!(next_available_bounded(free,current,true),upper);
+                assert_eq!(next_available_bounded(free,current,false),lower);
+            }
+        }
+    }
     #[test]
     fn one_input_fanout_is_atomic_and_excludes_other_routes() {
         let mut r=Reservations::new();

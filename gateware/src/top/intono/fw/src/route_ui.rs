@@ -172,15 +172,7 @@ impl View {
                         } else {
                             &mut o.play.input.value
                         };
-                        if let Some(next) = (1..=4)
-                            .map(|n| {
-                                if forward {
-                                    (*value + n) % 4
-                                } else {
-                                    (*value + 4 - n) % 4
-                                }
-                            })
-                            .find(|n| free & (1 << n) != 0)
+                        if let Some(next) = crate::ownership::next_available_bounded(free,*value,forward)
                         {
                             *value = next;
                         }

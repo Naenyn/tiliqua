@@ -96,15 +96,16 @@ fn encoder_moves_between_visible_controls_and_skips_measured_reference() {
     assert_eq!(opts.calibrate.zero_note.value,60);
 }
 #[test]
-fn page_selection_wraps_without_starting_outputs_or_calibration() {
+fn page_selection_stops_at_ends_without_starting_outputs_or_calibration() {
     let mut opts=Opts::default(); opts.toggle_modify();
-    for page in [Page::Calibrate,Page::Quantizer,Page::Play,Page::Settings,Page::Help,Page::Tuner] {
+    for page in [Page::Calibrate,Page::Quantizer,Page::Play,Page::Settings,Page::Help,Page::Help] {
         visible_ticks(&mut opts,1);
         assert!(opts.tracker.page.value==page);
         assert!(!opts.calibrate.run.poll() && !opts.play.run.poll());
     }
-    visible_ticks(&mut opts,-1);
-    assert!(opts.tracker.page.value==Page::Help);
+    visible_ticks(&mut opts,127);assert!(opts.tracker.page.value==Page::Help);
+    visible_ticks(&mut opts,-127);assert!(opts.tracker.page.value==Page::Tuner);
+    assert!(!opts.calibrate.run.poll() && !opts.play.run.poll());
 }
 #[test]
 fn action_click_is_one_shot_and_does_not_enter_value_editing() {
@@ -247,12 +248,12 @@ fn stopped_routes_reserve_jacks_in_encoder_selectors() {
     let mut o=Opts::default();o.tracker.page.value=Page::Play;o.play.output.value=0;
     let mut v=route_ui::View::new();v.layout=route_group::Layout{inputs:[0,1,2,3],outputs:[1,2,4,8]};let r=ownership::Reservations::new();
     v.screen=route_ui::Screen::Editor(route_ui::Stage::Input);
-    o.tracker.selected=Some(1);o.tracker.modify=true;
+    o.play.input.value=0;o.tracker.selected=Some(1);o.tracker.modify=true;
     v.ticks(&mut o,1,&r);assert_eq!(o.play.input.value,0);
     v.layout.outputs[1]=0;v.ticks(&mut o,1,&r);assert_eq!(o.play.input.value,1);
     v.screen=route_ui::Screen::Editor(route_ui::Stage::Add);o.tracker.selected=Some(13);o.play.output_edit.value=0;
     v.ticks(&mut o,1,&r);assert_eq!(o.play.output_edit.value,1);
-    v.ticks(&mut o,1,&r);assert_eq!(o.play.output_edit.value,0);
+    v.ticks(&mut o,1,&r);assert_eq!(o.play.output_edit.value,1);
 }
 
 #[test]
@@ -373,13 +374,14 @@ fn linear_tuner_skips_focus_and_restores_it_in_arc() {
 }
 
 #[test]
-fn tuner_input_list_wraps_and_can_observe_assigned_inputs() {
+fn tuner_input_list_stops_at_ends_and_can_observe_assigned_inputs() {
     let mut o=Opts::default();o.tracker.selected=Some(0);o.toggle_modify();
     let mut claims=ownership::Reservations::new();
     assert!(claims.claim(ownership::Owner::Calibration,2,1));
     ui_navigation::visible_ticks(&mut o,1,&claims);assert_eq!(o.tuner.input.value,1);
     ui_navigation::visible_ticks(&mut o,-1,&claims);assert_eq!(o.tuner.input.value,0);
-    ui_navigation::visible_ticks(&mut o,-1,&claims);assert_eq!(o.tuner.input.value,3);
+    ui_navigation::visible_ticks(&mut o,-1,&claims);assert_eq!(o.tuner.input.value,0);
+    ui_navigation::visible_ticks(&mut o,127,&claims);assert_eq!(o.tuner.input.value,3);
 }
 
 #[test]

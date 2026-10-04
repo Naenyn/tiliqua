@@ -20,26 +20,26 @@ pub fn visible_ticks(opts: &mut Opts, ticks: i8, claims: &crate::ownership::Rese
             };
             *preset = preset.stepped(step > 0);
         } else if opts.tracker.page.value==Page::Tuner && opts.tracker.selected==Some(0) && opts.tracker.modify {
-            for distance in 1..=4 {
-                let next=(opts.tuner.input.value as i32+step*distance).rem_euclid(4) as u8;
-                if claims.tuner_available(next) {opts.tuner.input.value=next;break;}
+            let free=(0..4).fold(0,|mask,input| mask | if claims.tuner_available(input) {1<<input}else{0});
+            if let Some(next)=crate::ownership::next_available_bounded(free,opts.tuner.input.value,step>0) {
+                opts.tuner.input.value=next;
             }
         } else if calibration_jack && opts.tracker.modify {
             let output = opts.tracker.selected == Some(1);
             if !claims.held(crate::ownership::Owner::Calibration) {
                 let value = if output { &mut opts.calibrate.output.value } else { &mut opts.calibrate.input.value };
-                if let Some(next) = claims.next_free(crate::ownership::Owner::Calibration,output,*value,step>0) { *value=next; }
+                if let Some(next) = claims.next_free_bounded(crate::ownership::Owner::Calibration,output,*value,step>0) { *value=next; }
             }
         } else if opts.tracker.page.value == Page::Play && matches!(opts.tracker.selected,Some(1|13)) && opts.tracker.modify {
             let output=opts.tracker.selected==Some(13);
             let owner=crate::ownership::Owner::Quant(opts.play.output.value);
             if output || !claims.held(owner) {
                 let value=if output {&mut opts.play.output_edit.value}else{&mut opts.play.input.value};
-                if let Some(next)=claims.next_free(owner,output,*value,step>0) {*value=next;}
+                if let Some(next)=claims.next_free_bounded(owner,output,*value,step>0) {*value=next;}
             }
         } else if opts.tracker.selected.is_none() && opts.tracker.modify {
             if let Some(index) = PAGES.iter().position(|page| *page == opts.tracker.page.value) {
-                opts.tracker.page.value = PAGES[(index as i32 + step).rem_euclid(PAGES.len() as i32) as usize];
+                opts.tracker.page.value = PAGES[(index as i32 + step).clamp(0,PAGES.len() as i32-1) as usize];
             }
         } else if matches!(opts.tracker.page.value,Page::QuantNotes|Page::Quantizer) && !opts.tracker.modify {
             use strum::IntoEnumIterator;
