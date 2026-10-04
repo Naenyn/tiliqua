@@ -95,7 +95,7 @@ def test_page_indicators_and_separators_follow_parent_page():
                 ctx.set(dut.y,62)
                 await ctx.tick('dvi').repeat(4)
                 assert ctx.get(dut.hit)==1
-            for y,left,right in [(124,144,576),(666,228,492)]:
+            for y,left,right in [(124,144,576),(631,228,492)]:
                 for x in [left-1,left,(left+right)//2,right-1,right]:
                     ctx.set(dut.x,x);ctx.set(dut.y,y)
                     await ctx.tick('dvi').repeat(4)

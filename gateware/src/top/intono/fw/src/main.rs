@@ -1351,7 +1351,7 @@ fn publish_tuner(
     for channel in 0..4usize {
         if !reservations.tuner_available(channel as u8) {
             if linear {
-                for row in [[6, 9, 12, 15][channel], [8, 11, 14, 17][channel]] {
+                for row in [ui_canvas::LINEAR_LABEL_ROWS[channel], ui_canvas::LINEAR_LEVEL_ROWS[channel]] {
                     ui_text::ux_field(
                         1,
                         row,
@@ -1382,7 +1382,7 @@ fn publish_tuner(
             bold: input as usize == channel,
         };
         if linear {
-            let row = [6, 9, 12, 15][channel];
+            let row = ui_canvas::LINEAR_LABEL_ROWS[channel];
             let mut label: String<48> = String::new();
             if value.valid {
                 let midi = pitch_math::semitones(value.frequency_hz, reference_hz);
@@ -1423,7 +1423,7 @@ fn publish_tuner(
             write!(volts, "{:5.3} Vrms  {:5.3} Vpp", value.vrms, value.vpp).ok();
             ui_text::ux_field(
                 1,
-                [8, 11, 14, 17][channel],
+                ui_canvas::LINEAR_LEVEL_ROWS[channel],
                 28,
                 &volts,
                 style,

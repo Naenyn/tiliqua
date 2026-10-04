@@ -119,7 +119,7 @@ class RoundedBorders(wiring.Component):
         current=pager_port.data[2]&(y1>=60)&(y1<81)
         other=pager_port.data[0]&(y1>=62)&(y1<78)&(pager_port.data[1]|(y1<64)|(y1>=76))
         pager_hit=(x1>=256)&(x1<512)&(current|other)
-        separator=((y1==124)&(x1>=144)&(x1<576))|((y1==666)&(x1>=228)&(x1<492))
+        separator=((y1==124)&(x1>=144)&(x1<576))|((y1==631)&(x1>=228)&(x1<492))
         m.d.dvi += [chrome_hit2.eq(active1&(pager_hit|separator)),
                     chrome_color2.eq(Mux(pager_hit&current,0xB9,0x49))]
         chrome_hit3=Signal();chrome_color3=Signal(8)

@@ -419,7 +419,11 @@ pub fn octave_label(note:usize,octave:usize) -> Option<(usize,usize,usize)> {
 /// Circular-safe linear cents ruler, shared by the retained view and tests.
 pub const LINEAR_LEFT: u16 = 152;
 pub const LINEAR_RIGHT: u16 = 568;
-pub const LINEAR_LANES: [i32; 4] = [224, 328, 432, 536];
+pub const LINEAR_LABEL_ROWS: [usize; 4] = [6, 9, 12, 15];
+pub const LINEAR_LEVEL_ROWS: [usize; 4] = [8, 11, 14, 17];
+// Native text is 15 pixels high on a 32-pixel row pitch. Center each ruler
+// between the two glyph centers, with identical spacing for every channel.
+pub const LINEAR_LANES: [i32; 4] = [231, 327, 423, 519];
 
 /// One-pixel cursor resolution without quantizing to the whole-cent label.
 /// Reject non-finite input before casting; never turn a bad estimate into a
@@ -631,6 +635,19 @@ mod tests {
             assert!(value >= previous && value <= previous + 1);
             assert!((LINEAR_LEFT..=LINEAR_RIGHT).contains(&value));
             previous = value;
+        }
+    }
+
+    #[test]
+    fn linear_rulers_are_centered_between_each_channels_text() {
+        for channel in 0..4 {
+            let top_center = LINEAR_LABEL_ROWS[channel] as i32 * 32 + 7;
+            let bottom_center = LINEAR_LEVEL_ROWS[channel] as i32 * 32 + 7;
+            assert_eq!(LINEAR_LANES[channel] - top_center, 32);
+            assert_eq!(bottom_center - LINEAR_LANES[channel], 32);
+            if channel > 0 {
+                assert_eq!(LINEAR_LANES[channel] - LINEAR_LANES[channel - 1], 96);
+            }
         }
     }
 
