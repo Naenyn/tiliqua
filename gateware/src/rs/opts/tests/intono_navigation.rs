@@ -17,7 +17,7 @@ fn visible_ticks(opts:&mut Opts,ticks:i8) {
 fn route_cards_open_nodes_without_triggering_option_actions() {
     let mut o=Opts::default();o.tracker.page.value=Page::Play;
     let mut v=route_ui::View::new();v.layout=route_group::Layout{inputs:[0,1,2,3],outputs:[1,2,4,8]};let r=ownership::Reservations::new();
-    assert!(v.ticks(&mut o,7,&r));assert_eq!(o.play.output.value,2);
+    assert!(v.ticks(&mut o,3,&r));assert_eq!(o.play.output.value,2);
     assert!(v.click(&mut o,&r));assert_eq!(v.screen,route_ui::Screen::Flow);
     assert_eq!(o.tracker.selected,Some(0));
     v.ticks(&mut o,2,&r);v.click(&mut o,&r);
@@ -305,15 +305,22 @@ fn midi_base_learn_is_reachable_as_a_one_shot_action() {
 }
 
 #[test]
-fn overview_start_is_reachable_without_changing_the_chosen_route() {
+fn overview_visits_cards_consecutively_then_shared_actions() {
     let mut o=Opts::default();o.tracker.page.value=Page::Play;
     let mut v=route_ui::View::new();v.layout=route_group::Layout{inputs:[0,1,2,3],outputs:[1,2,4,8]};let r=ownership::Reservations::new();
     for route in 0..4 {
         v.ticks(&mut o,1,&r);assert_eq!(o.tracker.selected,Some(route));assert_eq!(o.play.output.value,route as u8);
-        v.ticks(&mut o,1,&r);assert_eq!(o.tracker.selected,Some(4));assert_eq!(o.play.output.value,route as u8);
-        v.click(&mut o,&r);assert!(o.play.run.poll());
-        v.ticks(&mut o,1,&r);assert_eq!(o.tracker.selected,Some(6));
     }
+    v.ticks(&mut o,1,&r);assert_eq!(o.tracker.selected,Some(4));assert_eq!(o.play.output.value,3);
+    v.click(&mut o,&r);assert!(o.play.run.poll());
+    v.ticks(&mut o,1,&r);assert_eq!(o.tracker.selected,Some(6));
+    for index in [Some(4),Some(3),Some(2),Some(1),Some(0),None] {
+        v.ticks(&mut o,-1,&r);assert_eq!(o.tracker.selected,index);
+    }
+    // Empty last route skips Start/Stop in both directions.
+    v.layout.outputs[3]=0;v.ticks(&mut o,4,&r);assert_eq!(o.tracker.selected,Some(3));
+    v.ticks(&mut o,1,&r);assert_eq!(o.tracker.selected,Some(6));
+    v.ticks(&mut o,-1,&r);assert_eq!(o.tracker.selected,Some(3));
 }
 #[test]
 fn config_midi_has_route_selection_learn_and_explicit_back() {

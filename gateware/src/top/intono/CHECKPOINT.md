@@ -1335,3 +1335,12 @@ After the user confirmed the rack was powered on, flashed the qualified
 verified before writing. Erase, write, and FPGA refresh completed successfully;
 `cleanup-flash.json` records the operation. This confirms installation, not yet
 user-visible execution or a hardware smoke test.
+
+
+## October 3 overview navigation correction
+
+Route overview now traverses cards 1–4 consecutively, then Start/Stop and Configs
+once, following the visual order. Reverse traversal follows the same sequence;
+an empty route skips Start/Stop. Shared actions retain the last browsed route;
+each route flow retains its own Start/Stop. Regression coverage replaces the
+old per-card action traversal expectation.

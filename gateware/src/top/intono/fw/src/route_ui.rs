@@ -199,31 +199,20 @@ impl View {
                 continue;
             }
             if self.screen == Screen::Overview {
-                // Actions belong to the highlighted card, before moving to
-                // another route. START must not silently target the last card.
+                // Follow the visual order: all cards, then the shared actions.
+                // Actions keep the last browsed route; opening its flow also
+                // provides Start/Stop without traversing the overview footer.
                 let route = o.play.output.value.min(3) as usize;
                 let has_outputs = self.layout.outputs[route] != 0;
                 let next = match (o.tracker.selected, forward) {
                     (None, true) => Some(0),
-                    (Some(0..=3), true) => Some(if has_outputs { 4 } else { 6 }),
-                    (Some(4), true) => Some(6),
-                    (Some(6), true) => {
-                        if route < 3 {
-                            Some(route + 1)
-                        } else {
-                            Some(6)
-                        }
-                    }
-                    (Some(n @ 0..=3), false) => {
-                        if n == 0 {
-                            None
-                        } else {
-                            o.play.output.value = (n - 1) as u8;
-                            Some(6)
-                        }
-                    }
-                    (Some(4), false) => Some(route),
-                    (Some(6), false) => Some(if has_outputs { 4 } else { route }),
+                    (Some(n @ 0..=2), true) => Some(n + 1),
+                    (Some(3), true) => Some(if has_outputs { 4 } else { 6 }),
+                    (Some(4 | 6), true) => Some(6),
+                    (Some(0), false) => None,
+                    (Some(n @ 1..=3), false) => Some(n - 1),
+                    (Some(4), false) => Some(3),
+                    (Some(6), false) => Some(if has_outputs { 4 } else { 3 }),
                     _ => None,
                 };
                 o.tracker.selected = next;
