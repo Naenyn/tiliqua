@@ -228,6 +228,13 @@ class IntonoOverlay(wiring.Component):
             rx=Signal(signed(12));ry=Signal(signed(12))
             m.d.comb += [rx.eq(x-lefts[note]),ry.eq(y-key_top)]
             cursor=(state["keyboard_focus"]==Cat(note,self.i.pixel.intensity==15))
+            # Resolve the key-relative coordinates in the first existing overlay
+            # stage, then calculate its ring. Total pixel latency stays four.
+            rx1=Signal(signed(12));ry1=Signal(signed(12))
+            black1=Signal();cursor1=Signal();selected1=Signal();fill1=Signal()
+            m.d.dvi += [rx1.eq(rx),ry1.eq(ry),black1.eq(black),
+                        cursor1.eq(cursor),selected1.eq(selected),fill1.eq(fill)]
+            rx,ry,black,cursor,selected,fill=rx1,ry1,black1,cursor1,selected1,fill1
             # A two-pixel yellow ring with a dark halo on both sides stays
             # visible on white, black, and blue keys without changing membership.
             right=Mux(black,34,54);bottom=Mux(black,55,103)
@@ -244,9 +251,10 @@ class IntonoOverlay(wiring.Component):
                            Mux(selected,0xA9,Mux(black,0x09,0xF9)))
         else:
             fill, fill_color = Const(0), Const(0,8)
-        fills = [fill] + [Signal() for _ in range(4)]
-        fill_colors = [fill_color] + [Signal(8) for _ in range(4)]
-        for n in range(4):
+        fill_stages = 3 if self.large_text else 4
+        fills = [fill] + [Signal() for _ in range(fill_stages)]
+        fill_colors = [fill_color] + [Signal(8) for _ in range(fill_stages)]
+        for n in range(fill_stages):
             m.d.dvi += [fills[n+1].eq(fills[n]), fill_colors[n+1].eq(fill_colors[n])]
 
         if self.large_text:
@@ -344,8 +352,8 @@ class IntonoOverlay(wiring.Component):
         with m.If(intensity4 != 0):
             m.d.comb += [marked.pixel.color.eq(hue4), marked.pixel.intensity.eq(intensity4)]
 
-        with m.If(fills[4]):
-            m.d.comb += marked.pixel.eq(fill_colors[4])
+        with m.If(fills[-1]):
+            m.d.comb += marked.pixel.eq(fill_colors[-1])
 
         if self.large_text:
             with m.If(borders.hit):
