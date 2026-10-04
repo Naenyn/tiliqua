@@ -1553,3 +1553,23 @@ to Tiliqua #1 slot 1; write and Refresh DONE confirmed. User storage preserved.
 SHA-256: fd9a7b95937b5e77fecb723802e2abdf926d035b3ee904ea541d4d46ca2e7825.
 Matching profile-browser-firmware.elf, profile-browser-validation.json and
 profile-browser-flash.json retained. Physical visual confirmation pending.
+
+
+## 2026-10-04 — unlabeled whole-key scale highlights
+
+Implemented the selected keyboard design: excluded naturals are white, excluded
+accidentals black, and included intervals all use the same blue whole-key fill.
+Removed on-key letters and plus/minus marks. Cream focus outlines remain
+independent of membership. Both SCALES and SCALE TOOLS use the new appearance;
+interval storage, octave paging, MIDI editing, and route root keys are unchanged.
+
+Source commit: `1b8799b8`. All 51 display/shape/frame/renderer tests passed.
+Full r5 seed-21 build passed all four clocks: serializer 443.85/371.33 MHz,
+pixels 78.47/74.25 MHz, audio 68.11/49.15 MHz, CPU 65.56/60 MHz.
+Firmware: 311128 bytes of 327680. FPGA: COMB 21465/24288, FF 12190/24288,
+BRAM 47/56, DSP 14/28.
+
+Archive: `build/intono-ui-key-colors-r5/intono-ui-key-colors-1b8799b8-r5.tar.gz`.
+SHA256: `b9c800f3f11e5eb5bf331d26e4659647a0887b9da7886e624494e6173e233fc6`.
+Flashed Tiliqua #1 (E46534A193222B21), slot 1; `Refresh: DONE` verified.
+User storage was not erased. Hardware visual confirmation remains with the user.
