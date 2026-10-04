@@ -1371,3 +1371,25 @@ qualified route-order image. SHA-256:
 `659da158533fb6bca2ec1d52824e8c2109acd631c6d12069a056d2da7d2b25e4`.
 Matching ELF, validation and flash records have the `preferences-` prefix.
 Physical boot and save/reset smoke tests remain pending.
+
+## 2026-10-03 — shared navigation chrome and CAL spacing
+
+Removed Configs' two explanatory captions, retaining actual save/load feedback.
+Added padded separators below the top and bottom page buttons and a six-box
+Rezo-style indicator between the title and top tabs. Retained Configs, MIDI,
+and Preferences surfaces now identify their parent page correctly while
+reusing the common-only geometry ROM. All new pixels retain four-cycle latency
+and the existing ready gate. CAL uses compact IN/OUT/GRAPH on row 5 and a wider
+POLICY on row 6; all four policy values fit inline.
+
+Source commit `83884f8b`. Validation: 39 navigation/preferences, 53 presenter,
+39 flash-journal, and 15 display/calibration simulation checks pass. New FPGA
+seed 19 passes every clock: serializer 434.97/371.33 MHz, pixels 89.35/74.25,
+audio 68.43/49.15, CPU 69.33/60. Firmware 308,320 bytes, static SRAM 7,940 bytes;
+FPGA COMB 21,227/24,288, FF 12,128/24,288, BRAM 47/56, DSP 14/28.
+
+Built and flashed `build/intono-ui-chrome-r5/intono-ui-chrome-20261003-r5.tar.gz`
+to Tiliqua #1 slot 1; write and Refresh DONE confirmed. SHA-256:
+`cd152cb18bb7be26b7ebb370f46063e13e768fcee0a42f68a28f1db5dcb20c97`.
+Matching `chrome-firmware.elf`, `chrome-validation.json`, and `chrome-flash.json`
+are retained in that build directory. Physical layout confirmation is pending.
