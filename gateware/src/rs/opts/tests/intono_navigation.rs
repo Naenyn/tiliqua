@@ -378,3 +378,29 @@ fn tuner_input_list_wraps_and_can_observe_assigned_inputs() {
     ui_navigation::visible_ticks(&mut o,-1,&claims);assert_eq!(o.tuner.input.value,0);
     ui_navigation::visible_ticks(&mut o,-1,&claims);assert_eq!(o.tuner.input.value,3);
 }
+
+#[test]
+fn scale_preset_navigation_places_custom_last_and_wraps_both_directions() {
+    use options::ScalePreset;
+    use strum::IntoEnumIterator;
+    for page in [Page::Quantizer, Page::Play] {
+        let mut o=Opts::default();o.tracker.page.value=page;
+        o.tracker.selected=Some(if page==Page::Quantizer {1}else{9});
+        o.tracker.modify=true;
+        let current=|o:&Opts| if page==Page::Quantizer {o.quantizer.scale.value}else{o.play.scale.value};
+        visible_ticks(&mut o,-1);assert!(current(&o)==ScalePreset::Custom2);
+        visible_ticks(&mut o,1);assert!(current(&o)==ScalePreset::Chromatic);
+        let mut seen=0u16;
+        for _ in 0..14 {
+            seen|=1<<current(&o) as u8;
+            visible_ticks(&mut o,1);
+        }
+        assert_eq!(seen,0x3fff);assert!(current(&o)==ScalePreset::Chromatic);
+        visible_ticks(&mut o,-2);assert!(current(&o)==ScalePreset::Blues);
+        visible_ticks(&mut o,1);assert!(current(&o)==ScalePreset::Custom2);
+        visible_ticks(&mut o,-13);assert!(current(&o)==ScalePreset::Chromatic);
+        for preset in ScalePreset::iter() {
+            assert!(preset.stepped(true).stepped(false)==preset);
+        }
+    }
+}

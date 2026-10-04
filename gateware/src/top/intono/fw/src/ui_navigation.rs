@@ -9,7 +9,17 @@ pub fn visible_ticks(opts: &mut Opts, ticks: i8, claims: &crate::ownership::Rese
         let step = if ticks > 0 { 1 } else { -1 };
         let calibration_jack = opts.tracker.page.value == Page::Calibrate
             && matches!(opts.tracker.selected,Some(0|1));
-        if opts.tracker.page.value==Page::Tuner && opts.tracker.selected==Some(0) && opts.tracker.modify {
+        let scale_selector = opts.tracker.modify && matches!(
+            (opts.tracker.page.value, opts.tracker.selected),
+            (Page::Quantizer, Some(1)) | (Page::Play, Some(9)));
+        if scale_selector {
+            let preset = if opts.tracker.page.value == Page::Quantizer {
+                &mut opts.quantizer.scale.value
+            } else {
+                &mut opts.play.scale.value
+            };
+            *preset = preset.stepped(step > 0);
+        } else if opts.tracker.page.value==Page::Tuner && opts.tracker.selected==Some(0) && opts.tracker.modify {
             for distance in 1..=4 {
                 let next=(opts.tuner.input.value as i32+step*distance).rem_euclid(4) as u8;
                 if claims.tuner_available(next) {opts.tuner.input.value=next;break;}

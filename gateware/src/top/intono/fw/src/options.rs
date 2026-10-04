@@ -128,6 +128,21 @@ pub enum ScalePreset {
     Blues,
 }
 
+impl ScalePreset {
+    /// UI order is independent of the IDs persisted in scales and routes.
+    pub fn stepped(self, forward: bool) -> Self {
+        const ORDER: [ScalePreset; 14] = [
+            ScalePreset::Chromatic, ScalePreset::Major, ScalePreset::Minor,
+            ScalePreset::MajorPentatonic, ScalePreset::MinorPentatonic,
+            ScalePreset::Edo24, ScalePreset::Dorian, ScalePreset::Mixolydian,
+            ScalePreset::Phrygian, ScalePreset::Lydian, ScalePreset::HarmonicMinor,
+            ScalePreset::MelodicMinor, ScalePreset::Blues, ScalePreset::Custom2,
+        ];
+        let index = ORDER.iter().position(|preset| *preset == self).unwrap_or(0);
+        ORDER[(index + if forward { 1 } else { ORDER.len() - 1 }) % ORDER.len()]
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]
 pub enum Distribution {
     #[default]
