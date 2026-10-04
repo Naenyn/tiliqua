@@ -1620,3 +1620,19 @@ all four timing checks retained. `Refresh: DONE` verified, saved data preserved.
 Hardware visual confirmation remains pending. Explained current display targets:
 1280x720p60 unrotated HDMI and separate 720x720p60r2 rotated round-panel builds;
 there is currently no universal runtime-switchable display image.
+
+
+## 2026-10-04 — preset-only encoder wrapping
+
+Page selection clamps at Tuner/Help rather than wrapping. Tuner, calibration,
+and route jack selectors now stop at the numbered endpoints and skip assigned
+jacks within that direction. Automatic jack normalization retains its separate
+search policy. Scale preset lists retain Custom-last and bidirectional wrapping.
+The page loop predated the preset change; these were separate navigation branches.
+
+Source `8d69a142`. All 100 host navigation/route tests passed, including every
+jack availability mask and preset/page endpoints. Firmware 311136/327680 bytes.
+FPGA is byte-identical to the qualified scale-layout build; all timings PASS.
+Archive: `build/intono-ui-bounded-nav-r5/intono-ui-bounded-nav-8d69a142-r5.tar.gz`.
+SHA256: `158e2aee1ae0d36aa9c659c66bad21218730e33fce523b354e704020a143b57f`.
+Flashed Tiliqua #1 slot 1, verified `Refresh: DONE`. Saved data preserved.
