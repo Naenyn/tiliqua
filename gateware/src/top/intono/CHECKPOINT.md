@@ -1684,3 +1684,20 @@ FF 12214/24288, BRAM 47/56, DSP 14/28.
 Archive: `build/intono-ui-expanded-keys-pipe-r5/intono-ui-expanded-keys-pipe-727a4cc2-r5.tar.gz`.
 SHA256: `a6bf6fbe21a5ea80c409797d22a41fd1b763a2a282537f527a185ec48b60bae8`.
 Flashed Tiliqua #1 slot 1, verified `Refresh: DONE`. Saved data preserved.
+
+## 2026-10-04 — balance keyboard caption and group padding
+
+Second octave caption shifts down 12 pixels to y=364, matching the first
+caption's nine-pixel ink-to-key gap. Second keyboard starts y=388, with
+100-pixel natural and 54-pixel accidental height in both keyboards. Notes
+view outer/inter-group gaps are 17, 16, and 18 pixels. Side pager and other
+page text are unaffected; centered single view keeps its label placement.
+
+Source `d6b846f1`, seed 21. All 56 retained geometry/route and 34 display
+checks passed; both orientation caption/pager pixel checks passed separately.
+Firmware 311104/327680 bytes. Final clocks all PASS: serializer 388.05 MHz,
+pixel 86.48 MHz, audio 68.75 MHz, CPU 65.62 MHz. COMB 21455/24288,
+FF 12214/24288, BRAM 47/56, DSP 14/28.
+Archive: `build/intono-ui-key-padding-r5/intono-ui-key-padding-d6b846f1-r5.tar.gz`.
+SHA256: `436f7df74aca492faa593fb948e2aac51e52330ebbc8c8f94cbe99feafc89150`.
+Flashed Tiliqua #1 slot 1, verified `Refresh: DONE`. Saved data preserved.
