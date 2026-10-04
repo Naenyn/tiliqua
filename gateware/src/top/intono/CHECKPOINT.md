@@ -1667,3 +1667,20 @@ FF 12192/24288, BRAM 47/56, DSP 14/28.
 Archive: `build/intono-ui-taller-keys-r5/intono-ui-taller-keys-2a8389c4-r5.tar.gz`.
 SHA256: `8e2982e22731a5f3c806ec878e96ee1fa3a7dc6b7383a81bd45ddd90e023ec3a`.
 Flashed Tiliqua #1 slot 1, verified `Refresh: DONE`. Saved data preserved.
+
+## 2026-10-04 — use upper gap for expanded keyboards
+
+Top keyboard/label moved up 32 pixels; both keyboards gain another 16 pixels
+of natural-key height (104), with accidentals 56 pixels tall. Second keyboard
+starts at 392; its bottom remains at 496, clear of the controls. Single view
+remains centered with 96-pixel offset. Key spacing and rounded cursor retained.
+Coordinates and cursor calculations now occupy two of the existing four
+overlay stages, preserving latency while improving display timing.
+
+Source `727a4cc2`, seed 21. All 56 canvas/route and 34 display tests passed.
+Firmware 311104/327680 bytes. Final clocks all PASS: serializer 431.78 MHz,
+pixel 84.27 MHz, audio 70.48 MHz, CPU 64.75 MHz. COMB 21539/24288,
+FF 12214/24288, BRAM 47/56, DSP 14/28.
+Archive: `build/intono-ui-expanded-keys-pipe-r5/intono-ui-expanded-keys-pipe-727a4cc2-r5.tar.gz`.
+SHA256: `a6bf6fbe21a5ea80c409797d22a41fd1b763a2a282537f527a185ec48b60bae8`.
+Flashed Tiliqua #1 slot 1, verified `Refresh: DONE`. Saved data preserved.
