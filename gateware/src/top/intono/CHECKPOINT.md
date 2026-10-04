@@ -1416,3 +1416,24 @@ SHA-256 `339409755cd8a5faa32723ebc572598e4132b42882315f1538526d8665a9016c`.
 Matching `linear-firmware.elf`, `linear-validation.json`, `linear-flash.json`,
 and original seed-20 placement/timing files retained. Physical visual check
 remains pending.
+
+## 2026-10-04 — CAL visual navigation and arc-only FOCUS
+
+CAL now navigates IN, OUT, GRAPH, POLICY, SCAN/STOP, ACCEPT, DISCARD, PROFILES
+in both directions. Persisted option indices and action dispatch are unchanged.
+Linear TUNER omits FOCUS text and outline and navigates directly to VIEW.
+Arc restores FOCUS and its saved channel selection. Display surface 14 reuses
+the tuner geometry ROM, masking only FOCUS; page indicators and tabs remain
+correct. No acquisition or calibration math changed.
+
+Source `c97b8e68`: 41 navigation/preferences, 54 presenter, 8 display/frame checks
+pass. Full seed-20 build passes all clocks: serializer 434.97/371.33 MHz,
+pixels 87.97/74.25, audio 69.46/49.15, CPU 66.02/60. Firmware 308,608 bytes;
+static SRAM 7,940. FPGA COMB 21,184/24,288, FF 12,128/24,288, BRAM 47/56,
+DSP 14/28.
+
+Flashed `build/intono-ui-controls-r5/intono-ui-controls-20261004-r5.tar.gz`
+to Tiliqua #1 slot 1; write and Refresh DONE confirmed. SHA-256:
+`78ac84e017fd6cb1e2747247bd732d77192d3e7e756fcd26b1990a7a00bd0020`.
+Matching `controls-firmware.elf`, `controls-validation.json` and
+`controls-flash.json` retained. Physical navigation confirmation pending.
