@@ -609,7 +609,7 @@ def test_keyboard_fills_follow_mask_without_covering_edges_or_text(rotate_left):
             ctx.set(dut.keyboard_mask,mask)
             for note,(pos,black) in enumerate(keys):
                 center=164+pos*56+(0 if black else 28)
-                color=(0x29 if black else 0xa9)
+                color=0xa9 if mask&(1<<note) else (0x09 if black else 0xf9)
                 assert await sample(ctx,center,300 if black else 336)==color
                 left=164+pos*56-(18 if black else 0)
                 assert await sample(ctx,left,300 if black else 336)==0x49
@@ -622,10 +622,10 @@ def test_keyboard_fills_follow_mask_without_covering_edges_or_text(rotate_left):
                 for note in range(12):
                     tag=0xe0+octave*16+note
                     black=note in [1,3,6,8,10]
-                    expected=(0x29 if black else 0xa9)
+                    expected=0xa9 if mask&(1<<note) else (0x09 if black else 0xf9)
                     assert await sample(ctx,200,300+octave*128,tag)==expected
                     if not black:
-                        body=0xa9
+                        body=expected
                         assert await sample(ctx,200,336+octave*128,tag)==body
         # Membership and cursor are independent of piano identity, in each
         # visible octave and in the centered single-octave geometry.
@@ -640,13 +640,13 @@ def test_keyboard_fills_follow_mask_without_covering_edges_or_text(rotate_left):
                     for included in (False,True):
                         ctx.set(dut.keyboard_mask,(1<<note) if included else 0)
                         ctx.set(dut.keyboard_mask_b,(1<<note) if included else 0)
-                        assert await sample(ctx,center,yy,tag)==(0xf9 if black else 0x19)
-                        assert await sample(ctx,center,yy-3,tag)==((0xf9 if black else 0x19) if included else (0x29 if black else 0xa9))
+                        assert await sample(ctx,center,yy,tag)==(0xa9 if included else (0x09 if black else 0xf9))
+                        assert await sample(ctx,center,yy-3,tag)==(0xa9 if included else (0x09 if black else 0xf9))
                     ctx.set(dut.keyboard_focus,octave*16+note)
                     left=202 if black else 164
                     assert await sample(ctx,left+2,yy,tag)==0xdb
                     ctx.set(dut.keyboard_focus,31)
-                    assert await sample(ctx,left+2,yy,tag)==(0x29 if black else 0xa9)
+                    assert await sample(ctx,left+2,yy,tag)==0xa9
         ctx.set(dut.keyboard_second,1)
         # Text remains above the filled key, with the selected natural-key dark ink color.
         ctx.set(dut.keyboard_mask,1)

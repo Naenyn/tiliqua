@@ -222,18 +222,14 @@ class IntonoOverlay(wiring.Component):
             mask = Mux(self.i.pixel.intensity == 15, state["keyboard_mask_b"], state["keyboard_mask"])
             selected = mask.bit_select(note,1)
             fill = active & state["keyboard_enable"] & tagged
-            # Solid fills keep natural and accidental keys visually distinct.
-            # Piano identity is constant; membership is an explicit plus/minus.
+            # Excluded keys are white/black; included intervals share blue.
             lefts=Array(Const(n,10) for n in (164,202,220,258,276,332,370,388,426,444,482,500))
-            centers=Array(Const(n,10) for n in (192,220,248,276,304,360,388,416,444,472,500,528))
             key_top=280+Mux(self.i.pixel.intensity==15,128,0)+Mux(state["keyboard_second"],0,64)
-            dx=Signal(signed(12));dy=Signal(signed(12));rx=Signal(signed(12));ry=Signal(signed(12))
-            m.d.comb += [dx.eq(x-centers[note]),dy.eq(y-key_top-Mux(black,32,64)),
-                         rx.eq(x-lefts[note]),ry.eq(y-key_top)]
-            mark=((dx>=-4)&(dx<=4)&(dy==0)) | (selected&(dx==0)&(dy>=-4)&(dy<=4))
+            rx=Signal(signed(12));ry=Signal(signed(12))
+            m.d.comb += [rx.eq(x-lefts[note]),ry.eq(y-key_top)]
             cursor=(state["keyboard_focus"]==Cat(note,self.i.pixel.intensity==15))
             edge=(rx==2)|(rx==Mux(black,33,54))|(ry==2)|(ry==Mux(black,37,69))
-            fill_color=Mux(cursor&edge,0xDB,Mux(mark,Mux(black,0xF9,0x19),Mux(black,0x29,0xA9)))
+            fill_color=Mux(cursor&edge,0xDB,Mux(selected,0xA9,Mux(black,0x09,0xF9)))
         else:
             fill, fill_color = Const(0), Const(0,8)
         fills = [fill] + [Signal() for _ in range(4)]

@@ -1473,20 +1473,6 @@ fn publish_note_grid(text: &mut TextWriter<'_>, mask: u16, row: usize,
     }
 }
 
-#[inline(never)]
-fn publish_piano_notes(text: &mut TextWriter<'_>,_mask:u16,octave:usize,single:bool,focused:Option<usize>) {
-    for note in 0..12 {
-        let black=matches!(note,1|3|6|8|10);
-        let (column,mut row,width)=ui_canvas::octave_label(note,octave).unwrap();
-        if single {row+=ui_canvas::SINGLE_KEYBOARD_Y_OFFSET as usize/32;}
-        let mut label=String::<6>::new();
-        label.push_str(NOTE_NAMES[note]).ok();
-        let style=ui_text::Style {color:if black {0xD9}else{0x19},
-            bold:focused==Some(note)};
-        ui_text::field(column,row,width,&label,style,ui_text::Align::Center,|a,c|text.cell(a,c));
-    }
-}
-
 fn scale_label(id:u8) -> &'static str {
     use strum::IntoEnumIterator;
     options::ScalePreset::iter().nth(id as usize).map(Into::into).unwrap_or("INVALID SCALE")
@@ -1507,20 +1493,16 @@ fn publish_quantizer(display: &pac::TUNER_DISPLAY, text: &mut TextWriter<'_>, me
     let mut line = String::<64>::new();
     if page == Page::QuantNotes {
         let masks = critical_section::with(|cs|*QUANT_NOTES.borrow_ref(cs));
-        let (selected_octave, selected_note, key_focused)=with_app(|app|(
-            app.ui.opts.quant_notes.octave.value,app.ui.opts.quant_notes.note.value as usize,
-            app.ui.opts.tracker.selected==Some(ui_keyboard::KEYBOARD)));
+        let key_focused=with_app(|app|app.ui.opts.tracker.selected==Some(ui_keyboard::KEYBOARD));
         let base=critical_section::with(|cs|*MIDI_BASE.borrow_ref(cs));
         write!(line,"MIDI BASE: C{}",base as i32/12-1).ok();
         write_centered(text,6,&line,28);
-        write_centered(text,7,"+ = IN SCALE / - = SKIPPED",28);
+        write_centered(text,7,"BLUE = INCLUDED INTERVAL",28);
         let view=with_app(|app|app.ui.opts.quant_notes.view.value as usize);
         for row in 0..(c.octaves as usize).min(2) {
             let octave=view+row;
             line.clear();write!(line,"OCTAVE {} / {} NOTES",octave+1,masks[octave].count_ones()).ok();
             write_centered(text,8+row as u8*4+if c.octaves==1 {2}else{0},&line,28);
-            publish_piano_notes(text,masks[octave],row,c.octaves==1,
-                if key_focused && selected_octave as usize==octave {Some(selected_note)}else{None});
             keyboard_mask|=(masks[octave] as u32)<<(row*12);
         }
         let slot=with_app(|app|app.ui.opts.quant_notes.slot.value);
@@ -1539,10 +1521,9 @@ fn publish_quantizer(display: &pac::TUNER_DISPLAY, text: &mut TextWriter<'_>, me
     } else if page == Page::Quantizer {
         let (masks,quartertones,count)=preview.get_span(c.scale,c.masks,c.octaves);
         write!(line,"{} NOTES / {} OCTAVE{}",count,c.octaves,if c.octaves>1 {"S"}else{""}).ok();
-        write_centered(text,7,if quartertones {&line}else{"+ = IN SCALE / - = SKIPPED"},28);line.clear();
-        let (key_focused,focused_octave,focused_note,view)=with_app(|app|(
+        write_centered(text,7,if quartertones {&line}else{"BLUE = INCLUDED INTERVAL"},28);line.clear();
+        let (key_focused,view)=with_app(|app|(
             app.ui.opts.tracker.selected==Some(ui_keyboard::KEYBOARD),
-            app.ui.opts.quant_notes.octave.value as usize,app.ui.opts.quant_notes.note.value as usize,
             app.ui.opts.quantizer.view_octave.value as usize));
         if !quartertones {
             for row in 0..(c.octaves as usize).min(2) {
@@ -1550,8 +1531,6 @@ fn publish_quantizer(display: &pac::TUNER_DISPLAY, text: &mut TextWriter<'_>, me
                 line.clear();let count=masks[octave].count_ones();
                 write!(line,"OCTAVE {} / {} NOTE{}",octave+1,count,if count==1 {""}else{"S"}).ok();
                 write_centered(text,8+row as u8*4+if c.octaves==1 {2}else{0},&line,28);
-                publish_piano_notes(text,masks[octave],row,c.octaves==1,
-                    if key_focused && focused_octave==octave {Some(focused_note)}else{None});
                 keyboard_mask|=(masks[octave] as u32)<<(row*12);
             }
         } else {
