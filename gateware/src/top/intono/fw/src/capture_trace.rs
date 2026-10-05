@@ -220,8 +220,7 @@ impl Trace {
                 if !cal.active() {
                     writeln!(self.report,
                     "TUNER MONITOR IN={} HZ={:.3} VALID={} QUALIFIED={} VPP={:.3} SEQ={} WINDOW_AGE_MS={} END_AGE_MS={}",
-                    cal.input, feedback.frequency_hz, feedback.valid, feedback.qualified,
-                    feedback.vpp, feedback.sequence, feedback.window_age_ms,
+                    cal.input, crate::pitch_units::Decimal(feedback.frequency_hz), feedback.valid, feedback.qualified, crate::pitch_units::Decimal(feedback.vpp), feedback.sequence, feedback.window_age_ms,
                     feedback.end_age_ms).ok();
                 }
                 if let Some(f) = cal.tracking_failure {
@@ -264,8 +263,7 @@ impl Trace {
                     if !cal.active() {
                         writeln!(self.report,
                         "TUNER MONITOR IN={} HZ={:.3} VALID={} QUALIFIED={} VPP={:.3} SEQ={} WINDOW_AGE_MS={} END_AGE_MS={}",
-                        cal.input, feedback.frequency_hz, feedback.valid, feedback.qualified,
-                        feedback.vpp, feedback.sequence, feedback.window_age_ms,
+                        cal.input, crate::pitch_units::Decimal(feedback.frequency_hz), feedback.valid, feedback.qualified, crate::pitch_units::Decimal(feedback.vpp), feedback.sequence, feedback.window_age_ms,
                         feedback.end_age_ms).ok();
                     }
                     if let Some(auto) = cal.automatic.as_ref() {
@@ -286,9 +284,7 @@ impl Trace {
                             writeln!(
                             self.report,
                             "AUTO SUMMARY GRADE={} WORST_C={:.3} STABILITY_C={:.3} VERIFIED={}/{}",
-                            quality.grade.label(),
-                            quality.worst_cents(),
-                            quality.stability_cents(),
+                            quality.grade.label(), crate::pitch_units::Decimal(quality.worst_cents()), crate::pitch_units::Decimal(quality.stability_cents()),
                             scan.tested,
                             scan.total
                         )
@@ -297,16 +293,14 @@ impl Trace {
                             writeln!(
                                 self.report,
                                 "AUTO WORST MC={} ERROR_C={:+.2} GRID_C={:+.2} SPAN_C={:.2}",
-                                pitch, error, scan.worst_error, scan.max_spread
-                            )
+                                pitch, crate::pitch_units::Decimal(error), crate::pitch_units::Decimal(scan.worst_error), crate::pitch_units::Decimal(scan.max_spread))
                             .ok();
                             if let Some(check) = scan.local.as_ref() {
                                 for (index, label) in ["LOW", "HIGH", "TARGET"].iter().enumerate() {
                                     if let Some((mean, span, repeat)) = check.aggregate(index) {
                                         writeln!(self.report,
                                         "AUTO LOCAL {} UV={} MEAN_C={:+.2} SPAN_C={:.2} REPEAT_C={:.2}",
-                                        label, check.targets[index].microvolts,
-                                        mean, span, repeat).ok();
+                                        label, check.targets[index].microvolts, crate::pitch_units::Decimal(mean), crate::pitch_units::Decimal(span), crate::pitch_units::Decimal(repeat)).ok();
                                     }
                                 }
                                 writeln!(self.report, "AUTO LOCAL ADVICE={}", check.advice()).ok();
@@ -317,8 +311,7 @@ impl Trace {
                                 writeln!(
                                     self.report,
                                     "AUTO CANDIDATE_WORST MC={} ERROR_C={:+.2} SPAN_C={:.2}",
-                                    pitch, error, scan.max_spread
-                                )
+                                    pitch, crate::pitch_units::Decimal(error), crate::pitch_units::Decimal(scan.max_spread))
                                 .ok();
                                 if let Some(check) = scan.local.as_ref() {
                                     writeln!(
@@ -334,16 +327,13 @@ impl Trace {
                                         if let Some((mean, span, repeat)) = check.aggregate(index) {
                                             writeln!(self.report,
                                             "AUTO CANDIDATE_LOCAL {} UV={} MEAN_C={:+.2} SPAN_C={:.2} REPEAT_C={:.2}",
-                                            label, check.targets[index].microvolts,
-                                            mean, span, repeat).ok();
+                                            label, check.targets[index].microvolts, crate::pitch_units::Decimal(mean), crate::pitch_units::Decimal(span), crate::pitch_units::Decimal(repeat)).ok();
                                         }
                                     }
                                     if let Some(delta) = scan.grid_local_disagreement() {
                                         writeln!(
                                             self.report,
-                                            "AUTO CANDIDATE_GRID_LOCAL_DELTA_C={:.2}",
-                                            delta
-                                        )
+                                            "AUTO CANDIDATE_GRID_LOCAL_DELTA_C={:.2}", crate::pitch_units::Decimal(delta))
                                         .ok();
                                     }
                                     for (visit, result) in check.results.iter().enumerate() {
@@ -352,8 +342,7 @@ impl Trace {
                                             writeln!(self.report,
                                             "AUTO CANDIDATE_LOCAL VISIT={} TARGET={} UV={} MEAN_C={:+.2} SPAN_C={:.2}",
                                             visit + 1, ["LOW", "HIGH", "MID"][target],
-                                            check.targets[target].microvolts,
-                                            result.mean, result.spread).ok();
+                                            check.targets[target].microvolts, crate::pitch_units::Decimal(result.mean), crate::pitch_units::Decimal(result.spread)).ok();
                                         }
                                     }
                                 }
@@ -363,15 +352,13 @@ impl Trace {
                             writeln!(
                                 self.report,
                                 "AUTO LAST_REFINE MC={} OLD_C={:+.2} NEW_C={:+.2} REPEAT_C={:.2}",
-                                pitch, old, new, repeat
-                            )
+                                pitch, crate::pitch_units::Decimal(old), crate::pitch_units::Decimal(new), crate::pitch_units::Decimal(repeat))
                             .ok();
                         }
                         if let Some((old, new, kept)) = auto.last_recheck {
                             writeln!(
                                 self.report,
-                                "AUTO LAST_RECHECK OLD_C={:+.2} NEW_C={:+.2} KEPT={}",
-                                old, new, kept
+                                "AUTO LAST_RECHECK OLD_C={:+.2} NEW_C={:+.2} KEPT={}", crate::pitch_units::Decimal(old), crate::pitch_units::Decimal(new), kept
                             )
                             .ok();
                         }

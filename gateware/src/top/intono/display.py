@@ -225,25 +225,25 @@ class IntonoOverlay(wiring.Component):
             fill = active & state["keyboard_enable"] & tagged
             # Excluded keys are white/black; included intervals share blue.
             lefts=Array(Const(n,10) for n in (165,203,221,259,277,333,371,389,427,445,483,501))
-            key_top=248+Mux(self.i.pixel.intensity==15,140,0)+Mux(state["keyboard_second"],0,96)
+            key_top=248+Mux(self.i.pixel.intensity==15,140,0)+Mux(state["keyboard_second"],0,32)
             rx=Signal(signed(12));ry=Signal(signed(12))
             m.d.comb += [rx.eq(x-lefts[note]),ry.eq(y-key_top)]
             cursor=(state["keyboard_focus"]==Cat(note,self.i.pixel.intensity==15))
             # Resolve the key-relative coordinates in the first existing overlay
             # stage, then calculate its ring. Total pixel latency stays four.
             rx1=Signal(signed(12));ry1=Signal(signed(12))
-            black1=Signal();cursor1=Signal();selected1=Signal();fill1=Signal()
+            black1=Signal();cursor1=Signal();selected1=Signal();fill1=Signal();second1=Signal()
             m.d.dvi += [rx1.eq(rx),ry1.eq(ry),black1.eq(black),
-                        cursor1.eq(cursor),selected1.eq(selected),fill1.eq(fill)]
+                        cursor1.eq(cursor),selected1.eq(selected),fill1.eq(fill),second1.eq(state["keyboard_second"])]
             rx,ry,black,cursor,selected,fill=rx1,ry1,black1,cursor1,selected1,fill1
             # A two-pixel yellow ring with a dark halo on both sides stays
             # visible on white, black, and blue keys without changing membership.
-            right=Mux(black,34,54);bottom=Mux(black,53,99)
+            right=Mux(black,34,54);bottom=Mux(black,Mux(second1,53,77),Mux(second1,99,143))
             edge=(rx<=4)|(rx>=right-4)|(ry<=4)|(ry>=bottom-4)
             # Key radius is four pixels. Insetting the ring by two leaves
             # radius two: scanline insets 4,3,2 match the retained key curve.
-            row2=(ry==2)|(ry==Mux(black,51,97))
-            row3=(ry==3)|(ry==Mux(black,50,96))
+            row2=(ry==2)|(ry==bottom-2)
+            row3=(ry==3)|(ry==bottom-3)
             inset=Mux(row2,4,Mux(row3,3,2))
             outer=(ry>=2)&(ry<=bottom-2)&(rx>=inset)&(rx<=right-inset)
             inner=(rx>=4)&(rx<=right-4)&(ry>=4)&(ry<=bottom-4)
@@ -261,7 +261,7 @@ class IntonoOverlay(wiring.Component):
         if self.large_text:
             m.submodules.borders = borders = RoundedBorders()
             m.d.comb += [borders.x.eq(x),borders.y.eq(y),borders.active.eq(active & state["ui_ready"]),
-                        borders.surface.eq(state["ui_surface"]),borders.focus.eq(state["ui_focus"]),borders.mode.eq(state["ui_mode"])]
+                        borders.surface.eq(state["ui_surface"]),borders.focus.eq(state["ui_focus"]),borders.mode.eq(state["ui_mode"]),borders.keyboard_second.eq(state["keyboard_second"])]
 
         # One row-wide atlas, fetched in blanking rather than once per pixel.
         # Rotate bitmap samples as well as marker positions for the round panel.

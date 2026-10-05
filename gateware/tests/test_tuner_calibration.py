@@ -86,7 +86,7 @@ def test_note_slots_fit_menu_and_legacy_slot_is_preserved():
     firmware=Path(__file__).parents[1]/'src/top/intono/fw/src'
     options=(firmware/'options.rs').read_text()
     fields=re.findall(r'pub (\w+):',options.split('pub struct QuantNotesOpts {')[1].split('}')[0])
-    assert fields==['octave','note','toggle','clear','fill','learn','save','load','slot','octaves','view']
+    assert fields==['octave','note','toggle','clear','fill','learn','save','load','slot','octaves','view','back']
     assert 'min: 1, max: 8' in options
     record=(firmware/'note_pattern.rs').read_text()
     assert 'KEY + slot as u32 - 1' in record

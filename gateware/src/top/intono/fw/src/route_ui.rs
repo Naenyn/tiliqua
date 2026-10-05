@@ -138,6 +138,25 @@ impl View {
         }
         (order, len)
     }
+    /// Sequential jack feedback for the same controls walked by the encoder.
+    #[inline(never)]
+    pub fn led_index(&self,o:&Opts,imported:bool)->usize {
+        if o.tracker.page.value==Page::Play && self.screen==Screen::Warning {
+            return self.warning.map_or(0,|w|if matches!(w.kind,WarningKind::Running(_)){usize::from(!w.go)}else{0});
+        }
+        let Some(selected)=o.tracker.selected else {return crate::ui_navigation::page_led(o.tracker.page.value);};
+        let (flow,len)=if self.screen==Screen::Flow {self.flow_order(o.play.output.value.min(3))}else{([0;15],0)};
+        let order=if self.handles(o.tracker.page.value) && !matches!(o.tracker.page.value,Page::Settings|Page::QuantSetups) {
+            match self.screen {
+                Screen::Overview if self.layout.outputs[o.play.output.value.min(3) as usize]==0=>&[0,1,2,3,6][..],
+                Screen::Overview=>&[0,1,2,3,4,6][..],
+                Screen::Flow=>&flow[..len],
+                Screen::Editor(stage)=>self.editor_fields(stage,o.play.correction.value as u8),
+                Screen::Warning=>&[],
+            }
+        }else {crate::ui_navigation::order(o,imported)};
+        order.iter().position(|n|*n==selected).unwrap_or(selected)%8
+    }
     pub fn ticks(&mut self, o: &mut Opts, ticks: i8, claims: &Reservations) -> bool {
         if matches!(o.tracker.page.value, Page::QuantSetups | Page::Settings)
             || !self.handles(o.tracker.page.value)

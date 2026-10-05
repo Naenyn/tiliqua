@@ -137,22 +137,23 @@ impl<EncoderT: Encoder,
     /// foreground work forever if that bus is absent or wedged.
     pub fn update_realtime(&mut self) {
         self.poll_encoder(|opts, ticks| opts.consume_ticks(ticks));
-        self.finish_update(false);
+        self.finish_update(false,None);
     }
 
     /// Instrument-specific navigation with the same nonblocking ISR/LED path.
     pub fn update_encoder_realtime<F>(&mut self, apply_ticks: F)
     where F: FnOnce(&mut OptionsT, i8) {
         self.poll_encoder(apply_ticks);
-        self.finish_update(false);
+        self.finish_update(false,None);
     }
 
     /// Instruments with visible diagram nodes can consume a click before the
     /// ordinary option editor indexes its selected field.
-    pub fn update_encoder_realtime_custom<F, C>(&mut self, apply_ticks: F, click: C)
-    where F: FnOnce(&mut OptionsT, i8), C: FnOnce(&mut OptionsT) -> bool {
+    pub fn update_encoder_realtime_custom<F, C, L>(&mut self, apply_ticks: F, click: C, led: L)
+    where F: FnOnce(&mut OptionsT, i8), C: FnOnce(&mut OptionsT) -> bool,
+          L: FnOnce(&OptionsT) -> usize {
         self.poll_encoder_custom(apply_ticks, click);
-        self.finish_update(false);
+        self.finish_update(false,Some(led(&self.opts)));
     }
 
     pub fn update_encoder<F>(&mut self, apply_ticks: F)
@@ -160,7 +161,7 @@ impl<EncoderT: Encoder,
         F: FnOnce(&mut OptionsT, i8),
     {
         self.poll_encoder(apply_ticks);
-        self.finish_update(true);
+        self.finish_update(true,None);
     }
 
     fn poll_encoder<F>(&mut self, apply_ticks: F)
@@ -204,7 +205,7 @@ impl<EncoderT: Encoder,
         }
     }
 
-    fn finish_update(&mut self, push_mobo_leds: bool) {
+    fn finish_update(&mut self, push_mobo_leds: bool, navigation_led: Option<usize>) {
         if self.uptime_ms % (20*self.period_ms) == 0 {
             self.toggle_leds = !self.toggle_leds;
         }
@@ -227,14 +228,15 @@ impl<EncoderT: Encoder,
             // Flashing if we're modifying something
             self.pmod.led_all_auto();
             if self.toggle_leds {
-                if let Some(n) = self.opts.selected() {
+                if let Some(selected) = self.opts.selected() {
+                    let n=navigation_led.unwrap_or(selected);
                     // red for option selection
                     if n < 8 {
                         self.pmod.led_set_manual(n, i8::MAX);
                     }
                 } else {
                     // green for screen selection
-                    let n = (self.opts.page().percent() * (self.opts.page().n_unique_values() as f32)) as usize;
+                    let n = navigation_led.unwrap_or_else(|| (self.opts.page().percent() * (self.opts.page().n_unique_values() as f32)) as usize);
                     if n < 8 {
                         self.pmod.led_set_manual(n, i8::MIN);
                     }
@@ -248,14 +250,15 @@ impl<EncoderT: Encoder,
                 }
                 let fade: i8 = (((self.encoder_fade_ms-self.time_since_encoder_touched) * 120) /
                                  self.encoder_fade_ms) as i8;
-                if let Some(n) = self.opts.selected() {
+                if let Some(selected) = self.opts.selected() {
+                    let n=navigation_led.unwrap_or(selected);
                     // red for option selection
                     if n < 8 {
                         self.pmod.led_set_manual(n, fade);
                     }
                 } else {
                     // green for screen selection
-                    self.pmod.led_set_manual(0, -fade);
+                    self.pmod.led_set_manual(navigation_led.unwrap_or(0), -fade);
                 }
             } else {
                 self.pmod.led_all_auto();

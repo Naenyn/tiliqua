@@ -1,6 +1,7 @@
 //! Allocation-free scale math, independent of storage, MIDI, and DAC mapping.
 //! Intervals are thousandths of a cent relative to a separately supplied root.
 //! Degree zero is implicit in imported Scala files, but explicit in this table.
+#[path="scale_name.rs"] mod saved_name;
 pub const MAX_DEGREES: usize = 128;
 // IDs 5 (24 EDO) and 6 (custom) retain their original stored values.
 pub const MAX_SCALE_ID: u8 = 13;
@@ -66,6 +67,12 @@ pub enum Error {
     InvalidFile,
 }
 
+fn record_crc(bytes:&[u8])->u32 {
+    let mut crc=0xffff_ffffu32;
+    for byte in bytes {crc^=*byte as u32;for _ in 0..8 {crc=(crc>>1)^0xedb8_8320u32.wrapping_mul(crc&1);}}
+    !crc
+}
+
 /// Offline import envelope: magic TSC1, u16 count, u16 reserved=0, i32 period,
 /// count i32 degrees, then IEEE CRC32 over the preceding bytes; little endian.
 /// Validate everything before touching staging storage. Call only while stopped,
@@ -79,16 +86,7 @@ pub fn decode<'a>(bytes: &[u8], storage: &'a mut [i32; MAX_DEGREES]) -> Result<S
         return Err(Error::InvalidFile);
     }
     let read = |offset| i32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
-    let mut crc = 0xffff_ffffu32;
-    for byte in &bytes[..bytes.len() - 4] {
-        crc ^= *byte as u32;
-        for _ in 0..8 {
-            crc = (crc >> 1) ^ (0xedb8_8320u32.wrapping_mul(crc & 1));
-        }
-    }
-    if !crc != read(bytes.len() - 4) as u32 {
-        return Err(Error::InvalidFile);
-    }
+    if record_crc(&bytes[..bytes.len()-4]) != read(bytes.len()-4) as u32 {return Err(Error::InvalidFile);}
     let period = read(8);
     if period <= 0 {
         return Err(Error::InvalidPeriod);
@@ -215,6 +213,36 @@ impl Pattern {
                 period: self.period,
             })
         }
+    }
+}
+
+/// Foreground-loaded immutable microtonal table, stored in PSRAM by the adapter.
+#[derive(Clone)]
+pub struct Imported { degrees:[i32;MAX_DEGREES],count:u8,period:i32 }
+impl Imported {
+    pub const fn empty()->Self {Self {degrees:[0;MAX_DEGREES],count:0,period:1_200_000}}
+    pub const RECORD_LEN: usize = 16 + MAX_DEGREES * 4;
+    pub fn from_record(bytes: &[u8]) -> Result<Self, Error> {
+        let bytes=saved_name::payload(bytes).ok_or(Error::InvalidFile)?;
+        let mut result=Self::empty();
+        let value=decode(bytes,&mut result.degrees)?;
+        if value.period>9_600_000 {return Err(Error::InvalidPeriod);}
+        result.count=value.degrees.len() as u8;result.period=value.period;
+        Ok(result)
+    }
+    pub fn record(&self,bytes:&mut [u8])->Option<usize> {
+        if self.count==0 || self.degrees[0]!=0 {return None;}
+        let len=16+self.count as usize*4;
+        if bytes.len()<len {return None;}
+        bytes[..4].copy_from_slice(b"TSC1");bytes[4..6].copy_from_slice(&(self.count as u16).to_le_bytes());
+        bytes[6..8].fill(0);bytes[8..12].copy_from_slice(&self.period.to_le_bytes());
+        for (i,degree) in self.degrees[..self.count as usize].iter().enumerate() {bytes[12+i*4..16+i*4].copy_from_slice(&degree.to_le_bytes());}
+        let sum=record_crc(&bytes[..len-4]);bytes[len-4..len].copy_from_slice(&sum.to_le_bytes());Some(len)
+    }
+    pub fn degrees(&self)->&[i32] {&self.degrees[..self.count as usize]}
+    pub fn summary(&self)->(u8,i32) {(self.count,self.period)}
+    pub fn scale(&self)->Option<Scale<'_>> {
+        if self.count==0 {None}else{Some(Scale {degrees:Degrees::Pitch(&self.degrees[..self.count as usize]),period:self.period})}
     }
 }
 
@@ -675,5 +703,23 @@ mod tests {
                 .unwrap();
             assert_eq!(scale.quantize(pitch, 29, None), Ok(expected));
         }
+    }
+}
+
+#[cfg(test)] mod imported_tests {
+    use super::*;
+    #[test] fn maximum_saved_table_and_invalid_records() {
+        let table=Imported {degrees:core::array::from_fn(|i|i as i32*73125),count:128,period:9600000};
+        let mut bytes=[0;Imported::RECORD_LEN];let len=table.record(&mut bytes).unwrap();
+        assert_eq!(len,528);let loaded=Imported::from_record(&bytes).unwrap();
+        assert_eq!(loaded.summary(),(128,9600000));let mut second=[0;528];loaded.record(&mut second).unwrap();assert_eq!(bytes,second);
+        for i in 0..len {let mut corrupt=bytes;corrupt[i]^=1;assert!(Imported::from_record(&corrupt).is_err());}
+        let invalid=Imported {period:9600001,..table};invalid.record(&mut bytes).unwrap();assert!(Imported::from_record(&bytes).is_err());
+        assert!(Imported::empty().record(&mut bytes).is_none());
+    }
+    #[test] fn imported_non_octave_quantizes_across_negative_cycles_and_root() {
+        let table=Imported {degrees:core::array::from_fn(|i|if i==1 {386314}else if i==2 {701955}else{0}),count:3,period:1901955};
+        let mut bytes=[0;528];let len=table.record(&mut bytes).unwrap();let imported=Imported::from_record(&bytes[..len]).unwrap();let scale=imported.scale().unwrap();
+        for cycle in -10..10 {for degree in [0,386314,701955] {let pitch=cycle*1901955+degree+300000;assert_eq!(scale.quantize(pitch+100,300000,None),Ok(pitch));}}
     }
 }

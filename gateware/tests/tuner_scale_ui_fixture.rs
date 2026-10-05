@@ -112,7 +112,7 @@ fn explicit_span_preserves_empty_octaves_and_pages_every_key() {
             assert_eq!(ui_keyboard::window(view,span,Some(key)),view);
         }
         state=ui_keyboard::next_span(state.0,state.1,true,span,view,false);
-        assert_eq!(state.0,Some(8));
+        assert_eq!(state.0,Some(if span==1 {9}else{8}));
         for key in (first..end).rev() {
             state=ui_keyboard::next_span(state.0,state.1,false,span,view,false);
             assert_eq!(state,(Some(ui_keyboard::KEYBOARD),key));

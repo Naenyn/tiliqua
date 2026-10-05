@@ -633,7 +633,7 @@ def test_keyboard_fills_follow_mask_without_covering_edges_or_text(rotate_left):
         for second in (0,1):
             ctx.set(dut.keyboard_second,second)
             for octave in range(2 if second else 1):
-                offset=octave*140+(0 if second else 96)
+                offset=octave*140+(0 if second else 32)
                 for note,black in ((0,False),(1,True)):
                     center=192 if note==0 else 220
                     yy=(288 if black else 328)+offset
@@ -651,7 +651,7 @@ def test_keyboard_fills_follow_mask_without_covering_edges_or_text(rotate_left):
                     assert await sample(ctx,left+4,yy,tag)==0x09
                     # Rounded corners match an inset of the retained radius-4
                     # keys, mirrored on all four corners and both key sizes.
-                    width,height=(35,54) if black else (55,100)
+                    width,height=(35,54 if second else 78) if black else (55,100 if second else 144)
                     top=248+offset
                     for cy in (2,3,4):
                         for cx in (2,3,4):
@@ -783,3 +783,41 @@ def test_output_diagnostic_detects_overlay_leak_with_clean_background():
 @pytest.mark.parametrize("rotate_left",[False,True])
 def test_octave_scroll_text_reaches_the_rightmost_native_column(rotate_left):
     test_large_ux_text_retains_stride_bank_and_pixel_scale(rotate_left,"W",False,False,42)
+
+
+def test_single_octave_has_no_pager_border():
+    from top.intono.ui_shapes import RoundedBorders
+    dut=RoundedBorders();sim=Simulator(dut);sim.add_clock(1e-6,domain="dvi")
+    async def bench(ctx):
+        ctx.set(dut.active,1);ctx.set(dut.focus,31);ctx.set(dut.x,612);ctx.set(dut.y,314)
+        for surface in (4,5):
+            ctx.set(dut.surface,surface)
+            for second in (1,0,1):
+                ctx.set(dut.keyboard_second,second)
+                await ctx.tick("dvi").repeat(5)
+                assert ctx.get(dut.hit)==second
+    sim.add_testbench(bench);sim.run()
+
+
+def test_page_indicator_spans_match_all_six_pages():
+    from top.intono.ui_shapes import RoundedBorders
+    dut=RoundedBorders();sim=Simulator(dut);sim.add_clock(1e-6,domain="dvi")
+    async def bench(ctx):
+        ctx.set(dut.active,1)
+        for surface,page in ((0,0),(1,1),(4,2),(7,3),(8,4),(9,5)):
+            ctx.set(dut.surface,surface)
+            for y in (59,60,62,64,75,76,78,80,81):
+                ctx.set(dut.y,y)
+                for x in range(310,410):
+                    expected=False
+                    for index in range(6):
+                        center=330+index*12
+                        if index==page:
+                            expected |= center-9<=x<=center+9 and 60<=y<81
+                        else:
+                            center+=-4 if index<page else 4
+                            expected |= center-5<=x<=center+5 and 62<=y<78 and (x<center-3 or x>=center+4 or y<64 or y>=76)
+                    ctx.set(dut.x,x)
+                    await ctx.tick("dvi").repeat(5)
+                    assert bool(ctx.get(dut.hit))==expected,(surface,x,y)
+    sim.add_testbench(bench);sim.run()

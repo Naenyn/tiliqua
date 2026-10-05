@@ -165,6 +165,7 @@ pub struct PlaybackEngine<P: ProfileStorage> {
     midi_transpose: i8,
     pub equal: bool,
     pub pattern: crate::scale::Pattern,
+    pub imported: Option<&'static crate::scale::Imported>,
     quantized_pitch: Option<i32>,
     last_command: Option<u32>,
     target_since: u32,
@@ -200,6 +201,7 @@ impl<P: ProfileStorage> PlaybackEngine<P> {
             midi_transpose: 0,
             equal: false,
             pattern: crate::scale::Pattern::empty(),
+            imported: None,
             quantized_pitch: None,
             last_command: None,
             target_since: 0,
@@ -385,7 +387,7 @@ impl<P: ProfileStorage> PlaybackEngine<P> {
         let maximum = reference.checked_add(9_600_000).ok_or(MappingError::InputOverflow)?;
         let bounded = if self.scale_enabled {
             let scale = if self.scale_id == 6 {
-                self.pattern.scale()
+                self.imported.and_then(|table|table.scale()).or_else(||self.pattern.scale())
             } else {
                 crate::scale::preset(self.scale_id)
             }
@@ -466,7 +468,7 @@ impl<P: ProfileStorage> PlaybackEngine<P> {
         };
         if self.scale_enabled {
             let scale = if self.scale_id == 6 {
-                self.pattern.scale()
+                self.imported.and_then(|table|table.scale()).or_else(||self.pattern.scale())
             } else {
                 crate::scale::preset(self.scale_id)
             };
@@ -767,6 +769,27 @@ mod tests {
                 pitch_from_cv(uv, 60),
                 i32::try_from(6_000_000 + delta).map_err(|_| MappingError::InputOverflow)
             );
+        }
+    }
+    #[test]
+    fn imported_scala_plays_microtonal_non_octave_with_route_offsets() {
+        let mut bytes=[0u8;28];bytes[..4].copy_from_slice(b"TSC1");bytes[4]=3;
+        for (offset,value) in [(8,1901955i32),(12,0),(16,386314),(20,701955)] {bytes[offset..offset+4].copy_from_slice(&value.to_le_bytes());}
+        let mut crc=0xffff_ffffu32;for b in &bytes[..24] {crc^=*b as u32;for _ in 0..8 {crc=(crc>>1)^0xedb8_8320u32.wrapping_mul(crc&1);}}bytes[24..].copy_from_slice(&(!crc).to_le_bytes());
+        let table=Box::leak(Box::new(crate::scale::Imported::from_record(&bytes).unwrap()));
+        for equal in [false,true] {
+            let mut e=QuantEngine::new();assert!(e.arm_nominal(0,0,60,4000,0,0));
+            e.scale_id=6;e.imported=Some(table);e.equal=equal;e.root=3;e.transpose=2;e.set_midi_transpose(-1);
+            let scale=table.scale().unwrap();let mut command=0;
+            for (i,counts) in [-12000,-5000,0,2000,5000,16000].into_iter().enumerate() {
+                let input=6000000+counts as i32*300;let root=6300000;
+                let expected=if equal {scale.distribute(input,root,None)}else{scale.quantize(input,root,None)}.unwrap()+100000;
+                // Restart to make each comparison independent of hysteresis.
+                e.quantized_pitch=None;
+                command=e.tick((i+1) as u32,sample((i+1) as u32,counts),ack(command),true).unwrap();
+                assert!(e.active);assert_eq!(e.pitch,expected);
+                if let Ok(target)=map_nominal(expected,60) {assert_eq!(command as u16,target.dac_bits);}
+            }
         }
     }
     #[test]

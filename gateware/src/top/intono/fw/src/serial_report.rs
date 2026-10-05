@@ -93,11 +93,11 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
             d.frames, d.valid, d.qualified, d.fresh, d.last_window_age_ms, d.last_end_age_ms
         )?;
         if let Some((low, high)) = d.hz_range() {
-            writeln!(out, "VERIFY DETECTOR HZ={:.2}..{:.2}", low, high)?;
+            writeln!(out, "VERIFY DETECTOR HZ={:.2}..{:.2}", crate::pitch_units::Decimal(low), crate::pitch_units::Decimal(high))?;
         }
         writeln!(out, "VERIFY SETTLED FRESH={} TARGET_NEAR={}", d.settled_fresh, d.target_near)?;
         if let Some((low, high)) = d.settled_hz_range() {
-            writeln!(out, "VERIFY SETTLED_HZ={:.2}..{:.2}", low, high)?;
+            writeln!(out, "VERIFY SETTLED_HZ={:.2}..{:.2}", crate::pitch_units::Decimal(low), crate::pitch_units::Decimal(high))?;
         }
     }
     if let Some(d) = cal.failure_acquisition.as_ref() {
@@ -151,12 +151,12 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
                     d.frames, d.valid, d.qualified, d.fresh,
                     d.last_window_age_ms, d.last_end_age_ms)?;
                 if let Some((low, high)) = d.hz_range() {
-                    writeln!(out, "AUTO RECOVERED_HZ={:.2}..{:.2}", low, high)?;
+                    writeln!(out, "AUTO RECOVERED_HZ={:.2}..{:.2}", crate::pitch_units::Decimal(low), crate::pitch_units::Decimal(high))?;
                 }
                 writeln!(out, "AUTO RECOVERED_SETTLED FRESH={} TARGET_NEAR={}",
                     d.settled_fresh, d.target_near)?;
                 if let Some((low, high)) = d.settled_hz_range() {
-                    writeln!(out, "AUTO RECOVERED_SETTLED_HZ={:.2}..{:.2}", low, high)?;
+                    writeln!(out, "AUTO RECOVERED_SETTLED_HZ={:.2}..{:.2}", crate::pitch_units::Decimal(low), crate::pitch_units::Decimal(high))?;
                 }
             }
             if let Some(a) = cal.recovered_verification.as_ref() {
@@ -168,8 +168,7 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
         if let Some((old, new, accepted)) = auto.last_recheck {
             writeln!(
                 out,
-                "AUTO RECHECK OLD_C={:+.2} NEW_C={:+.2} KEPT={}",
-                old, new, accepted
+                "AUTO RECHECK OLD_C={:+.2} NEW_C={:+.2} KEPT={}", crate::pitch_units::Decimal(old), crate::pitch_units::Decimal(new), accepted
             )?;
         }
         if let Some(uv) = auto.recheck_missing_uv {
@@ -179,8 +178,7 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
             writeln!(
                 out,
                 "AUTO REFINE_TEST MC={} OLD_C={:+.2} NEW_C={:+.2} MAX_REPEAT_C={:.2}",
-                pitch, old, new, repeat
-            )?;
+                pitch, crate::pitch_units::Decimal(old), crate::pitch_units::Decimal(new), crate::pitch_units::Decimal(repeat))?;
         }
         if let Some(scan) = auto.best.as_ref() {
             writeln!(
@@ -194,22 +192,19 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
             )?;
             writeln!(
                 out,
-                "AUTO BEST_WORST_C={:+.2} TARGET_C={:.1} AIM_C={:.1} VERIFIED={}/{}",
-                scan.checked_worst().1,
-                auto.target_cents(),
-                auto.completion_cents(),
+                "AUTO BEST_WORST_C={:+.2} TARGET_C={:.1} AIM_C={:.1} VERIFIED={}/{}", crate::pitch_units::Decimal(scan.checked_worst().1), crate::pitch_units::Decimal(auto.target_cents()), crate::pitch_units::Decimal(auto.completion_cents()),
                 scan.tested,
                 scan.total
             )?;
             if !auto.active() {
                 write!(out, "AUTO WORST_AT=")?;
                 pitch_units::write_pitch(out, scan.checked_worst().0)?;
-                writeln!(out, " GRID_WORST_C={:+.2}", scan.worst_error)?;
-                writeln!(out, " MAX_SPAN_C={:.2}", scan.max_spread)?;
+                writeln!(out, " GRID_WORST_C={:+.2}", crate::pitch_units::Decimal(scan.worst_error))?;
+                writeln!(out, " MAX_SPAN_C={:.2}", crate::pitch_units::Decimal(scan.max_spread))?;
                 if let Some(pitch) = scan.max_spread_pitch {
                     write!(out, "AUTO MAX_SPREAD_AT=")?;
                     pitch_units::write_pitch(out, pitch)?;
-                    writeln!(out, " SPAN_C={:.2}", scan.max_spread)?;
+                    writeln!(out, " SPAN_C={:.2}", crate::pitch_units::Decimal(scan.max_spread))?;
                 }
                 if scan.unstable_grid_mask != 0 {
                     writeln!(out, "AUTO UNSTABLE_GRID_MASK={:013X}", scan.unstable_grid_mask)?;
@@ -223,19 +218,13 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
                             writeln!(
                                 out,
                                 "AUTO LOCAL {} MEAN_C={:+.2} SPAN_C={:.2} REPEAT_C={:.2}",
-                                ["LOW", "HIGH", "TARGET"][index],
-                                mean,
-                                span,
-                                repeat
-                            )?;
+                                ["LOW", "HIGH", "TARGET"][index], crate::pitch_units::Decimal(mean), crate::pitch_units::Decimal(span), crate::pitch_units::Decimal(repeat))?;
                         }
                     }
                     if let Some(residual) = check.residual() {
                         writeln!(
                             out,
-                            "AUTO LOCAL ENDPOINT_ADJUSTED_C={:+.2}; NOT ABSOLUTE ERROR",
-                            residual
-                        )?;
+                            "AUTO LOCAL ENDPOINT_ADJUSTED_C={:+.2}; NOT ABSOLUTE ERROR", crate::pitch_units::Decimal(residual))?;
                     }
                 }
             }
@@ -245,7 +234,7 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
             // Report the local repeats rather than only its aggregate grade.
             if let Some(scan) = cal.scan.as_ref() {
                 writeln!(out, "AUTO CANDIDATE_WORST_MC={} ERROR_C={:+.2} MAX_SPAN_C={:.2}",
-                    scan.checked_worst().0, scan.checked_worst().1, scan.max_spread)?;
+                    scan.checked_worst().0, crate::pitch_units::Decimal(scan.checked_worst().1), crate::pitch_units::Decimal(scan.max_spread))?;
                 writeln!(out, "AUTO CANDIDATE_CHECKED={}/{} MISSING={}; MISSING TARGETS NOT CERTIFIED",
                     scan.tested, scan.total, scan.missing)?;
                 if scan.missing_grid_mask != 0 {
@@ -262,11 +251,11 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
                             writeln!(out,
                                 "AUTO CANDIDATE_LOCAL {} UV={} MEAN_C={:+.2} SPAN_C={:.2} REPEAT_C={:.2}",
                                 ["LOW", "HIGH", "TARGET"][index],
-                                check.targets[index].microvolts, mean, span, repeat)?;
+                                check.targets[index].microvolts, crate::pitch_units::Decimal(mean), crate::pitch_units::Decimal(span), crate::pitch_units::Decimal(repeat))?;
                         }
                     }
                     if let Some(delta) = scan.grid_local_disagreement() {
-                        writeln!(out, "AUTO CANDIDATE_GRID_LOCAL_DELTA_C={:.2}", delta)?;
+                        writeln!(out, "AUTO CANDIDATE_GRID_LOCAL_DELTA_C={:.2}", crate::pitch_units::Decimal(delta))?;
                     }
                     // Preserve visit order: the same target is approached
                     // from alternating neighboring CVs, which distinguishes
@@ -277,13 +266,11 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
                             writeln!(out,
                                 "AUTO CANDIDATE_LOCAL VISIT={} TARGET={} UV={} MEAN_C={:+.2} SPAN_C={:.2}",
                                 visit + 1, ["LOW", "HIGH", "MID"][target],
-                                check.targets[target].microvolts,
-                                result.mean, result.spread)?;
+                                check.targets[target].microvolts, crate::pitch_units::Decimal(result.mean), crate::pitch_units::Decimal(result.spread))?;
                         }
                     }
                     if let Some(residual) = check.residual() {
-                        writeln!(out, "AUTO CANDIDATE_LOCAL ENDPOINT_ADJUSTED_C={:+.2}",
-                            residual)?;
+                        writeln!(out, "AUTO CANDIDATE_LOCAL ENDPOINT_ADJUSTED_C={:+.2}", crate::pitch_units::Decimal(residual))?;
                     }
                 }
             }
@@ -324,9 +311,7 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
         writeln!(
             out,
             "CAL REVIEW GRADE={} WORST_C={:.3} STABILITY_C={:.3} ACCEPTABLE={}",
-            cal.pending_quality.grade.label(),
-            cal.pending_quality.worst_cents(),
-            cal.pending_quality.stability_cents(),
+            cal.pending_quality.grade.label(), crate::pitch_units::Decimal(cal.pending_quality.worst_cents()), crate::pitch_units::Decimal(cal.pending_quality.stability_cents()),
             cal.pending_quality.acceptable()
         )?;
         if let Some(score) = cal.pending_quality.score_percent() {
@@ -380,10 +365,7 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
         writeln!(
             out,
             "PROFILE GRADE={} ERROR_C={:.3} STABILITY_C={:.3}",
-            cal.profile_quality.grade.label(),
-            cal.profile_quality.worst_cents(),
-            cal.profile_quality.stability_cents()
-        )?;
+            cal.profile_quality.grade.label(), crate::pitch_units::Decimal(cal.profile_quality.worst_cents()), crate::pitch_units::Decimal(cal.profile_quality.stability_cents()))?;
         let points = profile.points();
         if let (Some(lo), Some(hi)) = (points.first(), points.last()) {
             write!(
@@ -408,7 +390,7 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
             r.total()
         )?;
         if let Some(residual) = r.check.residual() {
-            writeln!(out, "REFINE LOCAL_C={:+.2}", residual)?;
+            writeln!(out, "REFINE LOCAL_C={:+.2}", crate::pitch_units::Decimal(residual))?;
         }
         for index in 0..4 {
             if let Some((pitch, old, new, repeat)) = r.comparison(index) {
@@ -416,17 +398,13 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
                 pitch_units::write_pitch(out, pitch)?;
                 writeln!(
                     out,
-                    " OLD_C={:+.2} NEW_C={:+.2} REPEAT_C={:.2}",
-                    old, new, repeat
-                )?;
+                    " OLD_C={:+.2} NEW_C={:+.2} REPEAT_C={:.2}", crate::pitch_units::Decimal(old), crate::pitch_units::Decimal(new), crate::pitch_units::Decimal(repeat))?;
             }
         }
         if r.total() > 0 && r.tested == r.total() {
             writeln!(
                 out,
-                "REFINE WORST_ABS_C ORIGINAL={:.2} CANDIDATE={:.2}",
-                r.original_worst, r.candidate_worst
-            )?;
+                "REFINE WORST_ABS_C ORIGINAL={:.2} CANDIDATE={:.2}", crate::pitch_units::Decimal(r.original_worst), crate::pitch_units::Decimal(r.candidate_worst))?;
         }
         writeln!(
             out,
@@ -461,12 +439,7 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
                         "HIGH_DOWN",
                         "REF_ZERO"
                     ][i],
-                    s.count,
-                    s.sum / s.count as f32,
-                    s.first,
-                    s.last,
-                    s.high - s.low
-                )?;
+                    s.count, crate::pitch_units::Decimal(s.sum / s.count as f32), crate::pitch_units::Decimal(s.first), crate::pitch_units::Decimal(s.last), crate::pitch_units::Decimal(s.high - s.low))?;
             }
             return Ok(());
         }
@@ -477,12 +450,10 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
             scan.tested,
             scan.total,
             scan.missing,
-            scan.complete,
-            scan.max_spread
-        )?;
+            scan.complete, crate::pitch_units::Decimal(scan.max_spread))?;
         if scan.tested > 0 {
             let (pitch, error) = scan.checked_worst();
-            write!(out, "VERIFY WORST_C={:+.2} AT=", error)?;
+            write!(out, "VERIFY WORST_C={:+.2} AT=", crate::pitch_units::Decimal(error))?;
             pitch_units::write_pitch(out, pitch)?;
             if scan.points_mode {
                 if let Some(point) = cal
@@ -495,7 +466,7 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
             }
             writeln!(out)?;
             if scan.local.is_some() {
-                write!(out, "VERIFY GRID_WORST_C={:+.2} AT=", scan.worst_error)?;
+                write!(out, "VERIFY GRID_WORST_C={:+.2} AT=", crate::pitch_units::Decimal(scan.worst_error))?;
                 pitch_units::write_pitch(out, scan.worst_pitch)?;
                 writeln!(out)?;
                 writeln!(out, "VERIFY RESULT={}", scan.accuracy_label())?;
@@ -532,7 +503,7 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
                                     / ((pair[1].microvolts as i64 - pair[0].microvolts as i64)
                                         as f32
                                         * 1000.0);
-                                writeln!(out, "VERIFY DAC_ROUNDING_C={:+.3}", cents)?;
+                                writeln!(out, "VERIFY DAC_ROUNDING_C={:+.3}", crate::pitch_units::Decimal(cents))?;
                             }
                         }
                     }
@@ -540,7 +511,7 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
             }
             for (index, error) in scan.first_errors.iter().enumerate() {
                 if let Some(error) = error {
-                    writeln!(out, "VERIFY P{}_C={:+.2}", index, error)?;
+                    writeln!(out, "VERIFY P{}_C={:+.2}", index, crate::pitch_units::Decimal(*error))?;
                 }
             }
         }
@@ -560,16 +531,14 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
                     pitch_units::write_pitch(out, check.targets[index].millicents)?;
                     writeln!(
                         out,
-                        " MEAN_C={:+.2} SPAN_C={:.2} REPEAT_C={:.2}",
-                        mean, span, repeat
-                    )?;
+                        " MEAN_C={:+.2} SPAN_C={:.2} REPEAT_C={:.2}", crate::pitch_units::Decimal(mean), crate::pitch_units::Decimal(span), crate::pitch_units::Decimal(repeat))?;
                 }
             }
             if let Some(residual) = check.residual() {
-                writeln!(out, "LOCAL ENDPOINT_ADJUSTED_C={:+.2}", residual)?;
+                writeln!(out, "LOCAL ENDPOINT_ADJUSTED_C={:+.2}", crate::pitch_units::Decimal(residual))?;
             }
             if let Some(r) = check.residuals() {
-                writeln!(out, "LOCAL PASSES_C={:+.2},{:+.2},{:+.2}", r[0], r[1], r[2])?;
+                writeln!(out, "LOCAL PASSES_C={:+.2},{:+.2},{:+.2}", crate::pitch_units::Decimal(r[0]), crate::pitch_units::Decimal(r[1]), crate::pitch_units::Decimal(r[2]))?;
             }
             if check.tested == 9 {
                 writeln!(out, "LOCAL ADVICE={}", check.advice())?;
@@ -577,17 +546,16 @@ pub fn verification(out: &mut impl Write, cal: &Live) -> fmt::Result {
         }
     }
     if let Some(error) = cal.error_cents {
-        writeln!(out, "VERIFY CURRENT_C={:+.2}", error)?;
+        writeln!(out, "VERIFY CURRENT_C={:+.2}", crate::pitch_units::Decimal(error))?;
     }
     if let Some(s) = cal.deviation {
         writeln!(
             out,
-            "VERIFY MEAN_C={:+.2} SPAN_C={:.2} SAMPLES={} AVERAGED={}",
-            s.mean, s.spread, s.count, s.averaged
+            "VERIFY MEAN_C={:+.2} SPAN_C={:.2} SAMPLES={} AVERAGED={}", crate::pitch_units::Decimal(s.mean), crate::pitch_units::Decimal(s.spread), s.count, s.averaged
         )?;
     }
     if let Some(error) = cal.zero_error_cents {
-        writeln!(out, "CAL ZERO_CHECK_C={:+.2}", error)?;
+        writeln!(out, "CAL ZERO_CHECK_C={:+.2}", crate::pitch_units::Decimal(error))?;
     }
     Ok(())
 }

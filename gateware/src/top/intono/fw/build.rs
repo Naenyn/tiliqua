@@ -77,6 +77,9 @@ SECTIONS {
    This is a static-data guard; compiled stack use still requires inspection. */
 ASSERT(_stack_start - _ebss >= 0x6000,
        "Intono SRAM leaves less than 24 KiB for runtime stack");
+/* Match the established 320 KiB firmware budget checked before flashing. */
+ASSERT(LOADADDR(.data) + SIZEOF(.data) - _stext <= 0x50000,
+       "Intono firmware exceeds its 320 KiB budget");
 ASSERT(LOADADDR(.data) + SIZEOF(.data) <= 0x20500000,
        "Intono firmware overlaps reserved runtime storage");
 ASSERT(ADDR(.intono_runtime) + SIZEOF(.intono_runtime) <= 0x20800000,

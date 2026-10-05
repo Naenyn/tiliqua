@@ -10,6 +10,7 @@ mod measurement_snapshot;
 mod midi_learn;
 mod midi_transpose;
 mod note_pattern;
+mod scale_name;
 mod preferences;
 mod profile_transfer;
 mod nsdf_guard;
@@ -28,7 +29,10 @@ mod ui_canvas;
 mod static_guides { include!(concat!(env!("OUT_DIR"), "/static-guides.rs")); }
 mod ui_controls;
 mod ui_scale;
+mod ui_imported;
+mod ui_theme;
 mod ui_route;
+mod startup_state;
 mod route_ui;
 mod route_render;
 mod ui_navigation;
@@ -56,6 +60,7 @@ use log::warn;
 use micromath::F32Ext;
 use riscv_rt::entry;
 
+use tiliqua_hal::dma_framebuffer::DMAFramebuffer;
 use tiliqua_hal::pca9635::Pca9635Driver;
 use tiliqua_hal::pmod::EurorackPmod;
 use tiliqua_lib::*;
@@ -95,7 +100,7 @@ fn quant_settings(
 ) -> quantizer_setup::Channel {
     let mut edited=current;
     edited.edit_scale(opts.scale.value as u8,masks);
-    if edited.octaves!=opts.octaves.value {edited.scale_slot=0;}
+    if edited.octaves!=opts.octaves.value && edited.imported_slot==0 {edited.scale_slot=0;}
     edited.octaves=opts.octaves.value;
     edited
 }
@@ -130,6 +135,7 @@ fn show_route_settings(opts: &mut options::PlayOpts,c:quantizer_setup::Channel) 
 // Keeping it static prevents future profile/scale/menu growth from silently
 // becoming part of `main()`'s stack frame, which previously corrupted an
 // already constrained main RAM after the first interrupt.
+static IMPORTED_PAGE: Mutex<RefCell<u8>> = Mutex::new(RefCell::new(0));
 static APP: Mutex<RefCell<Option<App>>> = Mutex::new(RefCell::new(None));
 static REFERENCE_CV: Mutex<RefCell<reference_cv::Reference>> = Mutex::new(RefCell::new(reference_cv::Reference::new()));
 static OWNERS: Mutex<RefCell<Reservations>> = Mutex::new(RefCell::new(Reservations::new()));
@@ -163,18 +169,20 @@ struct MultiQuant {
     phase: usize,
     samples: [u32; 4],
 }
-static MULTI_QUANT: Mutex<RefCell<MultiQuant>> = Mutex::new(RefCell::new(MultiQuant {
+// Four identical stopped engines need no fourfold ROM image. Initialize
+// them before interrupts, using one shared constructor and zeroed BSS state.
+static MULTI_QUANT:Mutex<RefCell<startup_state::StartupState<MultiQuant>>>=Mutex::new(RefCell::new(startup_state::StartupState::new()));
+#[inline(never)]
+fn new_quant_engine()->QuantEngine {QuantEngine::new()}
+#[inline(never)]
+fn install_quant() {
+    critical_section::with(|cs| {let mut q=MULTI_QUANT.borrow_ref_mut(cs);q.initialize(MultiQuant {
     groups: route_group::Layout::new(),
     midi: [midi_transpose::Config::new();4],
     shifts: [0;4],
     midi_last: [None;4],
     midi_base_learn: midi_transpose::Learn::new(),
-    lanes: [
-        QuantEngine::new(),
-        QuantEngine::new(),
-        QuantEngine::new(),
-        QuantEngine::new(),
-    ],
+    lanes: core::array::from_fn(|_| new_quant_engine()),
     configs: quantizer_setup::DEFAULT,
     bound: [0; 4],
     running: false,
@@ -183,7 +191,34 @@ static MULTI_QUANT: Mutex<RefCell<MultiQuant>> = Mutex::new(RefCell::new(MultiQu
     max_gap: 0,
     phase: 0,
     samples: [0; 4],
-}));
+});});
+}
+// Each output owns one table. Clear its only retained reference before replacing
+// the slot; callers hold the interrupt exclusion while readers borrow the table.
+#[link_section=".intono_runtime"]
+static mut IMPORTED_TABLES: core::mem::MaybeUninit<[scale::Imported;4]>=core::mem::MaybeUninit::uninit();
+struct ScaleNames {cal_changed:bool,loaded:[scale_name::Name;4],browse:scale_name::Name,slot:u8,present:bool,config:scale_name::Name,config_browse:scale_name::Name,config_slot:u8,config_present:bool}
+#[link_section=".intono_runtime"]
+static mut SCALE_NAMES:core::mem::MaybeUninit<ScaleNames>=core::mem::MaybeUninit::uninit();
+fn scale_names()->&'static mut ScaleNames {unsafe {&mut *core::ptr::addr_of_mut!(SCALE_NAMES).cast::<ScaleNames>()}}
+fn config_slot_name()->String<24> {
+    let slot=with_app(|a|a.ui.opts.quant_setups.slot.value);let cache=scale_names();let mut s=String::new();
+    s.push_str(if cache.config_slot!=slot {"STOP OUTPUTS TO PREVIEW"}else if !cache.config_browse.text().is_empty(){cache.config_browse.text()}else if cache.config_present {"UNNAMED CONFIG"}else{"EMPTY SLOT"}).ok();s
+}
+fn scale_saved_name(output:usize)->String<24> {let mut s=String::new();s.push_str(scale_names().loaded[output].text()).ok();s}
+fn write_saved_scale(w:&mut impl core::fmt::Write,output:usize,slot:u8) {
+    let name=scale_saved_name(output);
+    if name.is_empty() {write!(w,"USER {}",slot).ok();}else {for ch in name.chars().take(14) {w.write_char(ch).ok();}}
+}
+fn install_imported(q:&mut MultiQuant,n:usize,table:scale::Imported) {
+    critical_section::with(|cs|ROUTE_PAINT.borrow_ref_mut(cs).invalidate_imported());
+    q.lanes[n].imported=None;
+    if table.summary().0==0 {return;}
+    unsafe {
+        let destination=core::ptr::addr_of_mut!(IMPORTED_TABLES).cast::<scale::Imported>().add(n);
+        destination.write(table);q.lanes[n].imported=Some(&*destination);
+    }
+}
 #[inline(never)]
 fn quant_command(t: &pac::TUNER_PERIPH, n: usize, value: u32) {
     match n {
@@ -264,6 +299,7 @@ impl MultiQuant {
         for n in 0..4 {
             if mask&(1<<n)==0 {continue;}
             let c=channels[n];
+            if c.quantize && c.scale==6 && c.imported_slot!=0 && self.lanes[n].imported.is_none() {reason=Some("LOAD SCALA SLOT FIRST");}
             if !c.quantize && c.correction==0 {reason=Some("CHOOSE SCALE OR CORRECTION");}
             if c.correction!=0 && self.bound[n]!=c.correction {reason=Some("BIND CORRECTION ON ROUTE FIRST");}
         }
@@ -281,7 +317,8 @@ impl MultiQuant {
             if lane.arm_route(input,n as u8,c.zero,counts,now,quant_status(t,n),c.correction!=0,c.quantize) {
                 lane.scale_id=c.scale;lane.root=c.root;lane.transpose=c.transpose;lane.equal=c.equal;
                 lane.set_midi_transpose(self.shifts[route]);
-                if c.quantize && c.scale==6 {
+                if c.imported_slot==0 {lane.imported=None;}
+                if c.quantize && c.scale==6 && c.imported_slot==0 {
                     match scale::Pattern::compile_span(&c.masks,c.octaves) {
                         Ok(pattern)=>lane.pattern=pattern,
                         Err(_)=>{lane.stop("EMPTY PATTERN - ADD NOTES");}
@@ -387,10 +424,21 @@ fn timer0_handler() {
                 REFERENCE_CV.borrow_ref_mut(cs).free=OWNERS.borrow_ref(cs).free_mask(Owner::Reference,true)
                     & !app.groups.outputs.iter().fold(0,|mask,value|mask|value);
             });
-            app.ui.update_encoder_realtime_custom(visible_ticks,|opts|critical_section::with(|cs| {
+            let imported=app.quant_channels[app.quant_selected as usize].imported_slot!=0;
+            app.ui.update_encoder_realtime_custom(|opts,ticks| {
+                if imported && matches!(opts.tracker.page.value,Page::Quantizer|Page::QuantNotes) && opts.tracker.modify && opts.tracker.selected==Some(if opts.tracker.page.value==Page::Quantizer {8}else{10}) {
+                    critical_section::with(|cs| {let count=MULTI_QUANT.borrow_ref(cs).lanes[app.quant_selected as usize].imported.map(|t|t.summary().0).unwrap_or(1);let mut p=IMPORTED_PAGE.borrow_ref_mut(cs);*p=ui_imported::turn_page(*p,count,ticks);});
+                } else if imported && matches!(opts.tracker.page.value,Page::Quantizer|Page::QuantNotes) && !opts.tracker.modify {
+                    let order=ui_navigation::order(opts,true);
+                    for _ in 0..ticks.unsigned_abs() {
+                        let index=opts.tracker.selected.and_then(|s|order.iter().position(|n|*n==s));
+                        opts.tracker.selected=match (index,ticks>0) {(None,true)=>Some(order[0]),(Some(0),false)=>None,(Some(n),true)=>Some(order[(n+1).min(order.len()-1)]),(Some(n),false)=>Some(order[n-1]),_=>None};
+                    }
+                }else{visible_ticks(opts,ticks);}
+            },|opts|critical_section::with(|cs| {
                 let claims=*OWNERS.borrow_ref(cs);
                 ROUTE_VIEW.borrow_ref_mut(cs).click(opts,&claims)
-            }));
+            }),|opts|critical_section::with(|cs|ROUTE_VIEW.borrow_ref(cs).led_index(opts,imported)));
             // The retired root selector index now represents piano-key focus.
             // A click reaches the generic edit flag; consume it as a key action.
             if app.ui.opts.tracker.page.value==Page::Quantizer
@@ -402,6 +450,8 @@ fn timer0_handler() {
                     let current_masks=*QUANT_NOTES.borrow_ref(cs);
                     let status=if MULTI_QUANT.borrow_ref(cs).lanes[app.quant_selected as usize].active {
                         "STOP CHANNEL BEFORE EDITING"
+                    } else if app.quant_channels[app.quant_selected as usize].imported_slot!=0 {
+                        "EDIT SCALA IN WEB LIBRARY"
                     } else if let Some(masks)=ui_scale::toggle_span(
                         app.ui.opts.quantizer.scale.value as u8,current_masks,app.ui.opts.quantizer.octaves.value,key) {
                         *QUANT_NOTES.borrow_ref_mut(cs)=masks;
@@ -419,6 +469,8 @@ fn timer0_handler() {
                 critical_section::with(|cs| {
                     let status=if MULTI_QUANT.borrow_ref(cs).lanes[app.quant_selected as usize].active {
                         "STOP CHANNEL BEFORE EDITING"
+                    } else if app.quant_channels[app.quant_selected as usize].imported_slot!=0 {
+                        "EDIT SCALA IN WEB LIBRARY"
                     } else {
                         QUANT_NOTES.borrow_ref_mut(cs)[octave]^=1<<note;
                         "EDITED - SAVE TO KEEP"
@@ -877,10 +929,10 @@ impl BackgroundCanvas {
             for black_pass in [false,true] {
                 for note in 0..12 {
                     let (mut key,black)=ui_canvas::octave_key(note,octave).unwrap();
-                    if single {key.y+=ui_canvas::SINGLE_KEYBOARD_Y_OFFSET;}
+                    if single {key.y+=ui_canvas::SINGLE_KEYBOARD_Y_OFFSET;key.height=if black {78}else{144};}
                     if black!=black_pass {continue;}
-                    ui_canvas::rounded_rectangle(key,4,if black {0x69}else{0x49},
-                        0xE0+octave as u8*16+note as u8,
+                    ui_canvas::rounded_rectangle_stroke(key,4,if black {2}else{1},
+                        if black {0x69}else{0x49},0xE0+octave as u8*16+note as u8,
                         |p,c|self.put_panel_pixel(p.x,p.y,c));
                 }
             }
@@ -1179,7 +1231,9 @@ fn publish_controls(text: &mut TextWriter<'_>, menu: &MenuSnapshot, cal: &calibr
     for (index, entry) in menu.entries.iter().enumerate() {
         let Some(entry) = entry else { continue };
         if page==Page::Tuner && index==0 {continue;}
-        let Some(field) = ui_controls::field(surface(page),index) else { continue };
+        if with_app(|app|app.quant_channels[selected_output].imported_slot!=0) && ((page==Page::Quantizer && matches!(index,2|5|9)) || (page==Page::QuantNotes && matches!(index,0|2|3|4|5|9))) {continue;}
+        if with_app(|a| {let c=a.quant_channels[selected_output];c.imported_slot==0 && c.octaves==1}) && ((page==Page::Quantizer && index==8)||(page==Page::QuantNotes && index==10)) {continue;}
+        let Some(field) = ui_controls::scale_field(surface(page),index,with_app(|app|app.quant_channels[selected_output].imported_slot!=0)) else { continue };
         let label = match (page,index) {
             (Page::Calibrate,0) => "IN",
             (Page::Calibrate,1) => "OUT",
@@ -1225,6 +1279,11 @@ fn publish_controls(text: &mut TextWriter<'_>, menu: &MenuSnapshot, cal: &calibr
             } else {caption.push_str("REFERENCE CV").ok();}
             ui_text::ux_field(field.column as usize,field.row as usize,field.width as usize,&caption,style,ui_text::Align::Center,|a,c|text.cell(a,c));
             continue;
+        }
+        if with_app(|a|a.quant_channels[selected_output].imported_slot!=0) && ((page==Page::Quantizer && index==8)||(page==Page::QuantNotes && index==10)) {
+            let (current,total)=critical_section::with(|cs| {let count=MULTI_QUANT.borrow_ref(cs).lanes[selected_output].imported.map(|t|t.summary().0).unwrap_or(1);(ui_imported::page_start(count,*IMPORTED_PAGE.borrow_ref(cs))/6+1,(count as usize+5)/6)});
+            let mut caption=String::<24>::new();write!(&mut caption,"PAGE {} OF {}",current,total).ok();
+            ui_text::ux_field(field.column as usize,field.row as usize,field.width as usize,&caption,style,ui_text::Align::Center,|a,c|text.cell(a,c));continue;
         }
         let mut label_text = String::<32>::new();
         // Focus outline and EDIT footer already distinguish selection/editing.
@@ -1359,15 +1418,15 @@ fn publish_tuner(
             cents_line.clear();
             let midi=pitch_math::semitones(measurement.frequency_hz,reference_hz);
             let cents=100.0*(midi-midi.round());
-            write!(cents_line,"{:+.1}c",cents).ok();
+            write!(cents_line,"{:+.1}c",pitch_units::Decimal(cents)).ok();
             ui_text::ux_field(23,8,7,&cents_line,ui_text::Style {
                 color:if cents.abs()<=2.0 {0xF5}else{0xB9},bold:cents.abs()<=2.0,
             },ui_text::Align::Left,|a,c|text.cell(a,c));
-            frequency_line.clear();write!(frequency_line,"{:.*}Hz",if measurement.frequency_hz>=10000.0 {1}else{2},measurement.frequency_hz).ok();
+            frequency_line.clear();write!(frequency_line,"{:.*}Hz",if measurement.frequency_hz>=10000.0 {1}else{2},pitch_units::Decimal(measurement.frequency_hz)).ok();
             write_text(text,23,11,&frequency_line);
-            voltage_line.clear();write!(voltage_line,"{:.2}Vrms",measurement.vrms).ok();
+            voltage_line.clear();write!(voltage_line,"{:.2}Vrms",pitch_units::Decimal(measurement.vrms)).ok();
             write_text(text,23,14,&voltage_line);
-            voltage_line.clear();write!(voltage_line,"{:.2}Vpp",measurement.vpp).ok();
+            voltage_line.clear();write!(voltage_line,"{:.2}Vpp",pitch_units::Decimal(measurement.vpp)).ok();
             write_text(text,23,15,&voltage_line);
         }
         else if reservations.tuner_available(input) {write_text(text,23,8,"NO SIGNAL");}
@@ -1412,7 +1471,7 @@ fn publish_tuner(
                     NOTE_NAMES[note.rem_euclid(12) as usize],
                     note.div_euclid(12) - 1,
                     (100.0 * (midi - note as f32)).round() as i32,
-                    value.frequency_hz
+                    pitch_units::Decimal(value.frequency_hz)
                 )
                 .ok();
             } else {
@@ -1438,7 +1497,7 @@ fn publish_tuner(
                 |address, cell| text.cell(address, cell),
             );
             let mut volts: String<48> = String::new();
-            write!(volts, "{:5.3} Vrms  {:5.3} Vpp", value.vrms, value.vpp).ok();
+            write!(volts, "{:5.3} Vrms  {:5.3} Vpp", pitch_units::Decimal(value.vrms), pitch_units::Decimal(value.vpp)).ok();
             ui_text::ux_field(
                 1,
                 ui_canvas::LINEAR_LEVEL_ROWS[channel],
@@ -1515,6 +1574,18 @@ fn publish_quantizer(display: &pac::TUNER_DISPLAY, text: &mut TextWriter<'_>, me
         publish_markers(display,Markers([None;4]),false,menu);return 0;
     }
     let mut line = String::<64>::new();
+    if page==Page::Quantizer || (page==Page::QuantNotes && c.imported_slot!=0) {
+        let slot=with_app(|a|if page==Page::Quantizer {a.ui.opts.quantizer.slot.value}else{a.ui.opts.quant_notes.slot.value});
+        let names=scale_names();let caption=if names.slot!=slot {"STOP OUTPUTS TO PREVIEW"}else if !names.browse.text().is_empty() {names.browse.text()}else if names.present {"UNNAMED SCALE"}else {"EMPTY SLOT"};
+        write_centered(text,17,caption,28);
+    }
+    if c.imported_slot!=0 && matches!(page,Page::Quantizer|Page::QuantNotes) {
+        let table=critical_section::with(|cs|MULTI_QUANT.borrow_ref(cs).lanes[output as usize].imported);
+        if let Some(table)=table {ui_imported::text(table,c.imported_slot,critical_section::with(|cs|*IMPORTED_PAGE.borrow_ref(cs)),|a,c|text.cell(a,c));let name=scale_saved_name(output as usize);if !name.is_empty(){write_centered(text,7,&name,28);}}
+        else {write_centered(text,8,"LOAD SCALA SLOT FIRST",30);}
+        let (_,status)=critical_section::with(|cs|*NOTE_STATUS.borrow_ref(cs));write_centered(text,19,status,28);
+        publish_markers(display,Markers([None;4]),false,menu);return 0;
+    }
     if page == Page::QuantNotes {
         let masks = critical_section::with(|cs|*QUANT_NOTES.borrow_ref(cs));
         let key_focused=with_app(|app|app.ui.opts.tracker.selected==Some(ui_keyboard::KEYBOARD));
@@ -1525,7 +1596,7 @@ fn publish_quantizer(display: &pac::TUNER_DISPLAY, text: &mut TextWriter<'_>, me
         for row in 0..(c.octaves as usize).min(2) {
             let octave=view+row;
             line.clear();write!(line,"OCTAVE {} / {} NOTES",octave+1,masks[octave].count_ones()).ok();
-            write_centered(text,7+row as u8*4+if c.octaves==1 {3}else{0},&line,28);
+            write_centered(text,7+row as u8*4+if c.octaves==1 {1}else{0},&line,28);
             keyboard_mask|=(masks[octave] as u32)<<(row*12);
         }
         let slot=with_app(|app|app.ui.opts.quant_notes.slot.value);
@@ -1554,7 +1625,7 @@ fn publish_quantizer(display: &pac::TUNER_DISPLAY, text: &mut TextWriter<'_>, me
                 let octave=view+row;
                 line.clear();let count=masks[octave].count_ones();
                 write!(line,"OCTAVE {} / {} NOTE{}",octave+1,count,if count==1 {""}else{"S"}).ok();
-                write_centered(text,7+row as u8*4+if c.octaves==1 {3}else{0},&line,28);
+                write_centered(text,7+row as u8*4+if c.octaves==1 {1}else{0},&line,28);
                 keyboard_mask|=(masks[octave] as u32)<<(row*12);
             }
         } else {
@@ -1596,7 +1667,7 @@ fn publish_quantizer(display: &pac::TUNER_DISPLAY, text: &mut TextWriter<'_>, me
         },ui_text::Align::Center,|a,c|text.cell(a,c));line.clear();
         if active {
             for (column,label,uv) in [(6,"IN",input_uv),(20,"OUT",output_uv)] {
-                line.clear();write!(line,"{} {:+.3}V",label,uv as f32/1e6).ok();
+                line.clear();write!(line,"{} {:+.3}V",label,pitch_units::Decimal(uv as f32/1e6)).ok();
                 ui_text::field(column,13,14,&line,ui_text::DEFAULT,
                     ui_text::Align::Center,|a,c|text.cell(a,c));
             }
@@ -1726,9 +1797,9 @@ fn publish_calibration(
             write!(line,"CHECK {}/{}{}",scan.tested,scan.total,if scan.complete {" COMPLETE"}else{""}).ok();
             write_centered(text,10,&line,28); line.clear();
             if scan.tested>0 {
-                write!(line,"WORST: {:+.2}c",scan.worst_error).ok();
+                write!(line,"WORST: {:+.2}c",pitch_units::Decimal(scan.worst_error)).ok();
                 write_centered(text,11,&line,28); line.clear();
-                write!(line,"SPREAD: {:.2}c",scan.max_spread).ok();
+                write!(line,"SPREAD: {:.2}c",pitch_units::Decimal(scan.max_spread)).ok();
                 write_centered(text,12,&line,28); line.clear();
             }
             if scan.complete {
@@ -1748,13 +1819,13 @@ fn publish_calibration(
             let quality=if cal.pending_profile.is_some(){cal.pending_quality}else{cal.profile_quality};
             write_text(text,23,10,quality.grade.label());
             write_text(text,23,11,"WORST");
-            write!(line,"{:.1}c",quality.worst_cents()).ok();
+            write!(line,"{:.1}c",pitch_units::Decimal(quality.worst_cents())).ok();
             write_text(text,23,12,&line);line.clear();
             write_text(text,23,13,"SPREAD");
-            write!(line,"{:.1}c",quality.stability_cents()).ok();
+            write!(line,"{:.1}c",pitch_units::Decimal(quality.stability_cents())).ok();
             write_text(text,23,14,&line);line.clear();
         } else if value.valid {
-            write!(line,"{:.1}Hz",value.frequency_hz).ok();
+            write!(line,"{:.1}Hz",pitch_units::Decimal(value.frequency_hz)).ok();
             write_text(text,23,11,&line);line.clear();
         }
         let (low,high)=calibration_plot_range(cal,profile);
@@ -1788,14 +1859,14 @@ fn publish_calibration(
             (plot.x+plot.width as i32,high),
         ] {
             let column=((x-120)/12) as usize-width/2;
-            line.clear();write!(line,"{:+.1}V",voltage as f32/1e6).ok();
+            line.clear();write!(line,"{:+.1}V",pitch_units::Decimal(voltage as f32/1e6)).ok();
             ui_text::field(column,15,width,&line,ui_text::DEFAULT,ui_text::Align::Center,|a,c|text.cell(a,c));
         }
         line.clear();
         if cal.active() {
             if let Some(scan)=cal.scan.as_ref().filter(|_|cal.verifying) {
                 write!(line,"CHECK {}/{}",scan.tested,scan.total).ok();
-            } else { write!(line,"SCAN {:+.2}V / {} PTS",cal.millivolts as f32/1000.0,cal.point).ok(); }
+            } else { write!(line,"SCAN {:+.2}V / {} PTS",pitch_units::Decimal(cal.millivolts as f32/1000.0),cal.point).ok(); }
         } else if let Some(profile)=profile { write!(line,"{} POINTS",profile.points().len()).ok(); }
         else { line.push_str(if plot_ready {"READY TO SCAN"}else{"DRAWING GRAPH"}).ok(); }
         write_centered(text,19,&line,24);
@@ -2070,7 +2141,7 @@ fn poll_ui_frame(cal: &calibration_live::Live, scan_controls: Option<RuntimeCont
                 edited.zero = app.ui.opts.play.zero_note.value;
                 edited.quantize = app.ui.opts.play.quantize.value == options::RouteQuantize::Scale;
                 edited.correction = app.ui.opts.play.correction.value as u8;
-                if edited.scale!=app.ui.opts.play.scale.value as u8 {edited.scale_slot=0;}
+                if edited.scale!=app.ui.opts.play.scale.value as u8 {edited.scale_slot=0;edited.imported_slot=0;}
                 edited.scale=app.ui.opts.play.scale.value as u8;
                 edited.root=app.ui.opts.play.key.value as u8;
                 edited.transpose=app.ui.opts.play.transpose.value;
@@ -2079,7 +2150,7 @@ fn poll_ui_frame(cal: &calibration_live::Live, scan_controls: Option<RuntimeCont
                 edited =
                     quant_settings(&app.ui.opts.quantizer, *QUANT_NOTES.borrow_ref(cs), edited);
                 if app.ui.opts.tracker.page.value==Page::QuantNotes {
-                    if edited.octaves!=app.ui.opts.quant_notes.octaves.value {edited.scale_slot=0;}
+                    if edited.octaves!=app.ui.opts.quant_notes.octaves.value && edited.imported_slot==0 {edited.scale_slot=0;}
                     edited.octaves=app.ui.opts.quant_notes.octaves.value;
                 }
             }
@@ -2121,7 +2192,7 @@ fn poll_ui_frame(cal: &calibration_live::Live, scan_controls: Option<RuntimeCont
         let clear = app.ui.opts.quant_notes.clear.poll();
         let fill = app.ui.opts.quant_notes.fill.poll();
         let learn = app.ui.opts.quant_notes.learn.poll();
-        let on_notes = app.ui.opts.tracker.page.value == Page::QuantNotes;
+        let on_notes = app.ui.opts.tracker.page.value == Page::QuantNotes && app.quant_channels[app.quant_selected as usize].imported_slot==0;
         if on_notes {
             app.ui.opts.quantizer.slot.value = app.ui.opts.quant_notes.slot.value;
         } else {
@@ -2215,7 +2286,7 @@ fn poll_ui_frame(cal: &calibration_live::Live, scan_controls: Option<RuntimeCont
         if let Some(page) = destination {
             if matches!(page,Page::Play|Page::QuantSetups|Page::RouteMidi) {critical_section::with(|cs| {let mut v=ROUTE_VIEW.borrow_ref_mut(cs);v.midi_from_configs=page==Page::RouteMidi;v.screen=if v.midi_from_configs {route_ui::Screen::Editor(route_ui::Stage::Midi)}else{route_ui::Screen::Overview};v.pending=None;v.window=0;});}
             app.ui.opts.tracker.page.value = page;
-            app.ui.opts.tracker.selected = Some(if page==Page::QuantNotes {ui_keyboard::KEYBOARD}else if page==Page::Play {app.route_selected as usize}else if page==Page::Tuner {2}else{0});
+            app.ui.opts.tracker.selected = Some(if page==Page::QuantNotes {if app.quant_channels[app.quant_selected as usize].imported_slot!=0 {8}else{ui_keyboard::KEYBOARD}}else if page==Page::Play {app.route_selected as usize}else if page==Page::Tuner {2}else{0});
             if page==Page::RouteMidi {
                 app.midi_selected=app.route_selected;
                 app.ui.opts.route_midi.route.value=app.route_selected;
@@ -2226,6 +2297,7 @@ fn poll_ui_frame(cal: &calibration_live::Live, scan_controls: Option<RuntimeCont
             if page==Page::QuantNotes {
                 critical_section::with(|cs| {
                     if !MULTI_QUANT.borrow_ref(cs).lanes[app.quant_selected as usize].active
+                        && app.quant_channels[app.quant_selected as usize].imported_slot==0
                         && scale::has_piano_keys(app.ui.opts.quantizer.scale.value as u8) {
                         let masks=ui_scale::preview_span(app.ui.opts.quantizer.scale.value as u8,
                             *QUANT_NOTES.borrow_ref(cs),app.ui.opts.quantizer.octaves.value).0;
@@ -2305,17 +2377,20 @@ fn persist_setup(storage: &mut Option<IntonoPersistence>, save: bool) -> &'stati
     let Some(storage) = storage.as_mut() else {
         return "NO FLASH STORAGE";
     };
-    let mut check = [0u8; quantizer_setup::FULL_LEN + 1];
+    let mut check = [0u8; quantizer_setup::FULL_LEN + scale_name::OVERHEAD + 1];
     if save {
         let (channels,groups,midi) = with_app(|app| (app.quant_channels,app.groups,app.midi));
         let Some(bytes) = quantizer_setup::encode_full(&channels,groups,midi) else {
             return "INVALID CONFIG";
         };
-        if storage.save_key(key, &bytes).is_err() {
+        check[..bytes.len()].copy_from_slice(&bytes);
+        let Some(n)=scale_names().config.wrap_config(&mut check,bytes.len()) else {return "INVALID CONFIG NAME";};
+        if storage.save_key(key, &check[..n]).is_err() {
             return "CONFIG SAVE FAILED";
         }
-        match storage.load_key(key, &mut check) {
-            Ok(Some(n)) if n == bytes.len() && check[..n] == bytes => "CONFIG SAVED",
+        let mut verified=[0;quantizer_setup::FULL_LEN+scale_name::OVERHEAD+1];
+        match storage.load_key(key, &mut verified) {
+            Ok(Some(len)) if len == n && verified[..len] == check[..n] => {scale_names().config_slot=0;"CONFIG SAVED"},
             _ => "CONFIG READBACK FAILED",
         }
     } else {
@@ -2329,7 +2404,31 @@ fn persist_setup(storage: &mut Option<IntonoPersistence>, save: bool) -> &'stati
             with_app(|app|critical_section::with(|cs|ROUTE_VIEW.borrow_ref_mut(cs).warn(&mut app.ui.opts,kind)));
             return "INVALID SAVED CONFIG";
         };
+        let config_name=scale_name::Name::read(bytes);
+        let mut saved_names=[scale_name::Name::empty();4];
+        let mut patterns: [scale::Imported;4]=core::array::from_fn(|_|scale::Imported::empty());
+        for (n,c) in channels.iter().enumerate() {
+            if c.imported_slot==0 {
+                // Configs embed keyboard intervals; show the slot name only if
+                // its current contents still match that embedded snapshot.
+                if let Some(key)=note_pattern::key(c.scale_slot) {
+                    let mut record=[0;scale::Imported::RECORD_LEN+scale_name::OVERHEAD+1];
+                    if let Ok(Some(len))=read_scale(storage,key,&mut record) {
+                        if note_pattern::decode_span(&record[..len])==Some((c.masks,c.octaves)) {
+                            saved_names[n]=scale_name::Name::read(&record[..len]);
+                        }
+                    }
+                }
+                continue;
+            }
+            let mut record=[0;scale::Imported::RECORD_LEN+scale_name::OVERHEAD+1];
+            let Some(key)=note_pattern::key(c.imported_slot) else {return "INVALID SCALA SLOT";};
+            let Ok(Some(len))=read_scale(storage,key,&mut record) else {return "SCALA SLOT MISSING";};
+            let Ok(pattern)=scale::Imported::from_record(&record[..len]) else {return "SCALA SLOT INVALID";};
+            patterns[n]=pattern;saved_names[n]=scale_name::Name::read(&record[..len]);
+        }
         with_app(|app| {
+            scale_names().loaded=saved_names;scale_names().config=config_name;
             app.quant_channels = channels;
             app.groups=groups;app.midi=midi;
             app.ui.opts.play.input.value=groups.inputs[app.route_selected as usize];
@@ -2338,7 +2437,7 @@ fn persist_setup(storage: &mut Option<IntonoPersistence>, save: bool) -> &'stati
                 app.ui.opts.quant_notes.octaves.value=current.octaves;
             show_route_settings(&mut app.ui.opts.play,current);
             critical_section::with(|cs| {
-                let mut q=MULTI_QUANT.borrow_ref_mut(cs);q.bound=[0;4];q.groups=groups;q.midi=midi;q.midi_base_learn=midi_transpose::Learn::new();for route in 0..4 {q.transpose_route(route,0);q.midi_last[route]=None;}
+                let mut q=MULTI_QUANT.borrow_ref_mut(cs);for (n,pattern) in patterns.into_iter().enumerate() {install_imported(&mut q,n,pattern);}q.bound=[0;4];q.groups=groups;q.midi=midi;q.midi_base_learn=midi_transpose::Learn::new();for route in 0..4 {q.transpose_route(route,0);q.midi_last[route]=None;}
                 *QUANT_NOTES.borrow_ref_mut(cs) = current.masks;
                 *NOTE_STATUS.borrow_ref_mut(cs) =
                     (app.ui.opts.quant_notes.slot.value, "NOTES FROM CONFIG");
@@ -2362,7 +2461,18 @@ fn persist_notes(storage: &mut Option<IntonoPersistence>, save: bool, slot: u8) 
     let Some(storage) = storage.as_mut() else {
         return "NO FLASH STORAGE";
     };
-    let mut check = [0u8; note_pattern::LEN + 1];
+    let mut check = [0u8; scale::Imported::RECORD_LEN + scale_name::OVERHEAD + 1];
+    let imported=with_app(|app|app.quant_channels[app.quant_selected as usize].imported_slot!=0);
+    if save && imported {
+        let n=critical_section::with(|cs|MULTI_QUANT.borrow_ref(cs).lanes[with_app(|a|a.quant_selected as usize)].imported.and_then(|table|table.record(&mut check)));
+        let Some(n)=n else {return "INVALID SAVED NOTES";};
+        let Some(n)=scale_names().loaded[with_app(|a|a.quant_selected as usize)].wrap(&mut check,n) else {return "INVALID SCALE NAME";};
+        if storage.save_key_in(scale_window(storage),key,&check[..n]).is_err() {return "NOTE SAVE FAILED";}
+        let mut verified=[0u8;scale::Imported::RECORD_LEN+scale_name::OVERHEAD+1];
+        if !matches!(read_scale(storage,key,&mut verified),Ok(Some(len)) if len==n && verified[..len]==check[..n]) {return "NOTE READBACK FAILED";}
+        with_app(|app| {let c=&mut app.quant_channels[app.quant_selected as usize];c.imported_slot=slot;c.scale_slot=slot;});scale_names().slot=0;
+        return "NOTES SAVED";
+    }
     if save {
         let c = with_app(|app| app.quant_channels[app.quant_selected as usize]);
         let (masks, quartertones, _) = ui_scale::preview_span(c.scale, c.masks, c.octaves);
@@ -2370,29 +2480,35 @@ fn persist_notes(storage: &mut Option<IntonoPersistence>, save: bool, slot: u8) 
         let Some(bytes) = note_pattern::encode_span(masks, c.octaves) else {
             return "INVALID NOTES";
         };
-        if storage.save_key(key, &bytes).is_err() {
+        check[..bytes.len()].copy_from_slice(&bytes);
+        let Some(n)=scale_names().loaded[with_app(|a|a.quant_selected as usize)].wrap(&mut check,bytes.len()) else {return "INVALID SCALE NAME";};
+        if storage.save_key_in(scale_window(storage),key, &check[..n]).is_err() {
             return "NOTE SAVE FAILED";
         }
-        match storage.load_key(key, &mut check) {
-            Ok(Some(n)) if n == bytes.len() && check[..n] == bytes => {with_app(|app|app.quant_channels[app.quant_selected as usize].scale_slot=slot);"NOTES SAVED"},
+        let mut verified=[0;scale::Imported::RECORD_LEN+scale_name::OVERHEAD+1];
+        match read_scale(storage,key, &mut verified) {
+            Ok(Some(len)) if len == n && verified[..len] == check[..n] => {with_app(|app|app.quant_channels[app.quant_selected as usize].scale_slot=slot);scale_names().slot=0;"NOTES SAVED"},
             _ => "NOTE READBACK FAILED",
         }
     } else {
-        let bytes = match storage.load_key(key, &mut check) {
+        let bytes = match read_scale(storage,key, &mut check) {
             Ok(Some(n)) => &check[..n],
             Ok(None) => return "NO SAVED NOTES",
             Err(_) => return "NOTE LOAD FAILED",
         };
-        let Some((masks,octaves)) = note_pattern::decode_span(bytes) else {
-            return "INVALID SAVED NOTES";
+        let (masks,octaves,imported)=if let Some((masks,octaves))=note_pattern::decode_span(bytes) {(masks,octaves,0)} else {
+            let Ok(pattern)=scale::Imported::from_record(bytes) else {return "INVALID SAVED NOTES";};
+            critical_section::with(|cs|install_imported(&mut MULTI_QUANT.borrow_ref_mut(cs),with_app(|a|a.quant_selected as usize),pattern));
+            ([0;8],1,slot)
         };
-        critical_section::with(|cs| *QUANT_NOTES.borrow_ref_mut(cs) = masks);
+        scale_names().loaded[with_app(|a|a.quant_selected as usize)]=scale_name::Name::read(bytes);
+        critical_section::with(|cs| { *QUANT_NOTES.borrow_ref_mut(cs) = masks; *IMPORTED_PAGE.borrow_ref_mut(cs)=0; });
         with_app(|app| {
             let c = &mut app.quant_channels[app.quant_selected as usize];
             c.scale = options::ScalePreset::Custom2 as u8;
             c.masks = masks;
             c.octaves = octaves;
-            c.scale_slot=slot;
+            c.scale_slot=slot;c.imported_slot=imported;
             app.ui.opts.quantizer.scale.value = options::ScalePreset::Custom2;
             app.ui.opts.quantizer.slot.value = slot;
             app.ui.opts.quant_notes.slot.value = slot;
@@ -2403,30 +2519,43 @@ fn persist_notes(storage: &mut Option<IntonoPersistence>, save: bool, slot: u8) 
     }
 }
 
-// The browser can only address the two public profile banks, never journal keys.
+fn scale_window(storage:&IntonoPersistence)->core::ops::Range<u32> {
+    let base=storage.default_window().start;base+24576..base+36864
+}
+fn read_scale(storage:&mut IntonoPersistence,key:u32,bytes:&mut [u8])->Result<Option<usize>,opts::persistence::PersistenceError> {
+    match storage.load_key_in(scale_window(storage),key,bytes) {
+        Ok(None)=>storage.load_key(key,bytes),result=>result,
+    }
+}
+
+// Public calibration, scale, and route config banks; never arbitrary journal keys.
 struct ProfileStore<'a>(&'a mut Option<IntonoPersistence>);
 impl profile_transfer::Store for ProfileStore<'_> {
     fn read(&mut self, kind:u8, slot:u8, bytes:&mut [u8])->Result<Option<usize>,u8> {
         let storage=self.0.as_mut().ok_or(profile_transfer::IO)?;
-        let key=if kind==0 {oscillator_calibration::storage::key(slot)} else {note_pattern::key(slot)}
+        let key=if kind==0 {oscillator_calibration::storage::key(slot)} else if kind==1 {note_pattern::key(slot)}else {quantizer_setup::key(slot)}
             .ok_or(profile_transfer::INVALID)?;
         if kind==0 {
             match storage.load_key_in(expanded_window(storage),key,bytes) {
                 Ok(None)=>storage.load_key(key,bytes).map_err(|_|profile_transfer::IO),
                 result=>result.map_err(|_|profile_transfer::IO),
             }
-        } else {storage.load_key(key,bytes).map_err(|_|profile_transfer::IO)}
+        } else if kind==1 {read_scale(storage,key,bytes).map_err(|_|profile_transfer::IO)}else{storage.load_key(key,bytes).map_err(|_|profile_transfer::IO)}
     }
     fn write(&mut self, kind:u8, slot:u8, bytes:&[u8])->Result<(),u8> {
         let valid=if kind==0 {oscillator_calibration::storage::decode(bytes).is_ok()}
-            else {note_pattern::decode_span(bytes).is_some()};
+            else if kind==1 {note_pattern::decode_span(bytes).is_some() || scale::Imported::from_record(bytes).is_ok()}else{quantizer_setup::decode_full(bytes).is_some()};
         if !valid {return Err(profile_transfer::INVALID);}
-        let key=if kind==0 {oscillator_calibration::storage::key(slot)} else {note_pattern::key(slot)}
+        let key=if kind==0 {oscillator_calibration::storage::key(slot)} else if kind==1 {note_pattern::key(slot)}else {quantizer_setup::key(slot)}
             .ok_or(profile_transfer::INVALID)?;
         let storage=self.0.as_mut().ok_or(profile_transfer::IO)?;
         let result=if kind==0 {storage.save_key_in(expanded_window(storage),key,bytes)}
-            else {storage.save_key(key,bytes)};
+            else if kind==1 {storage.save_key_in(scale_window(storage),key,bytes)}else{storage.save_key(key,bytes)};
+        // A librarian write can replace the slot currently being previewed.
+        // Refresh even after an uncertain flash result; leave the RAM profile alone.
+        if kind==0 {scale_names().cal_changed=true;}
         result.map_err(|_|profile_transfer::IO)?;
+        if kind==1 {scale_names().slot=0;}else if kind==2 {scale_names().config_slot=0;}
         Ok(())
     }
 }
@@ -2666,6 +2795,7 @@ fn decode_profile(
 }
 
 struct RuntimeResources {
+    video: DMAFramebuffer0,
     uart: pac::UART0,
     hardware_calibration: Option<(i32, i32, u8)>,
     hardware_calibration_bits: u8,
@@ -2698,6 +2828,7 @@ fn boot_mark(byte: u8) {
 /// enabling interrupts. Its stack frame is released before `run()` begins.
 #[inline(never)]
 fn startup() -> RuntimeResources {
+    unsafe {core::ptr::addr_of_mut!(SCALE_NAMES).cast::<ScaleNames>().write(ScaleNames{cal_changed:false,loaded:[scale_name::Name::empty();4],browse:scale_name::Name::empty(),slot:0,present:false,config:scale_name::Name::empty(),config_browse:scale_name::Name::empty(),config_slot:0,config_present:false});}
     let peripherals = pac::Peripherals::take().unwrap();
     let sysclk = pac::clock::sysclk();
     peripherals
@@ -2742,6 +2873,7 @@ fn startup() -> RuntimeResources {
     // Static guide pixels are CPU-authored once; live text and marker state
     // are published together through the double-buffered overlay below.
     palette::ColorPalette::default().write_to_hardware(&mut video);
+
     let mut background = BackgroundCanvas::new(
         PSRAM_FB_BASE,
         modeline.h_active,
@@ -2879,6 +3011,7 @@ fn startup() -> RuntimeResources {
 
     boot_ms[7] = elapsed();
     RuntimeResources {
+        video,
         boot_ms,
         timer,
         tuner: peripherals.TUNER_PERIPH,
@@ -2910,8 +3043,13 @@ unsafe fn init_calibration_state() -> &'static mut calibration_live::Live {
 /// The perpetual real-time phase retains no large calibration state on its stack.
 #[inline(never)]
 fn run(resources: &mut RuntimeResources) -> ! {
+    // Startup's large frame has returned; construct playback independently
+    // before registering interrupts, so their stack frames cannot overlap.
+    install_quant();
     boot_mark(b'R');
+    let mut applied_palette=0u8;
     let RuntimeResources {
+        video,
         uart,
         hardware_calibration,
         hardware_calibration_bits,
@@ -3125,7 +3263,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
             let (learn, span, selected, slot) = with_app(|app| {
                 (
                     critical_section::with(|cs| *MIDI_LEARN.borrow_ref(cs))
-                        && app.ui.opts.tracker.page.value == Page::QuantNotes,
+                        && app.ui.opts.tracker.page.value == Page::QuantNotes && app.quant_channels[app.quant_selected as usize].imported_slot==0,
                     app.ui.opts.quant_notes.octaves.value as usize,
                     app.quant_selected as usize,
                     app.ui.opts.quant_notes.slot.value,
@@ -3236,7 +3374,9 @@ fn run(resources: &mut RuntimeResources) -> ! {
             refine |= ui_frame.refine;
             accept_refinement |= ui_frame.accept_refinement;
             discard_refinement |= ui_frame.discard_refinement;
-            if ui_frame.controls.mode != runtime::OperatingMode::Profiles {preview_slot=0;}
+            if ui_frame.controls.mode != runtime::OperatingMode::Profiles || scale_names().cal_changed {
+                preview_slot=0;scale_names().cal_changed=false;
+            }
             if ui_frame.controls.mode == runtime::OperatingMode::Profiles {
                 if preview_slot != ui_frame.profile_slot || ui_frame.save_profile {
                     preview_slot=ui_frame.profile_slot;
@@ -3289,6 +3429,14 @@ fn run(resources: &mut RuntimeResources) -> ! {
             } else {
                 TIMER0_ISR_PERIOD_MS as u16
             };
+            let theme=with_app(|a|a.ui.opts.settings.palette.value as u8);
+            if theme!=applied_palette {
+                for intensity in 0..16u8 {
+                    let (r,g,b)=ui_theme::color(theme,intensity).unwrap_or_else(||palette::ColorPalette::default().color(intensity,9));
+                    video.set_palette_rgb(intensity,9,r,g,b);
+                }
+                applied_palette=theme;
+            }
             if save_feedback.tick(feedback_ms) {
             }
             if (ui_frame.save_notes || ui_frame.load_notes)
@@ -3332,8 +3480,25 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 save_feedback.show(result);
             }
 
+            let config_slot=with_app(|a|if a.ui.opts.tracker.page.value==Page::QuantSetups {a.ui.opts.quant_setups.slot.value}else{0});
+            if config_slot!=0 && scale_names().config_slot!=config_slot && !outputs_running() {
+                if let Some(storage)=persistence.as_mut() {
+                    let mut bytes=[0;quantizer_setup::FULL_LEN+scale_name::OVERHEAD+1];
+                    let read=quantizer_setup::key(config_slot).and_then(|key|storage.load_key(key,&mut bytes).ok().flatten());
+                    let names=scale_names();names.config_slot=config_slot;names.config_present=read.is_some();names.config_browse=read.map(|n|scale_name::Name::read(&bytes[..n])).unwrap_or(scale_name::Name::empty());
+                }
+            }
+            let name_slot=with_app(|a|match a.ui.opts.tracker.page.value {Page::Quantizer=>a.ui.opts.quantizer.slot.value,Page::QuantNotes=>a.ui.opts.quant_notes.slot.value,_=>0});
+            if name_slot!=0 && scale_names().slot!=name_slot && !outputs_running() {
+                if let Some(storage)=persistence.as_mut() {
+                    let mut bytes=[0;scale::Imported::RECORD_LEN+scale_name::OVERHEAD+1];
+                    let read=note_pattern::key(name_slot).and_then(|key|read_scale(storage,key,&mut bytes).ok().flatten());
+                    let names=scale_names();names.slot=name_slot;names.present=read.is_some();names.browse=read.map(|n|scale_name::Name::read(&bytes[..n])).unwrap_or(scale_name::Name::empty());
+                }
+            }
             let route_page=with_app(|app|app.ui.opts.tracker.page.value);
-            let route_view_active=matches!(route_page,Page::Help|Page::Reference) || critical_section::with(|cs|ROUTE_VIEW.borrow_ref(cs).handles(route_page));
+            let imported_view=matches!(route_page,Page::Quantizer|Page::QuantNotes) && with_app(|a|a.quant_channels[a.quant_selected as usize].imported_slot!=0);
+            let route_view_active=imported_view || matches!(route_page,Page::Help|Page::Reference) || critical_section::with(|cs|ROUTE_VIEW.borrow_ref(cs).handles(route_page));
             let (mut history,activity,pitches)=critical_section::with(|cs| {
                 let q=MULTI_QUANT.borrow_ref(cs);
                 (*ROUTE_HISTORY.borrow_ref(cs),q.lanes.iter().enumerate().fold(0u8,|m,(n,l)|m|((l.active as u8)<<n)),
@@ -3344,7 +3509,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
             let entering_or_leaving=critical_section::with(|cs| {
                 let mut paint=ROUTE_PAINT.borrow_ref_mut(cs);
                 if paint.resident==route_view_active {return false;}
-                paint.resident=route_view_active;paint.copied=[0;2];paint.banks=[ui_route::Drawing::new();2];true
+                paint.resident=route_view_active;paint.invalidate_imported();paint.copied=[0;2];paint.banks=[ui_route::Drawing::new();2];true
             });
             if entering_or_leaving {backgrounds.invalidate_calibration();}
             let mut route_background_ready=false;
@@ -3729,7 +3894,20 @@ fn run(resources: &mut RuntimeResources) -> ! {
 
                 let menu = snapshot_menu(save_feedback.message());
                 if route_view_active {
-                    let drawing=if page==Page::Help {
+                    let drawing=if imported_view {
+                        let mut d=ui_route::Drawing::new();
+                        let (selected,editing)=with_app(|a|(a.ui.opts.tracker.selected,a.ui.opts.tracker.modify));
+                        for index in 0..16 {
+                            let Some(f)=ui_controls::scale_field(surface(page),index,true) else {continue;};
+                            let x=120+ui_text::ux_column(f.column as usize)*12-4;
+                            let width=(ui_text::ux_column((f.column+f.width) as usize)-ui_text::ux_column(f.column as usize))*12+8;
+                            let focused=selected==Some(index);
+                            if focused && editing {d.rounded_fill(x as u16,f.row as u16*32-6,width as u16,28);}
+                            else {d.outline(x as u16,f.row as u16*32-6,width as u16,28,focused);}
+                        }
+                        let r=ui_imported::STRIP;d.add(r.x as u16,r.y as u16,r.width,r.height,0,true);
+                        d
+                    } else if page==Page::Help {
                         let mut drawing=ui_route::Drawing::new();
                         let (selected,editing)=with_app(|app|(app.ui.opts.tracker.selected==Some(1),app.ui.opts.tracker.modify));
                         // TOPIC is a firmware-owned control; SCROLL retains its
@@ -3743,25 +3921,40 @@ fn run(resources: &mut RuntimeResources) -> ! {
                         route_render::reference(&mut text,&menu,selected,editing,reference)
                     } else {route_render::publish(&mut text,&menu)};
                     let bank=frame.background_back().bit() as usize;
-                    let old=critical_section::with(|cs|ROUTE_PAINT.borrow_ref(cs).banks[bank]);
+                    let (old,plot_cached)=critical_section::with(|cs| {
+                        let paint=ROUTE_PAINT.borrow_ref(cs);
+                        (paint.banks[bank],imported_view && paint.plot_cached(bank,with_app(|a|a.quant_selected)))
+                    });
+                    let changed=drawing.changed(&old);
                     let mut canvas=BackgroundCanvas::new(PSRAM_FB_BASE+bank*0x100000,video_size.0,video_size.1,ROUND_DISPLAY);
+                    if changed || (imported_view && !plot_cached) {
                     for (shapes,erase) in [(&old,true),(&drawing,false)] {
                         for shape in shapes.shapes[..shapes.len as usize].iter().copied() {
+                            // The interval strip is immutable during navigation.
+                            // Retain it independently in each background bank.
+                            if plot_cached && shape.kind==ui_route::ShapeKind::Rectangle && shape.rect()==ui_imported::STRIP {continue;}
                             let color=if erase {0}else{shape.color};
                             if shape.kind==ui_route::ShapeKind::RoundedFill {ui_canvas::rounded_rectangle(shape.rect(),6,color,color,|p,c|canvas.put_panel_pixel(p.x,p.y,c));}
                             else if shape.kind==ui_route::ShapeKind::Rectangle {for y in shape.y..shape.y+shape.h {for x in shape.x..shape.x+shape.w {canvas.put_panel_pixel(x as i32,y as i32,color);}}}
                             else {ui_canvas::rounded_outline(shape.rect(),color,|p,c|canvas.put_panel_pixel(p.x,p.y,c));}
                         }
                     }
+                    if imported_view && !plot_cached {
+                        let table=critical_section::with(|cs|MULTI_QUANT.borrow_ref(cs).lanes[with_app(|a|a.quant_selected as usize)].imported);
+                        if let Some(table)=table {ui_imported::plot(table,|p,c|canvas.put_panel_pixel(p.x,p.y,c));}
+                    }
                     canvas.finish();
-                    critical_section::with(|cs|ROUTE_PAINT.borrow_ref_mut(cs).banks[bank]=drawing);
+                    }
+                    critical_section::with(|cs| {
+                        let mut paint=ROUTE_PAINT.borrow_ref_mut(cs);paint.banks[bank]=drawing;
+                        paint.imported[bank]=if imported_view {with_app(|a|a.quant_selected)+1}else{0};
+                    });
                     swap_background=true;
                 }
                 publish_controls(&mut text,&menu,&calibration);
                 // Commit LAST: characters, marker geometry/color and menu
                 // visibility are immutable until the hardware acknowledges them.
-                let piano_view=page==Page::QuantNotes || (page==Page::Quantizer && with_app(|app|
-                    scale::has_piano_keys(app.quant_channels[app.quant_selected as usize].scale)));
+                let piano_view=matches!(page,Page::QuantNotes|Page::Quantizer) && with_app(|app| {let c=app.quant_channels[app.quant_selected as usize];c.imported_slot==0 && (page==Page::QuantNotes || scale::has_piano_keys(c.scale))});
                 // Text-only pages and a preparing instrument retain the common
                 // outer circle without exposing any old guide or graph pixels.
                 let circle_view = !piano_view && ((calibration_view
@@ -3775,7 +3968,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                         w.keyboard_second().bit(with_app(|app|app.quant_channels[app.quant_selected as usize].octaves>1));
                         w.ui_ready().bit(true);
                         unsafe {w.keyboard_mask().bits((keyboard_mask&0xfff) as u16);
-                            w.ui_surface().bits(if route_view_active {match page {Page::QuantSetups=>11,Page::RouteMidi=>12,Page::Settings=>13,Page::Help=>9,Page::Reference=>15,_=>7}}else if page==Page::Tuner && with_app(|app|app.ui.opts.tuner.display.value)==DisplayMode::Linear {14}else{surface(page) as u8});
+                            w.ui_surface().bits(if imported_view {10}else if route_view_active {match page {Page::QuantSetups=>11,Page::RouteMidi=>12,Page::Settings=>13,Page::Help=>9,Page::Reference=>15,_=>7}}else if page==Page::Tuner && with_app(|app|app.ui.opts.tuner.display.value)==DisplayMode::Linear {14}else{surface(page) as u8});
                             w.ui_mode().bits(if menu.page_bold {0}else if with_app(|a|a.ui.opts.tracker.modify) {2}else{1});
                             w.keyboard_focus().bits(with_app(|a| {
                                 let o=a.ui.opts.quant_notes.octave.value as usize;

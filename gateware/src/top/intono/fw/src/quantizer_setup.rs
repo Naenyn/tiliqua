@@ -7,6 +7,7 @@ pub mod ownership;
 #[cfg(test)]
 #[path="route_group.rs"]
 pub mod route_group;
+#[path="scale_name.rs"] mod saved_name;
 pub const SLOTS: u8 = 8;
 pub const LEN: usize = 108;
 pub fn key(slot: u8) -> Option<u32> {
@@ -27,6 +28,7 @@ pub struct Channel {
     pub masks: [u16; 8],
     pub octaves: u8,
     pub quantize: bool,
+    pub imported_slot: u8, // Scala record reference, loaded into an immutable runtime table
     pub scale_slot: u8, // saved interval snapshot provenance, 0 means edited/preset
     pub correction: u8, // 0:none, 1:RAM snapshot, 2..9:slot 1..8
 }
@@ -44,11 +46,12 @@ impl Channel {
             quantize: true,
             correction: 0,
             scale_slot: 0,
+            imported_slot: 0,
         }
     }
     /// Scale definitions contain intervals; musical offsets belong to the route.
     pub fn edit_scale<const N:usize>(&mut self,scale:u8,masks:[u16;N]) {
-        if self.scale!=scale || self.masks[..N]!=masks {self.scale_slot=0;}
+        if self.scale!=scale || self.masks[..N]!=masks {self.scale_slot=0;self.imported_slot=0;}
         self.scale=scale;self.masks=[0;8];self.masks[..N].copy_from_slice(&masks);
     }
     pub fn retune(&mut self,note:u8) {self.zero=note;}
@@ -57,6 +60,7 @@ impl Channel {
             && (12..=108).contains(&self.zero)
             && self.scale <= 13
             && self.scale_slot <= 8
+            && (self.imported_slot==0 || (self.imported_slot<=8 && self.scale==6 && self.scale_slot==self.imported_slot))
             && self.correction <= 9
             && (1..=8).contains(&self.octaves)
             && self.root < 12
@@ -275,18 +279,20 @@ mod tests {
 
 #[cfg(test)] #[path="midi_transpose.rs"] pub mod midi_transpose;
 #[cfg(not(test))] use crate::midi_transpose;
-pub const FULL_LEN:usize=132;
+pub const FULL_LEN:usize=136;
+const OLD_FULL_LEN:usize=132;
 pub fn encode_full(channels:&[Channel;4],groups:route_group::Layout,midi:[midi_transpose::Config;4])->Option<[u8;FULL_LEN]> {
     if !midi.iter().all(|c|c.valid()) {return None;}
     let old=encode_group(channels,groups)?;
-    let mut bytes=[0;FULL_LEN];bytes[..112].copy_from_slice(&old[..112]);bytes[..4].copy_from_slice(b"TQS5");
-    for n in 0..4 {bytes[112+n*3]=midi[n].channel;bytes[113+n*3]=midi[n].base;bytes[114+n*3]=midi[n].hold as u8;bytes[124+n]=channels[n].scale_slot;}
-    let sum=crc(&bytes[..128]);bytes[128..].copy_from_slice(&sum.to_le_bytes());Some(bytes)
+    let mut bytes=[0;FULL_LEN];bytes[..112].copy_from_slice(&old[..112]);bytes[..4].copy_from_slice(b"TQS6");
+    for n in 0..4 {bytes[112+n*3]=midi[n].channel;bytes[113+n*3]=midi[n].base;bytes[114+n*3]=midi[n].hold as u8;bytes[124+n]=channels[n].scale_slot;bytes[128+n]=channels[n].imported_slot;}
+    let sum=crc(&bytes[..132]);bytes[132..].copy_from_slice(&sum.to_le_bytes());Some(bytes)
 }
 /// Diagnose assignments only after authenticating the saved format and CRC.
 pub fn saved_assignment_conflict(bytes:&[u8])->Option<(bool,u8,u8,u8)> {
+    let bytes=saved_name::payload(bytes)?;
     let end=match (bytes.len(),bytes.get(..4)?) {
-        (FULL_LEN,b"TQS5")=>128,(GROUP_LEN,b"TQS4")=>GROUP_LEN-4,_=>return None,
+        (FULL_LEN,b"TQS6")=>132,(OLD_FULL_LEN,b"TQS5")=>128,(GROUP_LEN,b"TQS4")=>GROUP_LEN-4,_=>return None,
     };
     if crc(&bytes[..end])!=u32::from_le_bytes(bytes[end..end+4].try_into().ok()?) {return None;}
     let g=route_group::Layout {inputs:bytes[LEN-4..LEN].try_into().ok()?,outputs:bytes[LEN..LEN+4].try_into().ok()?};
@@ -294,13 +300,15 @@ pub fn saved_assignment_conflict(bytes:&[u8])->Option<(bool,u8,u8,u8)> {
     g.conflict()
 }
 pub fn decode_full(bytes:&[u8])->Option<([Channel;4],route_group::Layout,[midi_transpose::Config;4])> {
+    let bytes=saved_name::payload(bytes)?;
     let mut midi=[midi_transpose::Config::new();4];
-    if bytes.len()!=FULL_LEN {let (c,g)=decode_group(bytes)?;return Some((c,g,midi));}
-    if bytes.get(..4)?!=b"TQS5" || crc(&bytes[..128])!=u32::from_le_bytes(bytes[128..].try_into().ok()?) {return None;}
+    if bytes.len()!=FULL_LEN && bytes.len()!=OLD_FULL_LEN {let (c,g)=decode_group(bytes)?;return Some((c,g,midi));}
+    let end=bytes.len()-4;
+    if !matches!((bytes.len(),bytes.get(..4)?),(FULL_LEN,b"TQS6")|(OLD_FULL_LEN,b"TQS5")) || crc(&bytes[..end])!=u32::from_le_bytes(bytes[end..].try_into().ok()?) {return None;}
     let mut legacy=[0;GROUP_LEN];legacy[..112].copy_from_slice(&bytes[..112]);legacy[..4].copy_from_slice(b"TQS4");
     let sum=crc(&legacy[..112]);legacy[112..].copy_from_slice(&sum.to_le_bytes());
     let (mut channels,groups)=decode_group(&legacy)?;
-    for n in 0..4 {midi[n]=midi_transpose::Config {channel:bytes[112+n*3],base:bytes[113+n*3],hold:bytes[114+n*3]!=0};if bytes[114+n*3]>1 {return None;}channels[n].scale_slot=bytes[124+n];}
+    for n in 0..4 {midi[n]=midi_transpose::Config {channel:bytes[112+n*3],base:bytes[113+n*3],hold:bytes[114+n*3]!=0};if bytes[114+n*3]>1 {return None;}channels[n].scale_slot=bytes[124+n];if bytes.len()==FULL_LEN {channels[n].imported_slot=bytes[128+n];}}
     if !midi.iter().all(|c|c.valid()) || !channels.iter().all(Channel::valid) {return None;}
     Some((channels,groups,midi))
 }
@@ -311,11 +319,11 @@ pub fn decode_full(bytes:&[u8])->Option<([Channel;4],route_group::Layout,[midi_t
         let mut bytes=encode_full(&DEFAULT,g,[midi_transpose::Config::new();4]).unwrap();
         bytes[LEN-3]=0;
         assert_eq!(saved_assignment_conflict(&bytes),None); // bad CRC is not trusted
-        let sum=crc(&bytes[..128]);bytes[128..].copy_from_slice(&sum.to_le_bytes());
+        let sum=crc(&bytes[..FULL_LEN-4]);bytes[FULL_LEN-4..].copy_from_slice(&sum.to_le_bytes());
         assert_eq!(saved_assignment_conflict(&bytes),Some((false,0,0,1)));
         assert!(decode_full(&bytes).is_none());
         bytes[LEN-3]=1;bytes[LEN+1]=1;
-        let sum=crc(&bytes[..128]);bytes[128..].copy_from_slice(&sum.to_le_bytes());
+        let sum=crc(&bytes[..FULL_LEN-4]);bytes[FULL_LEN-4..].copy_from_slice(&sum.to_le_bytes());
         assert_eq!(saved_assignment_conflict(&bytes),Some((true,0,0,1)));
         assert!(decode_full(&bytes).is_none());
     }
@@ -326,5 +334,28 @@ pub fn decode_full(bytes:&[u8])->Option<([Channel;4],route_group::Layout,[midi_t
         for n in 0..FULL_LEN {let mut bad=bytes;bad[n]^=1;assert!(decode_full(&bad).is_none());}
         let old=decode_full(&encode_group(&DEFAULT,g).unwrap()).unwrap();assert_eq!(old.2,[midi_transpose::Config::new();4]);
         m[0].channel=17;assert!(encode_full(&c,g,m).is_none());
+    }
+}
+
+#[cfg(test)] mod scala_config_tests {
+    use super::*;
+    #[test] fn scala_slot_references_and_legacy_tqs5() {
+        let mut channels=DEFAULT;channels[0].scale=6;channels[0].scale_slot=8;channels[0].imported_slot=8;
+        let groups=route_group::Layout::new();let midi=[midi_transpose::Config::new();4];
+        let bytes=encode_full(&channels,groups,midi).unwrap();assert_eq!(decode_full(&bytes),Some((channels,groups,midi)));
+        let mut old=[0;OLD_FULL_LEN];old[..128].copy_from_slice(&bytes[..128]);old[..4].copy_from_slice(b"TQS5");let sum=crc(&old[..128]);old[128..].copy_from_slice(&sum.to_le_bytes());
+        let loaded=decode_full(&old).unwrap();assert_eq!(loaded.0[0].imported_slot,0);assert_eq!(loaded.0[0].scale_slot,8);
+        channels[0].imported_slot=9;assert!(encode_full(&channels,groups,midi).is_none());
+    }
+}
+
+#[cfg(test)] mod named_config_tests {
+    use super::*;
+    #[test] fn name_preserves_full_config_and_authenticated_conflict_checks() {
+        let channels=DEFAULT;let groups=route_group::Layout::new();let midi=[midi_transpose::Config::new();4];
+        let raw=encode_full(&channels,groups,midi).unwrap();let mut bytes=[0;FULL_LEN+saved_name::OVERHEAD];bytes[..FULL_LEN].copy_from_slice(&raw);
+        let mut name=saved_name::Name::empty();name.bytes[..6].copy_from_slice(b"Config");name.len=6;
+        let n=name.wrap_config(&mut bytes,FULL_LEN).unwrap();assert_eq!(decode_full(&bytes[..n]),Some((channels,groups,midi)));assert_eq!(saved_name::name(&bytes[..n]),Some("Config"));
+        for i in 0..n {let mut bad=bytes;bad[i]^=1;assert!(decode_full(&bad).is_none());}
     }
 }

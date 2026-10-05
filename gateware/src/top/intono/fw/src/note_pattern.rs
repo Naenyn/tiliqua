@@ -1,4 +1,5 @@
 //! Versioned custom-note record, separate from settings and oscillator profiles.
+#[path="scale_name.rs"] mod saved_name;
 pub const KEY: u32 = 0x544e5031;
 pub const SLOTS: u8 = 8;
 /// Slot 1 retains the original key, so existing saved notes need no migration.
@@ -58,6 +59,7 @@ pub fn encode_span(masks:[u16;8],octaves:u8)->Option<[u8;LEN]> {
     let sum=crc(&bytes[..21]);bytes[21..].copy_from_slice(&sum.to_le_bytes());Some(bytes)
 }
 pub fn decode_span(bytes:&[u8])->Option<([u16;8],u8)> {
+    let bytes=saved_name::payload(bytes)?;
     if bytes.len()==LEGACY_LEN {
         let mut old=decode(bytes)?;
         if old[0]==0 {old=[old[1],0];}
@@ -71,6 +73,13 @@ pub fn decode_span(bytes:&[u8])->Option<([u16;8],u8)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn named_saved_masks_roundtrip() {
+        let masks=[1,2,4,8,16,32,64,128];let raw=encode_span(masks,8).unwrap();
+        let mut bytes=[0;61];bytes[..raw.len()].copy_from_slice(&raw);
+        let mut name=saved_name::Name::empty();name.bytes[..5].copy_from_slice(b"Scale");name.len=5;
+        let len=name.wrap(&mut bytes,raw.len()).unwrap();assert_eq!(decode_span(&bytes[..len]),Some((masks,8)));
+    }
     #[test]
     fn roundtrip_and_corruption() {
         assert_eq!(key(1), Some(KEY));

@@ -20,7 +20,8 @@ def test_archive_disables_spread_without_changing_clocks_or_storage(external):
     archive=SimpleNamespace(external_pll_config=config,
                             with_option_storage=lambda **kw:sizes.append(kw['size']))
     namespace['configure_archive'](archive)
-    assert sizes==[24576]
+    # Base journal + expanded calibration and named Scala banks.
+    assert sizes==[36864]
     if external:
         assert vars(config)==dict(clk0_hz=49152000,clk1_hz=74250000,
                                   clk1_inherit=False,spread_spectrum=0.0)

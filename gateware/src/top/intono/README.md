@@ -13,9 +13,11 @@ records physical tuning/calibration coverage and its limits, including the
 Generate3 CORE/FUNDAMENTAL comparison on the latest detector build.
 
 The [local Profile Library](../../../../web/intono/README.md) reads and writes
-the eight saved calibration slots and eight user scale slots through USB debug
-serial. It supports backups, calibration renaming and scale interval editing;
-the instrument does not run a web server. It requires a profile-transfer build.
+eight slots each for calibration, scales and route configs through USB debug
+serial. It supports named profiles, Scala imports, whole-library backups and
+verified individual or bulk writes. Gold markers identify local changes not yet
+written to the device; exporting a backup does not clear them. The instrument
+does not run a web server. It requires a profile-transfer build.
 
 ## Current interface — September 30, 2026
 
@@ -555,6 +557,21 @@ Current qualified/flashed image: `intono-ux-circle-r5`. VIDEO BUFFER_GAPS in deb
 status will help distinguish missing background samples from the still-unresolved
 brief horizontal line. The diagnostic saturates at 255 episodes after the reader
 has received its first sample; it does not change acquisition or output timing.
+
+The coordinated framebuffer reader now tags the first and last word of each
+frame. On underrun it blanks the remaining background, drains late pixels, and
+resumes only at the first visible pixel of a fresh frame. Scene acquisition waits
+until the previous frame has drained, preventing a pending page change from
+publishing its controls over queued pixels from the old page. HDMI timing and
+foreground overlays continue during recovery. The legacy framebuffer path used
+without scene exchange is unchanged.
+
+Regression simulations check distinct pixel values during short and multi-frame
+memory stalls, including pending page changes and the R5 CPU/video clock ratio.
+This fixes a reproduced recovery defect; it is not confirmation that memory
+underruns caused the intermittently reported first-visit horizontal flashes.
+Keep VIDEO BUFFER_GAPS and BACKGROUND_ERRORS diagnostics enabled for hardware
+correlation. BUFFER_GAPS also counts blank active-line episodes during recovery.
 
 ### Output monitor and tuner feedback (October 1, 2026)
 

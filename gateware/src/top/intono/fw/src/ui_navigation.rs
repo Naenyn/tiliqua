@@ -1,6 +1,34 @@
 //! Encoder navigation for visible instrument controls.
 use crate::options::{Opts,Page};
 
+/// Visible order, independent of the stable persisted option indices.
+pub fn order(o:&Opts,imported:bool)->&'static [usize] {
+    match o.tracker.page.value {
+        Page::Quantizer if imported=>&[0,1,8,10,11,12],
+        Page::QuantNotes if imported=>&[8,10,6,7,11],
+        Page::Quantizer=>crate::ui_keyboard::order(o.quantizer.octaves.value,false),
+        Page::QuantNotes=>crate::ui_keyboard::order(o.quant_notes.octaves.value,true),
+        Page::Reference|Page::Verify=>&[0,1,2,3,4],
+        Page::Profiles=>&[0,1,2,3,4,5,6],
+        Page::RouteMidi=>&[0,1,2,5,4,3,6],
+        Page::Calibrate=>&[0,1,4,3,5,6,7,8],
+        Page::Tuner if o.tuner.display.value==crate::options::DisplayMode::Linear=>&[1,2],
+        Page::Tuner=>&[0,1,2],
+        Page::Settings=>&[0,3,1,2],
+        Page::Help=>&[1,0],
+        Page::QuantSetups=>&[0,1,2,3,4],
+        _=>&[0,1,13,14,9,10,3,2,11,12,4,5,15,6,7,8],
+    }
+}
+pub fn page_led(page:Page)->usize {
+    match page {
+        Page::Tuner|Page::Reference=>0,
+        Page::Calibrate|Page::Verify|Page::Profiles=>1,
+        Page::Quantizer|Page::QuantNotes=>2,
+        Page::Play|Page::QuantSetups|Page::RouteMidi=>3,
+        Page::Settings=>4,Page::Help=>5,
+    }
+}
 pub fn visible_ticks(opts: &mut Opts, ticks: i8, claims: &crate::ownership::Reservations) {
     visible_ticks_with_reference(opts,ticks,claims,claims.free_mask(crate::ownership::Owner::Reference,true));
 }
@@ -66,7 +94,7 @@ pub fn visible_ticks_with_reference(opts:&mut Opts,ticks:i8,claims:&crate::owner
             // Footer page selectors sit below their controls. Enter upward
             // with CCW, and leave downward with CW; values retain their usual
             // rotation direction while editing.
-            let order: &[usize]=if opts.tracker.page.value==Page::Help {&[1,0]} else {&[0,1,2]};
+            let order=order(opts,false);
             let index=opts.tracker.selected.and_then(|s|order.iter().position(|n|*n==s));
             opts.tracker.selected=match (index,step) {
                 (None,-1)=>Some(order[order.len()-1]),
@@ -85,13 +113,7 @@ pub fn visible_ticks_with_reference(opts:&mut Opts,ticks:i8,claims:&crate::owner
             opts.quant_notes.note.value=crate::options::ScaleRoot::iter().nth((key%12) as usize).unwrap();
         } else if matches!(opts.tracker.page.value,Page::Play|Page::Calibrate|Page::Tuner|Page::Reference) && !opts.tracker.modify {
             // Follow the on-screen order without changing persisted option indices.
-            let order: &[usize] = match opts.tracker.page.value {
-                Page::Reference => &[0,1,2,3,4],
-                Page::Calibrate => &[0,1,4,3,5,6,7,8],
-                Page::Tuner if opts.tuner.display.value==crate::options::DisplayMode::Linear => &[1,2],
-                Page::Tuner => &[0,1,2],
-                _ => &[0,1,13,14,9,10,3,2,11,12,4,5,15,6,7,8],
-            };
+            let order=order(opts,false);
             let index=opts.tracker.selected.and_then(|s|order.iter().position(|n|*n==s));
             opts.tracker.selected=match (index,step) {
                 (None,1)=>Some(order[0]), (Some(0),-1)=>None,

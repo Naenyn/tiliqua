@@ -82,12 +82,17 @@ impl Drawing {
         let old=self.len;self.add(x,y,w,h,0xF9,false);
         if self.len>old {self.shapes[old as usize].kind=ShapeKind::RoundedFill;}
     }
+    pub fn changed(&self,old:&Self)->bool {self.len!=old.len || self.shapes[..self.len as usize]!=old.shapes[..old.len as usize]}
     pub fn outline(&mut self,x:u16,y:u16,w:u16,h:u16,selected:bool){self.add(x,y,w,h,if selected {0xD9}else{0x49},false);}
 }
 // Kept static, not in the already substantial foreground stack frame. Less
 // than 1 KiB for both retained sparse lists; no second raster framebuffer.
-pub struct Paint { pub banks:[Drawing;2],pub copied:[usize;2],pub resident:bool }
-impl Paint {pub const fn new()->Self {Self {banks:[Drawing::new();2],copied:[0;2],resident:false}}}
+pub struct Paint { pub banks:[Drawing;2],pub copied:[usize;2],pub resident:bool,pub imported:[u8;2] }
+impl Paint {
+    pub const fn new()->Self {Self {banks:[Drawing::new();2],copied:[0;2],resident:false,imported:[0;2]}}
+    pub fn plot_cached(&self,bank:usize,output:u8)->bool {self.imported[bank]==output+1}
+    pub fn invalidate_imported(&mut self) {self.imported=[0;2];}
+}
 #[cfg(test)]mod route_history_tests {
     use super::*;
     #[test]fn history_cadence_hold_reset_and_bounds(){
@@ -96,6 +101,13 @@ impl Paint {pub const fn new()->Self {Self {banks:[Drawing::new();2],copied:[0;2
         h.sample(124,[0;4],15);assert_eq!(h.counts,[1;4]);
         h.sample(125,[6_000_000;4],1);assert_eq!(h.counts,[2,0,0,0]);assert_eq!(h.values[0][6],h.values[0][7]);
         for now in (250..2000).step_by(125){h.sample(now,[0;4],1);}assert_eq!(h.counts[0],8);
+    }
+    #[test]fn retained_shapes_and_interval_cache_track_both_banks() {
+        let mut p=Paint::new();let mut d=Drawing::new();d.outline(144,160,432,28,false);
+        assert!(d.changed(&p.banks[0]));p.banks[0]=d;assert!(!d.changed(&p.banks[0]));
+        assert!(d.changed(&p.banks[1]));d.shapes[0].color=0xD9;assert!(d.changed(&p.banks[0]));
+        p.imported[0]=2;assert!(p.plot_cached(0,1));assert!(!p.plot_cached(1,1));assert!(!p.plot_cached(0,2));
+        p.imported[1]=2;p.invalidate_imported();assert!(!p.plot_cached(0,1));assert!(!p.plot_cached(1,1));
     }
     #[test]fn paint_storage_is_small_and_geometry_never_spills(){
         assert!(core::mem::size_of::<Paint>()<=1024);

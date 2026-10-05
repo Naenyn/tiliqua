@@ -15,7 +15,7 @@ fn main() {
     use controls::Surface::*;
     for (s,surface) in [Tuner,Calibration,Profiles,Check,Scales,Notes,Setups,Routes,Settings,Help,Midi].iter().enumerate() {
         for n in 0..16 {
-            if s!=6 && s!=7 && !(s==9 && n==1) { if let Some(f)=controls::field(*surface,n) {
+            if s!=6 && s!=7 && s!=8 && !(s==9 && n==1) { if let Some(f)=controls::field(*surface,n) {
                 println!("{} {} {} {} {}",s,n,f.column,f.row,f.width);
             } }
         }
@@ -28,12 +28,12 @@ fn main() {
     for line in subprocess.check_output([str(binary)],text=True).splitlines():
         s,i,c,r,w=map(int,line.split());actual.setdefault(s,[]).append((i,c,r,w))
     # Help TOPIC also uses a firmware-owned outline; SCROLL remains hardware-owned.
-    # Routes and Configs now use firmware-owned sparse shapes in the background
+    # Routes, Configs, and Options now use firmware-owned sparse shapes in the background
     # banks (covered by intono_route_render). The qualified FPGA retains the
     # legacy Configs descriptors, but they are disabled for those views.
     # Their common tabs/footer still come from this hardware border layer.
     assert ACTIONS[7]==[] and FIELDS[7]==[]
-    assert {s:sorted(v) for s,v in actual.items()}=={s:sorted([*ACTIONS.get(s,()),*FIELDS.get(s,())]) for s in set(ACTIONS)|set(FIELDS) if s not in (6,7)}
+    assert {s:sorted(v) for s,v in actual.items()}=={s:sorted([*ACTIONS.get(s,()),*FIELDS.get(s,())]) for s in set(ACTIONS)|set(FIELDS) if s not in (6,7,8)}
     for surface in range(11):
         for row in range(22):
             boxes=descriptors(surface,row)
@@ -62,9 +62,9 @@ def test_border_pixels_and_focus_match_rounded_reference():
         ctx.set(dut.active,1)
         for surface,row in [(0,3),(0,4),(0,18),(1,5),(1,6),(1,16),(2,14),(3,19),(4,5),(4,6),(4,16),(4,18),(5,18),(7,9),(8,20),(10,3),(10,5),(10,7),(11,3),(12,3),(13,20),(14,3),(14,18)]:
             ctx.set(dut.surface,surface)
-            for left,width,index in descriptors(surface,row):
+            for left,width,index in descriptors(7 if surface==10 else surface,row):
                 ctx.set(dut.focus,index)
-                selected= index==({0:0,1:1,2:1,3:1,4:2,5:2,6:3,7:3,10:3,11:3,12:3,14:0}.get(surface,-1)) if row==3 else ((surface==8+index or (surface==13 and index==0)) if row==20 else True)
+                selected= index==({0:0,1:1,2:1,3:1,4:2,5:2,6:3,7:3,10:2,11:3,12:3,14:0}.get(surface,-1)) if row==3 else ((surface==8+index or (surface==13 and index==0)) if row==20 else True)
                 expected_color=(0x69 if row in (3,20) else 0xF9) if selected else 0x49
                 # All corner pixels, straight sides, centers, and outside rows.
                 for yy in [-1,0,1,2,3,4,5,6,13,21,22,23,24,25,26,27,28]:
@@ -88,7 +88,7 @@ def test_page_indicators_and_separators_follow_parent_page():
     dut=RoundedBorders();sim=Simulator(dut);sim.add_clock(1e-6,domain='dvi')
     async def bench(ctx):
         ctx.set(dut.active,1)
-        for surface,page in enumerate([0,1,1,1,2,2,3,3,4,5,3,3,3,4,0]):
+        for surface,page in enumerate([0,1,1,1,2,2,3,3,4,5,2,3,3,4,0]):
             ctx.set(dut.surface,surface)
             for index in range(6):
                 center=330+index*12
@@ -156,4 +156,25 @@ def test_reference_panel_keeps_tuner_chrome_without_body_controls():
             ctx.set(dut.x,x);ctx.set(dut.y,y);await ctx.tick("dvi").repeat(5)
             assert ctx.get(dut.hit)==hit
             if hit:assert ctx.get(dut.color)==color
+    sim.add_testbench(bench);sim.run()
+
+
+def test_imported_scale_keeps_scales_navigation_chrome():
+    dut=RoundedBorders();sim=Simulator(dut);sim.add_clock(1e-6,domain="dvi")
+    async def sample(ctx,x,y):
+        ctx.set(dut.x,x);ctx.set(dut.y,y)
+        await ctx.tick("dvi").repeat(5)
+        return ctx.get(dut.hit),ctx.get(dut.color)
+    async def bench(ctx):
+        ctx.set(dut.active,1);ctx.set(dut.surface,10);ctx.set(dut.focus,31)
+        for mode in range(3):
+            ctx.set(dut.mode,mode)
+            hit,color=await sample(ctx,438,103)  # SCALES button interior
+            assert hit==(mode==0)
+            if hit: assert color==0xB9
+            assert (await sample(ctx,546,103))[0]==0  # ROUTES interior stays clear
+            assert (await sample(ctx,438,90))==(1,0xB9 if mode==0 else 0x69)
+            assert (await sample(ctx,354,70))==(1,0xB9)  # Third page box
+            assert (await sample(ctx,370,70))[0]==0  # Fourth box interior
+            assert (await sample(ctx,176,154))[0]==0  # No legacy MIDI body field
     sim.add_testbench(bench);sim.run()

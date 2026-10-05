@@ -99,13 +99,13 @@ impl Exchange {
         self.tx[2..8].copy_from_slice(&self.rx[2..8]);
         let status = if op == 1 {
             // Version, slots per kind, chunk size; no persistent state is changed.
-            self.tx[8] = 4;
-            self.tx[12..16].copy_from_slice(&[1, 8, CHUNK as u8, 8]);
+            self.tx[8] = 5;
+            self.tx[12..17].copy_from_slice(&[1, 8, CHUNK as u8, 8, 7]); // Scala, names, and named route configs.
             OK
         } else if op == 6 {
             self.mode = 0;
             OK
-        } else if kind > 1 || !(1..=8).contains(&slot) || count > CHUNK {
+        } else if kind > 2 || !(1..=8).contains(&slot) || count > CHUNK {
             INVALID
         } else if busy {
             self.mode = 0;

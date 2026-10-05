@@ -58,13 +58,15 @@ Scales store intervals, not a musical root. Choose the root key and mapping when
 
 OUTPUT chooses the working scale to edit. PRESET chooses a factory pattern or CUSTOM. Only this preset list wraps from its last item back to its first.
 
-White and black keys show the familiar keyboard layout. Blue keys are included in the scale. The yellow outline marks the key selected for editing. Click that key to include or exclude it.
+White and black keys show the familiar keyboard layout. Colored keys are included in the scale. The yellow outline marks the key selected for editing. Click that key to include or exclude it.
 
-OCTAVES sets a repeating pattern from one to eight octaves. One is the default. VIEW chooses which octaves are visible; encoder navigation stays within that view.
+OCTAVES sets a repeating pattern from one to eight octaves. VIEW appears for two or more octaves; navigation stays within that view.
 
 SLOT chooses one of eight user scale slots. SAVE stores your working intervals there. LOAD replaces the working scale with that slot's saved intervals. Unsaved edits are lost on reboot.
 
-24 EDO divides an octave into 24 equal steps, including pitches between the normal keyboard notes.
+Scala tunings show cents and period. PAGE browses six intervals at a time. Edit them in the web Profile Library.
+
+The library uses USB debug serial for saved calibration, scales and configs. Stop outputs and scans first. Read, edit, then write changed slots. Export keeps a file, not device changes.
 ## SCALE TOOLS
 Tools work on the same intervals shown on SCALES. BACK returns to that page.
 
@@ -115,10 +117,14 @@ The summary lists each route's input and outputs. MIDI TRANSPOSE opens settings 
 Conflicting assignments are not silently taken from another route. Read the warning and use its route shortcut to inspect the owner, then change or release the assignment before retrying.
 
 Configs are separate from calibration profile and user scale slots. Saving a config does not save an unsaved calibration scan or scale edit.
+
+Keyboard intervals are stored in configs. Scala tunings reference user slots: replacing a slot changes future config loads. Missing or invalid Scala slots block loading.
 ## OPTIONS
 A4 REF sets the tuning reference, normally 440 Hz.
 
-SAVE PREFERENCES stores the reference, tuner view and selected input, and calibration input, output, 0V note, policy and graph choice.
+PALETTE chooses BLUE or a REZO color theme.
+
+SAVE PREFERENCES stores the palette, reference, tuner view and selected input, and calibration input, output, 0V note, policy and graph choice.
 
 RESET PREFERENCES restores those settings to their defaults. It does not erase saved oscillator profiles, user scales or route configs.
 

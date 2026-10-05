@@ -6,6 +6,7 @@ pub use opts_derive::{OptionPage, Options};
 
 mod traits;
 mod integer;
+mod decimal;
 mod enumeration;
 mod float;
 mod string;
@@ -15,6 +16,7 @@ pub mod cc_map;
 
 pub use crate::traits::*;
 pub use crate::integer::*;
+pub use crate::decimal::Decimal;
 pub use crate::enumeration::*;
 pub use crate::float::*;
 pub use crate::string::*;

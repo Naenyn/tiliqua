@@ -159,7 +159,7 @@ def test_memory_gap_blanks_background_instead_of_repeating_a_bright_pixel():
                 gaps += 1
             if started and y == 5:
                 stalled[0] = False
-            if started and not stalled[0] and y == 6 and pixel == 0x69:
+            if started and not stalled[0] and y == 0 and pixel == 0x69:
                 recovered = True
                 break
         assert gaps == width and recovered
@@ -276,6 +276,86 @@ def test_background_dma_reads_complete_frames_and_presents_matching_pixels(inver
         count = width*height//4
         for index, base in enumerate(acquisitions[:4]):
             assert transactions[index*count:(index+1)*count] == list(range(base,base+count))
+
+    sim.add_testbench(memory, background=True)
+    sim.add_testbench(screen)
+    sim.run()
+
+
+@pytest.mark.parametrize("production_clocks", [False, True])
+@pytest.mark.parametrize("stall_ticks", [280, 1800])
+@pytest.mark.parametrize("switch_scene", [False, True])
+def test_memory_gap_recovery_preserves_pixel_positions(stall_ticks, switch_scene, production_clocks):
+    """Late pixels are discarded, even across a frame and pending page change."""
+    width, height = 64, 8
+    owner = SceneExchange(BackgroundLayout(width, height), 8)
+    palette = ColorPalette()
+    dut = DMAFramebuffer(palette=palette, fifo_depth=16, burst_threshold_words=4,
+                         frame_exchange=owner)
+    m = Module()
+    m.submodules.dut, m.submodules.palette = dut, palette
+    sim = Simulator(m)
+    sim.add_clock(1 / 60e6 if production_clocks else 1e-6, domain="sync")
+    sim.add_clock(1 / 74.25e6 if production_clocks else 11.3e-6, domain="dvi")
+    stalled = [False]
+
+    def pixel(image, offset):
+        return (offset * 7 + image * 89) % 251 + 1
+
+    async def memory(ctx):
+        while True:
+            ctx.set(dut.bus.ack, int(not stalled[0] and
+                    ctx.get(dut.bus.cyc) and ctx.get(dut.bus.stb)))
+            address = ctx.get(dut.bus.adr)
+            image = int(address >= 0x200000)
+            offset = address - image * 0x200000
+            ctx.set(dut.bus.dat_r, sum(pixel(image, offset*4+n) << (8*n) for n in range(4)))
+            await ctx.tick("sync")
+
+    async def screen(ctx):
+        for field, value in dict(h_active=width, h_total=96, h_sync_start=80,
+                h_sync_end=88, v_active=height, v_total=14, v_sync_start=10,
+                v_sync_end=12, active_pixels=width*height).items():
+            ctx.set(getattr(dut.fbp.timings, field), value)
+        started_at = None
+        blanked = 0
+        recovered_frames = 0
+        frame_pixels = 0
+        for cycle in range(10000):
+            ctx.set(owner.boundary, ctx.get(palette.i.x) == 0 and
+                    ctx.get(palette.i.y) == -1 and not ctx.get(palette.i.de))
+            if ctx.get(owner.busy):
+                ctx.set(owner.submit, 0)
+            if started_at is not None and cycle - started_at >= stall_ticks:
+                stalled[0] = False
+            await ctx.tick("dvi")
+            if not ctx.get(palette.i.de):
+                continue
+            x, y = ctx.get(palette.i.x), ctx.get(palette.i.y)
+            value = ctx.get(palette.i.pixel.as_value())
+            if x == 0 and y == 0:
+                frame_pixels = 0
+            if value:
+                expected = pixel(ctx.get(owner.published), y*width+x)
+                assert value == expected, f"Displaced pixel at ({x},{y}): {value} != {expected}"
+                frame_pixels += 1
+            elif started_at is not None:
+                blanked += 1
+            if started_at is None and y == 2 and value:
+                stalled[0] = True
+                started_at = cycle
+                if switch_scene:
+                    ctx.set(owner.static_source, 1)
+                    ctx.set(owner.payload, 1)
+                    ctx.set(owner.submit, 1)
+            if started_at is not None and not stalled[0] and x == width-1 and y == height-1:
+                if frame_pixels == width*height:
+                    recovered_frames += 1
+                    if recovered_frames == 2:
+                        break
+        assert blanked > 0 and recovered_frames == 2
+        assert ctx.get(dut.scanout_gaps) > 0
+        assert ctx.get(owner.published) == int(switch_scene)
 
     sim.add_testbench(memory, background=True)
     sim.add_testbench(screen)

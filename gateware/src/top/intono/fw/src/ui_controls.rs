@@ -72,11 +72,26 @@ pub fn field(surface: Surface, index: usize) -> Option<Field> {
         },
         Surface::Help => match index {0 => (10,17,10,false), 1 => (3,5,24,false), _ => return None},
         Surface::Settings => match index {
-            0 => (4,5,10,false),1 => (16,5,10,true),2 => (4,7,10,true),
+            0 => (4,5,10,false),1 => (16,5,10,true),2 => (4,7,10,true),3 => (16,7,10,false),
             _ => return None,
         },
     };
     Some(Field { column, row, width, action })
+}
+/// Imported tunings have no keyboard, octave tools, or keyboard pager.
+/// Share this geometry between text and firmware-painted borders.
+pub fn scale_field(surface:Surface,index:usize,imported:bool)->Option<Field> {
+    if imported {
+        match surface {
+            Surface::Scales if index==8=>return Some(Field{column:20,row:16,width:10,action:false}),
+            Surface::Notes if index==10=>return Some(Field{column:20,row:16,width:10,action:false}),
+            Surface::Scales if matches!(index,2|5|9)=>return None,
+            Surface::Notes if matches!(index,0|2|3|4|5|9)=>return None,
+            Surface::Notes if index==8=>return Some(Field{column:10,row:5,width:10,action:false}),
+            _=>{},
+        }
+    }
+    field(surface,index)
 }
 #[cfg(test)]
 mod tests {

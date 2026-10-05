@@ -164,7 +164,7 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
             &mut d,
             text,
             216,
-            8,
+            10,
             288,
             "SAVE PREFERENCES",
             selected == Some(1),
@@ -174,22 +174,26 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
             &mut d,
             text,
             216,
-            10,
+            12,
             288,
             "RESET PREFERENCES",
             selected == Some(2),
             false,
         );
-        label(text, 144, 12, 432, "A4 / TUNER / CALIBRATION", 0x89, false);
+        label(text, 144, 14, 432, "PALETTE / A4 / TUNER / CALIBRATION", 0x89, false);
         label(
             text,
             144,
-            13,
+            15,
             432,
             "PROFILES / SCALES / CONFIGS KEPT",
             0x89,
             false,
         );
+        if let Some(entry)=menu.entries[3].as_ref() {
+            left(text,216,8,144,"PALETTE",0x89,false);
+            button(&mut d,text,360,8,144,&entry.value,selected==Some(3),false);
+        }
         return d;
     }
     if with_app(|a| a.ui.opts.tracker.page.value) == options::Page::QuantSetups {
@@ -207,7 +211,8 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
                 false,
             );
         }
-        label(text, 120, 6, 480, "CURRENT ROUTE ASSIGNMENTS", 0x89, false);
+        label(text,120,6,480,&config_slot_name(),0xB9,false);
+        label(text, 120, 7, 480, "CURRENT ROUTE ASSIGNMENTS", 0x89, false);
         for route in 0..4 {
             s.clear();
             ui_route::write_assignment(&mut s, groups, route);
@@ -461,7 +466,7 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
                                 s.push_str("BYPASS").ok();
                             } else {
                                 if c.scale_slot != 0 {
-                                    write!(s, "USER {}", c.scale_slot).ok();
+                                    write_saved_scale(&mut s,out as usize,c.scale_slot);
                                 } else {
                                     s.push_str(scale_label(c.scale)).ok();
                                 }
@@ -630,7 +635,7 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
                 if !c.quantize {
                     s.push_str("BYPASS").ok();
                 } else if c.scale_slot != 0 {
-                    write!(s, "USER {}", c.scale_slot).ok();
+                    write_saved_scale(&mut s,out as usize,c.scale_slot);
                 } else {
                     s.push_str(scale_label(c.scale)).ok();
                 }

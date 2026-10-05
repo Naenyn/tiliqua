@@ -1,4 +1,5 @@
-//! Use the actual instrument options/navigation, including persisted enum IDs.
+#[path="../../../top/intono/fw/src/startup_state.rs"] mod startup_state;
+// Use the actual instrument options/navigation, including persisted enum IDs.
 #[path = "../../../top/intono/fw/src/ui_help.rs"] mod ui_help;
 #[path="../../../top/intono/fw/src/reference_cv.rs"] mod reference_cv;
 #[path = "../../../top/intono/fw/src/options.rs"]
@@ -142,7 +143,7 @@ fn octave_count_defaults_to_one_and_keyboard_navigation_stays_in_the_selected_vi
     assert_eq!(opts.quantizer.octaves.value,1);
     for index in [0,1] {visible_ticks(&mut opts,1);assert_eq!(opts.tracker.selected,Some(index));}
     visible_ticks(&mut opts,12);assert_eq!(opts.tracker.selected,Some(2));
-    for index in [8,9] {visible_ticks(&mut opts,1);assert_eq!(opts.tracker.selected,Some(index));}
+    for index in [9] {visible_ticks(&mut opts,1);assert_eq!(opts.tracker.selected,Some(index));}
     opts.toggle_modify();visible_ticks(&mut opts,2);opts.toggle_modify();
     assert_eq!(opts.quantizer.octaves.value,3);
     visible_ticks(&mut opts,-26);assert_eq!(opts.tracker.selected,Some(1));
@@ -166,7 +167,6 @@ fn octave_count_defaults_to_one_and_keyboard_navigation_stays_in_the_selected_vi
     opts.tracker.page.value=Page::QuantNotes;opts.tracker.selected=None;
     for index in [8,9] {visible_ticks(&mut opts,1);assert_eq!(opts.tracker.selected,Some(index));}
     visible_ticks(&mut opts,12);assert_eq!(opts.tracker.selected,Some(2));
-    visible_ticks(&mut opts,1);assert_eq!(opts.tracker.selected,Some(10));
     for index in [0,5,3,4,6,7] {visible_ticks(&mut opts,1);assert_eq!(opts.tracker.selected,Some(index));}
 }
 
@@ -346,7 +346,7 @@ fn preferences_use_footer_navigation_and_one_shot_actions() {
     let mut o=Opts::default();o.tracker.page.value=Page::Settings;
     let mut v=route_ui::View::new();let claims=ownership::Reservations::new();
     assert!(v.handles(Page::Settings));
-    for index in [2,1,0] {
+    for index in [2,1,3,0] {
         assert!(!v.ticks(&mut o,-1,&claims));visible_ticks(&mut o,-1);
         assert_eq!(o.tracker.selected,Some(index));
     }
@@ -399,15 +399,15 @@ fn scale_preset_navigation_places_custom_last_and_wraps_both_directions() {
         visible_ticks(&mut o,-1);assert!(current(&o)==ScalePreset::Custom2);
         visible_ticks(&mut o,1);assert!(current(&o)==ScalePreset::Chromatic);
         let mut seen=0u16;
-        for _ in 0..14 {
+        for _ in 0..13 {
             seen|=1<<current(&o) as u8;
             visible_ticks(&mut o,1);
         }
-        assert_eq!(seen,0x3fff);assert!(current(&o)==ScalePreset::Chromatic);
+        assert_eq!(seen,0x3fdf);assert!(current(&o)==ScalePreset::Chromatic);
         visible_ticks(&mut o,-2);assert!(current(&o)==ScalePreset::Blues);
         visible_ticks(&mut o,1);assert!(current(&o)==ScalePreset::Custom2);
-        visible_ticks(&mut o,-13);assert!(current(&o)==ScalePreset::Chromatic);
-        for preset in ScalePreset::iter() {
+        visible_ticks(&mut o,-12);assert!(current(&o)==ScalePreset::Chromatic);
+        for preset in ScalePreset::iter().filter(|p|*p!=ScalePreset::Edo24) {
             assert!(preset.stepped(true).stepped(false)==preset);
         }
     }
@@ -435,14 +435,14 @@ fn help_topics_reset_scroll_and_navigation_follows_visible_controls() {
 fn options_enter_from_footer_without_reversing_value_edits_or_top_pages() {
     let mut o=Opts::default();o.tracker.page.value=Page::Settings;
     visible_ticks(&mut o,1);assert_eq!(o.tracker.selected,None);
-    for selected in [Some(2),Some(1),Some(0),Some(0)] {
+    for selected in [Some(2),Some(1),Some(3),Some(0),Some(0)] {
         visible_ticks(&mut o,-1);assert_eq!(o.tracker.selected,selected);
     }
     o.tracker.modify=true;
     visible_ticks(&mut o,1);assert_eq!(o.settings.reference.value,441);
     visible_ticks(&mut o,-1);assert_eq!(o.settings.reference.value,440);
     o.tracker.modify=false;
-    for selected in [Some(1),Some(2),None,None] {
+    for selected in [Some(3),Some(1),Some(2),None,None] {
         visible_ticks(&mut o,1);assert_eq!(o.tracker.selected,selected);
     }
     o.tracker.page.value=Page::Calibrate;
@@ -463,4 +463,44 @@ fn reference_cv_skips_assigned_jacks_locks_active_output_and_steps_voltage() {
     ui_navigation::visible_ticks_with_reference(&mut o,-1,&r,15);assert_eq!(o.reference_cv.voltage.value,990);
     o.reference_cv.voltage.value=8000;ui_navigation::visible_ticks_with_reference(&mut o,1,&r,15);assert_eq!(o.reference_cv.voltage.value,8000);
     o.reference_cv.voltage.value=-5000;ui_navigation::visible_ticks_with_reference(&mut o,-1,&r,15);assert_eq!(o.reference_cv.voltage.value,-5000);
+}
+
+#[path="../../../top/intono/fw/src/ui_theme.rs"] mod ui_theme;
+
+#[test]
+fn navigation_leds_follow_visible_pages_and_controls() {
+    let mut o=Opts::default();let mut v=route_ui::View::new();
+    for (index,page) in [Page::Tuner,Page::Calibrate,Page::Quantizer,Page::Play,Page::Settings,Page::Help].into_iter().enumerate() {
+        o.tracker.page.value=page;o.tracker.selected=None;
+        assert_eq!(v.led_index(&o,false),index);
+    }
+    for page in [Page::Tuner,Page::Calibrate,Page::Quantizer,Page::QuantNotes,Page::Settings,Page::Help,Page::Profiles,Page::QuantSetups] {
+        o.tracker.page.value=page;
+        for imported in [false,true] {
+            for (position,index) in ui_navigation::order(&o,imported).iter().enumerate() {
+                o.tracker.selected=Some(*index);assert_eq!(v.led_index(&o,imported),position%8);
+            }
+        }
+    }
+    o.tracker.page.value=Page::Play;
+    for stage in [route_ui::Stage::Input,route_ui::Stage::Midi,route_ui::Stage::Scale,route_ui::Stage::Destination,route_ui::Stage::Add] {
+        v.screen=route_ui::Screen::Editor(stage);
+        for (position,index) in v.editor_fields(stage,0).iter().enumerate() {
+            o.tracker.selected=Some(*index);assert_eq!(v.led_index(&o,false),position%8);
+        }
+    }
+    v.screen=route_ui::Screen::Flow;v.layout.outputs[0]=1;o.play.output.value=0;
+    o.tracker.selected=None;
+    for position in 0..8 {
+        v.ticks(&mut o,1,&ownership::Reservations::new());
+        assert_eq!(v.led_index(&o,false),position%8);
+    }
+    assert_eq!(ui_navigation::page_led(Page::QuantNotes),2);
+    assert_eq!(ui_navigation::page_led(Page::RouteMidi),3);
+    v.warn(&mut o,route_ui::WarningKind::Running(1));
+    assert_eq!(v.led_index(&o,false),0);
+    v.ticks(&mut o,1,&ownership::Reservations::new());
+    assert_eq!(v.led_index(&o,false),1);
+    v.warn(&mut o,route_ui::WarningKind::Calibration);
+    assert_eq!(v.led_index(&o,false),0);
 }

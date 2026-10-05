@@ -286,3 +286,15 @@ fn preference_updates_and_reset_preserve_profiles_scales_and_route_configs() {
     let n=reopened.load_key(config_key,&mut b).unwrap().unwrap();assert_eq!(&b[..n],config);
     assert_eq!(&f.0.borrow().bytes[8192..],profile_bytes);
 }
+
+#[test] fn eight_maximum_named_scala_tables_survive_gc_without_touching_legacy_banks() {
+    let f=Flash(Rc::new(RefCell::new(State {bytes:vec![255;36864],remaining:None,erases:0})));
+    let mut storage=ExpandedJournal::with_reserved_buffer(f.clone(),0..8192,0..36864).unwrap();
+    storage.save_key(tuner_notes::key(1).unwrap(),&tuner_notes::encode([1,2]).unwrap()).unwrap();
+    for slot in 0..8 {storage.save_key_in(8192..24576,KEY+slot,&[slot as u8;1072]).unwrap();}
+    let old=f.0.borrow().bytes[..24576].to_vec();
+    for version in 0..160u8 {storage.save_key_in(24576..36864,tuner_notes::key(version%8+1).unwrap(),&[version;564]).unwrap();}
+    let mut storage=ExpandedJournal::with_reserved_buffer(f.clone(),0..8192,0..36864).unwrap();let mut bytes=[0;565];
+    for slot in 1..=8 {let len=storage.load_key_in(24576..36864,tuner_notes::key(slot).unwrap(),&mut bytes).unwrap().unwrap();assert_eq!(len,564);assert_eq!(&bytes[..len],&[151+slot;564]);}
+    assert_eq!(f.0.borrow().bytes[..24576],old);assert!(f.0.borrow().erases>3);
+}

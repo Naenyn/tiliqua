@@ -51,7 +51,7 @@ impl Point {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Rect {
     pub x: i32,
     pub y: i32,
@@ -340,6 +340,12 @@ pub fn axis(value: i32, low: i32, high: i32, first: u16, last: u16) -> Option<i3
 /// Rounded scanline primitive for retained shapes. Interior colors may be
 /// palette tags; the overlay resolves them when publishing a frame.
 pub fn rounded_rectangle(rect: Rect, radius: u8, border: u8, fill: u8,
+    emit: impl FnMut(Point,u8)) -> bool {
+    rounded_rectangle_stroke(rect,radius,1,border,fill,emit)
+}
+
+/// Paint a thicker border in one pass, rather than repainting the interior.
+pub fn rounded_rectangle_stroke(rect: Rect, radius: u8, stroke: u8, border: u8, fill: u8,
     mut emit: impl FnMut(Point,u8)) -> bool {
     if rect.corners().is_none() || radius>32 || radius as u16*2>rect.width.min(rect.height)
         || rect.width as usize*rect.height as usize>100_000 {return false;}
@@ -352,7 +358,8 @@ pub fn rounded_rectangle(rect: Rect, radius: u8, border: u8, fill: u8,
     let (w,h,r)=(rect.width as i32,rect.height as i32,radius as i32);
     for y in 0..h {
         let outer=span(y,h,r);
-        let inner=if y>0 && y<h-1 {span(y-1,h-2,(r-1).max(0))+1}else{w};
+        let t=stroke as i32;
+        let inner=if y>=t && y<h-t && w>2*t {span(y-t,h-2*t,(r-t).max(0))+t}else{w};
         for x in outer..w-outer {
             emit(Point{x:rect.x+x,y:rect.y+y},if x>=inner && x<w-inner {fill}else{border});
         }
@@ -381,7 +388,7 @@ pub fn rounded_outline(rect:Rect,color:u8,mut emit:impl FnMut(Point,u8))->bool {
 }
 
 /// Center a single row within the area occupied by the two-row keyboard.
-pub const SINGLE_KEYBOARD_Y_OFFSET: i32 = 96;
+pub const SINGLE_KEYBOARD_Y_OFFSET: i32 = 32;
 
 /// One octave of piano keys, within the standard scale panel.
 /// Black keys overlay the shared white-key boundaries, as on a keyboard.
@@ -560,6 +567,22 @@ mod tests {
         assert!(!rounded_rectangle(rect,33,0,0,|_,_|panic!()));
     }
     #[test]
+    fn thick_border_matches_nested_strokes_without_duplicate_pixels() {
+        for height in [54,78] {
+            let rect=Rect{x:0,y:0,width:34,height};
+            let mut expected=vec![0u8;34*height as usize];
+            rounded_rectangle(rect,4,0x69,0xe1,|p,c|expected[p.y as usize*34+p.x as usize]=c);
+            rounded_rectangle(Rect{x:1,y:1,width:32,height:height-2},3,0x69,0xe1,
+                |p,c|expected[p.y as usize*34+p.x as usize]=c);
+            let mut actual=vec![0u8;expected.len()];
+            rounded_rectangle_stroke(rect,4,2,0x69,0xe1,|p,c| {
+                let index=p.y as usize*34+p.x as usize;
+                assert_eq!(actual[index],0);actual[index]=c;
+            });
+            assert_eq!(actual,expected);
+        }
+    }
+    #[test]
     fn keyboard_labels_fit_keys_and_notes_follow_chromatic_order() {
         let mut previous=0;
         let mut blacks=0;
@@ -594,13 +617,13 @@ mod tests {
     #[test]
     fn centered_single_keyboard_keeps_native_labels_inside_each_key() {
         for note in 0..12 {
-            let (mut key,_)=piano_key(note).unwrap();key.y+=SINGLE_KEYBOARD_Y_OFFSET;
+            let (mut key,black)=piano_key(note).unwrap();key.y+=SINGLE_KEYBOARD_Y_OFFSET;key.height=if black {78}else{144};
             let (_,row,_)=piano_label(note).unwrap();let row=row+SINGLE_KEYBOARD_Y_OFFSET as usize/32;
             assert!(key.fits_circle(360));
             assert!(row*32>key.y as usize && row*32+14<(key.y+key.height as i32) as usize);
         }
         let (key,_)=piano_key(0).unwrap();
-        assert_eq!(key.y+SINGLE_KEYBOARD_Y_OFFSET+key.height as i32/2,394);
+        assert_eq!(key.y+SINGLE_KEYBOARD_Y_OFFSET+144/2,352);
     }
     #[test]
     fn segmented_grids_and_traces_are_bounded_and_reject_invalid_work() {

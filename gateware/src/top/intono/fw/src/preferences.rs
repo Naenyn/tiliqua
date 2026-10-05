@@ -1,6 +1,6 @@
 //! Instrument preferences only. Route configs, scales and profiles have their
 //! own records. Always save defaults too, so an old value cannot reappear.
-use crate::options::{CalibrationGraph, CalibrationPolicy, DisplayMode, Opts};
+use crate::options::{CalibrationGraph, CalibrationPolicy, DisplayMode, Opts, UiPalette};
 use opts::{persistence::OptionsPersistence, OptionTrait};
 
 pub const KEY: u32 = 0x49504631;
@@ -15,6 +15,7 @@ pub struct Preferences {
     cal_zero: u8,
     policy: u8,
     graph: u8,
+    palette: u8,
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -27,6 +28,7 @@ impl Default for Preferences {
             cal_zero: 60,
             policy: 0,
             graph: 0,
+            palette: 0,
         }
     }
 }
@@ -41,6 +43,7 @@ impl Preferences {
             cal_zero: o.calibrate.zero_note.value,
             policy: o.calibrate.policy.value as u8,
             graph: o.calibrate.graph.value as u8,
+            palette: o.settings.palette.value as u8,
         }
     }
     fn valid(self) -> bool {
@@ -52,9 +55,12 @@ impl Preferences {
             && (12..=108).contains(&self.cal_zero)
             && self.policy < 4
             && self.graph < 2
+            && self.palette < 9
     }
     pub fn apply(self, o: &mut Opts) {
         o.settings.reference.value = self.reference;
+        use strum::IntoEnumIterator;
+        o.settings.palette.value=UiPalette::iter().nth(self.palette as usize).unwrap_or_default();
         o.tuner.input.value = self.tuner_input;
         o.tuner.display.value = if self.display == 2 {
             DisplayMode::Linear
@@ -89,6 +95,7 @@ impl Preferences {
             self.policy,
             self.graph,
         ]);
+        b[13]=self.palette;
         let sum = crc(&b[..16]);
         b[16..].copy_from_slice(&sum.to_le_bytes());
         b
@@ -96,7 +103,7 @@ impl Preferences {
     fn decode(b: &[u8]) -> Option<Self> {
         if b.len() != LEN
             || &b[..4] != b"IPF1"
-            || b[13..16] != [0; 3]
+            || b[14..16] != [0; 2]
             || crc(&b[..16]) != u32::from_le_bytes(b[16..].try_into().ok()?)
         {
             return None;
@@ -110,6 +117,7 @@ impl Preferences {
             cal_zero: b[10],
             policy: b[11],
             graph: b[12],
+            palette: b[13],
         };
         p.valid().then_some(p)
     }
@@ -276,7 +284,7 @@ mod tests {
             bad[i] ^= 1;
             assert!(Preferences::decode(&bad).is_none());
         }
-        for (index, value) in [(6, 4), (7, 1), (8, 4), (9, 4), (10, 0), (11, 4), (12, 2)] {
+        for (index, value) in [(6, 4), (7, 1), (8, 4), (9, 4), (10, 0), (11, 4), (12, 2), (13,9)] {
             let mut b = good;
             b[index] = value;
             let sum = crc(&b[..16]);
@@ -295,4 +303,12 @@ mod tests {
         load(&mut store, &mut loaded).unwrap();
         assert_eq!(loaded.settings.reference.value, 440);
     }
+}
+
+#[cfg(test)] mod palette_tests {
+ use super::*;
+ #[test]fn palettes_roundtrip_and_legacy_blue_defaults(){
+  for value in 0..9 {let mut p=Preferences::default();p.palette=value;assert_eq!(Preferences::decode(&p.encode()),Some(p));let mut o=Opts::default();p.apply(&mut o);assert_eq!(o.settings.palette.value as u8,value);}
+  assert_eq!(Preferences::default().encode()[13],0);
+ }
 }

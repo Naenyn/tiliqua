@@ -103,7 +103,8 @@ class DMAFramebuffer(wiring.Component):
                 m.d.comb += getattr(self.fbp.timings, member).eq(getattr(self.fixed_modeline, member))
 
         m.submodules.fifo = fifo = AsyncFIFOBuffered(
-                width=32, depth=self.fifo_depth, r_domain='dvi', w_domain='sync')
+                width=34 if self.frame_exchange is not None else 32,
+                depth=self.fifo_depth, r_domain='dvi', w_domain='sync')
         m.d.comb += self.scanout_urgent.eq(
             fifo.w_level < self.fifo_depth - self.burst_threshold_words)
 
@@ -141,6 +142,12 @@ class DMAFramebuffer(wiring.Component):
             previous_vsync = Signal()
             m.d.sync += previous_vsync.eq(phy_vsync_sync)
             frame_start = phy_vsync_sync & ~previous_vsync
+            # Do not publish another scene while an older frame remains queued.
+            # The reader acknowledges the final FIFO word, including discarded
+            # words during underrun recovery. Tokens cross only through flops.
+            frame_token, drained_token, drained_sync = Signal(), Signal(), Signal()
+            m.submodules.drained_ff = FFSynchronizer(drained_token, drained_sync,
+                                                     o_domain="sync")
 
         # DMA bus master -> FIFO state machine
         # Burst until FIFO is full, then wait until half empty.
@@ -150,14 +157,15 @@ class DMAFramebuffer(wiring.Component):
         # Read to FIFO in sync domain
         with m.FSM() as fsm:
             with m.State('WAIT-VSYNC'):
-                with m.If(phy_vsync_sync if self.frame_exchange is None else frame_start):
+                with m.If(phy_vsync_sync if self.frame_exchange is None else (frame_start & (frame_token == drained_sync))):
                     m.d.sync += dma_addr.eq(0)
                     if self.frame_exchange is None:
                         # Latch the base for the entire scan to avoid tearing.
                         m.d.sync += scan_base.eq(self.fbp.base)
                     else:
                         m.d.comb += self.frame_exchange.acquire.eq(1)
-                        m.d.sync += scan_base.eq(self.frame_exchange.next_base)
+                        m.d.sync += [scan_base.eq(self.frame_exchange.next_base),
+                                     frame_token.eq(~frame_token)]
                     m.next = 'WAIT'
             with m.State('BURST'):
                 m.d.comb += [
@@ -191,6 +199,7 @@ class DMAFramebuffer(wiring.Component):
                     # depends on counters, not a changing FIFO level, so CTI and
                     # address stay stable during arbitrarily delayed bus ACKs.
                     last_word = dma_addr == (fb_size_words - 1)
+                    m.d.comb += fifo.w_data.eq(Cat(bus.dat_r, dma_addr == 0, last_word))
                     end_burst = burst_cnt == (self.burst_threshold_words - 1)
                     with m.If(last_word | end_burst):
                         m.d.comb += bus.cti.eq(wishbone.CycleType.END_OF_BURST)
@@ -213,10 +222,34 @@ class DMAFramebuffer(wiring.Component):
         last_word   = Signal(32)
         word_available = fifo.r_rdy if self.frame_exchange is None else (fifo.r_rdy | (bytecounter != 0))
         if self.frame_exchange is not None:
+            # Frame tags let a starved reader discard late data instead of
+            # drawing it at shifted coordinates. Hold the next first word until
+            # the first visible pixel; HDMI timing and overlays never stop.
+            locked = Signal()
+            first_pixel = (dvi_tgen.x == 0) & (dvi_tgen.y == 0)
+            start_word = fifo.r_rdy & fifo.r_data[32]
+            reading = locked | (first_pixel & start_word)
+            sample_valid = dvi_tgen.ctrl.de & reading & word_available
+            with m.If(~locked):
+                m.d.comb += fifo.r_en.eq(fifo.r_rdy & ~fifo.r_data[32])
+            with m.If(sample_valid):
+                m.d.comb += fifo.r_en.eq(bytecounter == 0)
+                m.d.dvi += [locked.eq(1), bytecounter.eq(bytecounter + 1)]
+                with m.If(bytecounter == 0):
+                    m.d.dvi += last_word.eq(fifo.r_data[:32])
+                with m.Else():
+                    m.d.dvi += last_word.eq(last_word >> 8)
+            with m.If((dvi_tgen.ctrl.de & ~sample_valid) |
+                      ((dvi_tgen.x == self.fbp.timings.h_active - 1) &
+                       (dvi_tgen.y == self.fbp.timings.v_active - 1))):
+                m.d.dvi += [locked.eq(0), bytecounter.eq(0)]
+            with m.If(fifo.r_en & fifo.r_rdy & fifo.r_data[33]):
+                m.d.dvi += drained_token.eq(~drained_token)
+
             reader_started = Signal()
-            with m.If(dvi_tgen.ctrl.de & word_available):
+            with m.If(sample_valid):
                 m.d.dvi += reader_started.eq(1)
-            missing = reader_started & dvi_tgen.ctrl_phy.de & ~word_available
+            missing = reader_started & dvi_tgen.ctrl.de & ~sample_valid
             previous_missing = Signal()
             gaps = Signal(8)
             gray, gray_sync = Signal(8), Signal(8)
@@ -230,15 +263,16 @@ class DMAFramebuffer(wiring.Component):
             for bit in range(8):
                 m.d.comb += self.scanout_gaps[bit].eq(gray_sync[bit:].xor())
             m.d.comb += self.scanout_gaps[8:].eq(0)
-        with m.If(phy_vsync_dvi):
-            m.d.dvi += bytecounter.eq(0)
-        with m.Elif(dvi_tgen.ctrl.de & word_available):
-            m.d.comb += fifo.r_en.eq(bytecounter == 0),
-            m.d.dvi += bytecounter.eq(bytecounter+1)
-            with m.If(bytecounter == 0):
-                m.d.dvi += last_word.eq(fifo.r_data)
-            with m.Else():
-                m.d.dvi += last_word.eq(last_word >> 8)
+        else:
+            with m.If(phy_vsync_dvi):
+                m.d.dvi += bytecounter.eq(0)
+            with m.Elif(dvi_tgen.ctrl.de & word_available):
+                m.d.comb += fifo.r_en.eq(bytecounter == 0)
+                m.d.dvi += bytecounter.eq(bytecounter+1)
+                with m.If(bytecounter == 0):
+                    m.d.dvi += last_word.eq(fifo.r_data)
+                with m.Else():
+                    m.d.dvi += last_word.eq(last_word >> 8)
 
         # 1-cycle delayed x/y to align with last_word
         pixel_x = Signal(signed(12))
@@ -267,7 +301,7 @@ class DMAFramebuffer(wiring.Component):
             # Preserve HDMI timing and overlay coordinates, but blank that
             # missing background sample. Match the existing one-cycle delay.
             background_valid = Signal()
-            m.d.dvi += background_valid.eq(dvi_tgen.ctrl.de & word_available)
+            m.d.dvi += background_valid.eq(sample_valid)
             m.d.comb += first_input.pixel.eq(Mux(background_valid,
                                                last_word[:Pixel.as_shape().size], 0))
             # Align active/sync flags with the registered pixel and coordinates.

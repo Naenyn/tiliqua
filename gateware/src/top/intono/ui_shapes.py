@@ -7,6 +7,8 @@ from amaranth.lib.wiring import In, Out
 
 # Surface IDs 0..10 match firmware ui_controls::Surface. IDs 11/12/13
 # identify retained Configs/MIDI/Preferences views without legacy field borders.
+# ID 10 identifies imported scales with retained body geometry. The old MIDI
+# descriptors remain for layout compatibility; MIDI now publishes ID 12.
 # ID 14 is the linear tuner, which omits the arc-only FOCUS control.
 # Descriptors are (option, col, row, width).
 ACTIONS = {
@@ -52,7 +54,7 @@ class RoundedBorders(wiring.Component):
     def __init__(self):
         super().__init__({"x":In(signed(12)),
             "y":In(signed(12)),"active":In(1),"surface":In(4),"focus":In(5),"mode":In(2,init=1),
-            "hit":Out(1),"color":Out(8)})
+            "keyboard_second":In(1,init=1),"hit":Out(1),"color":Out(8)})
 
     def elaborate(self, platform):
         m=Module()
@@ -70,11 +72,11 @@ class RoundedBorders(wiring.Component):
         port=memory.read_port(domain="dvi");m.submodules.geometry=memory
         row=(self.y+6)[5:10]
         # Retained views reuse the common-only Routes geometry ROM entry.
-        geometry_surface=Mux(self.surface==14,0,Mux(self.surface>=11,7,self.surface))
+        geometry_surface=Mux(self.surface==14,0,Mux((self.surface>=11)|(self.surface==10),7,self.surface))
         m.d.comb += [port.addr.eq(Cat(row,geometry_surface)),port.en.eq(self.active)]
-        y1=Signal(signed(12));x1=Signal(10);ly1=Signal(5);row1=Signal(5);active1=Signal();surface1=Signal(4);focus1=Signal(5);mode1=Signal(2)
+        y1=Signal(signed(12));x1=Signal(10);ly1=Signal(5);row1=Signal(5);active1=Signal();surface1=Signal(4);focus1=Signal(5);mode1=Signal(2);second1=Signal()
         m.d.dvi += [y1.eq(self.y),x1.eq(self.x),ly1.eq((self.y+6)[:5]),row1.eq(row),active1.eq(self.active),
-                    surface1.eq(self.surface),focus1.eq(self.focus),mode1.eq(self.mode)]
+                    surface1.eq(self.surface),focus1.eq(self.focus),mode1.eq(self.mode),second1.eq(self.keyboard_second)]
         # Compute curve insets once per scanline before the per-box tests.
         outer=Array(Const(6-isqrt(36-(6-min(y,27-y))**2),4) if min(y,27-y)<6 else Const(0,4)
                     for y in range(28))
@@ -100,10 +102,10 @@ class RoundedBorders(wiring.Component):
             # Negative relative coordinates wrap above 255, outside every box.
             rx2=Signal(10)
             width2=Signal(8);ly2=Signal(5);active2=Signal();selected2=Signal();tab2=Signal();mode2=Signal(2)
-            category=Mux((surface1==0)|(surface1==14)|(surface1==15),0,Mux(surface1<=3,1,Mux(surface1<=5,2,3)))
+            category=Mux((surface1==0)|(surface1==14)|(surface1==15),0,Mux(surface1<=3,1,Mux((surface1<=5)|(surface1==10),2,3)))
             selected=Mux(row1==3,((surface1<8)|((surface1>=10)&(surface1<=12))|(surface1==14)|(surface1==15))&(index==category),
                          Mux(row1==20,((surface1==8+index)|((surface1==13)&(index==0))),index==focus1))
-            m.d.dvi += [rx2.eq(x1-left),width2.eq(width),ly2.eq(shape_y),active2.eq(active1 & (width!=0) & ~((surface1==14)&(row1==4)&(index==0))),
+            m.d.dvi += [rx2.eq(x1-left),width2.eq(width),ly2.eq(shape_y),active2.eq(active1 & (width!=0) & ~((surface1==14)&(row1==4)&(index==0)) & ~(~second1 & (((surface1==4)&(index==8))|((surface1==5)&(index==10))) & (row1!=3) & (row1!=20))),
                         selected2.eq(selected),tab2.eq((row1==3)|(row1==20)),mode2.eq(mode1)]
             inside=(ly2<Mux(compact2,21,28))&(rx2>=off2)&(rx2<width2-off2)
             inset=(ly2>=2)&(ly2<Mux(compact2,19,26))&(rx2>=inner_off2)&(rx2<width2-inner_off2)
@@ -112,25 +114,28 @@ class RoundedBorders(wiring.Component):
                         color3.eq(Mux(selected2,Mux(tab2,Mux(mode2==0,0xB9,0x69),0xF9),0x49))]
             hits.append(hit3);colors.append(color3)
         # Six boxes follow the visible navigation order, including subpages.
-        page=Mux((self.surface==0)|(self.surface==14)|(self.surface==15),0,Mux(self.surface<=3,1,Mux(self.surface<=5,2,
+        page=Mux((self.surface==0)|(self.surface==14)|(self.surface==15),0,Mux(self.surface<=3,1,Mux((self.surface<=5)|(self.surface==10),2,
              Mux((self.surface==8)|(self.surface==13),4,Mux(self.surface==9,5,3)))))
-        pager_words=[0]*(8*256)
-        for current in range(6):
-            for index in range(6):
-                center=360-5*6+index*12
-                if index==current:
-                    for x in range(center-9,center+10):pager_words[current*256+(x&255)]|=4
-                else:
-                    center+=-4 if index<current else 4
-                    for x in range(center-5,center+6):
-                        pager_words[current*256+(x&255)]|=1 | (2 if x<center-3 or x>=center+4 else 0)
-        pager=Memory(shape=unsigned(3),depth=len(pager_words),init=pager_words,attrs={"ram_style":"block"})
-        pager_port=pager.read_port(domain="dvi");m.submodules.pager=pager
-        m.d.comb += [pager_port.addr.eq(Cat(self.x[:8],page)),pager_port.en.eq(self.active)]
-        # Match the border layer's four-cycle latency, including the ROM read.
+        # Constant spans replace a 2K-word ROM used for just six boxes.
+        # Register the result to preserve the original ROM-read latency.
+        word=Const(0,3)
+        x=self.x[:8]
+        for index in range(6):
+            center=330+index*12-256
+            selected=(page==index)
+            left=page>index
+            inside=Mux(left,(x>=center-9)&(x<=center+1),
+                            (x>=center-1)&(x<=center+9))
+            edge=Mux(left,(x<center-7)|(x>=center),
+                          (x<center+1)|(x>=center+8))
+            word=word | Mux(selected, Mux((x>=center-9)&(x<=center+9),4,0),
+                           Mux(inside,Cat(Const(1,1),edge,Const(0,1)),0))
+        pager_word=Signal(3)
+        m.d.dvi += pager_word.eq(word)
+        # Match the border layer's four-cycle latency.
         chrome_hit2=Signal();chrome_color2=Signal(8)
-        current=pager_port.data[2]&(y1>=60)&(y1<81)
-        other=pager_port.data[0]&(y1>=62)&(y1<78)&(pager_port.data[1]|(y1<64)|(y1>=76))
+        current=pager_word[2]&(y1>=60)&(y1<81)
+        other=pager_word[0]&(y1>=62)&(y1<78)&(pager_word[1]|(y1<64)|(y1>=76))
         pager_hit=(x1>=256)&(x1<512)&(current|other)
         separator=((y1==124)&(x1>=144)&(x1<576))|((y1==631)&(x1>=228)&(x1<492))
         m.d.dvi += [chrome_hit2.eq(active1&(pager_hit|separator)),

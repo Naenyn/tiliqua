@@ -109,7 +109,7 @@ fn rejects_busy_bad_slots_order_truncation_and_expiry() {
         request(&mut e, &mut s, 2, 0, 1, 0, &[], 0, 100, false)[9],
         EMPTY
     );
-    for (kind, slot) in [(2, 1), (0, 0), (1, 9)] {
+    for (kind, slot) in [(3, 1), (0, 0), (1, 9)] {
         assert_eq!(
             request(&mut e, &mut s, 3, kind, slot, 0, &[], 10, 100, false)[9],
             INVALID
@@ -182,4 +182,12 @@ fn partial_packet_survives_a_foreground_scene_redraw() {
     assert_eq!(e.tx[9], OK);
     assert_eq!(&e.tx[12..16], &[1, 8, 16, 8]);
     assert_eq!(store.writes, 0);
+}
+
+#[test]
+fn config_bank_is_public_and_unknown_banks_are_rejected() {
+    let mut e=Exchange::new();let mut store=Memory {value:Some(vec![1,2,3]),..Memory::default()};
+    let hello=request(&mut e,&mut store,1,0,1,0,&[],0,100,false);assert_eq!(hello[16],7);
+    assert_eq!(request(&mut e,&mut store,2,2,8,0,&[],0,100,false)[9],OK);
+    assert_eq!(request(&mut e,&mut store,2,3,8,0,&[],0,100,false)[9],INVALID);
 }

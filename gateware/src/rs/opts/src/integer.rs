@@ -9,6 +9,8 @@ use crate::traits::*;
 pub enum IntFormat {
     #[default]
     Raw,
+    /// Compact fixed-point presentation, at most three fractional digits.
+    Fixed { divisor: u32, precision: usize, suffix: &'static str },
     Scaled { divisor: u32, precision: usize, suffix: &'static str },
 }
 
@@ -61,6 +63,10 @@ where
         match T::FORMAT {
             IntFormat::Raw => {
                 write!(&mut s, "{}", self.value).ok();
+            }
+            IntFormat::Fixed { divisor, precision, suffix } => {
+                let value: f32 = self.value.as_();
+                write!(&mut s, "{:.*}{}", precision, crate::Decimal(value / divisor as f32), suffix).ok();
             }
             IntFormat::Scaled { divisor, precision, suffix } => {
                 let scaled = self.value.as_() / divisor as f32;

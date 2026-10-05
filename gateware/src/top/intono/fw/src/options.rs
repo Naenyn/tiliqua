@@ -134,10 +134,10 @@ pub enum ScalePreset {
 impl ScalePreset {
     /// UI order is independent of the IDs persisted in scales and routes.
     pub fn stepped(self, forward: bool) -> Self {
-        const ORDER: [ScalePreset; 14] = [
+        const ORDER: [ScalePreset; 13] = [
             ScalePreset::Chromatic, ScalePreset::Major, ScalePreset::Minor,
             ScalePreset::MajorPentatonic, ScalePreset::MinorPentatonic,
-            ScalePreset::Edo24, ScalePreset::Dorian, ScalePreset::Mixolydian,
+            ScalePreset::Dorian, ScalePreset::Mixolydian,
             ScalePreset::Phrygian, ScalePreset::Lydian, ScalePreset::HarmonicMinor,
             ScalePreset::MelodicMinor, ScalePreset::Blues, ScalePreset::Custom2,
         ];
@@ -241,7 +241,7 @@ int_params!(NoteParams<u8> { step: 1, min: 12, max: 108 });
 int_params!(CentsParams<i16> { step: 1, min: -50, max: 50 });
 int_params!(ReferenceParams<u16> {
     step: 1, min: 400, max: 480,
-    format: IntFormat::Scaled { divisor: 1, precision: 0, suffix: "Hz" }
+    format: IntFormat::Fixed { divisor: 1, precision: 0, suffix: "Hz" }
 });
 int_params!(HelpTopicParams<u8> { step: 1, min: 0, max: 9 });
 int_params!(ScrollParams<u8> { step: 1, min: 0, max: 120 });
@@ -268,7 +268,7 @@ pub enum ReferenceStep {
     #[strum(serialize="10 mV")] Fine,
 }
 int_params!(ReferenceVoltageParams<i16> {step:10,min:-5000,max:8000,
-    format:IntFormat::Scaled {divisor:1000,precision:2,suffix:"V"}});
+    format:IntFormat::Fixed {divisor:1000,precision:2,suffix:"V"}});
 #[derive(OptionPage,Clone)]
 pub struct ReferenceOpts {
     #[option(0)] pub output:IntOption<InputParams>,
@@ -277,6 +277,9 @@ pub struct ReferenceOpts {
     #[option(false)] pub enable:ButtonOption<OneShotButtonParams>,
     #[option(false)] pub back:ButtonOption<OneShotButtonParams>,
 }
+#[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]
+pub enum UiPalette { #[default] Blue, #[strum(serialize="LCD")] Lcd, Amber, Cyan, Green, Violet, Ember, Neon, Azure }
+
 #[derive(OptionPage, Clone)]
 pub struct SettingsOpts {
     #[option(440)]
@@ -285,6 +288,7 @@ pub struct SettingsOpts {
     pub save_opts: ButtonOption<OneShotButtonParams>,
     #[option(false)]
     pub wipe_opts: ButtonOption<OneShotButtonParams>,
+    #[option] pub palette: EnumOption<UiPalette>,
 }
 
 #[derive(OptionPage, Clone)]

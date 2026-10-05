@@ -11,8 +11,9 @@ def test_playback_uses_supported_bus_timer_not_cpu_performance_csrs():
     top = (root / "src/top/intono/top.py").read_text()
     assert "riscv::register::mcycle" not in main
     assert "riscv::register::cycle" not in main
-    assert "PLAYBACK_TIMER.counter().read()" in main
-    assert "PLAYBACK_TIMER.reload().write" in main
+    compact="".join(main.split())
+    assert "PLAYBACK_TIMER.counter().read()" in compact
+    assert "PLAYBACK_TIMER.reload().write" in compact
     assert 'name="playback_timer"' in top
 
 

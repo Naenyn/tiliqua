@@ -38,7 +38,7 @@ except ImportError:
 
 def configure_archive(archiver):
     """INTONO-specific clock policy; do not change other bitstreams' defaults."""
-    archiver.with_option_storage(size=24576)
+    archiver.with_option_storage(size=36864)
     if archiver.external_pll_config is not None:
         archiver.external_pll_config.spread_spectrum = 0.0
 

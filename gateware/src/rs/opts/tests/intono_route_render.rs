@@ -36,6 +36,7 @@ impl TextWriter<'_>{fn cell(&mut self,a:u16,c:u32){self.cells[a as usize]=c;}}
 struct Entry {value:std::string::String}
 struct MenuSnapshot {entries:[Option<Entry>;16]}
 const NOTE_NAMES:[&str;12]=["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+fn write_saved_scale(w:&mut impl core::fmt::Write,_output:usize,slot:u8) {write!(w,"USER {}",slot).ok();}
 fn scale_label(id:u8)->&'static str {use strum::IntoEnumIterator;options::ScalePreset::iter().nth(id as usize).map(Into::into).unwrap_or("INVALID")}
 fn write_profile_source(s:&mut impl core::fmt::Write,n:u8){match n{0=>write!(s,"NOMINAL"),1=>write!(s,"RAM"),_=>write!(s,"SLOT {}",n-1)}.ok();}
 #[test]
@@ -90,3 +91,5 @@ fn reference_panel_geometry_and_longest_voltage_fit() {
         assert!(cells.iter().any(|c|c&127!=0));
     }
 }
+
+fn config_slot_name()->heapless::String<24> {heapless::String::new()}
