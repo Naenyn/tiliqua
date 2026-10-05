@@ -1794,3 +1794,46 @@ Archive: `build/intono-ui-help-r5/intono-ui-help-b7ea1899-r5.tar.gz`.
 SHA256: `d99de76d620077a3a0c7025a9e307b78bf0e9f5ef6e8605a42940e28c171b341`.
 Flashed Tiliqua #1 slot 1, verified `Refresh: DONE`; user storage retained.
 Qualification: `build/intono-ui-help-r5/help-update-flash.json`.
+
+## Tuner Reference CV and MIDI connector help — 2026-10-04
+
+Source `657d11e0`, r5 seed 21. Added REFERENCE CV beside VIEW on both
+Tuner views. Its centered panel chooses one free output and -5.00..+8.00 V,
+with 1 V / 10 mV steps and explicit ENABLE/DISABLE. BACK preserves the
+reference on Tuner; leaving Tuner disables it. It starts disabled on boot
+and is intentionally excluded from saved preferences.
+
+Reference CV renews the existing guarded calibration CSR command, with the
+continuous-output bit so voltage changes do not reset audio measurement.
+Configured route outputs are unavailable even while their routes are stopped.
+The output-only runtime claim persists until the DAC acknowledges shutdown;
+scan, verification and refinement cannot start while this port is occupied.
+Missing acknowledgement, hardware fault and watchdog inactivity fail closed.
+It claims no inputs. The diagnostic CV probe is excluded while reference is
+active. Retained surface 15 supplies Tuner chrome without legacy body borders.
+
+MIDI connector restrictions are documented in SCALE TOOLS and MIDI TRANSPOSE:
+only the 3.5 mm MIDI input is supported, not USB-C. Help uses a generated
+literal-phrase dictionary in read-only firmware. Decoder storage is limited
+to one 36-character line; it has no heap or full-topic RAM buffer. Tests compare
+all decoded scroll positions against the original uncompressed help text.
+
+Validation: navigation suite 51 passed; route/render suite 62 passed;
+standalone tuner/scale fixture 104 passed; help/border suite 7 passed;
+guarded DAC output suite 4 passed. Initial broader display suite passed 50
+checks with one failure from the relocated VIEW button's old sample point;
+that check was corrected and passed with the final border suite. Firmware
+327056 / 327680 bytes, 624 bytes spare. `_ebss=0x1fac`, stack start `0x8000`:
+24660 bytes of static stack space, passing the existing 24 KiB guard.
+
+Full FPGA build final timing all PASS: serializer 399.52 / 371.33 MHz,
+pixel 83.38 / 74.25 MHz, audio 69.89 / 49.15 MHz, CPU 66.45 / 60.00 MHz.
+Resources: COMB 21992/24288, FF 12246/24288, BRAM 51/56, DSP 14/28.
+Use this newly qualified hardware for subsequent firmware-only updates.
+
+Archive: `build/intono-reference-cv-r5/intono-reference-cv-657d11e0-r5.tar.gz`.
+SHA256: `a4a30620e04bc4ea50b683104402baa8eee52bbe95368a92ca20c257a5937d7f`.
+Flashed Tiliqua #1 (E46534A193222B21), slot 1; verified `Refresh: DONE`.
+Archive hardware and firmware match the build files byte-for-byte.
+Qualification: `build/intono-reference-cv-r5/reference-cv-flash.json`.
+Hardware interaction remains for the user's smoke test.

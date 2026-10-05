@@ -24,6 +24,7 @@ PITCH shows the nearest note and octave, then the cents offset. FREQUENCY is in 
 VIEW switches between ARC and LINEAR. The A4 reference is set in OPTIONS.
 
 REFERENCE CV supplies one free output with a steady tuning voltage. Select OUTPUT, VOLTAGE and STEP, then ENABLE. STEP offers 1 V or 10 mV adjustments. BACK returns to the tuner while keeping it on; DISABLE or leaving TUNER turns it off and releases the jack.
+
 ## CAL
 Calibration measures your oscillator's pitch-voltage response so a route can correct its tuning. It does not adjust the oscillator's internal trimmers.
 
