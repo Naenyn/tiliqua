@@ -22,6 +22,8 @@ LINEAR shows all four channels together. A centered marker is in tune; left is f
 PITCH shows the nearest note and octave, then the cents offset. FREQUENCY is in Hz. Vrms and Vpp describe signal level. NO SIGNAL means there is no usable pitch reading.
 
 VIEW switches between ARC and LINEAR. The A4 reference is set in OPTIONS.
+
+REFERENCE CV supplies one free output with a steady tuning voltage. Select OUTPUT, VOLTAGE and STEP, then ENABLE. STEP offers 1 V or 10 mV adjustments. BACK returns to the tuner while keeping it on; DISABLE or leaving TUNER turns it off and releases the jack.
 ## CAL
 Calibration measures your oscillator's pitch-voltage response so a route can correct its tuning. It does not adjust the oscillator's internal trimmers.
 
@@ -67,6 +69,8 @@ Tools work on the same intervals shown on SCALES. BACK returns to that page.
 
 TOOLS OCT chooses the octave affected by CLEAR OCT or FILL OCT. Clearing excludes all its notes; filling includes all twelve keyboard intervals.
 
+MIDI is supported through the 3.5 mm MIDI input only, not USB-C.
+
 LEARN BASE waits for any MIDI note. That note's octave becomes the first editing octave. For example, playing E3 sets MIDI BASE to C3. The first note sets the base without changing an interval.
 
 After learning, play a note to toggle its interval. Release it before playing it again to toggle it again. Notes outside the configured octave range are ignored. The view follows the octave being edited.
@@ -87,6 +91,8 @@ LOAD USER SCALE applies intervals from a saved user slot. PROFILE chooses oscill
 
 START and STOP control the selected route. The small bars show recent output pitch history. BACK returns to the overview. CONFIGS saves or loads the complete routing arrangement.
 ## MIDI TRANSPOSE
+MIDI uses the 3.5 mm MIDI input only; USB-C MIDI is not supported.
+
 MIDI transpose is shared by all outputs of a route, but configured separately for each route.
 
 CHANNEL enables a MIDI channel from 1 to 16. OFF disables MIDI transpose. Routes with different channels can be transposed independently by one MIDI source.

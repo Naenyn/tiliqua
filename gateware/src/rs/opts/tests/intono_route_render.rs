@@ -1,5 +1,6 @@
 //! Capture the real firmware presenter for layout checks and visual inspection.
 #[path = "../../../top/intono/fw/src/ui_help.rs"] mod ui_help;
+#[path="../../../top/intono/fw/src/reference_cv.rs"] mod reference_cv;
 #[path="../../../top/intono/fw/src/midi_transpose.rs"] mod midi_transpose;
 #[path="../../../top/intono/fw/src/options.rs"] mod options;
 #[path="../../../top/intono/fw/src/route_group.rs"] mod route_group;
@@ -75,4 +76,17 @@ fn capture_dense_views_with_bounded_geometry(){
         for (n,card) in cards.iter().enumerate() {assert_eq!(card.color,if focus==Some(n){0xD9}else{0x49});}
     }
 
+}
+
+#[test]
+fn reference_panel_geometry_and_longest_voltage_fit() {
+    let menu=MenuSnapshot{entries:core::array::from_fn(|i|Some(Entry{value:match i{0=>"3",1=>"-5.00V",2=>"10 mV",_=>""}.into()}))};
+    let mut reference=reference_cv::Reference::new();reference.free=8;
+    for focus in 0..5 {
+        let mut cells=[0;2025];
+        let d=route_render::reference(&mut TextWriter{cells:&mut cells},&menu,Some(focus),true,reference);
+        assert!((d.len as usize)<ui_route::MAX_SHAPES);
+        for shape in &d.shapes[..d.len as usize] {assert!(shape.rect().fits_circle(360));}
+        assert!(cells.iter().any(|c|c&127!=0));
+    }
 }

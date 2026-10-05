@@ -32,6 +32,7 @@ mod route_ui;
 mod route_render;
 mod ui_navigation;
 mod ui_help;
+mod reference_cv;
 mod ui_keyboard;
 
 mod ui_markers;
@@ -129,6 +130,7 @@ fn show_route_settings(opts: &mut options::PlayOpts,c:quantizer_setup::Channel) 
 // becoming part of `main()`'s stack frame, which previously corrupted an
 // already constrained main RAM after the first interrupt.
 static APP: Mutex<RefCell<Option<App>>> = Mutex::new(RefCell::new(None));
+static REFERENCE_CV: Mutex<RefCell<reference_cv::Reference>> = Mutex::new(RefCell::new(reference_cv::Reference::new()));
 static OWNERS: Mutex<RefCell<Reservations>> = Mutex::new(RefCell::new(Reservations::new()));
 static ROUTE_PAINT: Mutex<RefCell<ui_route::Paint>> = Mutex::new(RefCell::new(ui_route::Paint::new()));
 static ROUTE_HISTORY: Mutex<RefCell<ui_route::History>> = Mutex::new(RefCell::new(ui_route::History::new()));
@@ -339,7 +341,7 @@ impl App {
 fn visible_ticks(opts: &mut Opts, ticks: i8) {
     let claims = critical_section::with(|cs| *OWNERS.borrow_ref(cs));
     if critical_section::with(|cs|ROUTE_VIEW.borrow_ref_mut(cs).ticks(opts,ticks,&claims)) {return;}
-    ui_navigation::visible_ticks(opts, ticks, &claims);
+    ui_navigation::visible_ticks_with_reference(opts, ticks, &claims,critical_section::with(|cs|REFERENCE_CV.borrow_ref(cs).free));
 }
 
 #[inline(never)]
@@ -379,7 +381,11 @@ fn timer0_handler() {
         // Encoder/options and PMOD LEDs are all CSR-backed and deterministic.
         app.now_ms += PLAYBACK_PERIOD_MS as u64;
         if app.now_ms % TIMER0_ISR_PERIOD_MS as u64 == 0 {
-            critical_section::with(|cs|ROUTE_VIEW.borrow_ref_mut(cs).layout=app.groups);
+            critical_section::with(|cs| {
+                ROUTE_VIEW.borrow_ref_mut(cs).layout=app.groups;
+                REFERENCE_CV.borrow_ref_mut(cs).free=OWNERS.borrow_ref(cs).free_mask(Owner::Reference,true)
+                    & !app.groups.outputs.iter().fold(0,|mask,value|mask|value);
+            });
             app.ui.update_encoder_realtime_custom(visible_ticks,|opts|critical_section::with(|cs| {
                 let claims=*OWNERS.borrow_ref(cs);
                 ROUTE_VIEW.borrow_ref_mut(cs).click(opts,&claims)
@@ -979,6 +985,7 @@ impl MenuSnapshot {
         let page = opts.tracker.page.value;
         let page_label = match page {
             Page::Tuner => "INTONO",
+            Page::Reference => "REFERENCE CV",
             Page::Calibrate => "CAL",
             Page::Verify => "CHECK",
             Page::Profiles => "PROFILES",
@@ -1100,7 +1107,7 @@ fn snapshot_menu(save_feedback: &str) -> MenuSnapshot {
 fn surface(page: Page) -> ui_controls::Surface {
     use ui_controls::Surface as S;
     match page {
-        Page::Tuner => S::Tuner, Page::Calibrate => S::Calibration,
+        Page::Tuner|Page::Reference => S::Tuner, Page::Calibrate => S::Calibration,
         Page::Profiles => S::Profiles, Page::Verify => S::Check,
         Page::Quantizer => S::Scales, Page::QuantNotes => S::Notes,
         Page::QuantSetups => S::Setups, Page::Play => S::Routes,
@@ -1112,7 +1119,7 @@ fn publish_controls(text: &mut TextWriter<'_>, menu: &MenuSnapshot, cal: &calibr
     let page = with_app(|app| app.ui.opts.tracker.page.value);
     ui_text::ux_field(11,1,8,"INTONO",ui_text::Style {color:0xB9,bold:true},
         ui_text::Align::Center,|a,c|text.cell(a,c));
-    for (column, width, label, active) in [(2,9,"TUNER",matches!(page,Page::Tuner)),
+    for (column, width, label, active) in [(2,9,"TUNER",matches!(page,Page::Tuner|Page::Reference)),
         (11,9,"CAL",matches!(page,Page::Calibrate|Page::Profiles|Page::Verify)),
         (20,9,"SCALES",matches!(page,Page::Quantizer|Page::QuantNotes)),
         (29,9,"ROUTES",matches!(page,Page::Play|Page::QuantSetups|Page::RouteMidi))] {
@@ -1130,7 +1137,7 @@ fn publish_controls(text: &mut TextWriter<'_>, menu: &MenuSnapshot, cal: &calibr
             color: if active && menu.page_bold {0x09}else if active {0xB9}else{0x69}, bold: active && menu.page_bold,
         },ui_text::Align::Center,|a,c|text.cell(a,c));
     }
-    if critical_section::with(|cs|ROUTE_VIEW.borrow_ref(cs).handles(page)) {
+    if page==Page::Reference || critical_section::with(|cs|ROUTE_VIEW.borrow_ref(cs).handles(page)) {
         ui_text::field(25,2,10,if menu.page_bold {"PAGE"}else if with_app(|a|a.ui.opts.tracker.modify) {"EDIT"}else{"NAV"},
             ui_text::DEFAULT,ui_text::Align::Left,|a,c|text.cell(a,c));
         return;
@@ -1207,6 +1214,15 @@ fn publish_controls(text: &mut TextWriter<'_>, menu: &MenuSnapshot, cal: &calibr
             let topic=with_app(|app|app.ui.opts.help.topic.value);
             ui_text::inline_field(field.column as usize,field.row as usize,field.width as usize,
                 "TOPIC",ui_help::topic(topic).0,style,|a,c|text.cell(a,c));
+            continue;
+        }
+        if page==Page::Tuner && index==2 {
+            let reference=critical_section::with(|cs|*REFERENCE_CV.borrow_ref(cs));
+            let mut caption=String::<32>::new();
+            if reference.enabled() {
+                write!(&mut caption,"REF OUT{} {}",reference.output,with_app(|app|opts::OptionTrait::value(&app.ui.opts.reference_cv.voltage))).ok();
+            } else {caption.push_str("REFERENCE CV").ok();}
+            ui_text::ux_field(field.column as usize,field.row as usize,field.width as usize,&caption,style,ui_text::Align::Center,|a,c|text.cell(a,c));
             continue;
         }
         let mut label_text = String::<32>::new();
@@ -2157,6 +2173,7 @@ fn poll_ui_frame(cal: &calibration_live::Live, scan_controls: Option<RuntimeCont
         // the top-level page selector. Clicking a child header returns home.
         let page = app.ui.opts.tracker.page.value;
         let parent = match page {
+            Page::Reference => Some(Page::Tuner),
             Page::Verify => Some(Page::Profiles),
             Page::Profiles => Some(Page::Calibrate),
             Page::QuantNotes => Some(Page::Quantizer),
@@ -2165,7 +2182,9 @@ fn poll_ui_frame(cal: &calibration_live::Live, scan_controls: Option<RuntimeCont
             _ => None,
         };
         let header_back = app.ui.opts.tracker.selected.is_none() && app.ui.opts.tracker.modify;
-        let destination = if app.ui.opts.calibrate.profiles.poll() {
+        let destination = if app.ui.opts.tuner.reference_cv.poll() {Some(Page::Reference)}
+        else if app.ui.opts.reference_cv.back.poll() {Some(Page::Tuner)}
+        else if app.ui.opts.calibrate.profiles.poll() {
             Some(Page::Profiles)
         } else if app.ui.opts.profiles.check.poll() {
             Some(Page::Verify)
@@ -2195,7 +2214,7 @@ fn poll_ui_frame(cal: &calibration_live::Live, scan_controls: Option<RuntimeCont
         if let Some(page) = destination {
             if matches!(page,Page::Play|Page::QuantSetups|Page::RouteMidi) {critical_section::with(|cs| {let mut v=ROUTE_VIEW.borrow_ref_mut(cs);v.midi_from_configs=page==Page::RouteMidi;v.screen=if v.midi_from_configs {route_ui::Screen::Editor(route_ui::Stage::Midi)}else{route_ui::Screen::Overview};v.pending=None;v.window=0;});}
             app.ui.opts.tracker.page.value = page;
-            app.ui.opts.tracker.selected = Some(if page==Page::QuantNotes {ui_keyboard::KEYBOARD}else if page==Page::Play {app.route_selected as usize}else{0});
+            app.ui.opts.tracker.selected = Some(if page==Page::QuantNotes {ui_keyboard::KEYBOARD}else if page==Page::Play {app.route_selected as usize}else if page==Page::Tuner {2}else{0});
             if page==Page::RouteMidi {
                 app.midi_selected=app.route_selected;
                 app.ui.opts.route_midi.route.value=app.route_selected;
@@ -2930,12 +2949,32 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 uart,
                 now,
                 !calibration.active()
+                    && critical_section::with(|cs|REFERENCE_CV.borrow_ref(cs).phase==0)
                     && !playback_visible()
                     && with_app(|app| app.ui.opts.tracker.page.value == options::Page::Tuner),
             );
             // Service the DAC watchdog before any opportunistic serial or
             // framebuffer work. Transitions remain in calibration.tick().
 
+            let reference_command=critical_section::with(|cs| {
+                let mut app=borrow_app(cs);
+                let page=app.ui.opts.tracker.page.value;
+                let toggle=app.ui.opts.reference_cv.enable.poll();
+                let mut reference=REFERENCE_CV.borrow_ref_mut(cs);
+                reference.free=OWNERS.borrow_ref(cs).free_mask(Owner::Reference,true)
+                    & !app.groups.outputs.iter().fold(0,|mask,value|mask|value);
+                if !reference.enabled() {
+                    if let Some(output)=ownership::next_available_bounded(reference.free,app.ui.opts.reference_cv.output.value,false)
+                        .or_else(||(0..4).find(|output|reference.free&(1<<output)!=0)) {
+                        if reference.free&(1<<app.ui.opts.reference_cv.output.value)==0 {app.ui.opts.reference_cv.output.value=output;}
+                    }
+                }
+                reference.tick(now,tuner.cal_status().read().value().bits(),
+                    matches!(page,Page::Tuner|Page::Reference) && !calibration.active(),
+                    toggle,app.ui.opts.reference_cv.output.value,app.ui.opts.reference_cv.voltage.value,&mut OWNERS.borrow_ref_mut(cs));
+                reference.command()
+            });
+            if let Some(command)=reference_command {tuner.cal_command().write(|w|unsafe{w.value().bits(command)});}
             calibration.renew_output(&tuner);
             // Fast diagnostic is foreground-only, never an ISR job. It gets
             // opportunities between UI frames; UART writes remain bounded.
@@ -3236,7 +3275,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
             }
 
             let route_page=with_app(|app|app.ui.opts.tracker.page.value);
-            let route_view_active=route_page==Page::Help || critical_section::with(|cs|ROUTE_VIEW.borrow_ref(cs).handles(route_page));
+            let route_view_active=matches!(route_page,Page::Help|Page::Reference) || critical_section::with(|cs|ROUTE_VIEW.borrow_ref(cs).handles(route_page));
             let (mut history,activity,pitches)=critical_section::with(|cs| {
                 let q=MULTI_QUANT.borrow_ref(cs);
                 (*ROUTE_HISTORY.borrow_ref(cs),q.lanes.iter().enumerate().fold(0u8,|m,(n,l)|m|((l.active as u8)<<n)),
@@ -3395,6 +3434,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 }
                 if refine {
                     let can_start = !calibration.active()
+                        && critical_section::with(|cs|REFERENCE_CV.borrow_ref(cs).phase==0)
                         && calibration.profile_route.is_some_and(|route| {
                             critical_section::with(|cs| {
                                 OWNERS.borrow_ref_mut(cs).claim(
@@ -3416,6 +3456,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     run_verify = false;
                     let can_start = calibration.verifying
                         || (!calibration.active()
+                            && critical_section::with(|cs|REFERENCE_CV.borrow_ref(cs).phase==0)
                             && calibration.profile_route.is_some_and(|route| {
                                 critical_section::with(|cs| {
                                     OWNERS.borrow_ref_mut(cs).claim(
@@ -3432,7 +3473,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                         calibration.status = "NO PROFILE OR CHANNEL BUSY";
                     }
                 }
-                if run_calibration {
+                if run_calibration && critical_section::with(|cs|REFERENCE_CV.borrow_ref(cs).phase==0) {
                     run_calibration = false;
                     if controls.mode == runtime::OperatingMode::Calibrator {
                         let resume = calibration.can_continue_automatic();
@@ -3609,7 +3650,9 @@ fn run(resources: &mut RuntimeResources) -> ! {
                         ui_frame.menu_active,
                     );
                 }
-                if page==Page::Settings {
+                if page==Page::Reference {
+                    text.clear(false);publish_markers(&tuner_display,Markers([None;4]),false,false);
+                } else if page==Page::Settings {
                     text.clear(false);
                     publish_markers(&tuner_display,Markers([None;4]),false,false);
                     write_centered(&mut text,14,save_feedback.message(),24);
@@ -3618,7 +3661,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     publish_markers(&tuner_display,Markers([None;4]),false,false);
                     let (topic,scroll)=with_app(|app|(app.ui.opts.help.topic.value,app.ui.opts.help.scroll.value));
                     for (row,line) in ui_help::lines(topic,scroll).enumerate() {
-                        ui_text::field(2,7+row,36,line,ui_text::DEFAULT,ui_text::Align::Left,|a,c|text.cell(a,c));
+                        ui_text::field(2,7+row,36,&line,ui_text::DEFAULT,ui_text::Align::Left,|a,c|text.cell(a,c));
                     }
                     let mut position=String::<32>::new();
                     let first=scroll.min(ui_help::max_scroll(topic)) as usize+1;
@@ -3636,6 +3679,10 @@ fn run(resources: &mut RuntimeResources) -> ! {
                         if selected && editing {drawing.rounded_fill(164,154,392,28);}
                         drawing.outline(164,154,392,28,selected);
                         drawing
+                    } else if page==Page::Reference {
+                        let reference=critical_section::with(|cs|*REFERENCE_CV.borrow_ref(cs));
+                        let (selected,editing)=with_app(|app|(app.ui.opts.tracker.selected,app.ui.opts.tracker.modify));
+                        route_render::reference(&mut text,&menu,selected,editing,reference)
                     } else {route_render::publish(&mut text,&menu)};
                     let bank=frame.background_back().bit() as usize;
                     let old=critical_section::with(|cs|ROUTE_PAINT.borrow_ref(cs).banks[bank]);
@@ -3670,7 +3717,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                         w.keyboard_second().bit(with_app(|app|app.quant_channels[app.quant_selected as usize].octaves>1));
                         w.ui_ready().bit(true);
                         unsafe {w.keyboard_mask().bits((keyboard_mask&0xfff) as u16);
-                            w.ui_surface().bits(if route_view_active {match page {Page::QuantSetups=>11,Page::RouteMidi=>12,Page::Settings=>13,Page::Help=>9,_=>7}}else if page==Page::Tuner && with_app(|app|app.ui.opts.tuner.display.value)==DisplayMode::Linear {14}else{surface(page) as u8});
+                            w.ui_surface().bits(if route_view_active {match page {Page::QuantSetups=>11,Page::RouteMidi=>12,Page::Settings=>13,Page::Help=>9,Page::Reference=>15,_=>7}}else if page==Page::Tuner && with_app(|app|app.ui.opts.tuner.display.value)==DisplayMode::Linear {14}else{surface(page) as u8});
                             w.ui_mode().bits(if menu.page_bold {0}else if with_app(|a|a.ui.opts.tracker.modify) {2}else{1});
                             w.keyboard_focus().bits(with_app(|a| {
                                 let o=a.ui.opts.quant_notes.octave.value as usize;

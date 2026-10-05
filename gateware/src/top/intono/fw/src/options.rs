@@ -22,6 +22,8 @@ pub enum Page {
     QuantSetups,
     #[strum(disabled)]
     RouteMidi,
+    #[strum(disabled)]
+    Reference,
 }
 // EnumIter excludes child screens, but labels must remain valid for every
 // screen. Deriving IntoStaticStr with `disabled` would panic for a child.
@@ -29,6 +31,7 @@ impl From<Page> for &'static str {
     fn from(page: Page) -> Self {
         match page {
             Page::Tuner => "INTONO",
+            Page::Reference => "REFERENCE CV",
             Page::Calibrate => "CAL",
             Page::Verify => "CHECK",
             Page::Profiles => "PROFILES",
@@ -256,8 +259,24 @@ pub struct TunerOpts {
     pub input: IntOption<InputParams>,
     #[option]
     pub display: EnumOption<DisplayMode>,
+    #[option(false)] pub reference_cv: ButtonOption<OneShotButtonParams>,
 }
 
+#[derive(Clone,Copy,PartialEq,EnumIter,IntoStaticStr,Default,Serialize,Deserialize)]
+pub enum ReferenceStep {
+    #[default] #[strum(serialize="1 V")] Volt,
+    #[strum(serialize="10 mV")] Fine,
+}
+int_params!(ReferenceVoltageParams<i16> {step:10,min:-5000,max:8000,
+    format:IntFormat::Scaled {divisor:1000,precision:2,suffix:"V"}});
+#[derive(OptionPage,Clone)]
+pub struct ReferenceOpts {
+    #[option(0)] pub output:IntOption<InputParams>,
+    #[option(0)] pub voltage:IntOption<ReferenceVoltageParams>,
+    #[option] pub step:EnumOption<ReferenceStep>,
+    #[option(false)] pub enable:ButtonOption<OneShotButtonParams>,
+    #[option(false)] pub back:ButtonOption<OneShotButtonParams>,
+}
 #[derive(OptionPage, Clone)]
 pub struct SettingsOpts {
     #[option(440)]
@@ -445,6 +464,8 @@ pub struct Opts {
     pub tracker: ScreenTracker<Page>,
     #[page(Page::Tuner)]
     pub tuner: TunerOpts,
+    #[page(Page::Reference)]
+    pub reference_cv: ReferenceOpts,
     #[page(Page::Calibrate)]
     pub calibrate: CalibrateOpts,
     #[page(Page::Verify)]

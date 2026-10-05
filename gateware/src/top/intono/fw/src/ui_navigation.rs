@@ -2,6 +2,9 @@
 use crate::options::{Opts,Page};
 
 pub fn visible_ticks(opts: &mut Opts, ticks: i8, claims: &crate::ownership::Reservations) {
+    visible_ticks_with_reference(opts,ticks,claims,claims.free_mask(crate::ownership::Owner::Reference,true));
+}
+pub fn visible_ticks_with_reference(opts:&mut Opts,ticks:i8,claims:&crate::ownership::Reservations,reference_free:u8) {
     use opts::OptionsEncoderInterface;
     const PAGES: [Page; 6] = [Page::Tuner, Page::Calibrate, Page::Quantizer,
         Page::Play, Page::Settings, Page::Help];
@@ -20,6 +23,15 @@ pub fn visible_ticks(opts: &mut Opts, ticks: i8, claims: &crate::ownership::Rese
             } else {
                 let maximum=crate::ui_help::max_scroll(opts.help.topic.value);
                 opts.help.scroll.value=(opts.help.scroll.value as i32+step).clamp(0,maximum as i32) as u8;
+            }
+        } else if opts.tracker.page.value==Page::Reference && opts.tracker.modify && matches!(opts.tracker.selected,Some(0|1)) {
+            if opts.tracker.selected==Some(0) {
+                if !claims.held(crate::ownership::Owner::Reference) {
+                    if let Some(next)=crate::ownership::next_available_bounded(reference_free,opts.reference_cv.output.value,step>0) {opts.reference_cv.output.value=next;}
+                }
+            } else {
+                let delta=if opts.reference_cv.step.value==crate::options::ReferenceStep::Volt {1000}else{10};
+                opts.reference_cv.voltage.value=(opts.reference_cv.voltage.value as i32+step*delta).clamp(-5000,8000) as i16;
             }
         } else if scale_selector {
             let preset = if opts.tracker.page.value == Page::Quantizer {
@@ -71,12 +83,13 @@ pub fn visible_ticks(opts: &mut Opts, ticks: i8, claims: &crate::ownership::Rese
             opts.tracker.selected=selected;
             opts.quant_notes.octave.value=key/12;
             opts.quant_notes.note.value=crate::options::ScaleRoot::iter().nth((key%12) as usize).unwrap();
-        } else if matches!(opts.tracker.page.value,Page::Play|Page::Calibrate|Page::Tuner) && !opts.tracker.modify {
+        } else if matches!(opts.tracker.page.value,Page::Play|Page::Calibrate|Page::Tuner|Page::Reference) && !opts.tracker.modify {
             // Follow the on-screen order without changing persisted option indices.
             let order: &[usize] = match opts.tracker.page.value {
+                Page::Reference => &[0,1,2,3,4],
                 Page::Calibrate => &[0,1,4,3,5,6,7,8],
-                Page::Tuner if opts.tuner.display.value==crate::options::DisplayMode::Linear => &[1],
-                Page::Tuner => &[0,1],
+                Page::Tuner if opts.tuner.display.value==crate::options::DisplayMode::Linear => &[1,2],
+                Page::Tuner => &[0,1,2],
                 _ => &[0,1,13,14,9,10,3,2,11,12,4,5,15,6,7,8],
             };
             let index=opts.tracker.selected.and_then(|s|order.iter().position(|n|*n==s));

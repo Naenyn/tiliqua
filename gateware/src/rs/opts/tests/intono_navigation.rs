@@ -1,5 +1,6 @@
 //! Use the actual instrument options/navigation, including persisted enum IDs.
 #[path = "../../../top/intono/fw/src/ui_help.rs"] mod ui_help;
+#[path="../../../top/intono/fw/src/reference_cv.rs"] mod reference_cv;
 #[path = "../../../top/intono/fw/src/options.rs"]
 mod options;
 #[path = "../../../top/intono/fw/src/route_group.rs"] mod route_group;
@@ -447,4 +448,19 @@ fn options_enter_from_footer_without_reversing_value_edits_or_top_pages() {
     o.tracker.page.value=Page::Calibrate;
     visible_ticks(&mut o,-1);assert_eq!(o.tracker.selected,None);
     visible_ticks(&mut o,1);assert_eq!(o.tracker.selected,Some(0));
+}
+
+#[test]
+fn reference_cv_skips_assigned_jacks_locks_active_output_and_steps_voltage() {
+    let mut o=Opts::default();o.tracker.page.value=Page::Reference;o.tracker.selected=Some(0);o.tracker.modify=true;
+    let mut r=ownership::Reservations::new();
+    ui_navigation::visible_ticks_with_reference(&mut o,1,&r,0b1001);assert_eq!(o.reference_cv.output.value,3);
+    assert!(r.claim(ownership::Owner::Reference,0,8));
+    ui_navigation::visible_ticks_with_reference(&mut o,-1,&r,15);assert_eq!(o.reference_cv.output.value,3);
+    o.tracker.selected=Some(1);
+    ui_navigation::visible_ticks_with_reference(&mut o,1,&r,15);assert_eq!(o.reference_cv.voltage.value,1000);
+    o.reference_cv.step.value=options::ReferenceStep::Fine;
+    ui_navigation::visible_ticks_with_reference(&mut o,-1,&r,15);assert_eq!(o.reference_cv.voltage.value,990);
+    o.reference_cv.voltage.value=8000;ui_navigation::visible_ticks_with_reference(&mut o,1,&r,15);assert_eq!(o.reference_cv.voltage.value,8000);
+    o.reference_cv.voltage.value=-5000;ui_navigation::visible_ticks_with_reference(&mut o,-1,&r,15);assert_eq!(o.reference_cv.voltage.value,-5000);
 }

@@ -10,6 +10,7 @@ from amaranth.lib.wiring import In, Out
 # ID 14 is the linear tuner, which omits the arc-only FOCUS control.
 # Descriptors are (option, col, row, width).
 ACTIONS = {
+    0: [(2,15,18,12)],
     1: [(5,3,16,7),(6,12,16,7),(7,20,16,7),(8,8,18,14)],
     2: [(3,4,14,10),(4,16,14,10),(5,4,16,10),(6,16,16,10)],
     3: [(0,4,16,10),(1,16,16,10),(2,4,18,10),(3,16,18,10),(4,11,19,8)],
@@ -24,7 +25,7 @@ ACTIONS = {
 # Compact editable fields share the action outline style. All route selectors,
 # including profile selection, fit one row with room between the two columns.
 FIELDS = {
-    0: [(0,8,4,14),(1,10,18,10)],
+    0: [(0,8,4,14),(1,3,18,10)],
     1: [(0,3,5,6),(1,10,5,6),(3,8,6,14),(4,17,5,10)],
     2: [(0,10,5,10),(1,4,10,10),(2,16,10,10)],
     4: [(0,3,5,9),(1,14,5,13),(9,3,16,10),(8,29,10,3),(10,3,18,7)],
@@ -45,7 +46,7 @@ def descriptors(surface, row):
         return [(120+column(c)*12-4,(column(c+w)-column(c))*12+8,index)
                 for index,c,w in ((0,8,7),(1,17,4))]
     return [(120+column(c)*12-4,(column(c+w)-column(c))*12+8,index)
-            for index,c,r,w in (*ACTIONS.get(surface,()),*(FIELDS[0][1:] if surface==14 else FIELDS.get(surface,()))) if r==row]
+            for index,c,r,w in (*ACTIONS.get(0 if surface==14 else surface,()),*(FIELDS[0][1:] if surface==14 else FIELDS.get(surface,()))) if r==row]
 
 class RoundedBorders(wiring.Component):
     def __init__(self):
@@ -72,7 +73,7 @@ class RoundedBorders(wiring.Component):
         geometry_surface=Mux(self.surface==14,0,Mux(self.surface>=11,7,self.surface))
         m.d.comb += [port.addr.eq(Cat(row,geometry_surface)),port.en.eq(self.active)]
         y1=Signal(signed(12));x1=Signal(10);ly1=Signal(5);row1=Signal(5);active1=Signal();surface1=Signal(4);focus1=Signal(5);mode1=Signal(2)
-        m.d.dvi += [y1.eq(self.y),x1.eq(self.x),ly1.eq((self.y+6)[:5]),row1.eq(row),active1.eq(self.active & (self.surface<15)),
+        m.d.dvi += [y1.eq(self.y),x1.eq(self.x),ly1.eq((self.y+6)[:5]),row1.eq(row),active1.eq(self.active),
                     surface1.eq(self.surface),focus1.eq(self.focus),mode1.eq(self.mode)]
         # Compute curve insets once per scanline before the per-box tests.
         outer=Array(Const(6-isqrt(36-(6-min(y,27-y))**2),4) if min(y,27-y)<6 else Const(0,4)
@@ -99,8 +100,8 @@ class RoundedBorders(wiring.Component):
             # Negative relative coordinates wrap above 255, outside every box.
             rx2=Signal(10)
             width2=Signal(8);ly2=Signal(5);active2=Signal();selected2=Signal();tab2=Signal();mode2=Signal(2)
-            category=Mux((surface1==0)|(surface1==14),0,Mux(surface1<=3,1,Mux(surface1<=5,2,3)))
-            selected=Mux(row1==3,((surface1<8)|((surface1>=10)&(surface1<=12))|(surface1==14))&(index==category),
+            category=Mux((surface1==0)|(surface1==14)|(surface1==15),0,Mux(surface1<=3,1,Mux(surface1<=5,2,3)))
+            selected=Mux(row1==3,((surface1<8)|((surface1>=10)&(surface1<=12))|(surface1==14)|(surface1==15))&(index==category),
                          Mux(row1==20,((surface1==8+index)|((surface1==13)&(index==0))),index==focus1))
             m.d.dvi += [rx2.eq(x1-left),width2.eq(width),ly2.eq(shape_y),active2.eq(active1 & (width!=0) & ~((surface1==14)&(row1==4)&(index==0))),
                         selected2.eq(selected),tab2.eq((row1==3)|(row1==20)),mode2.eq(mode1)]
@@ -111,7 +112,7 @@ class RoundedBorders(wiring.Component):
                         color3.eq(Mux(selected2,Mux(tab2,Mux(mode2==0,0xB9,0x69),0xF9),0x49))]
             hits.append(hit3);colors.append(color3)
         # Six boxes follow the visible navigation order, including subpages.
-        page=Mux((self.surface==0)|(self.surface==14),0,Mux(self.surface<=3,1,Mux(self.surface<=5,2,
+        page=Mux((self.surface==0)|(self.surface==14)|(self.surface==15),0,Mux(self.surface<=3,1,Mux(self.surface<=5,2,
              Mux((self.surface==8)|(self.surface==13),4,Mux(self.surface==9,5,3)))))
         pager_words=[0]*(8*256)
         for current in range(6):

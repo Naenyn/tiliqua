@@ -140,9 +140,20 @@ def test_page_navigation_and_value_edit_have_distinct_fills():
             if hit:assert color==0xB9
             hit,color=await sample(ctx,198,90)
             assert hit and color==(0xB9 if mode==0 else 0x69)
-            hit,color=await sample(ctx,360,580)
+            hit,color=await sample(ctx,248,580)
             assert hit==(mode==2)
             if hit:assert color==0xF9
         ctx.set(dut.surface,13);ctx.set(dut.mode,0)
         assert (await sample(ctx,300,647))==(1,0xB9)
+    sim.add_testbench(bench);sim.run()
+
+
+def test_reference_panel_keeps_tuner_chrome_without_body_controls():
+    dut=RoundedBorders();sim=Simulator(dut);sim.add_clock(1e-6,domain="dvi")
+    async def bench(ctx):
+        ctx.set(dut.active,1);ctx.set(dut.surface,15);ctx.set(dut.mode,0)
+        for x,y,hit,color in [(198,103,1,0xB9),(300,126,0,0),(248,570,0,0),(330,60,1,0xB9)]:
+            ctx.set(dut.x,x);ctx.set(dut.y,y);await ctx.tick("dvi").repeat(5)
+            assert ctx.get(dut.hit)==hit
+            if hit:assert ctx.get(dut.color)==color
     sim.add_testbench(bench);sim.run()

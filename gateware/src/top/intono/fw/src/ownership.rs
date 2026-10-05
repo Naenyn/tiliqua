@@ -2,12 +2,14 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Owner {
     Calibration,
+    Reference,
     Quant(u8),
 }
 impl Owner {
     fn index(self) -> Option<usize> {
         match self {
             Self::Calibration => Some(0),
+            Self::Reference => Some(5),
             Self::Quant(n) if n < 4 => Some(1 + n as usize),
             _ => None,
         }
@@ -15,27 +17,27 @@ impl Owner {
 }
 #[derive(Clone, Copy)]
 pub struct Reservations {
-    inputs: [u8; 5],
-    outputs: [u8; 5],
+    inputs: [u8; 6],
+    outputs: [u8; 6],
 }
 impl Reservations {
     pub const fn new() -> Self {
         Self {
-            inputs: [0; 5],
-            outputs: [0; 5],
+            inputs: [0; 6],
+            outputs: [0; 6],
         }
     }
     pub fn claim(&mut self, owner: Owner, inputs: u8, outputs: u8) -> bool {
         let Some(index) = owner.index() else {
             return false;
         };
-        if (inputs | outputs) & !15 != 0 || inputs.count_ones()!=1 || outputs==0 {
+        if (inputs | outputs) & !15 != 0 || (if owner==Owner::Reference {inputs!=0 || outputs.count_ones()!=1} else {inputs.count_ones()!=1 || outputs==0}) {
             return false;
         }
         if self.inputs[index] | self.outputs[index] != 0 {
             return self.inputs[index] == inputs && self.outputs[index] == outputs;
         }
-        for n in 0..5 {
+        for n in 0..6 {
             if self.outputs[n] & outputs != 0 || self.inputs[n] & inputs != 0 {
                 return false;
             }

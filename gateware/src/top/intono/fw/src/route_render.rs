@@ -73,9 +73,17 @@ fn button(
     focus: bool,
     locked: bool,
 ) {
-    debug_assert!(value.chars().count() <= width as usize / 12, "button label exceeds its bounds: {}", value);
-    let filled=focus && !locked && d.editing;
-    if filled {d.rounded_fill(x,row as u16*32-6,width,28);}else{d.outline(x, row as u16 * 32 - 6, width, 28, focus && !locked);}
+    debug_assert!(
+        value.chars().count() <= width as usize / 12,
+        "button label exceeds its bounds: {}",
+        value
+    );
+    let filled = focus && !locked && d.editing;
+    if filled {
+        d.rounded_fill(x, row as u16 * 32 - 6, width, 28);
+    } else {
+        d.outline(x, row as u16 * 32 - 6, width, 28, focus && !locked);
+    }
     label(
         text,
         x,
@@ -136,7 +144,7 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
     });
     let running = active & groups.outputs[route] != 0;
     let mut d = ui_route::Drawing::new();
-    d.editing=editing && selected.is_some();
+    d.editing = editing && selected.is_some();
     let mut s = String::<64>::new();
     if with_app(|a| a.ui.opts.tracker.page.value) == options::Page::Settings {
         if let Some(entry) = menu.entries[0].as_ref() {
@@ -188,7 +196,16 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
         label(text, 168, 4, 384, "CONFIGS", 0xF9, true);
         if let Some(entry) = menu.entries[0].as_ref() {
             left(text, 240, 5, 144, "CONFIG SLOT", 0x89, false);
-            button(&mut d,text,384,5,96,&entry.value,selected==Some(0),false);
+            button(
+                &mut d,
+                text,
+                384,
+                5,
+                96,
+                &entry.value,
+                selected == Some(0),
+                false,
+            );
         }
         label(text, 120, 6, 480, "CURRENT ROUTE ASSIGNMENTS", 0x89, false);
         for route in 0..4 {
@@ -233,11 +250,7 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
             168,
             18,
             384,
-            if status_slot == slot {
-                status
-            } else {
-                ""
-            },
+            if status_slot == slot { status } else { "" },
             0x89,
             false,
         );
@@ -307,7 +320,16 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
                 );
             } else {
                 left(text, 192, row, 120, name, 0x89, false);
-                button(&mut d,text,312,row,216,&entry.value,selected==Some(index),locked);
+                button(
+                    &mut d,
+                    text,
+                    312,
+                    row,
+                    216,
+                    &entry.value,
+                    selected == Some(index),
+                    locked,
+                );
             }
         }
         write!(s, "ROUTE {} TRANSPOSE: {:+} ST", route + 1, shift).ok();
@@ -803,7 +825,16 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
                     );
                 } else {
                     left(text, 192, row, 120, label_name, 0x89, false);
-                    button(&mut d,text,312,row,216,&entry.value,selected==Some(index),locked);
+                    button(
+                        &mut d,
+                        text,
+                        312,
+                        row,
+                        216,
+                        &entry.value,
+                        selected == Some(index),
+                        locked,
+                    );
                 }
             }
             if matches!(stage, Stage::Input | Stage::Add | Stage::Destination) {
@@ -885,5 +916,79 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
         0x89,
         false,
     );
+    d
+}
+
+/// Centered tuning-reference panel; operation state is supplied by the adapter.
+#[inline(never)]
+pub fn reference(
+    text: &mut TextWriter<'_>,
+    menu: &MenuSnapshot,
+    selected: Option<usize>,
+    editing: bool,
+    reference: reference_cv::Reference,
+) -> ui_route::Drawing {
+    let mut d = ui_route::Drawing::new();
+    d.editing = editing;
+    d.outline(144, 186, 432, 418, true);
+    label(text, 168, 6, 384, "REFERENCE CV", 0xF9, true);
+    for (index, name, row) in [(0, "OUTPUT", 8), (1, "VOLTAGE", 10), (2, "STEP", 12)] {
+        if let Some(entry) = menu.entries[index].as_ref() {
+            left(text, 168, row, 132, name, 0x89, false);
+            button(
+                &mut d,
+                text,
+                312,
+                row,
+                240,
+                &entry.value,
+                selected == Some(index),
+                index == 0 && reference.phase != 0,
+            );
+        }
+    }
+    button(
+        &mut d,
+        text,
+        168,
+        14,
+        180,
+        if reference.enabled() {
+            "DISABLE"
+        } else {
+            "ENABLE"
+        },
+        selected == Some(3),
+        reference.phase == 3 || reference.free == 0,
+    );
+    button(
+        &mut d,
+        text,
+        372,
+        14,
+        180,
+        "BACK",
+        selected == Some(4),
+        false,
+    );
+    label(text, 168, 16, 384, reference.status, 0xB9, false);
+    for output in 0..4 {
+        let mut number = String::<8>::new();
+        write!(&mut number, "OUT{}", output).ok();
+        label(
+            text,
+            168 + output * 96,
+            17,
+            96,
+            &number,
+            if reference.free & (1 << output) != 0 {
+                0xB9
+            } else {
+                0x49
+            },
+            false,
+        );
+    }
+    label(text, 168, 18, 384, "DIM = ASSIGNED", 0x89, false);
     d
 }

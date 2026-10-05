@@ -20,7 +20,7 @@ pub fn field(surface: Surface, index: usize) -> Option<Field> {
             7 => (20, 16, 7, true), 8 => (8, 18, 14, true), _ => return None,
         },
         Surface::Tuner => match index {
-            0 => (8, 4, 14, false), 1 => (10, 18, 10, false), _ => return None,
+            0 => (8, 4, 14, false), 1 => (3, 18, 10, false), 2 => (15,18,12,true), _ => return None,
         },
         Surface::Scales => match index {
             0 => (3,5,9,false), 1 => (14,5,13,false),
@@ -103,7 +103,7 @@ mod tests {
             (Surface::Scales,&[0,1][..]),(Surface::Scales,&[9,5][..]),
             (Surface::Scales,&[10,11,12][..]),(Surface::Notes,&[6,7,11][..]),
             (Surface::Calibration,&[0,1,4][..]),(Surface::Calibration,&[3][..]),
-            (Surface::Calibration,&[5,6,7][..]),(Surface::Tuner,&[0][..]),
+            (Surface::Calibration,&[5,6,7][..]),(Surface::Tuner,&[0][..]),(Surface::Tuner,&[1,2][..]),
         ] {
             let mut left=i32::MAX;let mut right=0;
             for index in indices {
