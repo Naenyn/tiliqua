@@ -1,11 +1,12 @@
 # UART register/RX implementation adapted from LUNA luna_soc/gateware/core/uart.py.
 # Copyright (c) 2020-2025 Great Scott Gadgets <info@greatscottgadgets.com>
 # SPDX-License-Identifier: BSD-3-Clause
-"""Experimental drop-in UART: sixteen register-backed queued transmit bytes.
+"""Drop-in UART: sixteen queued transmit bytes and 64 queued receive bytes.
 
 No new CSRs, IRQs, EBRs or software buffers. TX-ready means queue space, not
 wire idle. The serial engine drains independently between foreground visits.
-RX, baud divisor and physical output-enable behavior match the original UART.
+The RX queue accepts a complete profile-transfer packet while foreground work
+is busy. Baud divisor and physical output-enable behavior remain unchanged.
 """
 from amaranth import Array, Module, Signal
 from amaranth.lib.wiring import connect, flipped
@@ -42,17 +43,27 @@ class Peripheral(BasePeripheral):
         with m.Elif(pop & ~push):
             m.d.sync += count.eq(count - 1)
 
-        rx_buf = Signal(8)
-        rx_avail = Signal()
+        rx_queue = Array(Signal(8, name=f"rx_byte_{i}") for i in range(64))
+        rx_head = Signal(6)
+        rx_tail = Signal(6)
+        rx_count = Signal(range(65))
+        rx_push = Signal()
+        rx_pop = Signal()
         m.submodules.rx = rx = AsyncSerialRX(divisor=self._init_divisor, divisor_bits=24)
-        with m.If(self._rx_data.f.data.r_stb):
-            m.d.sync += rx_avail.eq(0)
-        with m.If(rx.rdy):
-            m.d.sync += [rx_buf.eq(rx.data), rx_avail.eq(1)]
+        with m.If(rx_push):
+            m.d.sync += [rx_queue[rx_tail].eq(rx.data), rx_tail.eq(rx_tail + 1)]
+        with m.If(rx_pop):
+            m.d.sync += rx_head.eq(rx_head + 1)
+        with m.If(rx_push & ~rx_pop):
+            m.d.sync += rx_count.eq(rx_count + 1)
+        with m.Elif(rx_pop & ~rx_push):
+            m.d.sync += rx_count.eq(rx_count - 1)
         m.d.comb += [
-            rx.i.eq(self.pins.rx), rx.ack.eq(~rx_avail),
+            rx.i.eq(self.pins.rx), rx.ack.eq(rx_count < 64),
+            rx_push.eq(rx.rdy & (rx_count < 64)),
+            rx_pop.eq(self._rx_data.f.data.r_stb & (rx_count != 0)),
             rx.divisor.eq(self._divisor.f.div.data),
-            self._rx_data.f.data.r_data.eq(rx_buf),
-            self._rx_avail.f.rxe.r_data.eq(rx_avail),
+            self._rx_data.f.data.r_data.eq(rx_queue[rx_head]),
+            self._rx_avail.f.rxe.r_data.eq(rx_count != 0),
         ]
         return m

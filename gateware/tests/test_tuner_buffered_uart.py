@@ -67,3 +67,25 @@ def test_rx_registers_remain_compatible():
             assert await read(4)==value
             assert await read(12)==0
     sim=Simulator(dut);sim.add_clock(1e-6);sim.add_testbench(bench);sim.run()
+
+
+def test_rx_queue_retains_packet_and_wraps_without_foreground_reads():
+    dut=Peripheral(divisor=16)
+    async def bench(ctx):
+        ctx.set(dut.pins.rx,1);await ctx.tick().repeat(32)
+        async def send(value):
+            for bit in [0]+[(value>>i)&1 for i in range(8)]+[1]:
+                ctx.set(dut.pins.rx,bit);await ctx.tick().repeat(16)
+            await ctx.tick().repeat(16)
+        async def read(addr):
+            ctx.set(dut.bus.addr,addr);ctx.set(dut.bus.r_stb,1)
+            await ctx.tick();value=ctx.get(dut.bus.r_data)
+            ctx.set(dut.bus.r_stb,0);await ctx.tick();return value
+        for batch in range(4):
+            values=[(batch*47+i*13)&255 for i in range(32)]
+            for value in values:await send(value)
+            for value in values:
+                assert await read(12)==1
+                assert await read(4)==value
+            assert await read(12)==0
+    sim=Simulator(dut);sim.add_clock(1e-6);sim.add_testbench(bench);sim.run()

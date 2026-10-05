@@ -1,12 +1,15 @@
 //! Continuous acquisition for tuner display and diagnostics. No DAC writes.
 //! Latest-value storage is bounded; a blocked UART cannot hold the score engine.
+#[cfg(tuner_nsdf_telemetry)]
 use core::fmt::Write;
 use heapless::String;
 use tiliqua_pac as pac;
 #[cfg(tuner_nsdf_wave_diag)]
 type Pending = String<448>;
-#[cfg(not(tuner_nsdf_wave_diag))]
+#[cfg(all(not(tuner_nsdf_wave_diag), tuner_nsdf_telemetry))]
 type Pending = String<512>;
+#[cfg(not(tuner_nsdf_telemetry))]
+type Pending = String<0>;
 #[path = "nsdf_publish.rs"]
 mod publish;
 #[path = "nsdf_resolve.rs"]
@@ -20,10 +23,14 @@ pub use sequence::Sequence;
 #[derive(Clone, Copy)]
 struct Latest {
     count: u32,
+    #[cfg(tuner_nsdf_telemetry)]
     seq: u32,
     mhz: u32,
+    #[cfg(tuner_nsdf_telemetry)]
     first_mhz: u32,
+    #[cfg(tuner_nsdf_telemetry)]
     cycles: u32,
+    #[cfg(tuner_nsdf_telemetry)]
     work: u32,
     dt: u32,
     done: u64,
@@ -34,10 +41,14 @@ struct Latest {
 impl Latest {
     const EMPTY: Self = Self {
         count: 0,
+        #[cfg(tuner_nsdf_telemetry)]
         seq: 0,
         mhz: 0,
+        #[cfg(tuner_nsdf_telemetry)]
         first_mhz: 0,
+        #[cfg(tuner_nsdf_telemetry)]
         cycles: 0,
+        #[cfg(tuner_nsdf_telemetry)]
         work: 0,
         dt: 0,
         done: 0,
@@ -52,12 +63,16 @@ pub struct Scheduler {
     offset: usize,
     slot: u8,
     sampling: sampling::Sampling,
+    #[cfg(tuner_nsdf_telemetry)]
     report: u8,
     active: bool,
     due: u64,
     started: u64,
+    #[cfg(tuner_nsdf_telemetry)]
     report_due: u64,
+    #[cfg(tuner_nsdf_telemetry)]
     faults: u32,
+    #[cfg(tuner_nsdf_telemetry)]
     baseline: [(u32, bool, u32, u64); 4],
     #[cfg(tuner_nsdf_wave_diag)]
     wave_mhz: u32,
@@ -115,13 +130,17 @@ impl Scheduler {
             offset: 0,
             slot: 0,
             sampling: sampling::Sampling::new(),
-            report: 0,
+            #[cfg(tuner_nsdf_telemetry)]
+        report: 0,
             active: false,
             due: 2000,
             started: 0,
-            report_due: 2000,
-            faults: 0,
-            baseline: [(0, false, u32::MAX, 0); 4],
+            #[cfg(tuner_nsdf_telemetry)]
+        report_due: 2000,
+            #[cfg(tuner_nsdf_telemetry)]
+        faults: 0,
+            #[cfg(tuner_nsdf_telemetry)]
+        baseline: [(0, false, u32::MAX, 0); 4],
             #[cfg(tuner_nsdf_wave_diag)]
             wave_mhz: 0,
             #[cfg(tuner_nsdf_wave_diag)]
@@ -138,6 +157,7 @@ impl Scheduler {
         end_age: u32,
         now: u64,
     ) {
+        #[cfg(tuner_nsdf_telemetry)]
         if let Some(slot) = self.baseline.get_mut(input as usize) {
             *slot = ((hz * 1000.0) as u32, qualified, end_age, now);
         }
@@ -266,10 +286,13 @@ impl Scheduler {
     /// Pause telemetry generation, not acquisition, during a status report.
     /// Always drain the old batch before handing UART ownership to its writer.
     pub fn tick_reporting(&mut self, uart: &pac::UART0, now: u64, reports: bool) {
+        self.tick_serial(uart,now,reports,true);
+    }
+    pub fn tick_serial(&mut self, uart: &pac::UART0, now:u64, reports:bool, serial:bool) {
         let nsdf = unsafe { &*pac::NSDF_PERIPH::ptr() };
         // UART service never gates acquisition, even when disconnected/stalled.
         for _ in 0..32 {
-            if self.offset == self.pending.len() || !uart.tx_ready().read().txe().bit() {
+            if !cfg!(tuner_nsdf_telemetry) || !serial || self.offset == self.pending.len() || !uart.tx_ready().read().txe().bit() {
                 break;
             }
             uart.tx_data()
@@ -287,9 +310,11 @@ impl Scheduler {
             {
                 nsdf.control().write(|w| unsafe { w.value().bits(2) });
                 self.latest[self.slot as usize].valid = false;
-                self.faults = self.faults.saturating_add(1);
+                #[cfg(tuner_nsdf_telemetry)]
+                { self.faults = self.faults.saturating_add(1); }
                 self.finish(now);
             } else if complete {
+                #[cfg(tuner_nsdf_telemetry)]
                 let started = crate::playback_cycles();
                 let energy = (nsdf.energy_low().read().value().bits() as u64)
                     | ((nsdf.energy_high().read().value().bits() as u64) << 32);
@@ -323,6 +348,7 @@ impl Scheduler {
                     status & (1 << 8) != 0,
                     status & (1 << 9) != 0,
                 );
+                #[cfg(tuner_nsdf_telemetry)]
                 let cycles = crate::playback_cycles().wrapping_sub(started) as u32;
                 let (mhz, first_mhz, raw) = result.map_or((0, 0, false), |r| {
                     (
@@ -347,10 +373,14 @@ impl Scheduler {
                 let old = self.latest[self.slot as usize];
                 self.latest[self.slot as usize] = Latest {
                     count: old.count.saturating_add(1),
+                    #[cfg(tuner_nsdf_telemetry)]
                     seq,
                     mhz,
+                    #[cfg(tuner_nsdf_telemetry)]
                     first_mhz,
+                    #[cfg(tuner_nsdf_telemetry)]
                     cycles,
+                    #[cfg(tuner_nsdf_telemetry)]
                     work: old.work.wrapping_add(cycles),
                     dt: now.saturating_sub(self.started).min(u32::MAX as u64) as u32,
                     done: now,
@@ -373,7 +403,8 @@ impl Scheduler {
             }
         } else if now >= self.due {
             if nsdf.identity().read().value().bits() != 0x4e534407 {
-                self.faults = self.faults.saturating_add(1);
+                #[cfg(tuner_nsdf_telemetry)]
+                { self.faults = self.faults.saturating_add(1); }
                 self.latest = [Latest::EMPTY; 8];
                 self.due = now.saturating_add(5000);
             } else {
@@ -399,6 +430,7 @@ impl Scheduler {
                 }
             }
         }
+        #[cfg(tuner_nsdf_telemetry)]
         if reports && !cfg!(tuner_nsdf_pair_diag) && self.serial_idle() && now >= self.report_due {
             self.pending.clear();
             self.offset = 0;

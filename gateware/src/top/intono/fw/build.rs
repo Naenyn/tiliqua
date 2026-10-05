@@ -114,6 +114,10 @@ ASSERT(ADDR(.intono_runtime) + SIZEOF(.intono_runtime) <= 0x20800000,
     println!("cargo:rustc-check-cfg=cfg(tuner_nsdf_continuous)");
     println!("cargo:rustc-check-cfg=cfg(tuner_nsdf_wave_diag)");
     println!("cargo:rustc-check-cfg=cfg(tuner_nsdf_pair_diag)");
+    println!("cargo:rustc-check-cfg=cfg(tuner_nsdf_telemetry)");
+    if trace != "continuous-quiet" {
+        println!("cargo:rustc-cfg=tuner_nsdf_telemetry");
+    }
     if trace == "continuous" || trace == "continuous-quiet" || trace == "continuous-wave" || trace == "continuous-pair" {
         println!("cargo:rustc-cfg=tuner_nsdf_continuous");
     }

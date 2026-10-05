@@ -11,6 +11,7 @@ mod midi_learn;
 mod midi_transpose;
 mod note_pattern;
 mod preferences;
+mod profile_transfer;
 mod nsdf_guard;
 mod nsdf_select;
 mod nsdf_trace;
@@ -2402,6 +2403,41 @@ fn persist_notes(storage: &mut Option<IntonoPersistence>, save: bool, slot: u8) 
     }
 }
 
+// The browser can only address the two public profile banks, never journal keys.
+struct ProfileStore<'a>(&'a mut Option<IntonoPersistence>);
+impl profile_transfer::Store for ProfileStore<'_> {
+    fn read(&mut self, kind:u8, slot:u8, bytes:&mut [u8])->Result<Option<usize>,u8> {
+        let storage=self.0.as_mut().ok_or(profile_transfer::IO)?;
+        let key=if kind==0 {oscillator_calibration::storage::key(slot)} else {note_pattern::key(slot)}
+            .ok_or(profile_transfer::INVALID)?;
+        if kind==0 {
+            match storage.load_key_in(expanded_window(storage),key,bytes) {
+                Ok(None)=>storage.load_key(key,bytes).map_err(|_|profile_transfer::IO),
+                result=>result.map_err(|_|profile_transfer::IO),
+            }
+        } else {storage.load_key(key,bytes).map_err(|_|profile_transfer::IO)}
+    }
+    fn write(&mut self, kind:u8, slot:u8, bytes:&[u8])->Result<(),u8> {
+        let valid=if kind==0 {oscillator_calibration::storage::decode(bytes).is_ok()}
+            else {note_pattern::decode_span(bytes).is_some()};
+        if !valid {return Err(profile_transfer::INVALID);}
+        let key=if kind==0 {oscillator_calibration::storage::key(slot)} else {note_pattern::key(slot)}
+            .ok_or(profile_transfer::INVALID)?;
+        let storage=self.0.as_mut().ok_or(profile_transfer::IO)?;
+        let result=if kind==0 {storage.save_key_in(expanded_window(storage),key,bytes)}
+            else {storage.save_key(key,bytes)};
+        result.map_err(|_|profile_transfer::IO)?;
+        Ok(())
+    }
+}
+#[link_section = ".intono_runtime"]
+static mut PROFILE_EXCHANGE: core::mem::MaybeUninit<profile_transfer::Exchange> = core::mem::MaybeUninit::uninit();
+#[inline(never)]
+unsafe fn init_profile_exchange()-> &'static mut profile_transfer::Exchange {
+    let state=core::ptr::addr_of_mut!(PROFILE_EXCHANGE).cast::<profile_transfer::Exchange>();
+    state.write(profile_transfer::Exchange::new()); &mut *state
+}
+
 fn expanded_window(storage: &IntonoPersistence) -> core::ops::Range<u32> {
     let base = storage.default_window().start;
     base + 8192..base + 24576
@@ -2892,6 +2928,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
     let counts_per_v = *counts_per_v;
     let video_size = *video_size;
     let midi_input = unsafe { pac::Peripherals::steal() }.MIDI_INPUT;
+    let exchange=unsafe {init_profile_exchange()};
     handler!(timer0 = || timer0_handler());
 
     irq::scope(|scope| {
@@ -2976,6 +3013,26 @@ fn run(resources: &mut RuntimeResources) -> ! {
             });
             if let Some(command)=reference_command {tuner.cal_command().write(|w|unsafe{w.value().bits(command)});}
             calibration.renew_output(&tuner);
+            let _=exchange.active(now);
+            // One 32-byte request in flight. Its reply owns TX until drained;
+            // profile data remains in foreground-only PSRAM, outside the ISR.
+            if exchange.sent==profile_transfer::FRAME {
+                for _ in 0..profile_transfer::FRAME {
+                    if !uart.rx_avail().read().rxe().bit() {break;}
+                    if exchange.feed(uart.rx_data().read().data().bits() as u8,now) {
+                        let busy=calibration.active() || outputs_running()
+                            || critical_section::with(|cs|REFERENCE_CV.borrow_ref(cs).phase!=0);
+                        exchange.respond(now,busy,&mut ProfileStore(persistence));break;
+                    }
+                }
+            }
+            for _ in 0..16 {
+                if exchange.sent==profile_transfer::FRAME || !uart.tx_ready().read().txe().bit() {break;}
+                uart.tx_data().write(|w|unsafe{w.data().bits(exchange.tx[exchange.sent].into())});
+                exchange.sent+=1;
+            }
+            let transferring=exchange.active(now);
+
             // Fast diagnostic is foreground-only, never an ISR job. It gets
             // opportunities between UI frames; UART writes remain bounded.
             #[cfg(tuner_nsdf_continuous)]
@@ -2986,14 +3043,15 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 );
                 let status_due = capture_trace.status_due(now, calibration.active());
 
-                nsdf_trace.tick_reporting(
+                nsdf_trace.tick_serial(
                     uart,
                     now,
-                    !status_due
+                    !transferring && !status_due
                         && env!("TILIQUA_INTONO_NSDF_TRACE") != "continuous-quiet",
+                    !transferring,
                 );
 
-                if status_due && nsdf_trace.serial_idle() {
+                if !transferring && status_due && nsdf_trace.serial_idle() {
                     // One owner at a time, including under UART backpressure.
                     // Reuse the existing report storage; no new RAM buffer.
                     let video_health=tuner_display.video_health().read();
@@ -3011,7 +3069,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 }
             }
             #[cfg(not(tuner_nsdf_continuous))]
-            if nsdf_trace.fast() {
+            if !transferring && nsdf_trace.fast() {
                 nsdf_trace.tick(uart, now);
             }
             let ui_period_ms = TIMER0_ISR_PERIOD_MS as u64;
