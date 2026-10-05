@@ -1772,3 +1772,25 @@ SHA256: `70f568b4589927a34d2384980a61a878103868f541f826a29b4edd22968d78da`.
 Flashed Tiliqua #1 slot 1, verified `Refresh: DONE`; saved user storage retained.
 Qualification: `build/intono-ui-help-r5/help-flash.json`.
 On-rack wording and visual review remain with the user.
+
+## 2026-10-04 — footer navigation and calibration guidance
+
+OPTIONS and HELP now enter their controls from the bottom with CCW and return
+to the footer page selector with CW. Top pages and editing directions retain
+their behavior. Tests cover both ends, Help's visual order, preference actions,
+value direction and unchanged CAL navigation.
+
+CAL help now covers warm-up, starting frequency, direct patching, modulation,
+waveform choice, tuning setup, policy choices, observed scan duration and saved
+profile reuse. Guidance provenance is documented after the rendered help block.
+CAL has 76 wrapped lines; the help-only scroll capacity is now 120, and actual
+scroll remains clamped to each topic's final nine-line view. Total help text is
+9197 bytes, within the 10000-byte authoring budget.
+
+Checks: 47 navigation, 58 retained route/text/helper, generated-help agreement
+and shared-control geometry passed. Firmware source `b7ea1899`, 323736/327680
+bytes; qualified FPGA bytes unchanged from `67179044`, all timing PASS.
+Archive: `build/intono-ui-help-r5/intono-ui-help-b7ea1899-r5.tar.gz`.
+SHA256: `d99de76d620077a3a0c7025a9e307b78bf0e9f5ef6e8605a42940e28c171b341`.
+Flashed Tiliqua #1 slot 1, verified `Refresh: DONE`; user storage retained.
+Qualification: `build/intono-ui-help-r5/help-update-flash.json`.
