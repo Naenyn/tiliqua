@@ -12,6 +12,11 @@ The current [oscillator compatibility qualification](OSCILLATOR_QUALIFICATION.md
 records physical tuning/calibration coverage and its limits, including the
 Generate3 CORE/FUNDAMENTAL comparison on the latest detector build.
 
+The [local Profile Library](../../../../web/intono/README.md) reads and writes
+the eight saved calibration slots and eight user scale slots through USB debug
+serial. It supports backups, calibration renaming and scale interval editing;
+the instrument does not run a web server. It requires a profile-transfer build.
+
 ## Current interface — September 30, 2026
 
 See [automatic calibration](AUTO_CALIBRATION.md) and [routing](CONCURRENCY.md)

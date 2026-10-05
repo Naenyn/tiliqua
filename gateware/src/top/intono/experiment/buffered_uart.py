@@ -10,6 +10,7 @@ is busy. Baud divisor and physical output-enable behavior remain unchanged.
 """
 from amaranth import Array, Module, Signal, unsigned
 from amaranth.lib.memory import Memory
+from amaranth.lib.cdc import FFSynchronizer
 from amaranth.lib.wiring import connect, flipped
 from amaranth_stdio.serial import AsyncSerialRX, AsyncSerialTX
 from luna_soc.gateware.core.uart import Peripheral as BasePeripheral
@@ -54,6 +55,10 @@ class Peripheral(BasePeripheral):
         rx_push = Signal()
         rx_pop = Signal()
         m.submodules.rx = rx = AsyncSerialRX(divisor=self._init_divisor, divisor_bits=24)
+        # AsyncSerialRX only inserts its own synchronizer when given platform
+        # pins. Our provider supplies a logical pin interface instead, so the
+        # external UART signal must cross into the system clock here.
+        m.submodules.rx_sync = FFSynchronizer(self.pins.rx, rx.i, init=1)
         with m.If(rx_push):
             m.d.sync += rx_tail.eq(rx_tail + 1)
         with m.If(rx_pop):
@@ -63,7 +68,7 @@ class Peripheral(BasePeripheral):
         with m.Elif(rx_pop & ~rx_push):
             m.d.sync += rx_count.eq(rx_count - 1)
         m.d.comb += [
-            rx.i.eq(self.pins.rx), rx.ack.eq(rx_count < 64),
+            rx.ack.eq(rx_count < 64),
             rx_push.eq(rx.rdy & (rx_count < 64)),
             rx_pop.eq(self._rx_data.f.data.r_stb & (rx_count != 0)),
             rx.divisor.eq(self._divisor.f.div.data),
