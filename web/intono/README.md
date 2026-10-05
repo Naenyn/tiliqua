@@ -12,13 +12,13 @@ python3 -m http.server 8765 --bind 127.0.0.1 --directory web/intono
 ```
 
 Open http://localhost:8765 in desktop Chrome or Edge (Web Serial required).
-Connect Tiliqua's **USB debug serial port**, select it with **Connect device**,
+Connect Tiliqua's **USB debug serial port**, choose **Tiliqua R5 apfbug…** with **Connect device**,
 and launch INTONO from the factory bootloader. Close competing serial monitors.
 The instrument's USB-C musical MIDI limitation is unchanged: musical MIDI uses
 its 3.5 mm MIDI input. The debug USB connection is used only for profile data.
 
 1. Stop calibration, all running routes, and Reference CV.
-2. **Read from device** creates a consistent local snapshot of all sixteen slots.
+2. **Read from device** creates a complete local snapshot of all sixteen slots.
    It does not activate anything on the instrument. If any read fails, the old
    local snapshot is retained.
 3. Calibration profiles can be inspected, renamed, exported, or imported.
@@ -54,7 +54,7 @@ There is no arbitrary key, address, erase, or route-config operation. All flash
 access uses the existing journal and calibration's legacy fallback window.
 Transfers are rejected while any output operation is active. The transfer state
 lives in foreground-only PSRAM, with no new static SRAM allocation. A 64-byte
-register RX queue complements the existing 16-byte TX queue; no new block RAM
+distributed-memory RX queue complements the existing 16-byte TX queue; no new block RAM
 is needed. Diagnostic serial output pauses during a transfer lease while pitch
 acquisition continues.
 

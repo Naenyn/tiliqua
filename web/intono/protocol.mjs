@@ -19,19 +19,21 @@ export function packet(op, seq, kind=0, slot=1, offset=0, data=new Uint8Array(),
 export class FrameReader {
   constructor(){this.bytes=[];}
   push(chunk){
-    this.bytes.push(...chunk);const result=[];
-    while(this.bytes.length>=FRAME){
+    const result=[];
+    for(const byte of chunk){
+      this.bytes.push(byte);
+      if(this.bytes.length<FRAME)continue;
       if(this.bytes[0]!==73||this.bytes[1]!==82){this.bytes.shift();continue;}
-      const p=Uint8Array.from(this.bytes.slice(0,FRAME));
+      const p=Uint8Array.from(this.bytes);
       if(p[31]!==crc8(p.subarray(0,31))||p[8]>CHUNK){this.bytes.shift();continue;}
-      this.bytes.splice(0,FRAME);result.push(p);
+      this.bytes=[];result.push(p);
     }
     // At most one incomplete frame is retained, regardless of diagnostic noise.
     return result;
   }
 }
 export class Device {
-  constructor(port){this.port=port;this.seq=0;this.parser=new FrameReader();this.pending=null;this.closed=false;}
+  constructor(port){this.port=port;this.seq=Math.floor(Math.random()*256);this.parser=new FrameReader();this.pending=null;this.closed=false;}
   async open(){
     await this.port.open({baudRate:115200});
     if(this.port.setSignals)await this.port.setSignals({dataTerminalReady:true,requestToSend:false});

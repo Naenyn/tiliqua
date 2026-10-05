@@ -9,6 +9,8 @@ const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&g
 function render(){
   $('connection').textContent=device?'Connected · USB serial':demo?'Demo · local data':'Not connected';
   $('connect').hidden=!!device;$('disconnect').hidden=!device;
+  $('importProfile').disabled=busy;$('importLibrary').disabled=busy;
+  $('calTab').disabled=busy;$('scaleTab').disabled=busy;
   $('read').disabled=!device||busy;$('connect').disabled=busy;$('disconnect').disabled=busy;$('demo').disabled=busy;
   $('write').disabled=!device||!banks[kind][slot]||busy;
   $('export').disabled=!banks[kind][slot]||busy;$('backup').disabled=!hasSnapshot||busy;
@@ -24,11 +26,12 @@ function render(){
   const bytes=banks[kind][slot];
   if(!bytes){$('editor').innerHTML=`<div class="empty"><p class="eyebrow">${kind===0?'CALIBRATION':'SCALE'} SLOT ${slot+1}</p><h2>${known[kind][slot]?'Empty saved slot':'Your profiles live on INTONO.'}</h2><p>${kind===0?'Import a measured calibration profile, or read your instrument.':'Create a scale of intervals, import one, or read your instrument.'}</p>${kind===1?'<button id="newScale">Create a scale</button>':''}</div>`;
     if($('newScale'))$('newScale').onclick=()=>{banks[1][slot]=encodeScale({octaves:1,masks:[4095,0,0,0,0,0,0,0]});dirty[1][slot]=true;known[1][slot]=true;hasSnapshot=true;render();};return;}
-  let r;try{r=decode(bytes);}catch(e){$('editor').innerHTML=`<h2>Invalid saved record</h2><p>${escape(e.message)}</p><p>You can export this record for inspection, or import a replacement.</p>`;return;}
+  let r;try{r=decode(bytes);}catch(e){$('write').disabled=true;$('editor').innerHTML=`<h2>Invalid saved record</h2><p>${escape(e.message)}</p><p>You can export this record for inspection, or import a replacement.</p>`;return;}
   $('editor').innerHTML=`<div class="editor-head"><div><p class="eyebrow">${kind===0?'CALIBRATION':'SCALE'} SLOT ${slot+1}</p><h2>${escape(kind===0?r.name:`User scale ${slot+1}`)}</h2><p>${kind===0?'Measured oscillator response':'Intervals, ready for any root key'}</p></div><span class="badge">${dirty[kind][slot]?'Local changes':demo?'Demo profile':'Local snapshot'}</span></div>`;
   if(kind===0){
     $('editor').insertAdjacentHTML('beforeend',`<div class="fields"><label>Profile name<input id="profileName" type="text" maxlength="24" value="${escape(r.name)}" ${busy?'disabled':''}></label></div><div class="metadata"><div>Captured connection<strong>IN${r.input} → OUT${r.output}</strong></div><div>0 V reference<strong>${escape(names[r.zeroNote%12]+(Math.floor(r.zeroNote/12)-1))}</strong></div><div>Record version<strong>${r.version}</strong></div><div>Curve range<strong>${(r.points[0].microvolts/1e6).toFixed(2)} to ${(r.points.at(-1).microvolts/1e6).toFixed(2)} V</strong></div></div><div class="chart">${plot(r.points)}</div><p class="note">The measured points are preserved. Renaming does not change the calibration.</p>`);
-    $('profileName').onchange=e=>{try{banks[0][slot]=renameCalibration(bytes,e.target.value);dirty[0][slot]=true;render();}catch(error){message(error.message,true);e.target.value=r.name;}};
+    $('profileName').oninput=e=>{try{banks[0][slot]=renameCalibration(bytes,e.target.value);dirty[0][slot]=true;$('write').disabled=!device||busy;}catch{$('write').disabled=true;}};
+    $('profileName').onblur=e=>{try{banks[0][slot]=renameCalibration(bytes,e.target.value);dirty[0][slot]=e.target.value!==r.name||dirty[0][slot];}catch(error){message(error.message,true);}render();};
   }else{
     $('editor').insertAdjacentHTML('beforeend',`<div class="fields"><label>Octaves<select id="octaves" ${busy?'disabled':''}>${Array.from({length:8},(_,i)=>`<option ${r.octaves===i+1?'selected':''}>${i+1}</option>`).join('')}</select></label><p class="legend"><b>Blue</b> keys are included. Click a key to toggle its interval.<br>Labels show intervals from the start of each octave.</p></div><div id="keyboards"></div>`);
     $('octaves').onchange=e=>{r.octaves=Number(e.target.value);saveScale(r);};
@@ -39,13 +42,13 @@ function render(){
         const key=document.createElement('button'),included=!!(r.masks[octave]&(1<<interval));key.className='key'+(black?' black':'')+(included?' included':'');key.disabled=busy;
         key.setAttribute('aria-label',`Octave ${octave+1}, interval ${interval} semitones`);key.setAttribute('aria-pressed',included);key.innerHTML=`<span>${interval}</span>`;
         if(black)key.style.left=`${boundary*100/7-4}%`;
-        key.onclick=()=>{r.masks[octave]^=1<<interval;saveScale(r);};keyboard.append(key);
+        key.onclick=()=>{r.masks[octave]^=1<<interval;saveScale(r,`Octave ${octave+1}, interval ${interval} semitones`);};keyboard.append(key);
       }$('keyboards').append(box);
     }
   }
 }
 function count(mask){let n=0;while(mask){n+=mask&1;mask>>>=1;}return n;}
-function saveScale(r){banks[1][slot]=encodeScale(r);dirty[1][slot]=true;render();}
+function saveScale(r,focus){banks[1][slot]=encodeScale(r);dirty[1][slot]=true;render();if(focus)document.querySelector(`[aria-label="${focus}"]`)?.focus();}
 function plot(points){
   const first=points[0],last=points.at(-1),x=p=>45+(p.microvolts-first.microvolts)/(last.microvolts-first.microvolts)*500,y=p=>185-(p.millicents-first.millicents)/(last.millicents-first.millicents)*165;
   return `<svg viewBox="0 0 580 220" role="img" aria-label="Measured pitch rises with control voltage">${[0,1,2,3,4].map(i=>`<line x1="45" y1="${20+i*41.25}" x2="545" y2="${20+i*41.25}"/><line x1="${45+i*125}" y1="20" x2="${45+i*125}" y2="185"/>`).join('')}<path d="${points.map((p,i)=>(i?'L':'M')+x(p).toFixed(2)+','+y(p).toFixed(2)).join(' ')}"/><text x="45" y="205" text-anchor="middle">${(first.microvolts/1e6).toFixed(2)} V</text><text x="545" y="205" text-anchor="middle">${(last.microvolts/1e6).toFixed(2)} V</text><text x="10" y="16">Pitch</text></svg>`;
@@ -58,7 +61,10 @@ async function readAll(){
 }
 $('connect').onclick=()=>work(async()=>{
   if(!navigator.serial)throw Error('This browser does not support Web Serial. Open the utility in desktop Chrome or Edge.');
-  const port=await navigator.serial.requestPort();const candidate=new Device(port);
+  message('Choose Tiliqua R5 apfbug — the USB debug serial port.');
+  let port;try{port=await navigator.serial.requestPort({filters:[{usbVendorId:0x1209,usbProductId:0xc0ca}]});}
+  catch(e){if(e.name==='NotFoundError')throw Error('Connection canceled. Choose the Tiliqua debug serial port when ready.');throw e;}
+  const candidate=new Device(port);
   try{await candidate.open();device=candidate;demo=false;message('Connected. Read from device to inspect saved profiles.');}
   catch(e){await candidate.close();throw e;}
 });
@@ -73,8 +79,8 @@ $('write').onclick=()=>{if(busy)return;$('confirmText').textContent=`Replace ${k
 $('cancel').onclick=()=>$('confirm').close();
 $('confirmWrite').onclick=()=>{$('confirm').close();work(async()=>{message(`Writing slot ${slot+1}…`);await device.write(kind,slot+1,banks[kind][slot]);dirty[kind][slot]=false;demo=false;message(`Slot ${slot+1} saved and verified by reading it back. Active route settings were not changed.`);});};
 function download(name,value){const url=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
-$('export').onclick=()=>download(`intono-${kind===0?'calibration':'scale'}-${slot+1}.json`,exportProfile(banks[kind][slot]));
-$('backup').onclick=()=>download('intono-library.json',{format:'intono-library',version:1,banks:banks.map(bank=>bank.map(b=>b?exportProfile(b):null))});
+$('export').onclick=()=>download(`intono-${kind===0?'calibration':'scale'}-${slot+1}.json`,exportProfile(banks[kind][slot],kind));
+$('backup').onclick=()=>download('intono-library.json',{format:'intono-library',version:1,banks:banks.map((bank,k)=>bank.map(b=>b?exportProfile(b,k):null))});
 $('importProfile').onchange=e=>work(async()=>{const file=e.target.files[0];e.target.value='';if(!file)return;if(file.size>100000)throw Error('Profile file is too large');const bytes=importProfile(JSON.parse(await file.text())),r=decode(bytes);
   if(r.kind!==kind)throw Error(`Choose the ${r.kind===0?'Calibration':'Scales'} tab before importing this profile.`);
   if(banks[kind][slot]&&!confirm(`Replace the local copy of slot ${slot+1}?`))return;banks[kind][slot]=bytes;dirty[kind][slot]=true;known[kind][slot]=true;hasSnapshot=true;message('Imported locally. Write this slot to save it on INTONO.');});

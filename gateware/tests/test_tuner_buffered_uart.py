@@ -82,7 +82,7 @@ def test_rx_queue_retains_packet_and_wraps_without_foreground_reads():
             await ctx.tick();value=ctx.get(dut.bus.r_data)
             ctx.set(dut.bus.r_stb,0);await ctx.tick();return value
         for batch in range(4):
-            values=[(batch*47+i*13)&255 for i in range(32)]
+            values=[(batch*47+i*13)&255 for i in range(64)]
             for value in values:await send(value)
             for value in values:
                 assert await read(12)==1

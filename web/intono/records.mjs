@@ -33,7 +33,7 @@ export function renameCalibration(raw,name){
   if(decode(raw).kind!==0)throw Error('Not a calibration');
   const b=new Uint8Array(raw);b.fill(0,12,36);b[8]=name.length;b.set([...name].map(c=>c.charCodeAt(0)),12);return finish(b);
 }
-export function exportProfile(bytes){const r=decode(bytes);return {format:'intono-profile',version:1,kind:r.kind===0?'calibration':'scale',record:Array.from(bytes)};}
+export function exportProfile(bytes,rawKind){const kind=rawKind===undefined?decode(bytes).kind:rawKind;return {format:'intono-profile',version:1,kind:kind===0?'calibration':'scale',record:Array.from(bytes)};}
 export function importProfile(value){
   if(value.format!=='intono-profile'||value.version!==1||!Array.isArray(value.record)||value.record.length>1100||value.record.some(b=>!Number.isInteger(b)||b<0||b>255))throw Error('Invalid INTONO profile file');
   const bytes=Uint8Array.from(value.record),r=decode(bytes);
