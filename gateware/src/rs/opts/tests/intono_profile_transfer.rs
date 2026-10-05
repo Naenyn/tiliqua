@@ -151,18 +151,35 @@ fn rejects_busy_bad_slots_order_truncation_and_expiry() {
 fn corrupt_and_expired_frames_never_form_requests() {
     let mut e = Exchange::new();
     assert!(!e.feed(73, 1));
-    assert!(!e.feed(80, 400));
+    assert!(!e.feed(80, 2400));
     let mut p = [0; FRAME];
     p[..3].copy_from_slice(&[73, 80, 1]);
     p[31] = crc(&p[..31]) ^ 1;
     for b in p {
-        assert!(!e.feed(b, 401));
+        assert!(!e.feed(b, 2401));
     }
     let mut s = Memory::default();
     assert_eq!(
-        request(&mut e, &mut s, 1, 0, 1, 0, &[], 0, 500, false)[12],
+        request(&mut e, &mut s, 1, 0, 1, 0, &[], 0, 2500, false)[12],
         1
     );
     assert_eq!(s.reads, 0);
     assert_eq!(s.writes, 0);
+}
+
+#[test]
+fn partial_packet_survives_a_foreground_scene_redraw() {
+    let mut e = Exchange::new();
+    let mut packet = [0; FRAME];
+    packet[..6].copy_from_slice(&[73, 80, 1, 42, 0, 1]);
+    packet[31] = crc(&packet[..31]);
+    for byte in &packet[..8] { assert!(!e.feed(*byte, 1)); }
+    for (index, byte) in packet[8..].iter().enumerate() {
+        assert_eq!(e.feed(*byte, 1500), index == FRAME - 9);
+    }
+    let mut store = Memory::default();
+    e.respond(1500, false, &mut store);
+    assert_eq!(e.tx[9], OK);
+    assert_eq!(&e.tx[12..16], &[1, 8, 16, 8]);
+    assert_eq!(store.writes, 0);
 }

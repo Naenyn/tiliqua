@@ -67,7 +67,10 @@ impl Exchange {
         if now >= self.rx_deadline {
             self.used = 0;
         }
-        self.rx_deadline = now.saturating_add(250);
+        // A scene redraw can delay the next foreground visit after the first
+        // bytes are read. The hardware FIFO retains the rest of the packet;
+        // keep its parser state across that delay, below the host's 8 s limit.
+        self.rx_deadline = now.saturating_add(2_000);
         if self.used == 0 && byte != b'I' {
             return false;
         }
