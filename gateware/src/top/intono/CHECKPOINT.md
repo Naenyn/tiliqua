@@ -1745,3 +1745,30 @@ Archive: `build/intono-ui-text-center-pipe-r5/intono-ui-text-center-pipe-8e8a807
 SHA256: `cf3f0133e5b6e600d035c8ffba97e3ea3575cbb1987e49b1e274b7454b6ed5ea`.
 Flashed Tiliqua #1 slot 1, verified `Refresh: DONE`. Saved data preserved.
 Use this qualified hardware for subsequent firmware-only builds.
+
+## 2026-10-04 — page-based help
+
+Help now has ten topics: Start, Tuner, Cal, Cal Profiles, Scales, Scale Tools,
+Routes, MIDI Transpose, Configs and Options. TOPIC precedes SCROLL in encoder
+navigation; topics are bounded, changing topic resets scroll, and scrolling
+stops at that topic's last full nine-line view. A line-range indicator shows
+reading position. Topic outlines use the existing retained firmware drawing
+path, preserving the qualified FPGA and its hardware-owned Scroll control.
+
+Editable prose: `INTONO_HELP.md`; `help_content.py` wraps it to 36 columns and
+checks glyphs, topic order, line limits and a 10000-byte text budget. Normal
+builds regenerate `fw/src/help_text.rs`. Help stays in read-only firmware
+storage; no heap, help RAM buffer or FPGA ROM was added.
+
+Firmware source `5cccba2b`, 322128/327680 bytes. FPGA bytes are identical to
+`intono-ui-text-center-pipe-r5/top.bit`, qualified hardware source `67179044`.
+All four copied timing results remain PASS; FPGA utilization is unchanged.
+Checks: 46 navigation and 58 retained route/text/helper tests; generated-content
+agreement and shared shape geometry passed. Help end-of-topic and bounds are
+covered in both host suites.
+
+Archive: `build/intono-ui-help-r5/intono-ui-help-5cccba2b-r5.tar.gz`.
+SHA256: `70f568b4589927a34d2384980a61a878103868f541f826a29b4edd22968d78da`.
+Flashed Tiliqua #1 slot 1, verified `Refresh: DONE`; saved user storage retained.
+Qualification: `build/intono-ui-help-r5/help-flash.json`.
+On-rack wording and visual review remain with the user.
