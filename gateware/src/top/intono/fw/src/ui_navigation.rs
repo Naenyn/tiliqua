@@ -50,6 +50,18 @@ pub fn visible_ticks(opts: &mut Opts, ticks: i8, claims: &crate::ownership::Rese
             if let Some(index) = PAGES.iter().position(|page| *page == opts.tracker.page.value) {
                 opts.tracker.page.value = PAGES[(index as i32 + step).clamp(0,PAGES.len() as i32-1) as usize];
             }
+        } else if matches!(opts.tracker.page.value,Page::Settings|Page::Help) && !opts.tracker.modify {
+            // Footer page selectors sit below their controls. Enter upward
+            // with CCW, and leave downward with CW; values retain their usual
+            // rotation direction while editing.
+            let order: &[usize]=if opts.tracker.page.value==Page::Help {&[1,0]} else {&[0,1,2]};
+            let index=opts.tracker.selected.and_then(|s|order.iter().position(|n|*n==s));
+            opts.tracker.selected=match (index,step) {
+                (None,-1)=>Some(order[order.len()-1]),
+                (Some(n),-1)=>Some(order[n.saturating_sub(1)]),
+                (Some(n),1) if n+1<order.len()=>Some(order[n+1]),
+                _=>None,
+            };
         } else if matches!(opts.tracker.page.value,Page::QuantNotes|Page::Quantizer) && !opts.tracker.modify {
             use strum::IntoEnumIterator;
             let tools=opts.tracker.page.value==Page::QuantNotes;
@@ -59,10 +71,9 @@ pub fn visible_ticks(opts: &mut Opts, ticks: i8, claims: &crate::ownership::Rese
             opts.tracker.selected=selected;
             opts.quant_notes.octave.value=key/12;
             opts.quant_notes.note.value=crate::options::ScaleRoot::iter().nth((key%12) as usize).unwrap();
-        } else if matches!(opts.tracker.page.value,Page::Play|Page::Calibrate|Page::Tuner|Page::Help) && !opts.tracker.modify {
+        } else if matches!(opts.tracker.page.value,Page::Play|Page::Calibrate|Page::Tuner) && !opts.tracker.modify {
             // Follow the on-screen order without changing persisted option indices.
             let order: &[usize] = match opts.tracker.page.value {
-                Page::Help => &[1,0],
                 Page::Calibrate => &[0,1,4,3,5,6,7,8],
                 Page::Tuner if opts.tuner.display.value==crate::options::DisplayMode::Linear => &[1],
                 Page::Tuner => &[0,1],

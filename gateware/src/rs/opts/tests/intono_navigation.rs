@@ -341,14 +341,15 @@ fn config_midi_has_route_selection_learn_and_explicit_back() {
 mod preferences;
 
 #[test]
-fn preferences_use_generic_navigation_and_one_shot_actions() {
+fn preferences_use_footer_navigation_and_one_shot_actions() {
     let mut o=Opts::default();o.tracker.page.value=Page::Settings;
     let mut v=route_ui::View::new();let claims=ownership::Reservations::new();
     assert!(v.handles(Page::Settings));
-    for index in 0..3 {
-        assert!(!v.ticks(&mut o,1,&claims));visible_ticks(&mut o,1);
+    for index in [2,1,0] {
+        assert!(!v.ticks(&mut o,-1,&claims));visible_ticks(&mut o,-1);
         assert_eq!(o.tracker.selected,Some(index));
     }
+    o.tracker.selected=Some(2);
     assert!(!v.click(&mut o,&claims));o.toggle_modify();assert!(o.settings.wipe_opts.poll());
     o.tracker.selected=Some(1);o.toggle_modify();assert!(o.settings.save_opts.poll());
 }
@@ -414,10 +415,12 @@ fn scale_preset_navigation_places_custom_last_and_wraps_both_directions() {
 #[test]
 fn help_topics_reset_scroll_and_navigation_follows_visible_controls() {
     let mut o=Opts::default();o.tracker.page.value=Page::Help;
-    visible_ticks(&mut o,1);assert_eq!(o.tracker.selected,Some(1));
-    visible_ticks(&mut o,1);assert_eq!(o.tracker.selected,Some(0));
+    visible_ticks(&mut o,1);assert_eq!(o.tracker.selected,None);
+    visible_ticks(&mut o,-1);assert_eq!(o.tracker.selected,Some(0));
     visible_ticks(&mut o,-1);assert_eq!(o.tracker.selected,Some(1));
-    visible_ticks(&mut o,-1);assert_eq!(o.tracker.selected,None);
+    visible_ticks(&mut o,-1);assert_eq!(o.tracker.selected,Some(1));
+    visible_ticks(&mut o,1);assert_eq!(o.tracker.selected,Some(0));
+    visible_ticks(&mut o,1);assert_eq!(o.tracker.selected,None);
     o.tracker.selected=Some(1);o.tracker.modify=true;o.help.scroll.value=10;
     visible_ticks(&mut o,1);assert_eq!(o.help.topic.value,1);assert_eq!(o.help.scroll.value,0);
     visible_ticks(&mut o,-10);assert_eq!(o.help.topic.value,0);
@@ -425,4 +428,23 @@ fn help_topics_reset_scroll_and_navigation_follows_visible_controls() {
     o.tracker.selected=Some(0);
     visible_ticks(&mut o,100);assert_eq!(o.help.scroll.value,ui_help::max_scroll(9));
     visible_ticks(&mut o,-100);assert_eq!(o.help.scroll.value,0);
+}
+
+#[test]
+fn options_enter_from_footer_without_reversing_value_edits_or_top_pages() {
+    let mut o=Opts::default();o.tracker.page.value=Page::Settings;
+    visible_ticks(&mut o,1);assert_eq!(o.tracker.selected,None);
+    for selected in [Some(2),Some(1),Some(0),Some(0)] {
+        visible_ticks(&mut o,-1);assert_eq!(o.tracker.selected,selected);
+    }
+    o.tracker.modify=true;
+    visible_ticks(&mut o,1);assert_eq!(o.settings.reference.value,441);
+    visible_ticks(&mut o,-1);assert_eq!(o.settings.reference.value,440);
+    o.tracker.modify=false;
+    for selected in [Some(1),Some(2),None,None] {
+        visible_ticks(&mut o,1);assert_eq!(o.tracker.selected,selected);
+    }
+    o.tracker.page.value=Page::Calibrate;
+    visible_ticks(&mut o,-1);assert_eq!(o.tracker.selected,None);
+    visible_ticks(&mut o,1);assert_eq!(o.tracker.selected,Some(0));
 }

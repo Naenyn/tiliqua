@@ -17,7 +17,7 @@ pub fn lines(index: u8, scroll: u8) -> impl Iterator<Item=&'static str> {
             assert!(name.len()+7<=32);
             assert!(body.is_ascii());
             assert!(body.lines().all(|line|line.len()<=36));
-            assert!(max_scroll(index)<=60);
+            assert!(max_scroll(index)<=120);
             assert_eq!(lines(index,255).last(),body.lines().last());
             assert_eq!(lines(index,255).count(),VISIBLE_ROWS.min(line_count(index)));
         }

@@ -7,7 +7,7 @@ paragraphs are wrapped to the display width by `help_content.py`.
 ## START
 Turn the encoder to select a control. Click to edit its value, turn to change it, then click to finish. Action buttons work with one click.
 
-PAGE means you are choosing a page. NAV means you are selecting its controls. EDIT means you are changing a value. Turn back to the page selector to choose another page.
+PAGE means you are choosing a page. NAV means you are selecting its controls. EDIT means you are changing a value. From a top page selector, turn clockwise to enter its controls. From OPTIONS or HELP at the bottom, turn counterclockwise to enter from below. Turn back toward the page selector to leave.
 
 Hold the encoder to return to the bootloader.
 
@@ -23,25 +23,29 @@ PITCH shows the nearest note and octave, then the cents offset. FREQUENCY is in 
 
 VIEW switches between ARC and LINEAR. The A4 reference is set in OPTIONS.
 ## CAL
-Calibration measures how your oscillator responds to pitch voltage so a route can correct its tuning.
+Calibration measures your oscillator's pitch-voltage response so a route can correct its tuning. It does not adjust the oscillator's internal trimmers.
 
-Choose a free IN and OUT. Patch that OUT to the oscillator's V/oct input and its audio output directly to that IN. Remove other pitch modulation and leave its tuning controls steady.
+Let an analog oscillator warm up and settle first; allow about 10-20 minutes, or follow its manual. Set audio-rate mode with a steady tone. Roughly 100-500 Hz at zero pitch CV is a useful starting point, not a required note.
 
-SCAN starts the measurement. SEARCHING FOR TONE can take longer at low or negative voltages. STOP interrupts the scan; RESUME is offered when it can continue.
+Choose a free IN and OUT. Patch that OUT directly to V/oct and a single oscillator audio output directly to that IN. Use normal V/oct sensitivity. Disconnect FM, sync, vibrato and other pitch modulation; disable internal modulation or detune where possible.
 
-AUTO is the normal policy. PRECISION requires stricter results. FORGIVING tolerates more variation. FAST uses fewer stability samples.
+Prefer a clean sine or triangle. A steady saw or square can work, but rich waveforms may be harder to measure. Avoid heavy folding, narrow pulses, noise, chords and effects. Check the tuner for a steady note before scanning.
 
-PITCH plots measured notes against output voltage. ERROR shows pitch error in cents. The dashed guide is the nominal response.
+Keep tuning, octave, tracking and modulation settings unchanged during and after calibration. Tune before the scan, not during it. Changing settings that affect pitch response calls for a new profile.
 
-Review the result before ACCEPT. CHECKS DISAGREE means the independent checks found different errors; check the patch and oscillator stability and consider another scan.
+AUTO is the usual starting policy. PRECISION demands tighter results from a stable oscillator. FORGIVING allows more natural variation; it does not fix a bad patch. FAST takes fewer stability samples for a quicker first pass, with less averaging.
 
-ACCEPT keeps the result in RAM. Use PROFILES to save it for later. DISCARD rejects the result.
+SCAN finds the usable range, measures it, then checks and may refine the curve. Allow several minutes: recent rack runs took about 4-7 minutes. Low tones, gaps and unstable readings can take longer; there is no fixed total run time. SEARCHING FOR TONE is expected near the low end. STOP interrupts; RESUME appears when available.
+
+PITCH plots notes against voltage; ERROR shows error in cents. The dashed guide is nominal response. Review the result before ACCEPT. CHECKS DISAGREE means independent checks found different errors; check patch and stability and consider another scan.
+
+ACCEPT keeps the result in RAM. PROFILES lets you name and save it. DISCARD keeps the previous profile. Use a saved profile for the same oscillator and tuning setup; use NONE for nominal CV without correction. A profile cannot correct a range the oscillator could not reliably produce.
 ## CAL PROFILES
 SLOT chooses one of eight saved oscillator profiles. Browsing shows what is stored there without loading it or changing the profile in RAM.
 
 LOAD copies the chosen saved profile into RAM. SAVE writes the current RAM profile to the chosen slot. Saving to an occupied slot replaces that profile.
 
-Use CURSOR and the character control to edit the profile name before saving. Give profiles names that identify the oscillator and its settings.
+Use CURSOR and the character control to edit the profile name before saving. Give profiles names that identify the oscillator and its tuning setup. Keep separate profiles for different oscillator settings; recall one only when that setup is restored.
 
 A route's output/profile controls choose the saved correction profile to apply. NONE uses nominal pitch voltage instead.
 
@@ -113,3 +117,9 @@ RESET PREFERENCES restores those settings to their defaults. It does not erase s
 
 Stop outputs and calibration before a flash storage operation when prompted. User profiles, scales and configs are saved with their own SAVE controls.
 <!-- HELP END -->
+
+## Guidance sources (not shown on the display)
+
+- Warm-up guidance: [Intellijel oscillator calibration guide](https://intellijel.zendesk.com/hc/en-us/articles/115000914288-How-to-calibrate-the-1V-OCT-tracking-of-an-Intellijel-analog-oscillator). Intono does not ask users to adjust internal trimmers.
+- Starting frequency and unchanged tuning relationship: `CALIBRATION.md`; waveform behavior: `OSCILLATOR_QUALIFICATION.md`.
+- Approximate 4-7 minute examples and no total-run deadline: `AUTO_CALIBRATION.md`. These are observations, not promised completion times.

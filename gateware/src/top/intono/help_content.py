@@ -26,7 +26,7 @@ def render():
         wrapped = '\n\n'.join(paragraphs)
         lines = wrapped.splitlines()
         assert all(len(line) <= COLUMNS for line in lines)
-        assert len(lines) - VISIBLE_ROWS <= 60, 'Exceeds SCROLL range'
+        assert len(lines) - VISIBLE_ROWS <= 120, 'Exceeds SCROLL range'
         total += len(wrapped)
         result += f'    ({json.dumps(name)}, {json.dumps(wrapped)}),\n'
     assert total <= 10000, 'Help exceeds firmware text budget'

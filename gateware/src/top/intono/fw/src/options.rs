@@ -241,7 +241,7 @@ int_params!(ReferenceParams<u16> {
     format: IntFormat::Scaled { divisor: 1, precision: 0, suffix: "Hz" }
 });
 int_params!(HelpTopicParams<u8> { step: 1, min: 0, max: 9 });
-int_params!(ScrollParams<u8> { step: 1, min: 0, max: 60 });
+int_params!(ScrollParams<u8> { step: 1, min: 0, max: 120 });
 int_params!(ProfileSlotParams<u8> { step: 1, min: 1, max: 8 });
 int_params!(NamePositionParams<u8> { step: 1, min: 1, max: 24 });
 int_params!(NameCharacterParams<u8> { step: 1, min: 32, max: 126 });
