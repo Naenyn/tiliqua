@@ -10,6 +10,7 @@ calibrated zero unless an explicitly started calibration or CV route owns one.
 
 import os
 import sys
+from pathlib import Path
 
 from amaranth import Module, Mux
 from amaranth.lib import wiring
@@ -24,10 +25,12 @@ from tiliqua.dsp.tuner import TunerPeripheral
 from tiliqua.tiliqua_soc import TiliquaSoc
 
 try:
+    from .help_content import render as render_help
     from .display import Peripheral as IntonoDisplayPeripheral
     from .background import BackgroundLayout
     from .midi_input import Peripheral as MidiInputPeripheral
 except ImportError:
+    from help_content import render as render_help
     from display import Peripheral as IntonoDisplayPeripheral
     from background import BackgroundLayout
     from midi_input import Peripheral as MidiInputPeripheral
@@ -54,6 +57,7 @@ class IntonoSoc(TiliquaSoc):
     )
 
     def __init__(self, **kwargs):
+        Path(__file__).with_name("fw").joinpath("src/help_text.rs").write_text(render_help())
         # INTONO deliberately uses the native 16-bit, 4-counts/mV sample
         # representation.  Its CV command protocol and production NSDF
         # detector are both signed 16-bit interfaces.  Reject an accidental

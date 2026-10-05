@@ -1,4 +1,5 @@
 //! Use the actual instrument options/navigation, including persisted enum IDs.
+#[path = "../../../top/intono/fw/src/ui_help.rs"] mod ui_help;
 #[path = "../../../top/intono/fw/src/options.rs"]
 mod options;
 #[path = "../../../top/intono/fw/src/route_group.rs"] mod route_group;
@@ -408,4 +409,20 @@ fn scale_preset_navigation_places_custom_last_and_wraps_both_directions() {
             assert!(preset.stepped(true).stepped(false)==preset);
         }
     }
+}
+
+#[test]
+fn help_topics_reset_scroll_and_navigation_follows_visible_controls() {
+    let mut o=Opts::default();o.tracker.page.value=Page::Help;
+    visible_ticks(&mut o,1);assert_eq!(o.tracker.selected,Some(1));
+    visible_ticks(&mut o,1);assert_eq!(o.tracker.selected,Some(0));
+    visible_ticks(&mut o,-1);assert_eq!(o.tracker.selected,Some(1));
+    visible_ticks(&mut o,-1);assert_eq!(o.tracker.selected,None);
+    o.tracker.selected=Some(1);o.tracker.modify=true;o.help.scroll.value=10;
+    visible_ticks(&mut o,1);assert_eq!(o.help.topic.value,1);assert_eq!(o.help.scroll.value,0);
+    visible_ticks(&mut o,-10);assert_eq!(o.help.topic.value,0);
+    visible_ticks(&mut o,100);assert_eq!(o.help.topic.value,9);
+    o.tracker.selected=Some(0);
+    visible_ticks(&mut o,100);assert_eq!(o.help.scroll.value,ui_help::max_scroll(9));
+    visible_ticks(&mut o,-100);assert_eq!(o.help.scroll.value,0);
 }

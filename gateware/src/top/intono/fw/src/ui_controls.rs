@@ -70,7 +70,7 @@ pub fn field(surface: Surface, index: usize) -> Option<Field> {
             2 => (4,18,10,true), 3 => (16,18,10,true),
             4 => (11,19,8,true), _ => return None,
         },
-        Surface::Help => match index {0 => (10,17,10,false), _ => return None},
+        Surface::Help => match index {0 => (10,17,10,false), 1 => (3,5,24,false), _ => return None},
         Surface::Settings => match index {
             0 => (4,5,10,false),1 => (16,5,10,true),2 => (4,7,10,true),
             _ => return None,

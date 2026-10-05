@@ -15,7 +15,7 @@ fn main() {
     use controls::Surface::*;
     for (s,surface) in [Tuner,Calibration,Profiles,Check,Scales,Notes,Setups,Routes,Settings,Help,Midi].iter().enumerate() {
         for n in 0..16 {
-            if s!=6 && s!=7 { if let Some(f)=controls::field(*surface,n) {
+            if s!=6 && s!=7 && !(s==9 && n==1) { if let Some(f)=controls::field(*surface,n) {
                 println!("{} {} {} {} {}",s,n,f.column,f.row,f.width);
             } }
         }
@@ -27,6 +27,7 @@ fn main() {
     actual={}
     for line in subprocess.check_output([str(binary)],text=True).splitlines():
         s,i,c,r,w=map(int,line.split());actual.setdefault(s,[]).append((i,c,r,w))
+    # Help TOPIC also uses a firmware-owned outline; SCROLL remains hardware-owned.
     # Routes and Configs now use firmware-owned sparse shapes in the background
     # banks (covered by intono_route_render). The qualified FPGA retains the
     # legacy Configs descriptors, but they are disabled for those views.

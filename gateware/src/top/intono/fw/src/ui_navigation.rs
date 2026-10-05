@@ -12,7 +12,16 @@ pub fn visible_ticks(opts: &mut Opts, ticks: i8, claims: &crate::ownership::Rese
         let scale_selector = opts.tracker.modify && matches!(
             (opts.tracker.page.value, opts.tracker.selected),
             (Page::Quantizer, Some(1)) | (Page::Play, Some(9)));
-        if scale_selector {
+        if opts.tracker.page.value==Page::Help && opts.tracker.modify && opts.tracker.selected.is_some() {
+            if opts.tracker.selected==Some(1) {
+                let old=opts.help.topic.value;
+                opts.help.topic.value=(old as i32+step).clamp(0,9) as u8;
+                if old!=opts.help.topic.value {opts.help.scroll.value=0;}
+            } else {
+                let maximum=crate::ui_help::max_scroll(opts.help.topic.value);
+                opts.help.scroll.value=(opts.help.scroll.value as i32+step).clamp(0,maximum as i32) as u8;
+            }
+        } else if scale_selector {
             let preset = if opts.tracker.page.value == Page::Quantizer {
                 &mut opts.quantizer.scale.value
             } else {
@@ -50,9 +59,10 @@ pub fn visible_ticks(opts: &mut Opts, ticks: i8, claims: &crate::ownership::Rese
             opts.tracker.selected=selected;
             opts.quant_notes.octave.value=key/12;
             opts.quant_notes.note.value=crate::options::ScaleRoot::iter().nth((key%12) as usize).unwrap();
-        } else if matches!(opts.tracker.page.value,Page::Play|Page::Calibrate|Page::Tuner) && !opts.tracker.modify {
+        } else if matches!(opts.tracker.page.value,Page::Play|Page::Calibrate|Page::Tuner|Page::Help) && !opts.tracker.modify {
             // Follow the on-screen order without changing persisted option indices.
             let order: &[usize] = match opts.tracker.page.value {
+                Page::Help => &[1,0],
                 Page::Calibrate => &[0,1,4,3,5,6,7,8],
                 Page::Tuner if opts.tuner.display.value==crate::options::DisplayMode::Linear => &[1],
                 Page::Tuner => &[0,1],

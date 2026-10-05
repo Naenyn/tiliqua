@@ -31,6 +31,7 @@ mod ui_route;
 mod route_ui;
 mod route_render;
 mod ui_navigation;
+mod ui_help;
 mod ui_keyboard;
 
 mod ui_markers;
@@ -1202,6 +1203,12 @@ fn publish_controls(text: &mut TextWriter<'_>, menu: &MenuSnapshot, cal: &calibr
         let locked=(cal.active() && page==Page::Calibrate && matches!(index,0|1|3)) || quant_locked(index)
             || assigned || (page==Page::Calibrate && index==5 && !cal.active() && !cal_free);
         let style = ui_text::Style { color: if locked {0x69} else if entry.editing {0x09} else if entry.selected { 0xF9 } else { 0xB9 }, bold:entry.selected };
+        if page==Page::Help && index==1 {
+            let topic=with_app(|app|app.ui.opts.help.topic.value);
+            ui_text::inline_field(field.column as usize,field.row as usize,field.width as usize,
+                "TOPIC",ui_help::topic(topic).0,style,|a,c|text.cell(a,c));
+            continue;
+        }
         let mut label_text = String::<32>::new();
         // Focus outline and EDIT footer already distinguish selection/editing.
         // Avoid an extra prefix that shifts or wraps compact selector labels.
@@ -3229,7 +3236,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
             }
 
             let route_page=with_app(|app|app.ui.opts.tracker.page.value);
-            let route_view_active=critical_section::with(|cs|ROUTE_VIEW.borrow_ref(cs).handles(route_page));
+            let route_view_active=route_page==Page::Help || critical_section::with(|cs|ROUTE_VIEW.borrow_ref(cs).handles(route_page));
             let (mut history,activity,pitches)=critical_section::with(|cs| {
                 let q=MULTI_QUANT.borrow_ref(cs);
                 (*ROUTE_HISTORY.borrow_ref(cs),q.lanes.iter().enumerate().fold(0u8,|m,(n,l)|m|((l.active as u8)<<n)),
@@ -3609,14 +3616,27 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 } else if page==Page::Help {
                     text.clear(false);
                     publish_markers(&tuner_display,Markers([None;4]),false,false);
-                    write_centered(&mut text,7,"TURN TO SELECT",24);
-                    write_centered(&mut text,9,"CLICK TO EDIT / APPLY",26);
-                    write_centered(&mut text,12,"HELP CONTENT TO FOLLOW",26);
+                    let (topic,scroll)=with_app(|app|(app.ui.opts.help.topic.value,app.ui.opts.help.scroll.value));
+                    for (row,line) in ui_help::lines(topic,scroll).enumerate() {
+                        ui_text::field(2,7+row,36,line,ui_text::DEFAULT,ui_text::Align::Left,|a,c|text.cell(a,c));
+                    }
+                    let mut position=String::<32>::new();
+                    let first=scroll.min(ui_help::max_scroll(topic)) as usize+1;
+                    write!(&mut position,"LINES {}-{} / {}",first,(first+ui_help::VISIBLE_ROWS-1).min(ui_help::line_count(topic)),ui_help::line_count(topic)).ok();
+                    write_centered(&mut text,18,&position,32);
                 }
 
                 let menu = snapshot_menu(save_feedback.message());
                 if route_view_active {
-                    let drawing=route_render::publish(&mut text,&menu);
+                    let drawing=if page==Page::Help {
+                        let mut drawing=ui_route::Drawing::new();
+                        let (selected,editing)=with_app(|app|(app.ui.opts.tracker.selected==Some(1),app.ui.opts.tracker.modify));
+                        // TOPIC is a firmware-owned control; SCROLL retains its
+                        // existing hardware border and option index.
+                        if selected && editing {drawing.rounded_fill(164,154,392,28);}
+                        drawing.outline(164,154,392,28,selected);
+                        drawing
+                    } else {route_render::publish(&mut text,&menu)};
                     let bank=frame.background_back().bit() as usize;
                     let old=critical_section::with(|cs|ROUTE_PAINT.borrow_ref(cs).banks[bank]);
                     let mut canvas=BackgroundCanvas::new(PSRAM_FB_BASE+bank*0x100000,video_size.0,video_size.1,ROUND_DISPLAY);
@@ -3650,7 +3670,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                         w.keyboard_second().bit(with_app(|app|app.quant_channels[app.quant_selected as usize].octaves>1));
                         w.ui_ready().bit(true);
                         unsafe {w.keyboard_mask().bits((keyboard_mask&0xfff) as u16);
-                            w.ui_surface().bits(if route_view_active {match page {Page::QuantSetups=>11,Page::RouteMidi=>12,Page::Settings=>13,_=>7}}else if page==Page::Tuner && with_app(|app|app.ui.opts.tuner.display.value)==DisplayMode::Linear {14}else{surface(page) as u8});
+                            w.ui_surface().bits(if route_view_active {match page {Page::QuantSetups=>11,Page::RouteMidi=>12,Page::Settings=>13,Page::Help=>9,_=>7}}else if page==Page::Tuner && with_app(|app|app.ui.opts.tuner.display.value)==DisplayMode::Linear {14}else{surface(page) as u8});
                             w.ui_mode().bits(if menu.page_bold {0}else if with_app(|a|a.ui.opts.tracker.modify) {2}else{1});
                             w.keyboard_focus().bits(with_app(|a| {
                                 let o=a.ui.opts.quant_notes.octave.value as usize;

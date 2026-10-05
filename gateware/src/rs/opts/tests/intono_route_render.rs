@@ -1,4 +1,5 @@
 //! Capture the real firmware presenter for layout checks and visual inspection.
+#[path = "../../../top/intono/fw/src/ui_help.rs"] mod ui_help;
 #[path="../../../top/intono/fw/src/midi_transpose.rs"] mod midi_transpose;
 #[path="../../../top/intono/fw/src/options.rs"] mod options;
 #[path="../../../top/intono/fw/src/route_group.rs"] mod route_group;
