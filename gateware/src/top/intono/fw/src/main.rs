@@ -673,11 +673,11 @@ impl BackgroundCanvas {
         }
     }
 
-    fn plot_dot(&mut self, x: i32, y: i32) {
+    fn plot_dot(&mut self, x: i32, y: i32, color:u8) {
         for dy in -2..=2 {
             for dx in -2..=2 {
                 if dx * dx + dy * dy <= 4 {
-                    self.put_panel_pixel(x + dx, y + dy, 0xFF);
+                    self.put_panel_pixel(x + dx, y + dy, color);
                 }
             }
         }
@@ -731,7 +731,7 @@ impl BackgroundCanvas {
             if index > 0 && points[index].microvolts as i64
                 - points[index - 1].microvolts as i64 <= 125_000 {
                 if let (Some(a), Some(b)) = (location(points[index - 1]), location(points[index])) {
-                    self.line(a.x, a.y, b.x, b.y, 0xDB);
+                    self.line(a.x, a.y, b.x, b.y, if graph==CalibrationGraph::Error {0x69}else{0xDB});
                 }
             }
             if graph == CalibrationGraph::Pitch && index > 0 {
@@ -739,7 +739,7 @@ impl BackgroundCanvas {
                     (bipolar::MIN_UV, bipolar::MAX_UV));
             }
             if let Some(p) = location(points[index]) {
-                self.plot_dot(p.x, p.y);
+                self.plot_dot(p.x, p.y, if graph==CalibrationGraph::Error {ui_canvas::calibration_error_color(ui_canvas::calibration_error_mc(points[index].microvolts,points[index].millicents,anchor.microvolts,anchor.millicents))}else{0xFF});
             }
         }
     }
@@ -864,7 +864,7 @@ impl BackgroundCanvas {
                         if n > 0 && points[n].microvolts as i64
                             - points[n - 1].microvolts as i64 <= 125_000 {
                             if let (Some(a), Some(b)) = (point(points[n - 1]), point(points[n])) {
-                                self.line(a.x, a.y, b.x, b.y, 0xDB);
+                                self.line(a.x, a.y, b.x, b.y, if graph==CalibrationGraph::Error {0x69}else{0xDB});
                             }
                         }
                         if graph == CalibrationGraph::Pitch && n > 0 {
@@ -872,7 +872,7 @@ impl BackgroundCanvas {
                                 plot_range);
                         }
                         if let Some(p) = point(points[n]) {
-                            self.plot_dot(p.x, p.y);
+                            self.plot_dot(p.x, p.y, if graph==CalibrationGraph::Error {ui_canvas::calibration_error_color(ui_canvas::calibration_error_mc(points[n].microvolts,points[n].millicents,low.microvolts,low.millicents))}else{0xFF});
                         }
                     }
                 }
@@ -932,7 +932,7 @@ impl BackgroundCanvas {
                     if single {key.y+=ui_canvas::SINGLE_KEYBOARD_Y_OFFSET;key.height=if black {78}else{144};}
                     if black!=black_pass {continue;}
                     ui_canvas::rounded_rectangle_stroke(key,4,if black {2}else{1},
-                        if black {0x69}else{0x49},0xE0+octave as u8*16+note as u8,
+                        if black {0x09}else{0x49},0xE0+octave as u8*16+note as u8,
                         |p,c|self.put_panel_pixel(p.x,p.y,c));
                 }
             }
@@ -1264,7 +1264,7 @@ fn publish_controls(text: &mut TextWriter<'_>, menu: &MenuSnapshot, cal: &calibr
         };
         let locked=(cal.active() && page==Page::Calibrate && matches!(index,0|1|3)) || quant_locked(index)
             || assigned || (page==Page::Calibrate && index==5 && !cal.active() && !cal_free);
-        let style = ui_text::Style { color: if locked {0x69} else if entry.editing {0x09} else if entry.selected { 0xF9 } else { 0xB9 }, bold:entry.selected };
+        let style = ui_text::Style { color: if locked {0x49} else if entry.editing {0x09} else if entry.selected { 0xF9 } else if field.action {ui_theme::COMPLEMENT_BRIGHT} else { 0xD9 }, bold:entry.selected };
         if page==Page::Help && index==1 {
             let topic=with_app(|app|app.ui.opts.help.topic.value);
             ui_text::inline_field(field.column as usize,field.row as usize,field.width as usize,
@@ -1535,7 +1535,7 @@ fn publish_tuner(
     publish_markers(display, Markers(markers), false, menu_active);
 }
 
-const CHANNEL_HUES: [u8; 4] = [1, 5, 9, 13];
+const CHANNEL_HUES: [u8; 4] = [1, 5, 7, 13];
 mod pitch_units;
 
 /// Six notes per row; brackets identify included notes without relying on color.
@@ -1840,6 +1840,9 @@ fn publish_calibration(
             }
         } else {
             write_text(text,4,7,"ERROR c");
+            for (col,label,color) in [(11,"2c",0xFF),(14,"5c",0xD4),(17,"15c",0xE2),(20,"30c",0xD1),(23,">30c",0xD0)] {
+                ui_text::ux_field(col,7,4,label,ui_text::Style{color,bold:false},ui_text::Align::Center,|a,c|text.cell(a,c));
+            }
             let span=calibration_plot_error_span(cal,profile);
             for (row,amount) in [(8,span),(11,0),(14,-span)] {
                 line.clear();
@@ -2873,6 +2876,13 @@ fn startup() -> RuntimeResources {
     // Static guide pixels are CPU-authored once; live text and marker state
     // are published together through the double-buffered overlay below.
     palette::ColorPalette::default().write_to_hardware(&mut video);
+    for intensity in 0..16 {
+        let (r,g,b)=palette::ColorPalette::default().color(intensity,9);
+        video.set_palette_rgb(intensity,7,r,g,b);
+    }
+    video.set_palette_rgb(14,2,255,218,70);
+    for (hue,r,g,b) in [(4,70,220,120),(1,255,148,55),(0,255,75,75)] {video.set_palette_rgb(13,hue,r,g,b);}
+    video.set_palette_rgb(15,15,245,248,255);
 
     let mut background = BackgroundCanvas::new(
         PSRAM_FB_BASE,
@@ -2908,6 +2918,23 @@ fn startup() -> RuntimeResources {
         modeline.h_active, modeline.v_active, ROUND_DISPLAY);
     cached.clear();cached.draw_static_tuner();cached.finish();
     boot_ms[1] = elapsed();
+    let mut opts = Opts::default();
+    let persistence = if let Some(window) = bootinfo.manifest.get_option_storage_window() {
+        let default = window.start..window.start.saturating_add(8192);
+        match IntonoPersistence::with_reserved_buffer(spiflash, default, window) {
+            Ok(mut storage) => {
+                preferences::load(&mut storage, &mut opts).ok();
+                Some(storage)
+            }
+            Err(_) => {
+                warn!("Invalid option storage window");
+                None
+            }
+        }
+    } else {
+        warn!("No option storage region; settings will not persist");
+        None
+    };
     // Bank 1 is not visible at boot. Build the empty CAL dashboard here so
     // entering CAL can publish its grid and circular edge on the next frame,
     // without waiting for a multi-frame clear/draw pass.
@@ -2925,7 +2952,7 @@ fn startup() -> RuntimeResources {
         None,
         (bipolar::MIN_UV, bipolar::MAX_UV),
         (0, 6_000_000),
-        CalibrationGraph::Pitch,
+        opts.calibrate.graph.value,
         ui_canvas::CAL_ERROR_SPAN_MC,
     );
     calibration_background.finish();
@@ -2977,23 +3004,6 @@ fn startup() -> RuntimeResources {
     });
 
     boot_ms[6] = elapsed();
-    let mut opts = Opts::default();
-    let persistence = if let Some(window) = bootinfo.manifest.get_option_storage_window() {
-        let default = window.start..window.start.saturating_add(8192);
-        match IntonoPersistence::with_reserved_buffer(spiflash, default, window) {
-            Ok(mut storage) => {
-                preferences::load(&mut storage, &mut opts).ok();
-                Some(storage)
-            }
-            Err(_) => {
-                warn!("Invalid option storage window");
-                None
-            }
-        }
-    } else {
-        warn!("No option storage region; settings will not persist");
-        None
-    };
     // Recall instrument settings, not the navigation position saved alongside
     // them. Start at the INTONO tuning page heading on every boot, outside edit mode.
     opts.tracker.page.value = Page::Tuner;
@@ -3047,7 +3057,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
     // before registering interrupts, so their stack frames cannot overlap.
     install_quant();
     boot_mark(b'R');
-    let mut applied_palette=0u8;
+    let mut applied_palette=u8::MAX;
     let RuntimeResources {
         video,
         uart,
@@ -3105,7 +3115,10 @@ fn run(resources: &mut RuntimeResources) -> ! {
         let mut publication_hold = ui_scene::PublicationHold::new();
         let mut scale_preview = ui_scale::Cache::new();
         let mut scene = ui_scene::Scene::Spiral;
-        let mut calibration_revision = 0u64;
+        let mut calibration_revision = calibration_plot_revision(None,
+            (bipolar::MIN_UV, bipolar::MAX_UV), (0, 6_000_000),
+            with_app(|app| app.ui.opts.calibrate.graph.value),
+            ui_canvas::CAL_ERROR_SPAN_MC);
         let mut calibration_plot_dirty = false;
         let mut live_trace = ui_scene::LiveTrace::new();
         let mut text_scenes = [None; 2];
@@ -3432,9 +3445,12 @@ fn run(resources: &mut RuntimeResources) -> ! {
             let theme=with_app(|a|a.ui.opts.settings.palette.value as u8);
             if theme!=applied_palette {
                 for intensity in 0..16u8 {
-                    let (r,g,b)=ui_theme::color(theme,intensity).unwrap_or_else(||palette::ColorPalette::default().color(intensity,9));
+                    let (r,g,b)=ui_theme::color(theme,intensity);
                     video.set_palette_rgb(intensity,9,r,g,b);
                 }
+                let (r,g,b)=ui_theme::highlight(theme);
+                video.set_palette_rgb(15,2,r,g,b);
+                video.set_palette_rgb(13,2,r,g,b);
                 applied_palette=theme;
             }
             if save_feedback.tick(feedback_ms) {
@@ -3903,7 +3919,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                             let width=(ui_text::ux_column((f.column+f.width) as usize)-ui_text::ux_column(f.column as usize))*12+8;
                             let focused=selected==Some(index);
                             if focused && editing {d.rounded_fill(x as u16,f.row as u16*32-6,width as u16,28);}
-                            else {d.outline(x as u16,f.row as u16*32-6,width as u16,28,focused);}
+                            else if focused {d.outline(x as u16,f.row as u16*32-6,width as u16,28,true);}
                         }
                         let r=ui_imported::STRIP;d.add(r.x as u16,r.y as u16,r.width,r.height,0,true);
                         d
@@ -3913,7 +3929,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                         // TOPIC is a firmware-owned control; SCROLL retains its
                         // existing hardware border and option index.
                         if selected && editing {drawing.rounded_fill(164,154,392,28);}
-                        drawing.outline(164,154,392,28,selected);
+                        if selected && !editing {drawing.outline(164,154,392,28,true);}
                         drawing
                     } else if page==Page::Reference {
                         let reference=critical_section::with(|cs|*REFERENCE_CV.borrow_ref(cs));

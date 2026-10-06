@@ -149,7 +149,8 @@ pub fn inline_field(column:usize,row:usize,width:usize,label:&str,value:&str,
     style:Style,mut emit:impl FnMut(u16,u32)) -> bool {
     if column>=32 || row>=22 {return false;}
     let start=ux_column(column);let end=ux_column((column+width).min(32));
-    let count=label.chars().count()+2+value.chars().count();
+    let label_count=label.chars().count();
+    let count=label_count+2+value.chars().count();
     if count>end-start {return false;}
     let padding=(end-start-count)/2;
     let shift=center_shift(end-start,count);
@@ -158,7 +159,8 @@ pub fn inline_field(column:usize,row:usize,width:usize,label:&str,value:&str,
         let character=if offset>=padding && offset<padding+count {
             chars.next().unwrap_or(' ')
         } else {' '};
-        emit((row*COLUMNS+start+offset) as u16,cell(character,style) | (if character == ' ' { 0 } else { shift<<16 }));
+        let ink=if style.color==0xD9 && offset>=padding && offset<padding+label_count+1 {Style{color:0x69,..style}}else{style};
+        emit((row*COLUMNS+start+offset) as u16,cell(character,ink) | (if character == ' ' { 0 } else { shift<<16 }));
     }
     true
 }
@@ -229,6 +231,18 @@ mod tests {
         assert!(!inline_field(4,5,10,"PROFILE","TWENTY-FOUR LETTER NAME",DEFAULT,|_,_|panic!()));
         assert!(!inline_field(30,5,10,"X","Y",DEFAULT,|_,_|panic!()));
         assert!(!inline_field(4,22,10,"X","Y",DEFAULT,|_,_|panic!()));
+    }
+    #[test]
+    fn inline_labels_use_primary_ink_without_breaking_edit_contrast() {
+        for (color,label_ink,value_ink) in [(0xD9,0x69,0xD9),(0x09,0x09,0x09),(0xF9,0xF9,0xF9)] {
+            let mut cells=Vec::new();
+            assert!(inline_field(3,5,9,"SLOT","8",Style{color,bold:false},|_,c|cells.push(c)));
+            for c in cells {
+                let ch=((c&127) as u8+32) as char;
+                if ch==' ' {continue;}
+                assert_eq!((c>>8)&255,if ch=='8' {value_ink}else{label_ink});
+            }
+        }
     }
     #[test]
     fn sparse_clear_preserves_bank_independence_and_shorter_fields() {

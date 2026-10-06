@@ -87,9 +87,9 @@ pub enum CalibrationPolicy {
 
 #[derive(Clone, Copy, PartialEq, EnumIter, IntoStaticStr, Default, Serialize, Deserialize)]
 pub enum CalibrationGraph {
-    #[default]
     #[strum(serialize = "PITCH")]
     Pitch,
+    #[default]
     #[strum(serialize = "ERROR")]
     Error,
 }

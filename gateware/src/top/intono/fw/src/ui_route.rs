@@ -83,7 +83,7 @@ impl Drawing {
         if self.len>old {self.shapes[old as usize].kind=ShapeKind::RoundedFill;}
     }
     pub fn changed(&self,old:&Self)->bool {self.len!=old.len || self.shapes[..self.len as usize]!=old.shapes[..old.len as usize]}
-    pub fn outline(&mut self,x:u16,y:u16,w:u16,h:u16,selected:bool){self.add(x,y,w,h,if selected {0xD9}else{0x49},false);}
+    pub fn outline(&mut self,x:u16,y:u16,w:u16,h:u16,selected:bool){self.add(x,y,w,h,if selected {0xF2}else{0x49},false);}
 }
 // Kept static, not in the already substantial foreground stack frame. Less
 // than 1 KiB for both retained sparse lists; no second raster framebuffer.

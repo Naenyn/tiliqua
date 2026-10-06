@@ -40,7 +40,7 @@ AUTO is the usual starting policy. PRECISION demands tighter results from a stab
 
 SCAN finds the usable range, measures it, then checks and may refine the curve. Allow several minutes: recent rack runs took about 4-7 minutes. Low tones, gaps and unstable readings can take longer; there is no fixed total run time. SEARCHING FOR TONE is expected near the low end. STOP interrupts; RESUME appears when available.
 
-PITCH plots notes against voltage; ERROR shows error in cents. The dashed guide is nominal response. Review the result before ACCEPT. CHECKS DISAGREE means independent checks found different errors; check patch and stability and consider another scan.
+ERROR (default): tracking error in cents. Fixed colors: up to 2c (white), 5c (green), 15c (yellow), 30c (orange), then red. PITCH shows notes vs voltage; the guide is nominal. Review before ACCEPT. CHECKS DISAGREE: checks differ. Check patch and stability.
 
 ACCEPT keeps the result in RAM. PROFILES lets you name and save it. DISCARD keeps the previous profile. Use a saved profile for the same oscillator and tuning setup; use NONE for nominal CV without correction. A profile cannot correct a range the oscillator could not reliably produce.
 ## CAL PROFILES
@@ -58,7 +58,7 @@ Scales store intervals, not a musical root. Choose the root key and mapping when
 
 OUTPUT chooses the working scale to edit. PRESET chooses a factory pattern or CUSTOM. Only this preset list wraps from its last item back to its first.
 
-White and black keys show the familiar keyboard layout. Colored keys are included in the scale. The yellow outline marks the key selected for editing. Click that key to include or exclude it.
+White and black keys show the familiar keyboard layout. Colored keys are included in the scale. The bright outline marks the key selected for editing. Click that key to include or exclude it.
 
 OCTAVES sets a repeating pattern from one to eight octaves. VIEW appears for two or more octaves; navigation stays within that view.
 

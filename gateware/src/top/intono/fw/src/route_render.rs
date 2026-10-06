@@ -63,7 +63,7 @@ fn left(
         ui_text::Align::Left,
     );
 }
-fn button(
+fn control(
     d: &mut ui_route::Drawing,
     text: &mut TextWriter<'_>,
     x: u16,
@@ -72,6 +72,7 @@ fn button(
     value: &str,
     focus: bool,
     locked: bool,
+    normal:u8,
 ) {
     debug_assert!(
         value.chars().count() <= width as usize / 12,
@@ -81,8 +82,8 @@ fn button(
     let filled = focus && !locked && d.editing;
     if filled {
         d.rounded_fill(x, row as u16 * 32 - 6, width, 28);
-    } else {
-        d.outline(x, row as u16 * 32 - 6, width, 28, focus && !locked);
+    } else if focus && !locked {
+        d.outline(x, row as u16 * 32 - 6, width, 28, true);
     }
     label(
         text,
@@ -97,10 +98,17 @@ fn button(
         } else if focus {
             0xF9
         } else {
-            0xB9
+            normal
         },
         focus,
     );
+}
+// Actions use the complementary family; editable values stay neutral white.
+fn button(d:&mut ui_route::Drawing,text:&mut TextWriter<'_>,x:u16,row:u8,width:u16,value:&str,focus:bool,locked:bool) {
+    control(d,text,x,row,width,value,focus,locked,0xC9);
+}
+fn value_button(d:&mut ui_route::Drawing,text:&mut TextWriter<'_>,x:u16,row:u8,width:u16,value:&str,focus:bool,locked:bool) {
+    control(d,text,x,row,width,value,focus,locked,0xD9);
 }
 fn history(d: &mut ui_route::Drawing, h: &ui_route::History, out: usize, y: u16) {
     for i in 0..8 {
@@ -148,8 +156,8 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
     let mut s = String::<64>::new();
     if with_app(|a| a.ui.opts.tracker.page.value) == options::Page::Settings {
         if let Some(entry) = menu.entries[0].as_ref() {
-            left(text, 216, 6, 144, "A4 REF", 0x89, false);
-            button(
+            left(text, 216, 6, 144, "A4 REF", 0x69, false);
+            value_button(
                 &mut d,
                 text,
                 360,
@@ -180,27 +188,27 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
             selected == Some(2),
             false,
         );
-        label(text, 144, 14, 432, "PALETTE / A4 / TUNER / CALIBRATION", 0x89, false);
+        label(text, 144, 14, 432, "PALETTE / A4 / TUNER / CALIBRATION", 0x69, false);
         label(
             text,
             144,
             15,
             432,
             "PROFILES / SCALES / CONFIGS KEPT",
-            0x89,
+            0x69,
             false,
         );
         if let Some(entry)=menu.entries[3].as_ref() {
-            left(text,216,8,144,"PALETTE",0x89,false);
-            button(&mut d,text,360,8,144,&entry.value,selected==Some(3),false);
+            left(text,216,8,144,"PALETTE",0x69,false);
+            value_button(&mut d,text,360,8,144,&entry.value,selected==Some(3),false);
         }
         return d;
     }
     if with_app(|a| a.ui.opts.tracker.page.value) == options::Page::QuantSetups {
         label(text, 168, 4, 384, "CONFIGS", 0xF9, true);
         if let Some(entry) = menu.entries[0].as_ref() {
-            left(text, 240, 5, 144, "CONFIG SLOT", 0x89, false);
-            button(
+            left(text, 240, 5, 144, "CONFIG SLOT", 0x69, false);
+            value_button(
                 &mut d,
                 text,
                 384,
@@ -211,12 +219,12 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
                 false,
             );
         }
-        label(text,120,6,480,&config_slot_name(),0xB9,false);
-        label(text, 120, 7, 480, "CURRENT ROUTE ASSIGNMENTS", 0x89, false);
+        label(text,120,6,480,&config_slot_name(),0xD9,false);
+        label(text, 120, 7, 480, "CURRENT ROUTE ASSIGNMENTS", 0x69, false);
         for route in 0..4 {
             s.clear();
             ui_route::write_assignment(&mut s, groups, route);
-            left(text, 120, 8 + route * 2, 480, &s, 0xB9, false);
+            left(text, 120, 8 + route * 2, 480, &s, 0xD9, false);
         }
         button(
             &mut d,
@@ -256,7 +264,7 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
             18,
             384,
             if status_slot == slot { status } else { "" },
-            0x89,
+            0x69,
             false,
         );
         button(
@@ -280,14 +288,14 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
                 q.midi_base_learn.route == Some(route as u8),
             )
         });
-        label(text, 168, 4, 384, "MIDI TRANSPOSE", 0xF9, true);
+        label(text, 168, 4, 384, "MIDI TRANSPOSE", 0xC9, true);
         label(
             text,
             144,
             6,
             432,
             "CHOOSE A ROUTE TO CONFIGURE",
-            0x89,
+            0x69,
             false,
         );
         for (index, row, name, action) in [
@@ -324,8 +332,8 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
                     locked,
                 );
             } else {
-                left(text, 192, row, 120, name, 0x89, false);
-                button(
+                left(text, 192, row, 120, name, 0x69, false);
+                value_button(
                     &mut d,
                     text,
                     312,
@@ -338,7 +346,7 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
             }
         }
         write!(s, "ROUTE {} TRANSPOSE: {:+} ST", route + 1, shift).ok();
-        label(text, 144, 14, 432, &s, 0xB9, false);
+        label(text, 144, 14, 432, &s, 0xD9, false);
         label(
             text,
             144,
@@ -349,10 +357,10 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
             } else {
                 "APPLIES TO ALL ROUTE OUTPUTS"
             },
-            0x89,
+            0x69,
             false,
         );
-        label(text, 168, 16, 384, "SAVED WITH CONFIG", 0x89, false);
+        label(text, 168, 16, 384, "SAVED WITH CONFIG", 0x69, false);
         return d;
     }
     match view.screen {
@@ -364,16 +372,16 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
                     route_ui::WarningKind::Running(n) => {
                         s.clear();
                         write!(s, "ROUTE {} IS RUNNING", n + 1).ok();
-                        label(text, 168, 9, 384, &s, 0xB9, false);
-                        label(text, 168, 11, 384, "STOP IT BEFORE LOADING", 0x89, false);
+                        label(text, 168, 9, 384, &s, 0xD9, false);
+                        label(text, 168, 11, 384, "STOP IT BEFORE LOADING", 0x69, false);
                         s.clear();
                         write!(s, "GO TO ROUTE {}", n + 1).ok();
                         button(&mut d, text, 180, 14, 216, &s, w.go, false);
                         button(&mut d, text, 408, 14, 132, "CANCEL", !w.go, false);
                     }
                     route_ui::WarningKind::Calibration => {
-                        label(text, 168, 9, 384, "CALIBRATION IS RUNNING", 0xB9, false);
-                        label(text, 168, 11, 384, "STOP SCAN BEFORE LOADING", 0x89, false);
+                        label(text, 168, 9, 384, "CALIBRATION IS RUNNING", 0xD9, false);
+                        label(text, 168, 11, 384, "STOP SCAN BEFORE LOADING", 0x69, false);
                         button(&mut d, text, 288, 14, 144, "CANCEL", true, false);
                     }
                     route_ui::WarningKind::SavedConflict(output, jack, a, b) => {
@@ -385,19 +393,19 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
                             jack
                         )
                         .ok();
-                        label(text, 168, 9, 384, &s, 0xB9, false);
+                        label(text, 168, 9, 384, &s, 0xD9, false);
                         s.clear();
                         write!(s, "SAVED ROUTES {} AND {}", a + 1, b + 1).ok();
-                        label(text, 168, 11, 384, &s, 0x89, false);
+                        label(text, 168, 11, 384, &s, 0x69, false);
                         button(&mut d, text, 288, 14, 144, "CANCEL", true, false);
                     }
                     route_ui::WarningKind::InvalidSetup => {
-                        label(text, 168, 9, 384, "SAVED CONFIG IS INVALID", 0xB9, false);
-                        label(text, 168, 11, 384, "CHECK JACK ASSIGNMENTS", 0x89, false);
+                        label(text, 168, 9, 384, "SAVED CONFIG IS INVALID", 0xD9, false);
+                        label(text, 168, 11, 384, "CHECK JACK ASSIGNMENTS", 0x69, false);
                         button(&mut d, text, 288, 14, 144, "CANCEL", true, false);
                     }
                 }
-                label(text, 168, 15, 384, "CURRENT CONFIG KEPT", 0x89, false);
+                label(text, 168, 15, 384, "CURRENT CONFIG KEPT", 0x69, false);
             }
             return d;
         }
@@ -421,7 +429,7 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
                     row,
                     108,
                     &s,
-                    if focused { 0xF9 } else { 0xB9 },
+                    if focused { 0xF9 } else { 0xD9 },
                     focused,
                 );
                 s.clear();
@@ -435,7 +443,7 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
                 } else {
                     s.push_str("NOT ASSIGNED").ok();
                 }
-                left(text, 288, row, 204, &s, 0x89, false);
+                left(text, 288, row, 204, &s, 0x69, false);
                 label(
                     text,
                     492,
@@ -448,7 +456,7 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
                     } else {
                         "STOP"
                     },
-                    if active & mask != 0 { 0xD4 } else { 0x89 },
+                    if active & mask != 0 { 0xD4 } else { 0x69 },
                     false,
                 );
                 if expanded {
@@ -460,7 +468,7 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
                             s.clear();
                             write!(s, "OUT{}", out).ok();
                             d.outline(156, r as u16 * 32 - 3, 60, 26, false);
-                            label(text, 156, r, 60, &s, 0xB9, true);
+                            label(text, 156, r, 60, &s, 0xD9, true);
                             s.clear();
                             if !c.quantize {
                                 s.push_str("BYPASS").ok();
@@ -478,11 +486,11 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
                                 )
                                 .ok();
                             }
-                            left(text, 240, r, 324, &s, 0xB9, false);
+                            left(text, 240, r, 324, &s, 0xD9, false);
                             s.clear();
                             write_profile_source(&mut s, c.correction);
                             write!(s, " / {:+} ST", c.transpose).ok();
-                            left(text, 240, r + 1, 252, &s, 0x89, false);
+                            left(text, 240, r + 1, 252, &s, 0x69, false);
                             if active & (1 << out) != 0 {
                                 history(&mut d, &h, out, (r + 1) as u16 * 32);
                             }
@@ -499,7 +507,7 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
                 } else {
                     write!(s, "MIDI CH{} / {:+}st", midi.channel, shift).ok();
                 }
-                label(text, 168, 17, 384, &s, 0x89, false);
+                label(text, 168, 17, 384, &s, 0x69, false);
             }
             button(
                 &mut d,
@@ -531,7 +539,7 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
                 if running { "RUNNING" } else { "STOPPED" }
             )
             .ok();
-            label(text, 192, 4, 336, &s, 0xB9, false);
+            label(text, 192, 4, 336, &s, 0xD9, false);
             if groups.outputs[route] == 0 {
                 let claims = critical_section::with(|cs| *OWNERS.borrow_ref(cs));
                 let available = groups.available(route as u8, true, &claims) != 0
@@ -547,7 +555,7 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
                     !available,
                 );
                 if !available {
-                    label(text, 192, 13, 336, "NO FREE INPUT / OUTPUT", 0x89, false);
+                    label(text, 192, 13, 336, "NO FREE INPUT / OUTPUT", 0x69, false);
                 }
                 button(
                     &mut d,
@@ -573,7 +581,7 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
             }
             for (node, x, title) in [(0, 168, "CV INPUT"), (1, 384, "MIDI TRANSPOSE")] {
                 d.outline(x, 154, 168, 60, selected == Some(node));
-                label(text, x, 5, 168, title, 0x89, false);
+                label(text, x, 5, 168, title, if node==1 {0xB9}else{0x69}, false);
                 s.clear();
                 if node == 0 {
                     write!(s, "IN{}", groups.inputs[route]).ok();
@@ -582,7 +590,7 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
                 } else {
                     write!(s, "CH{} {:+}st", midi.channel, shift).ok();
                 }
-                label(text, x, 6, 168, &s, 0xB9, false);
+                label(text, x, 6, 168, &s, if node==1 {0xC9}else{0xD9}, false);
             }
             let outs = view.outputs(route as u8);
             // Musical processing and oscillator/output setup are grouped.
@@ -628,9 +636,9 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
                 );
                 d.add(360, center, 48, 1, 0x49, true);
                 for dx in 0..3 {
-                    d.add(393 + dx, center - 2 + dx, 1, 5 - dx * 2, 0x89, true);
+                    d.add(393 + dx, center - 2 + dx, 1, 5 - dx * 2, 0x69, true);
                 }
-                label(text, 168, row, 180, "PITCH", 0x89, false);
+                label(text, 168, row, 180, "PITCH", 0x69, false);
                 s.clear();
                 if !c.quantize {
                     s.push_str("BYPASS").ok();
@@ -639,7 +647,7 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
                 } else {
                     s.push_str(scale_label(c.scale)).ok();
                 }
-                label(text, 168, row + 1, 180, &s, 0xB9, false);
+                label(text, 168, row + 1, 180, &s, 0xD9, false);
                 s.clear();
                 write!(
                     s,
@@ -648,16 +656,16 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
                     if c.equal { "EQUAL" } else { "NEAREST" }
                 )
                 .ok();
-                label(text, 168, row + 2, 180, &s, 0x89, false);
+                label(text, 168, row + 2, 180, &s, 0x69, false);
                 s.clear();
                 write!(s, "{:+}ST MIDI{:+}", c.transpose, shift).ok();
-                label(text, 168, row + 3, 180, &s, 0x89, false);
+                label(text, 168, row + 3, 180, &s, 0x69, false);
                 s.clear();
                 write!(s, "OUTPUT {}", out).ok();
-                label(text, 420, row, 144, &s, 0x89, false);
+                label(text, 420, row, 144, &s, 0x69, false);
                 s.clear();
                 write_profile_source(&mut s, c.correction);
-                label(text, 420, row + 1, 144, &s, 0xB9, false);
+                label(text, 420, row + 1, 144, &s, 0xD9, false);
                 s.clear();
                 if c.correction != 0 && c.correction != bound[out] {
                     s.push_str("APPLY!").ok();
@@ -665,7 +673,7 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
                     s.push_str("0V ").ok();
                     pitch_units::write_note(&mut s, c.zero as i32).ok();
                 }
-                label(text, 420, row + 2, 144, &s, 0x89, false);
+                label(text, 420, row + 2, 144, &s, 0x69, false);
                 s.clear();
                 if active & (1 << out) != 0 {
                     pitch_units::write_note(&mut s, pitches[out].div_euclid(100_000)).ok();
@@ -678,12 +686,12 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
                     row + 3,
                     144,
                     &s,
-                    if active & (1 << out) != 0 { 0xD4 } else { 0x89 },
+                    if active & (1 << out) != 0 { 0xD4 } else { 0x69 },
                     false,
                 );
             }
             if outs[0].is_none() {
-                label(text, 192, 10, 336, "ADD AN OUTPUT TO BEGIN", 0x89, false);
+                label(text, 192, 10, 336, "ADD AN OUTPUT TO BEGIN", 0x69, false);
             }
             if groups.outputs[route].count_ones() > 2 {
                 s.clear();
@@ -829,8 +837,8 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
                         locked,
                     );
                 } else {
-                    left(text, 192, row, 120, label_name, 0x89, false);
-                    button(
+                    left(text, 192, row, 120, label_name, 0x69, false);
+                    value_button(
                         &mut d,
                         text,
                         312,
@@ -869,14 +877,14 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
             }
             let jacks = matches!(stage, Stage::Input | Stage::Add | Stage::Destination);
             if jacks {
-                label(text, 192, 14, 336, "* ASSIGNED TO THIS ROUTE", 0x89, false);
-                label(text, 192, 15, 336, "DIM = ASSIGNED", 0x89, false);
+                label(text, 192, 14, 336, "* ASSIGNED TO THIS ROUTE", 0x69, false);
+                label(text, 192, 15, 336, "DIM = ASSIGNED", 0x69, false);
             } else if running && stage != Stage::Midi {
-                label(text, 192, 15, 336, "STOP ROUTE TO EDIT", 0x89, false);
+                label(text, 192, 15, 336, "STOP ROUTE TO EDIT", 0x69, false);
             } else if stage == Stage::Midi {
                 s.clear();
                 write!(s, "TRANSPOSE: {:+} ST", shift).ok();
-                label(text, 192, 14, 336, &s, 0xB9, false);
+                label(text, 192, 14, 336, &s, 0xD9, false);
                 label(
                     text,
                     192,
@@ -889,7 +897,7 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
                     } else {
                         "SHARED BY ALL OUTPUTS"
                     },
-                    0x89,
+                    0x69,
                     false,
                 );
             }
@@ -918,7 +926,7 @@ pub fn publish(text: &mut TextWriter<'_>, menu: &MenuSnapshot) -> ui_route::Draw
         } else {
             "TURN TO SELECT / CLICK TO OPEN"
         }),
-        0x89,
+        0x69,
         false,
     );
     d
@@ -939,8 +947,8 @@ pub fn reference(
     label(text, 168, 6, 384, "REFERENCE CV", 0xF9, true);
     for (index, name, row) in [(0, "OUTPUT", 8), (1, "VOLTAGE", 10), (2, "STEP", 12)] {
         if let Some(entry) = menu.entries[index].as_ref() {
-            left(text, 168, row, 132, name, 0x89, false);
-            button(
+            left(text, 168, row, 132, name, 0x69, false);
+            value_button(
                 &mut d,
                 text,
                 312,
@@ -976,7 +984,7 @@ pub fn reference(
         selected == Some(4),
         false,
     );
-    label(text, 168, 16, 384, reference.status, 0xB9, false);
+    label(text, 168, 16, 384, reference.status, 0xD9, false);
     for output in 0..4 {
         let mut number = String::<8>::new();
         write!(&mut number, "OUT{}", output).ok();
@@ -987,13 +995,13 @@ pub fn reference(
             96,
             &number,
             if reference.free & (1 << output) != 0 {
-                0xB9
+                0xD9
             } else {
                 0x49
             },
             false,
         );
     }
-    label(text, 168, 18, 384, "DIM = ASSIGNED", 0x89, false);
+    label(text, 168, 18, 384, "DIM = ASSIGNED", 0x69, false);
     d
 }

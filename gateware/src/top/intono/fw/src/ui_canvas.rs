@@ -35,7 +35,7 @@ pub fn calibration_tracking_color(
         - delta_uv * 1_200_000 / 1_000_000;
     let slope_mc_per_volt = error_mc.abs().saturating_mul(1_000_000) / delta_uv;
     Some(if slope_mc_per_volt < 50_000 { 0xD9 }
-        else if slope_mc_per_volt < 200_000 { 0xD2 }
+        else if slope_mc_per_volt < 200_000 { 0xE2 }
         else { 0xD0 })
 }
 
@@ -221,6 +221,27 @@ pub fn calibration_error_mc(
 ) -> i64 {
     pitch_mc as i64 - anchor_mc as i64
         - (voltage_uv as i64 - anchor_uv as i64) * 1_200_000 / 1_000_000
+}
+
+/// Fixed absolute-error bands, independent of the graph's automatic Y range.
+/// White <=2c; green <=5c; yellow <=15c; orange <=30c; red above30c.
+pub fn calibration_error_color(error_mc:i64)->u8 {
+    match error_mc.unsigned_abs() {0..=2_000=>0xFF,2_001..=5_000=>0xD4,
+        5_001..=15_000=>0xE2,15_001..=30_000=>0xD1,_=>0xD0}
+}
+
+#[cfg(test)]
+mod error_color_tests {
+    #[test]
+    fn bands_are_absolute_fixed_and_safe_at_integer_limits() {
+        for (amount,color) in [(0,0xFF),(2_000,0xFF),(2_001,0xD4),(5_000,0xD4),
+            (5_001,0xE2),(15_000,0xE2),(15_001,0xD1),(30_000,0xD1),(30_001,0xD0)] {
+            assert_eq!(super::calibration_error_color(amount),color);
+            assert_eq!(super::calibration_error_color(-amount),color);
+        }
+        assert_eq!(super::calibration_error_color(i64::MIN),0xD0);
+        assert_eq!(super::calibration_error_color(i64::MAX),0xD0);
+    }
 }
 
 pub fn calibration_ideal_mc(voltage_uv: i32, anchor_uv: i32, anchor_mc: i32) -> i32 {
@@ -976,7 +997,7 @@ mod tests {
     #[test]
     fn tracking_strip_shows_local_slope_and_leaves_missing_intervals_blank() {
         assert_eq!(calibration_tracking_color(0, 0, 100_000, 120_000), Some(0xD9));
-        assert_eq!(calibration_tracking_color(0, 0, 100_000, 130_000), Some(0xD2));
+        assert_eq!(calibration_tracking_color(0, 0, 100_000, 130_000), Some(0xE2));
         assert_eq!(calibration_tracking_color(0, 0, 100_000, 150_000), Some(0xD0));
         assert_eq!(calibration_tracking_color(0, 0, 126_000, 151_200), None);
         assert_eq!(calibration_tracking_color(0, 0, 0, 0), None);

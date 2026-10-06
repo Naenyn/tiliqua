@@ -13,14 +13,14 @@ pub fn text(table:&scale::Imported,slot:u8,page:u8,mut emit:impl FnMut(u16,u32))
     let (count,period)=table.summary();let mut s=String::<48>::new();
     write!(&mut s,"SCALA / USER SLOT {}",slot).ok();label(7,&s,0xF9,&mut emit);
     s.clear();write!(&mut s,"{} PITCHES / REPEATING PATTERN",count).ok();label(8,&s,0xB9,&mut emit);
-    s.clear();write!(&mut s,"PERIOD {}.{:03} CENTS",period/1000,period%1000).ok();label(9,&s,0xB9,&mut emit);
+    s.clear();write!(&mut s,"PERIOD {}.{:03} CENTS",period/1000,period%1000).ok();label(9,&s,0xD9,&mut emit);
     ui_text::field(3,12,10,"0",ui_text::DEFAULT,ui_text::Align::Left,&mut emit);
     s.clear();write!(&mut s,"{}.{:03}",period/1000,period%1000).ok();
     ui_text::field(27,12,10,&s,ui_text::DEFAULT,ui_text::Align::Right,&mut emit);
     let degrees=table.degrees();
     for (i,pitch) in degrees.iter().skip(page_start(count,page)).take(6).enumerate() {
         s.clear();write!(&mut s,"{}: {}.{:03}c",page_start(count,page)+i+1,pitch/1000,pitch%1000).ok();
-        ui_text::field(if i<3 {4}else{23},13+i%3,15,&s,ui_text::Style{color:0xB9,bold:false},ui_text::Align::Left,&mut emit);
+        ui_text::field(if i<3 {4}else{23},13+i%3,15,&s,ui_text::Style{color:0xD9,bold:false},ui_text::Align::Left,&mut emit);
     }
     s.clear();write!(&mut s,"{}-{} OF {} / READ ONLY",page_start(count,page)+1,(page_start(count,page)+6).min(count as usize),count).ok();
     ui_text::field(0,16,26,&s,ui_text::Style{color:0x89,bold:false},ui_text::Align::Center,&mut emit);

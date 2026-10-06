@@ -504,3 +504,10 @@ fn navigation_leds_follow_visible_pages_and_controls() {
     v.warn(&mut o,route_ui::WarningKind::Calibration);
     assert_eq!(v.led_index(&o,false),0);
 }
+
+#[test]
+fn calibration_defaults_to_deviation_without_reordering_saved_variants() {
+    assert!(Opts::default().calibrate.graph.value==options::CalibrationGraph::Error);
+    use strum::IntoEnumIterator;
+    assert!(options::CalibrationGraph::iter().next().unwrap()==options::CalibrationGraph::Pitch);
+}

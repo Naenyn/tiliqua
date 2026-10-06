@@ -110,8 +110,8 @@ class RoundedBorders(wiring.Component):
             inside=(ly2<Mux(compact2,21,28))&(rx2>=off2)&(rx2<width2-off2)
             inset=(ly2>=2)&(ly2<Mux(compact2,19,26))&(rx2>=inner_off2)&(rx2<width2-inner_off2)
             hit3=Signal();color3=Signal(8)
-            m.d.dvi += [hit3.eq(active2 & inside & (~inset | (selected2 & Mux(tab2,mode2==0,mode2==2)))),
-                        color3.eq(Mux(selected2,Mux(tab2,Mux(mode2==0,0xB9,0x69),0xF9),0x49))]
+            m.d.dvi += [hit3.eq(active2 & (tab2 | (selected2 & (mode2!=0))) & inside & (~inset | (selected2 & Mux(tab2,mode2==0,mode2==2)))),
+                        color3.eq(Mux(tab2,Mux(selected2,Mux(mode2==0,0xB9,0x69),0x49),Mux(mode2==2,0xF9,0xF2)))]
             hits.append(hit3);colors.append(color3)
         # Six boxes follow the visible navigation order, including subpages.
         page=Mux((self.surface==0)|(self.surface==14)|(self.surface==15),0,Mux(self.surface<=3,1,Mux((self.surface<=5)|(self.surface==10),2,

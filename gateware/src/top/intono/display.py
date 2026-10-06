@@ -194,7 +194,7 @@ class IntonoOverlay(wiring.Component):
             raw = self.i.pixel.as_value()
             known = ((raw == 0) | (self.i.pixel.color == 9) |
                      (raw == 0xFF) | (raw == 0xDB) | (raw == 0xD2) |
-                     (raw == 0xD0) | (raw == 0xD4) |
+                     (raw == 0xD0) | (raw == 0xD1) | (raw == 0xD4) |
                      ((self.i.pixel.intensity >= 14) & (self.i.pixel.color < 12)))
             bad = self.i.de & ((~known) | ((~active) & (raw != 0)))
             # Sticky evidence is enough to distinguish an incoming bad sample
@@ -223,7 +223,7 @@ class IntonoOverlay(wiring.Component):
             mask = Mux(self.i.pixel.intensity == 15, state["keyboard_mask_b"], state["keyboard_mask"])
             selected = mask.bit_select(note,1)
             fill = active & state["keyboard_enable"] & tagged
-            # Excluded keys are white/black; included intervals share blue.
+            # Excluded keys are white/black; included intervals use the theme highlight.
             lefts=Array(Const(n,10) for n in (165,203,221,259,277,333,371,389,427,445,483,501))
             key_top=248+Mux(self.i.pixel.intensity==15,140,0)+Mux(state["keyboard_second"],0,32)
             rx=Signal(signed(12));ry=Signal(signed(12))
@@ -236,8 +236,8 @@ class IntonoOverlay(wiring.Component):
             m.d.dvi += [rx1.eq(rx),ry1.eq(ry),black1.eq(black),
                         cursor1.eq(cursor),selected1.eq(selected),fill1.eq(fill),second1.eq(state["keyboard_second"])]
             rx,ry,black,cursor,selected,fill=rx1,ry1,black1,cursor1,selected1,fill1
-            # A two-pixel yellow ring with a dark halo on both sides stays
-            # visible on white, black, and blue keys without changing membership.
+            # A two-pixel white ring with a dark halo on both sides stays
+            # visible on white, black, and highlighted keys without changing membership.
             right=Mux(black,34,54);bottom=Mux(black,Mux(second1,53,77),Mux(second1,99,143))
             edge=(rx<=4)|(rx>=right-4)|(ry<=4)|(ry>=bottom-4)
             # Key radius is four pixels. Insetting the ring by two leaves
@@ -248,8 +248,8 @@ class IntonoOverlay(wiring.Component):
             outer=(ry>=2)&(ry<=bottom-2)&(rx>=inset)&(rx<=right-inset)
             inner=(rx>=4)&(rx<=right-4)&(ry>=4)&(ry<=bottom-4)
             yellow=outer & ~inner
-            fill_color=Mux(cursor&edge,Mux(yellow,0xD2,0x09),
-                           Mux(selected,0xA9,Mux(black,0x09,0xF9)))
+            fill_color=Mux(cursor&edge,Mux(yellow,0xF9,0x09),
+                           Mux(selected,0xF2,Mux(black,0x09,0xF9)))
         else:
             fill, fill_color = Const(0), Const(0,8)
         fill_stages = 3 if self.large_text else 4

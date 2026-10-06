@@ -212,8 +212,8 @@ musical key or semitone transpose. Set OCTAVES (1–8, default 1), then turn thr
 keyboard keys, then click a highlighted key to toggle membership. Editing a
 preset selects Custom; **SCALE TOOLS** opens slot/save/load and MIDI facilities.
 ROUTES selects Scale, Key, and Transpose independently for each output. The standard scales use a piano-key preview: included keys are filled
-blue, without on-key labels. Excluded natural keys are white and excluded sharps
-are black. Membership and the yellow focus outline with a dark halo update at a video-frame boundary. The
+with the palette highlight, without on-key labels. Excluded natural keys are white and excluded sharps
+are black. Membership and the white focus outline with a dark halo update at a video-frame boundary. The
 key outlines are cached, so switching pages does not require drawing them again.
 Custom patterns retain their exact degrees and explicit octave span, including
 empty octaves. Up to two keyboards are visible together; VIEW selects the first
@@ -480,13 +480,15 @@ A passing timing report alone does not establish HDMI lock, and a rebuild with
 the same seed can produce a different bitstream, so keep the hardware-verified
 archive when preparing a release.
 
-The interface uses rounded outline tabs and action buttons, with a brighter
-outline for the active page or focused action. Standard-scale piano keys have
-subtly rounded corners; included notes retain their cyan fill. Native font size
+The experimental visual treatment retains rounded page tabs and flow/card
+containers. Ordinary controls show an outline only when selected; value editing
+fills the selected field. The default theme uses subdued cyan structure,
+primary-color labels, complementary-color actions, white values, and palette selection highlights. Standard-scale piano keys have
+subtly rounded corners; included notes use the palette highlight. Native font size
 and character spacing are unchanged.
 
 SCALES and SCALE TOOLS display up to two stacked piano keyboards. One-octave
-patterns show only one keyboard. Turn to focus a key (yellow outline with a dark halo), click
+patterns show only one keyboard. Turn to focus a key (white outline with a dark halo), click
 to toggle it. OCTAVES sets the repeat length independently of note membership;
 VIEW browses adjacent octaves; keyboard focus stops at the visible page edges. On
 SCALE TOOLS, TOOLS OCT chooses the Clear/Fill target. Opening Scale Tools
@@ -632,3 +634,25 @@ creates a custom interval pattern without changing the factory table.
 Reference: [Seaside Modular Proteus manual](https://seaside.digital/manuals/ProteusManual.pdf),
 scale selection on page 9. This is a practical common set, not a measured popularity
 ranking. Proteus supplies the core set; Lydian, melodic minor and blues extend it.
+
+
+On the visual-hierarchy branch, CAL defaults to ERROR (saved graph preferences
+still take precedence). Error point colors use fixed absolute deviations from
+nominal 1 V/oct, anchored at the first measured point: white ≤2 cents, green
+≤5, yellow ≤15, orange ≤30, and red >30. The colored legend above the graph
+shows these upper bounds. Position still shows sharp/flat; automatic Y scaling
+does not change the color thresholds. These colors describe oscillator tracking,
+not the remaining error after applying a calibration profile.
+
+
+The visual-hierarchy palettes now each contain seven colors: primary dim,
+primary medium, primary bright, complementary dim, complementary medium,
+complementary bright, and highlight. The named combinations reuse REZO's
+control/modulation pairings (cyan/coral, green/magenta, violet/gold, and others).
+LCD remains grayscale. Black and white are shared constants. Guides and field
+labels use the primary family; actions and MIDI summaries use the complementary
+family; values use white. Control selection outlines use the highlight. Included keyboard intervals also
+use the highlight, while the key cursor is white with a dark halo. Blue pairs
+its primary cyan with bright orange rather than salmon. Calibration severity colors stay fixed. Tuner channels use their
+own fixed palette slots, including a separate cyan slot, so changing the UI
+theme cannot recolor channel identification. Existing saved theme IDs are intact.

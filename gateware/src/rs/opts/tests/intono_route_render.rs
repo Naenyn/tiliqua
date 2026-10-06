@@ -74,7 +74,7 @@ fn capture_dense_views_with_bounded_geometry(){
         let mut cells=[0;2025];let d=route_render::publish(&mut TextWriter{cells:&mut cells},&menu);
         let cards:Vec<_>=d.shapes[..d.len as usize].iter().filter(|s|s.x==144 && s.w==432).collect();
         assert_eq!(cards.len(),4);
-        for (n,card) in cards.iter().enumerate() {assert_eq!(card.color,if focus==Some(n){0xD9}else{0x49});}
+        for (n,card) in cards.iter().enumerate() {assert_eq!(card.color,if focus==Some(n){0xF2}else{0x49});}
     }
 
 }

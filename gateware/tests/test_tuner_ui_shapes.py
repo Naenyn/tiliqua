@@ -65,7 +65,7 @@ def test_border_pixels_and_focus_match_rounded_reference():
             for left,width,index in descriptors(7 if surface==10 else surface,row):
                 ctx.set(dut.focus,index)
                 selected= index==({0:0,1:1,2:1,3:1,4:2,5:2,6:3,7:3,10:2,11:3,12:3,14:0}.get(surface,-1)) if row==3 else ((surface==8+index or (surface==13 and index==0)) if row==20 else True)
-                expected_color=(0x69 if row in (3,20) else 0xF9) if selected else 0x49
+                expected_color=(0x69 if row in (3,20) else 0xF2) if selected else 0x49
                 # All corner pixels, straight sides, centers, and outside rows.
                 for yy in [-1,0,1,2,3,4,5,6,13,21,22,23,24,25,26,27,28]:
                     for xx in [-1,0,1,2,3,4,5,6,7,width//2,width-8,width-7,width-6,width-5,width-4,width-3,width-2,width-1,width]:
@@ -117,10 +117,10 @@ def test_linear_focus_outline_is_hidden_but_view_remains():
     async def bench(ctx):
         ctx.set(dut.active,1)
         for surface,focus_visible in [(0,True),(14,False)]:
-            ctx.set(dut.surface,surface)
+            ctx.set(dut.surface,surface);ctx.set(dut.focus,0)
             ctx.set(dut.y,126);ctx.set(dut.x,300);await ctx.tick('dvi').repeat(4)
             assert ctx.get(dut.hit)==focus_visible
-            ctx.set(dut.y,570);ctx.set(dut.x,300);await ctx.tick('dvi').repeat(4)
+            ctx.set(dut.focus,1);ctx.set(dut.y,570);ctx.set(dut.x,300);await ctx.tick('dvi').repeat(4)
             assert ctx.get(dut.hit)==1
     sim.add_testbench(bench);sim.run()
 
@@ -177,4 +177,20 @@ def test_imported_scale_keeps_scales_navigation_chrome():
             assert (await sample(ctx,354,70))==(1,0xB9)  # Third page box
             assert (await sample(ctx,370,70))[0]==0  # Fourth box interior
             assert (await sample(ctx,176,154))[0]==0  # No legacy MIDI body field
+    sim.add_testbench(bench);sim.run()
+
+
+def test_body_outlines_require_focus_and_disappear_in_page_navigation():
+    dut=RoundedBorders();sim=Simulator(dut);sim.add_clock(1e-6,domain='dvi')
+    async def bench(ctx):
+        ctx.set(dut.active,1);ctx.set(dut.surface,1)
+        # CAL input field: an unselected field is bare text, selected NAV has
+        # an outline, and EDIT fills the field without losing its rounded edge.
+        left,width,_=descriptors(1,5)[0]
+        for mode,focus,expected in [(1,4,0),(0,0,0),(1,0,1),(2,0,1)]:
+            ctx.set(dut.mode,mode);ctx.set(dut.focus,focus)
+            ctx.set(dut.x,left+width//2);ctx.set(dut.y,154)
+            await ctx.tick('dvi').repeat(5)
+            assert ctx.get(dut.hit)==expected
+            if expected:assert ctx.get(dut.color)==(0xF9 if mode==2 else 0xF2)
     sim.add_testbench(bench);sim.run()
