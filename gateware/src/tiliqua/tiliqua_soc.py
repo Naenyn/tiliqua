@@ -404,7 +404,12 @@ class TiliquaSoc(Component):
         reset_dvi = Signal()
         m.submodules.en_ff = cdc.FFSynchronizer(
                 i=~self.fb.fbp.enable, o=reset_dvi, o_domain="dvi", reset=1)
-        m.submodules.fb = ResetInserter({'sync': ~self.fb.fbp.enable, 'dvi': reset_dvi, 'dvi5x': reset_dvi})(self.fb)
+        fb_resets = {'sync': ~self.fb.fbp.enable, 'dvi': reset_dvi}
+        if not getattr(self.fb, "synchronize_serializer_reset", False):
+            fb_resets['dvi5x'] = reset_dvi
+        # The opt-in path combines enable/PLL reset before one serializer-clock
+        # synchronizer in CAR, avoiding another LUT on the fast reset path.
+        m.submodules.fb = ResetInserter(fb_resets)(self.fb)
         m.submodules.framebuffer_periph = self.framebuffer_periph
 
         # video periph / persist
@@ -463,6 +468,9 @@ class TiliquaSoc(Component):
 
             # generate our domain clocks/resets
             m.submodules.car = car = platform.clock_domain_generator(self.clock_settings)
+            car.synchronize_serializer_reset = getattr(
+                self.fb, "synchronize_serializer_reset", False)
+            car.serializer_reset_inhibit = reset_dvi
             if platform.version_major >= 4:
                 m.d.comb += car.reset_dvi_pll.eq(~self.fb.fbp.enable)
 

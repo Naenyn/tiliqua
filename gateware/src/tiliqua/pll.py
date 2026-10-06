@@ -11,7 +11,7 @@ from typing import Optional
 
 from amaranth import *
 from amaranth.lib import wiring
-from amaranth.lib.cdc import FFSynchronizer
+from amaranth.lib.cdc import FFSynchronizer, ResetSynchronizer
 
 from .video.modeline import DVIPLL, DVIModeline
 
@@ -452,8 +452,16 @@ class TiliquaDomainGeneratorPLLExternal(Elaboratable):
 
             m.d.comb += [
                 ResetSignal("dvi")  .eq(~locked_dvi | ~lock_pipe[1]),
-                ResetSignal("dvi5x").eq(~locked_dvi | ~lock_pipe[1]),
             ]
+            # Combine all reset requests before synchronizing deassertion.
+            # A pixel-clock reset released directly into the fast phase ring
+            # can leave its flops out of step and corrupt the transmitted clock.
+            if getattr(self, "synchronize_serializer_reset", False):
+                m.submodules.serializer_pll_reset = ResetSynchronizer(
+                    ~locked_dvi | ~lock_pipe[1] | self.serializer_reset_inhibit,
+                    domain="dvi5x")
+            else:
+                m.d.comb += ResetSignal("dvi5x").eq(~locked_dvi | ~lock_pipe[1])
 
             # LED off when DVI PLL locked
             m.d.comb += platform.request("led_a").o.eq(ResetSignal("dvi"))

@@ -97,6 +97,8 @@ class IntonoSoc(TiliquaSoc):
         assert self.psram_size >= 0xC00000 + 4096
         self.fb.frame_exchange = self.tuner_display.exchange
         self.fb.serializer_circular_shift = True
+        # Release the phase ring and DDR outputs together on a serializer edge.
+        self.fb.synchronize_serializer_reset = True
         # Pitch belongs exclusively to the NSDF peripheral. This block is now
         # only the level/CV/output transport used by all three modes.
         self.tuner_periph = TunerPeripheral(

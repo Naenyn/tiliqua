@@ -16,7 +16,7 @@ def test_circular_serializer_matches_legacy_every_output_pair(monkeypatch):
     class Platform:
         def request(self,name):
             return SimpleNamespace(**{key:SimpleNamespace(o=Signal()) for key in ["d0","d1","d2","ck"]})
-    old=dvi.DVIPHY(); new=dvi.DVIPHY(circular_shift=True)
+    old=dvi.DVIPHY(circular_shift=False); new=dvi.DVIPHY(circular_shift=True)
     m=Module(); m.submodules.old=old.elaborate(Platform()); m.submodules.new=new.elaborate(Platform())
     sim=Simulator(m); sim.add_clock(1e-6,domain="dvi5x");sim.add_clock(5e-6,domain="dvi")
     async def bench(ctx):
