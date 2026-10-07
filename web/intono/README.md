@@ -125,6 +125,30 @@ distributed-memory RX queue complements the existing 16-byte TX queue; no new bl
 is needed. Diagnostic serial output pauses during a transfer lease while pitch
 acquisition continues.
 
+## GitHub Pages hosting
+
+`.github/workflows/intono-pages.yml` runs the Node tests before publishing the
+static librarian at `https://naenyn.github.io/tiliqua/intono/`. The site root
+redirects there. Pushes to `naenyn` deploy only when this folder or the workflow
+changes; pull requests targeting `naenyn` run tests without deploying.
+
+One-time repository setup:
+
+1. Open **Settings → Pages** and choose **GitHub Actions** as the source.
+2. If the `github-pages` environment restricts deployment branches, allow `naenyn`.
+3. Commit and push the workflow and librarian changes to `naenyn`.
+
+For manual deployment, use **Actions → Intono librarian website → Run workflow**
+and select `naenyn`. GitHub shows this manual control only once the workflow also
+exists on the repository's default branch (currently `main`). Automatic deployment
+from `naenyn` does not require changing the default branch.
+
+GitHub Pages has one deployed site per repository. This workflow publishes the
+librarian, not the separate documentation site; it does not combine both sites.
+The existing documentation workflow remains unchanged. HTTPS-hosted Web Serial
+still requires desktop Chrome or Edge and permission to access the USB debug
+serial port. Profile data stays in the browser and on the connected instrument.
+
 ## Tests
 
 ```sh

@@ -1,0 +1,75 @@
+name: Intono librarian website
+
+on:
+  push:
+    branches: [naenyn]
+    paths:
+      - 'web/intono/**'
+      - '.github/workflows/intono-pages.yml'
+  pull_request:
+    branches: [naenyn]
+    paths:
+      - 'web/intono/**'
+      - '.github/workflows/intono-pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Test profile transfers, records, Scala imports, and synchronization
+        run: node --test web/intono/tests.mjs
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/naenyn'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: github-pages
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/configure-pages@v5
+      - name: Prepare static website
+        run: |
+          mkdir -p _site/intono
+          cp web/intono/index.html web/intono/style.css _site/intono/
+          cp web/intono/app.mjs web/intono/protocol.mjs web/intono/records.mjs _site/intono/
+          cp web/intono/scala.mjs web/intono/sync.mjs _site/intono/
+          cp -R web/intono/examples _site/intono/
+          touch _site/.nojekyll
+          cat > _site/index.html <<'HTML'
+          <!doctype html>
+          <html lang="en">
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width,initial-scale=1">
+          <meta http-equiv="refresh" content="0;url=intono/">
+          <title>Intono Profile Library</title>
+          <a href="intono/">Open the Intono Profile Library</a>
+          </html>
+          HTML
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+      - name: Publish website
+        id: deployment
+        uses: actions/deploy-pages@v4
