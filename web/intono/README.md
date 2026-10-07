@@ -1,11 +1,14 @@
 # INTONO Profile Library
 
-A static, local web utility for Intono's 24 saved slots: eight calibration
+A static web utility for Intono's 24 saved slots: eight calibration
 profiles, eight user scales, and eight route configs. No server runs on the instrument, and no cloud service receives
 profile data. This needs the profile-transfer Intono firmware and gateware;
 earlier images do not implement the protocol or its receive queue.
 
-From the repository root:
+**[Open the hosted librarian](https://naenyn.github.io/tiliqua/intono/)** in desktop
+Chrome or Edge. No installation or local server is required.
+
+To run it locally instead, from the repository root:
 
 ```sh
 python3 -m http.server 8765 --bind 127.0.0.1 --directory web/intono

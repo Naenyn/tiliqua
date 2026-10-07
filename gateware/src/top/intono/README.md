@@ -12,7 +12,8 @@ The current [oscillator compatibility qualification](OSCILLATOR_QUALIFICATION.md
 records physical tuning/calibration coverage and its limits, including the
 Generate3 CORE/FUNDAMENTAL comparison on the latest detector build.
 
-The [local Profile Library](../../../../web/intono/README.md) reads and writes
+The [online Profile Library](https://naenyn.github.io/tiliqua/intono/)
+([librarian guide](../../../../web/intono/README.md)) reads and writes
 eight slots each for calibration, scales and route configs through USB debug
 serial. It supports named profiles, Scala imports, whole-library backups and
 verified individual or bulk writes. Gold markers identify local changes not yet

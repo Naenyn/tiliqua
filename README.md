@@ -1,10 +1,47 @@
 # Tiliqua
 
+This is Naenyn's fork of [apf.audio's Tiliqua project](https://github.com/apfaudio/tiliqua),
+with additional bitstreams and an Intono profile librarian. Development lives on
+the [`naenyn` branch](https://github.com/Naenyn/tiliqua/tree/naenyn).
+
 **Tiliqua is a powerful, open hardware FPGA-based audio multitool for Eurorack.** It looks like this:
 
 ![image](https://github.com/user-attachments/assets/1dbe8672-6f8d-4d33-b0d6-634b90801f7d)
 
 # ⮕[Documentation](https://apfaudio.github.io/tiliqua/)⬅
+
+## Bitstreams added in this fork
+
+The bitstreams below are listed in development order. **REZO, REZOMO, and
+STREZO form the REZO family**: three related bitstreams built around a shared
+ten-band resonant filterbank.
+
+| Bitstream | What it does | Documentation / source |
+|---|---|---|
+| **OSCIO** | Four-channel oscilloscope with a CV/LFO history view and signal measurements | [Overview and source](gateware/src/top/oscio/top.py) |
+| **SONORO** | Spectrum analyzer and 2D spectrograph with selectable input and spectral history | [Overview and source](gateware/src/top/sonoro/top.py) |
+| **CASCADO** | 3D spectrogram with filled terrain and wire ridge views | [Overview and source](gateware/src/top/cascado/top.py) |
+| **REZO** | Ten-band mono resonant filterbank with shaped low-pass, high-pass, band-pass, and notch responses | [User guide](gateware/src/top/rezo/REZO_USER_GUIDE.md) |
+| **REZOMO** | Clock-oriented mono resonant filterbank with generated modulation | [User guide](gateware/src/top/rezo/REZOMO_USER_GUIDE.md) |
+| **STREZO** | Linked stereo resonant filterbank with frequency motion, feedback routing, and mid/side shaping | [User guide](gateware/src/top/rezo/STREZO_USER_GUIDE.md) |
+| **INTONO** | Four-input tuner, oscillator calibration, and CV routing with per-output quantization, calibration correction, and MIDI transposition | [Intono documentation](gateware/src/top/intono/README.md) |
+
+### Intono Profile Library
+
+**[Open the Intono librarian](https://naenyn.github.io/tiliqua/intono/)** in desktop
+Chrome or Edge to manage named calibration profiles, user scales, and route
+configs. It supports Scala imports, whole-library backups, and verified writes
+to the instrument through Tiliqua's USB debug serial connection. Profile data
+stays in your browser and on the connected instrument; no local web server is
+needed. Musical MIDI uses the separate 3.5 mm MIDI input.
+
+See the [librarian guide](web/intono/README.md) for the connection and editing
+workflow, supported formats, and limitations. Each category has eight saved slots.
+
+The [REZO family documentation](gateware/src/top/rezo/README.md) covers its display
+variants and build instructions. Intono build and hardware qualification details
+are in its documentation linked above. Demo and tutorial videos will be linked
+here as they become available.
 
 # Updates / Community
 
