@@ -127,7 +127,7 @@ def test_static_guides_switch_atomically_without_changing_cal_draw_bank():
     async def bench(ctx):
         cal_bank = 0
         for index, (source, swap) in enumerate([(1, False), (2, False),
-                (0, True), (3, False), (4, False), (5, False), (1, False), (2, False), (0, True)]):
+                (0, True), (3, False), (4, False), (5, False), (6, False), (1, False), (2, False), (0, True)]):
             old_draw = ctx.get(dut.draw_base)
             ctx.set(dut.static_source, source)
             ctx.set(dut.swap_background, swap)
@@ -139,7 +139,7 @@ def test_static_guides_switch_atomically_without_changing_cal_draw_bank():
             ctx.set(dut.payload, 999)
             await ctx.tick("sync").repeat(8)
             cal_bank ^= swap
-            expected = {1: 0x200000, 2: 0x240000, 3: 0x2C0000, 4: 0x280000, 5: 0x300000}.get(source, cal_bank * 0x40000)
+            expected = {1: 0x200000, 2: 0x240000, 3: 0x2C0000, 4: 0x280000, 5: 0x300000, 6: 0x340000}.get(source, cal_bank * 0x40000)
             assert ctx.get(dut.next_base) == expected
             assert ctx.get(dut.draw_base) == old_draw
             ctx.set(dut.acquire, 1)

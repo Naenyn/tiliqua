@@ -1,4 +1,4 @@
-//! Seven semantic theme colors: three primary, three complementary, highlight.
+//! Seven general theme colors plus a dedicated keyboard membership color: three primary, three complementary, highlight.
 //! REZO control/modulation pairings; black/white and musical status colors are shared.
 pub const BLACK:u8=0x09;
 pub const WHITE:u8=0xF9;
@@ -9,6 +9,24 @@ pub const COMPLEMENT_DIM:u8=0x89;
 pub const COMPLEMENT:u8=0xB9;
 pub const COMPLEMENT_BRIGHT:u8=0xC9;
 pub const HIGHLIGHT:u8=0xF2;
+pub const KEY_INCLUDED:u8=0xA2;
+// Membership uses the complementary medium hue. Only Violet and Neon need
+// 10% dimming to stay distinct from white keys; resolve this at compile time.
+const fn keyboard_color(theme:usize)->u32 {
+    let color=COLORS[theme][4];
+    if theme==5 || theme==7 {
+        let r=((color>>16)&255)*9/10;
+        let g=((color>>8)&255)*9/10;
+        let b=(color&255)*9/10;
+        (r<<16)|(g<<8)|b
+    } else {color}
+}
+pub const KEY_COLORS:[u32;9]=[
+    keyboard_color(0),keyboard_color(1),keyboard_color(2),
+    keyboard_color(3),keyboard_color(4),keyboard_color(5),
+    keyboard_color(6),keyboard_color(7),keyboard_color(8),
+];
+pub fn keyboard_highlight(theme:u8)->(u8,u8,u8) {rgb(KEY_COLORS[theme.min(8) as usize])}
 pub const COLORS:[[u32;7];9]=[
     [0x183541,0x367A94,0x55BFE8,0x995600,0xFF9000,0xFFAC40,0xFFE58A], // Blue
     [0x343434,0x767676,0xB8B8B8,0x484848,0x787878,0x9A9A9A,0xFFFFFF], // LCD
@@ -41,4 +59,43 @@ pub fn color(theme:u8,intensity:u8)->(u8,u8,u8) {
         assert_eq!(color(7,6),rgb(0x9B5DE5));assert_eq!(color(7,11),rgb(0x00E5FF));
         for theme in 0..=8 {assert_eq!(color(theme,10),color(theme,6));}
     }
+    // These are graphical fills, not small text: require visible luminance
+    // separation from both excluded key colors in every shipped palette.
+    fn luminance(color:(u8,u8,u8))->f64 {
+        let linear=|v:u8| {let c=v as f64/255.0;
+            if c<=0.04045 {c/12.92}else{((c+0.055)/1.055).powf(2.4)}};
+        0.2126*linear(color.0)+0.7152*linear(color.1)+0.0722*linear(color.2)
+    }
+    #[test]fn included_keys_contrast_with_excluded_keys_in_every_palette() {
+        let white=luminance(color(0,15));
+        for theme in 0..=8 {
+            let fill=luminance(keyboard_highlight(theme));
+            assert!((white+0.05)/(fill+0.05)>=1.8,"theme {theme}: white key contrast");
+            assert!((fill+0.05)/0.05>=4.5,"theme {theme}: black key contrast");
+        }
+    }
+
+    fn hue(color:(u8,u8,u8))->Option<f64> {
+        let (r,g,b)=(color.0 as f64,color.1 as f64,color.2 as f64);
+        let max=r.max(g).max(b);let min=r.min(g).min(b);let delta=max-min;
+        if delta==0.0 {return None;}
+        Some((if max==r {(g-b)/delta}else if max==g {2.0+(b-r)/delta}
+            else {4.0+(r-g)/delta})*60.0)
+    }
+    #[test]fn keyboard_membership_stays_in_the_complementary_color_family() {
+        for theme in 0..=8 {
+            let medium=rgb(COLORS[theme as usize][4]);
+            let fill=keyboard_highlight(theme);
+            match (hue(medium),hue(fill)) {
+                (Some(a),Some(b))=>assert!((a-b).abs()<1.0,"theme {theme}: changed hue"),
+                (None,None)=>assert_eq!(fill.0,fill.1),
+                _=>panic!("theme {theme}: changed color family"),
+            }
+            let l=luminance(medium);let white=luminance(color(0,15));
+            if (white+0.05)/(l+0.05)>=1.8 && (l+0.05)/0.05>=4.5 {
+                assert_eq!(fill,medium,"theme {theme}: unnecessary adjustment");
+            }
+        }
+    }
+
 }

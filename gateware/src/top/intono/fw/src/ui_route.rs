@@ -83,6 +83,50 @@ impl Drawing {
         if self.len>old {self.shapes[old as usize].kind=ShapeKind::RoundedFill;}
     }
     pub fn changed(&self,old:&Self)->bool {self.len!=old.len || self.shapes[..self.len as usize]!=old.shapes[..old.len as usize]}
+    /// Include changed layers by position, preserving overlapping paint order.
+    pub fn damage(&self,old:&Self)->Option<Shape> {
+        let mut bounds:Option<Shape>=None;
+        for n in 0..(self.len.max(old.len) as usize) {
+            if n<self.len as usize && n<old.len as usize && self.shapes[n]==old.shapes[n] {continue;}
+            for list in [old,self] {
+                if n>=list.len as usize {continue;}
+                let s=list.shapes[n];
+                bounds=Some(match bounds {
+                    None=>s,
+                    Some(b)=> {let x=b.x.min(s.x);let y=b.y.min(s.y);
+                        Shape{x,y,w:(b.x+b.w).max(s.x+s.w)-x,h:(b.y+b.h).max(s.y+s.h)-y,..b}}
+                });
+            }
+        }
+        bounds
+    }
+    /// Erase and repaint the same damage region in layer order. Clipping also
+    /// protects unchanged foreground layers outside the affected area.
+    pub fn repaint(&self,old:&Self,damage:Option<Shape>,retain:Option<crate::ui_canvas::Rect>,
+        mut emit:impl FnMut(crate::ui_canvas::Point,u8)) {
+        for (list,erase) in [(old,true),(self,false)] {
+            for shape in list.shapes[..list.len as usize].iter().copied() {
+                if shape.kind==ShapeKind::Rectangle && retain==Some(shape.rect()) {continue;}
+                if let Some(d)=damage {
+                    if shape.x>=d.x+d.w || d.x>=shape.x+shape.w || shape.y>=d.y+d.h || d.y>=shape.y+shape.h {continue;}
+                }
+                let mut clipped=|p:crate::ui_canvas::Point,c:u8| {
+                    if damage.map_or(true,|d|p.x>=d.x as i32 && p.x<(d.x+d.w) as i32
+                        && p.y>=d.y as i32 && p.y<(d.y+d.h) as i32) {emit(p,c);}
+                };
+                let color=if erase {0}else{shape.color};
+                match shape.kind {
+                    ShapeKind::RoundedFill=> {crate::ui_canvas::rounded_rectangle(shape.rect(),6,color,color,&mut clipped);}
+                    ShapeKind::Outline=> {crate::ui_canvas::rounded_outline(shape.rect(),color,&mut clipped);}
+                    ShapeKind::Rectangle=> {
+                        let (x,y,right,bottom)=damage.map_or((shape.x,shape.y,shape.x+shape.w,shape.y+shape.h),|d|
+                            (shape.x.max(d.x),shape.y.max(d.y),(shape.x+shape.w).min(d.x+d.w),(shape.y+shape.h).min(d.y+d.h)));
+                        for y in y..bottom {for x in x..right {clipped(crate::ui_canvas::Point{x:x as i32,y:y as i32},color);}}
+                    }
+                }
+            }
+        }
+    }
     pub fn outline(&mut self,x:u16,y:u16,w:u16,h:u16,selected:bool){self.add(x,y,w,h,if selected {0xF2}else{0x49},false);}
 }
 // Kept static, not in the already substantial foreground stack frame. Less
@@ -90,6 +134,7 @@ impl Drawing {
 pub struct Paint { pub banks:[Drawing;2],pub copied:[usize;2],pub resident:bool,pub imported:[u8;2] }
 impl Paint {
     pub const fn new()->Self {Self {banks:[Drawing::new();2],copied:[0;2],resident:false,imported:[0;2]}}
+    pub fn invalidate_bank(&mut self,bank:usize) {self.copied[bank]=0;self.banks[bank]=Drawing::new();self.imported[bank]=0;}
     pub fn plot_cached(&self,bank:usize,output:u8)->bool {self.imported[bank]==output+1}
     pub fn invalidate_imported(&mut self) {self.imported=[0;2];}
 }
@@ -108,6 +153,45 @@ impl Paint {
         assert!(d.changed(&p.banks[1]));d.shapes[0].color=0xD9;assert!(d.changed(&p.banks[0]));
         p.imported[0]=2;assert!(p.plot_cached(0,1));assert!(!p.plot_cached(1,1));assert!(!p.plot_cached(0,2));
         p.imported[1]=2;p.invalidate_imported();assert!(!p.plot_cached(0,1));assert!(!p.plot_cached(1,1));
+    }
+    #[test]fn damage_tracks_removal_reordering_and_small_activity_changes() {
+        let mut old=Drawing::new();old.outline(132,200,400,100,false);
+        old.add(500,270,4,10,0xF2,true);
+        let mut new=old;new.shapes[1].h=20;
+        let d=new.damage(&old).unwrap();assert_eq!((d.x,d.y,d.w,d.h),(500,270,4,20));
+        assert!(old.damage(&old).is_none());
+        new.len=1;let d=new.damage(&old).unwrap();assert_eq!((d.x,d.y,d.w,d.h),(500,270,4,10));
+        new=old;new.shapes.swap(0,1);let d=new.damage(&old).unwrap();
+        assert_eq!((d.x,d.y,d.w,d.h),(132,200,400,100));
+    }
+    #[test]fn invalidating_one_bank_preserves_the_other() {
+        let mut p=Paint::new();p.copied=[230400;2];p.imported=[3;2];
+        p.banks[0].outline(132,200,400,100,false);p.banks[1]=p.banks[0];
+        p.invalidate_bank(0);assert_eq!(p.copied,[0,230400]);
+        assert_eq!(p.banks[0].len,0);assert_eq!(p.banks[1].len,1);
+        assert_eq!(p.imported,[0,3]);
+    }
+    #[test]fn partial_repaint_matches_complete_layers_across_transitions() {
+        let mut a=Drawing::new();a.rounded_fill(100,100,160,80);
+        a.outline(110,110,180,60,false);a.add(120,120,120,8,0x49,true);
+        let mut pixels=std::vec![0u8;720*720];
+        a.repaint(&Drawing::new(),None,None,|p,c|pixels[p.y as usize*720+p.x as usize]=c);
+        for n in 0..30 {
+            let mut b=a;
+            match n%5 {
+                0=>b.shapes[2].color=0xF2,
+                1=>b.shapes[2].w=40+n,
+                2=>b.shapes.swap(0,2),
+                3=>b.len=2,
+                _=>b.add(140,115,100,15,0x49,true),
+            }
+            if let Some(d)=b.damage(&a) {
+                b.repaint(&a,Some(d),None,|p,c|pixels[p.y as usize*720+p.x as usize]=c);
+            }
+            let mut expected=std::vec![0u8;720*720];
+            b.repaint(&Drawing::new(),None,None,|p,c|expected[p.y as usize*720+p.x as usize]=c);
+            assert_eq!(pixels,expected,"transition {}",n);a=b;
+        }
     }
     #[test]fn paint_storage_is_small_and_geometry_never_spills(){
         assert!(core::mem::size_of::<Paint>()<=1024);

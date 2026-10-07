@@ -149,6 +149,7 @@ impl Scheduler {
             wave_seq: 0,
         }
     }
+    #[cfg(tuner_nsdf_telemetry)]
     pub fn observe_baseline(
         &mut self,
         input: u8,
@@ -157,7 +158,6 @@ impl Scheduler {
         end_age: u32,
         now: u64,
     ) {
-        #[cfg(tuner_nsdf_telemetry)]
         if let Some(slot) = self.baseline.get_mut(input as usize) {
             *slot = ((hz * 1000.0) as u32, qualified, end_age, now);
         }
@@ -289,6 +289,8 @@ impl Scheduler {
         self.tick_serial(uart,now,reports,true);
     }
     pub fn tick_serial(&mut self, uart: &pac::UART0, now:u64, reports:bool, serial:bool) {
+        #[cfg(not(tuner_nsdf_telemetry))]
+        let _ = reports;
         let nsdf = unsafe { &*pac::NSDF_PERIPH::ptr() };
         // UART service never gates acquisition, even when disconnected/stalled.
         for _ in 0..32 {
@@ -350,7 +352,7 @@ impl Scheduler {
                 );
                 #[cfg(tuner_nsdf_telemetry)]
                 let cycles = crate::playback_cycles().wrapping_sub(started) as u32;
-                let (mhz, first_mhz, raw) = result.map_or((0, 0, false), |r| {
+                let (mhz, _first_mhz, raw) = result.map_or((0, 0, false), |r| {
                     (
                         (r.hz * 1000.0) as u32,
                         (r.unrefined_hz * 1000.0) as u32,
@@ -377,7 +379,7 @@ impl Scheduler {
                     seq,
                     mhz,
                     #[cfg(tuner_nsdf_telemetry)]
-                    first_mhz,
+                    first_mhz: _first_mhz,
                     #[cfg(tuner_nsdf_telemetry)]
                     cycles,
                     #[cfg(tuner_nsdf_telemetry)]

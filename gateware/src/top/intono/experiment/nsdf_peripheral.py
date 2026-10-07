@@ -1,8 +1,9 @@
-"""Opt-in diagnostic CSR adapter. Retains one complete score frame until start.
+"""Production NSDF score, source-energy and snapshot CSR adapter.
 
-The baseline detector remains authoritative. This adapter never controls DACs.
-Single-buffer/request-driven export is for hardware validation, not the final
-four-channel 20-Hz scheduler or production double-buffered handoff.
+One complete score frame is retained until the firmware scheduler requests the
+next channel/bank. This peripheral supplies Intono's authoritative pitch data;
+waveform inspection is optional diagnostic access to the same stored history.
+It never directly controls DACs. The directory name predates integration.
 """
 from amaranth import Array, Cat, Const, Module, Mux, Signal, signed, unsigned
 from amaranth.lib import wiring

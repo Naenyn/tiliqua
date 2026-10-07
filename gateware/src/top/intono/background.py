@@ -114,7 +114,8 @@ class SceneExchange(wiring.Component):
                        Mux(source == 3, 0xB00000 // 4,
                            Mux(source == 4, 0xA00000 // 4,
                                Mux(source == 5, 0xC00000 // 4,
-                                   Mux(selected, self.layout.word_bases[1], 0))))))
+                                   Mux(source == 6, 0xD00000 // 4,
+                                       Mux(selected, self.layout.word_bases[1], 0)))))))
         m.d.comb += [self.busy.eq(request != acknowledged_sync),
                     self.back_bank.eq(~acknowledged_sync),
                     self.next_base.eq(base),

@@ -79,7 +79,7 @@ fn main() {
     let status="VERIFY MOCK immutable status report\n".repeat(28);
     assert_eq!(trace.ui_period_ms(false,5),5);
     let all=env!("TILIQUA_INTONO_NSDF_TRACE")=="fast-all";
-    let continuous=env!("TILIQUA_INTONO_NSDF_TRACE")=="continuous";
+    let continuous=cfg!(tuner_nsdf_continuous);
     assert_eq!(trace.ui_period_ms(true,5),if trace.fast() && !all && !continuous {100}else{5});
     for now in 0..12000 {
         // Approximate 115200-baud 8N1 draining between 1-ms foreground visits.

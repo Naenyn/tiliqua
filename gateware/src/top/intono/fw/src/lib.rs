@@ -4,7 +4,6 @@
 pub use tiliqua_hal as hal;
 pub use tiliqua_pac as pac;
 
-tiliqua_hal::impl_serial! { Serial0: tiliqua_pac::UART0, }
 tiliqua_hal::impl_timer! { Timer0: tiliqua_pac::TIMER0, }
 tiliqua_hal::impl_i2c! { I2c0: tiliqua_pac::I2C0, }
 tiliqua_hal::impl_i2c! { I2c1: tiliqua_pac::I2C1, }

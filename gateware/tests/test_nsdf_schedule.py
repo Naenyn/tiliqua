@@ -16,7 +16,8 @@ def test_operation_sampling_and_passive_tuner_restore(tmp_path,scenario,focus):
     here=Path(__file__).parent
     exe=tmp_path/'focused-scheduler'
     subprocess.run([str(Path.home()/'.cargo/bin/rustc'),'--edition=2021','-O',
-                    '--cfg','tuner_nsdf_continuous',str(here/'nsdf_trace_mock.rs'),
+                    '--cfg','tuner_nsdf_continuous','--cfg','tuner_nsdf_telemetry',
+                    str(here/'nsdf_trace_mock.rs'),
                     '-o',str(exe)],env=dict(os.environ,TILIQUA_INTONO_NSDF_TRACE='continuous'),check=True)
     text=subprocess.check_output([exe,str(scenario),str(focus)],text=True)
     starts=[dict(part.split('=') for part in line.split()[2:])
@@ -55,7 +56,8 @@ def test_real_scheduler_keeps_acquiring_during_uart_stall(tmp_path,scenario):
     here=Path(__file__).parent
     exe=tmp_path/'scheduler'
     subprocess.run([str(Path.home()/'.cargo/bin/rustc'),'--edition=2021','-O',
-                    '--cfg','tuner_nsdf_continuous',str(here/'nsdf_trace_mock.rs'),
+                    '--cfg','tuner_nsdf_continuous','--cfg','tuner_nsdf_telemetry',
+                    str(here/'nsdf_trace_mock.rs'),
                     '-o',str(exe)],env=dict(os.environ,TILIQUA_INTONO_NSDF_TRACE='continuous'),check=True)
     text=subprocess.check_output([exe,str(scenario)],text=True)
     if scenario==3:
@@ -199,3 +201,20 @@ def test_continuous_capture_split_reads_and_disconnect(monkeypatch,capsys,wrong_
         capture_nsdf_cpu.main()
         assert capsys.readouterr().out==raw.decode()
     assert port.closed and port.dtr and not port.rts
+
+
+@pytest.mark.parametrize('scenario', [0, 1, 2, 4])
+def test_quiet_production_scheduler_has_no_uart_output(tmp_path, scenario):
+    """Keep acquiring and publishing pitch without diagnostic UART traffic.
+
+    The CSR mock checks request cadence, freshness, per-channel frequency, and
+    acquisition through stalls; stdout must stay empty with telemetry disabled.
+    """
+    here = Path(__file__).parent
+    exe = tmp_path / 'quiet-scheduler'
+    subprocess.run([str(Path.home()/'.cargo/bin/rustc'), '--edition=2021', '-O',
+                    '--cfg', 'tuner_nsdf_continuous', str(here/'nsdf_trace_mock.rs'),
+                    '-o', str(exe)],
+                   env=dict(os.environ, TILIQUA_INTONO_NSDF_TRACE='continuous-quiet'),
+                   check=True)
+    assert subprocess.check_output([exe, str(scenario)], text=True) == ''

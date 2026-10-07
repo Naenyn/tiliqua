@@ -166,12 +166,11 @@ class IntonoSoc(TiliquaSoc):
 if __name__ == "__main__":
     this_path = os.path.dirname(os.path.realpath(__file__))
     modeline = os.getenv("TILIQUA_INTONO_MODELINE", "1280x720p60")
-    # Qualified placements for the shared-text renderer. The serializer has a
-    # tighter routing constraint on the high-clock HDMI target.
-    # Seed 15 became marginal after adding MIDI reception (the 5x DVI domain
-    # missed timing in one placement). Seed 18 was routed and hardware-checked
-    # on the non-circular R5 target with HDMI lock restored.
-    default_seed = "13" if modeline == "720x720p60r2" else "18"
+    # Seed 13 qualifies the current HDMI scene-cache design with margin on
+    # all four clocks; seed 18 no longer routes efficiently for this netlist.
+    # The rotated panel retains its existing seed-13 recipe and must still
+    # be qualified independently when its hardware changes.
+    default_seed = "13"
     seed = int(os.getenv("TILIQUA_INTONO_SEED", default_seed))
     name = os.getenv("TILIQUA_INTONO_NAME", "INTONO")
     top_level_cli(

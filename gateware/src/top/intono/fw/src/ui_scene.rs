@@ -77,7 +77,8 @@ pub const CACHE_OFFSET: usize = 0x800000;
 pub const CACHE_STRIDE: usize = 0x100000;
 pub const KEYBOARD_CACHE: usize = CACHE_OFFSET + 3 * CACHE_STRIDE;
 pub const SINGLE_KEYBOARD_CACHE: usize = CACHE_OFFSET + 4 * CACHE_STRIDE;
-pub const CACHE_END: usize = CACHE_OFFSET + 5 * CACHE_STRIDE;
+pub const CALIBRATION_CACHE: usize = CACHE_OFFSET + 5 * CACHE_STRIDE;
+pub const CACHE_END: usize = CACHE_OFFSET + 6 * CACHE_STRIDE;
 pub const fn cache_offset(source: Option<Scene>) -> usize {
     CACHE_OFFSET + CACHE_STRIDE * match source {
         Some(Scene::Spiral) => 0, Some(Scene::Linear) => 1,
@@ -145,6 +146,39 @@ impl LiveTrace {
 
     pub fn mark_drawn(&mut self, bank: usize) {
         self.drawn[bank] = self.count;
+    }
+}
+
+/// One retained completed CAL plot. Copy in bounded batches only while the
+/// cache is not scanned and the scene exchange is idle. The source bank must
+/// stay untouched until flush; route painting cancels any incomplete copy.
+pub struct CalibrationCache {
+    revision: Option<u64>,
+    copying: Option<(u64, usize, usize)>,
+}
+impl CalibrationCache {
+    pub const fn prepared(revision:u64)->Self {
+        Self {revision:Some(revision),copying:None}
+    }
+    pub fn ready(&self,revision:u64)->bool {self.revision==Some(revision)}
+    pub fn cancel_copy(&mut self) {self.copying=None;}
+    pub fn step(&mut self,revision:u64,bank:usize,words:usize,visible:bool)
+        ->Option<(usize,usize,usize)> {
+        if visible || self.ready(revision) {return None;}
+        let (source,first)=match self.copying {
+            Some((key,source,first)) if key==revision=>(source,first),
+            _=>(bank,0),
+        };
+        if first==words {return None;} // Caller must flush before publication.
+        self.revision=None;
+        let end=(first+COPY_WORDS_PER_TICK).min(words);
+        self.copying=Some((revision,source,end));
+        Some((source,first,end))
+    }
+    pub fn flushed(&mut self,revision:u64,words:usize) {
+        if self.copying.is_some_and(|(key,_,end)|key==revision && end==words) {
+            self.revision=Some(revision);self.copying=None;
+        }
     }
 }
 
@@ -519,4 +553,52 @@ mod tests {
         trace.mark_drawn(1);
         assert!(trace.observe(false, None, None, 0));
     }
+    #[test]
+    fn completed_calibration_survives_navigation_and_partial_copies_do_not_publish() {
+        let mut cache=CalibrationCache::prepared(7);
+        for bank in [0,1,0,1] {
+            cache.cancel_copy(); // Shared route buffers may be overwritten.
+            assert!(cache.ready(7));
+            assert_eq!(cache.step(7,bank,8192,false),None);
+        }
+        assert_eq!(cache.step(8,1,8192,true),None); // Never write visible cache.
+        assert!(cache.ready(7));
+        assert_eq!(cache.step(8,1,8192,false),Some((1,0,4096)));
+        assert!(!cache.ready(7) && !cache.ready(8));
+        cache.flushed(8,8192);assert!(!cache.ready(8));
+        // A mutable buffer swap does not change the held copy source.
+        assert_eq!(cache.step(8,0,8192,false),Some((1,4096,8192)));
+        assert!(!cache.ready(8));
+        cache.flushed(8,8192);assert!(cache.ready(8));
+    }
+    #[test]
+    fn changed_calibration_or_route_paint_restarts_snapshot_without_stale_pixels() {
+        let mut cache=CalibrationCache::prepared(0);
+        assert_eq!(cache.step(1,0,12288,false),Some((0,0,4096)));
+        assert_eq!(cache.step(2,1,12288,false),Some((1,0,4096)));
+        cache.cancel_copy();
+        assert_eq!(cache.step(2,0,12288,false),Some((0,0,4096)));
+        assert_eq!(cache.step(2,1,12288,true),None);
+        assert_eq!(cache.step(2,1,12288,false),Some((0,4096,8192)));
+        assert_eq!(cache.step(2,1,12288,false),Some((0,8192,12288)));
+        cache.flushed(1,12288);assert!(!cache.ready(2));
+        cache.flushed(2,12288);assert!(cache.ready(2));
+        assert!(CACHE_END<=0x1000000-4096);
+    }
+
+    #[test]
+    fn retained_calibration_copies_full_frames_in_bounded_batches_for_both_displays() {
+        for words in [1280*720/4,720*720/4] {
+            let mut cache=CalibrationCache::prepared(0);
+            let mut copied=0;
+            while let Some((source,first,end))=cache.step(1,1,words,false) {
+                assert_eq!(source,1);assert_eq!(first,copied);
+                assert!(end-first<=COPY_WORDS_PER_TICK && end<=words);
+                assert!(!cache.ready(1));copied=end;
+            }
+            assert_eq!(copied,words);assert!(!cache.ready(1));
+            cache.flushed(1,words);assert!(cache.ready(1));
+        }
+    }
+
 }

@@ -1,4 +1,4 @@
-"""Build-time Q17 low-bank coefficients; experimental SciPy dependency only."""
+"""Production Q17 low-bank coefficients; SciPy runs only during the build."""
 import numpy as np
 from scipy.signal import firwin
 

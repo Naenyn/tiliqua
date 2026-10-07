@@ -1,14 +1,9 @@
-#![allow(unused_imports, unused_mut, unused_variables)]
-
-use crate::{hal, pac};
-use crate::{Serial0, Timer0};
+use crate::pac;
+use crate::Timer0;
 
 use amaranth_soc_isr::return_as_is;
-use core::cell::RefCell;
 use core::panic::PanicInfo;
 use irq::scoped_interrupts;
-use log::*;
-use tiliqua_lib::logger::WriteLogger;
 
 scoped_interrupts! {
     #[allow(non_camel_case_types)]
@@ -16,21 +11,7 @@ scoped_interrupts! {
     use #[return_as_is];
 }
 
-static LOGGER: WriteLogger<Serial0> = WriteLogger {
-    writer: RefCell::new(None),
-    level: Level::Trace,
-};
-
-pub fn logger_init(writer: Serial0) {
-    LOGGER.writer.replace(Some(writer));
-    unsafe {
-        log::set_logger_racy(&LOGGER)
-            .map(|()| log::set_max_level_racy(LevelFilter::Trace))
-            .expect("logger");
-    }
-}
-
-// Fatal diagnostics bypass the deliberately disabled synchronous logger.
+// Bounded fatal diagnostics remain available without a runtime logger.
 // A disconnected debug cable must not turn fault reporting into another hang.
 struct FaultWriter;
 impl core::fmt::Write for FaultWriter {

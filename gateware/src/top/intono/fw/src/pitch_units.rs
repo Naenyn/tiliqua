@@ -24,11 +24,6 @@ pub fn write_pitch(out: &mut impl Write, millicents: i32) -> fmt::Result {
     write!(out, " {:+.1}c", Decimal(cents))
 }
 
-/// Ideal 1 V/oct voltage, NOT the profile-corrected DAC voltage.
-pub fn nominal_volts(millicents: i32, zero_note: u8) -> f32 {
-    (millicents as f32 - zero_note as f32 * 100000.0) / 1200000.0
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -42,12 +37,5 @@ mod tests {
         let mut s = String::new();
         write_pitch(&mut s, 6652500).unwrap();
         assert_eq!(s, "G4 -47.5c");
-    }
-    #[test]
-    fn origin_changes_nominal_voltage_not_target_pitch() {
-        assert_eq!(nominal_volts(7200000, 60), 1.0);
-        assert_eq!(nominal_volts(7200000, 48), 2.0);
-        assert_eq!(nominal_volts(5400000, 60), -0.5);
-        assert!((nominal_volts(7201000, 60) - 1.0008333).abs() < 0.000001);
     }
 }

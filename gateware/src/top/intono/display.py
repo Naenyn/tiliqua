@@ -249,7 +249,7 @@ class IntonoOverlay(wiring.Component):
             inner=(rx>=4)&(rx<=right-4)&(ry>=4)&(ry<=bottom-4)
             yellow=outer & ~inner
             fill_color=Mux(cursor&edge,Mux(yellow,0xF9,0x09),
-                           Mux(selected,0xF2,Mux(black,0x09,0xF9)))
+                           Mux(selected,0xA2,Mux(black,0x09,0xF9)))
         else:
             fill, fill_color = Const(0), Const(0,8)
         fill_stages = 3 if self.large_text else 4

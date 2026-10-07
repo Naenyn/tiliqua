@@ -95,6 +95,15 @@ ASSERT(ADDR(.intono_runtime) + SIZEOF(.intono_runtime) <= 0x20800000,
     if verbose == "1" {
         println!("cargo:rustc-cfg=intono_verbose_diagnostics");
     }
+    // Production UART carries librarian packets only. Compact operational
+    // reports and stack scanning are available in explicit diagnostic builds.
+    println!("cargo:rerun-if-env-changed=TILIQUA_INTONO_STATUS_DIAGNOSTICS");
+    println!("cargo:rustc-check-cfg=cfg(intono_status_diagnostics)");
+    let status = std::env::var("TILIQUA_INTONO_STATUS_DIAGNOSTICS").unwrap_or_default();
+    assert!(matches!(status.as_str(), "" | "0" | "1"));
+    if status == "1" || verbose == "1" {
+        println!("cargo:rustc-cfg=intono_status_diagnostics");
+    }
     println!("cargo:rerun-if-env-changed=TILIQUA_INTONO_REPEAT_DIAGNOSTIC");
     println!("cargo:rerun-if-env-changed=TILIQUA_TUNER_REPEAT_DIAGNOSTIC");
     let repeat = std::env::var("TILIQUA_INTONO_REPEAT_DIAGNOSTIC")

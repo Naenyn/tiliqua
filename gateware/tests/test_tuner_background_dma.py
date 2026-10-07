@@ -28,9 +28,10 @@ def test_first_page_visits_keep_scene_and_pixels_aligned_at_r5_clock_ratio(memor
     sim.add_clock(1 / 60e6, domain="sync")
     sim.add_clock(1 / 74.25e6, domain="dvi")
     bases = {0: 0, 1: 0x200000, 3: 0x2C0000, 4: 0x280000,
-             5: layout.word_bases[1]}
-    pages = [(1, False, 1), (0, True, 5), (3, False, 3),
-             (1, False, 1), (0, False, 5), (3, False, 3)]
+             5: layout.word_bases[1], 6: 0x340000}
+    pages = [(1, False, 1), (6, False, 6), (0, True, 5),
+             (6, False, 6), (3, False, 3), (1, False, 1),
+             (0, False, 5), (3, False, 3), (6, False, 6)]
 
     def pixel(image, offset):
         return (image << 4) | (offset % 13 + 1)
@@ -170,7 +171,7 @@ def test_memory_gap_blanks_background_instead_of_repeating_a_bright_pixel():
     sim.run()
 
 
-@pytest.mark.parametrize("static_source", [0, 1, 2, 3, 4, 5])
+@pytest.mark.parametrize("static_source", [0, 1, 2, 3, 4, 5, 6])
 @pytest.mark.parametrize("invert", [False, True])
 @pytest.mark.parametrize("coordinated", [False, True])
 def test_background_dma_reads_complete_frames_and_presents_matching_pixels(invert, coordinated, static_source):
@@ -222,7 +223,7 @@ def test_background_dma_reads_complete_frames_and_presents_matching_pixels(inver
                 assert transfer == pending, "bus transfer changed before ACK"
                 if delay == 0:
                     address = transfer[0]
-                    new_base = {1: 0x200000, 2: 0x240000, 3: 0x2C0000, 4: 0x280000, 5: 0x300000}.get(static_source, layout.word_bases[1])
+                    new_base = {1: 0x200000, 2: 0x240000, 3: 0x2C0000, 4: 0x280000, 5: 0x300000, 6: 0x340000}.get(static_source, layout.word_bases[1])
                     bank = int(address >= new_base)
                     offset = address - (new_base if bank else 0)
                     assert 0 <= offset < width * height // 4

@@ -72,7 +72,7 @@ This bitstream continuously measures all four monophonic audio inputs and displa
 
 The reference-tone feature has been removed from production firmware and
 gateware. All outputs remain at calibrated zero unless an explicitly started
-calibration operation, profile check, or explicitly armed route owns them. A4 remains configurable as a tuning reference,
+calibration operation, profile check, explicitly armed route, or Reference CV owns them. A4 remains configurable as a tuning reference,
 not an audio output.
 
 All channel labels follow the physical panel's 0–3 numbering.
@@ -212,7 +212,7 @@ musical key or semitone transpose. Set OCTAVES (1–8, default 1), then turn thr
 keyboard keys, then click a highlighted key to toggle membership. Editing a
 preset selects Custom; **SCALE TOOLS** opens slot/save/load and MIDI facilities.
 ROUTES selects Scale, Key, and Transpose independently for each output. The standard scales use a piano-key preview: included keys are filled
-with the palette highlight, without on-key labels. Excluded natural keys are white and excluded sharps
+with the dedicated palette keyboard color, without on-key labels. Excluded natural keys are white and excluded sharps
 are black. Membership and the white focus outline with a dark halo update at a video-frame boundary. The
 key outlines are cached, so switching pages does not require drawing them again.
 Custom patterns retain their exact degrees and explicit octave span, including
@@ -484,7 +484,7 @@ The experimental visual treatment retains rounded page tabs and flow/card
 containers. Ordinary controls show an outline only when selected; value editing
 fills the selected field. The default theme uses subdued cyan structure,
 primary-color labels, complementary-color actions, white values, and palette selection highlights. Standard-scale piano keys have
-subtly rounded corners; included notes use the palette highlight. Native font size
+subtly rounded corners; included notes use the dedicated keyboard color. Native font size
 and character spacing are unchanged.
 
 SCALES and SCALE TOOLS display up to two stacked piano keyboards. One-octave
@@ -598,15 +598,22 @@ and remaining hardware checks.
 
 ### Serial diagnostics
 
-Normal builds retain calibration pass timing/progress, stack watermark and video
-health reports. Detailed raw CV snapshots, scan command/acknowledgement dumps,
-frame ages, tuner/verification evidence, EEPROM/boot reports and boot markers are
-opt-in: set `TILIQUA_INTONO_VERBOSE_DIAGNOSTICS=1` when building firmware. The
-normal default is unset or `0`. Both modes drain serial output without blocking.
-This flag is independent of `TILIQUA_INTONO_NSDF_TRACE`; retain its default
+Normal builds send no unsolicited status reports; USB debug serial remains
+available for the Profile Library protocol. Production NSDF acquisition,
+output watchdogs, and fatal panic/trap reporting remain active.
+
+Set `TILIQUA_INTONO_STATUS_DIAGNOSTICS=1` when building firmware to enable bounded
+calibration timing/progress, video health, and stack watermark reports. Set
+`TILIQUA_INTONO_VERBOSE_DIAGNOSTICS=1` for detailed raw CV snapshots, scan
+command/acknowledgement dumps, frame ages, tuner/verification evidence, EEPROM
+and boot reports, and boot markers. Verbose mode also enables compact status
+reporting. Both flags default to unset or `0`; UART writes are nonblocking.
+The stack watermark and boot timing collection are omitted from ordinary builds.
+
+These flags are independent of `TILIQUA_INTONO_NSDF_TRACE`; retain its default
 `continuous-quiet` for production pitch acquisition. Wave/pair experiments and
-repeat diagnostics remain independently opt-in. Output watchdogs and acquisition
-scheduling are always active.
+repeat diagnostics remain independently opt-in. Diagnostic firmware still must
+fit the linker budget; enabling verbose output is not a promise of release fit.
 
 ### Mapping belongs to the output route
 
@@ -645,14 +652,66 @@ does not change the color thresholds. These colors describe oscillator tracking,
 not the remaining error after applying a calibration profile.
 
 
-The visual-hierarchy palettes now each contain seven colors: primary dim,
+The visual-hierarchy palettes each contain seven general UI colors plus a
+dedicated keyboard membership color. The general roles are primary dim,
 primary medium, primary bright, complementary dim, complementary medium,
 complementary bright, and highlight. The named combinations reuse REZO's
 control/modulation pairings (cyan/coral, green/magenta, violet/gold, and others).
 LCD remains grayscale. Black and white are shared constants. Guides and field
 labels use the primary family; actions and MIDI summaries use the complementary
-family; values use white. Control selection outlines use the highlight. Included keyboard intervals also
-use the highlight, while the key cursor is white with a dark halo. Blue pairs
+family; values use white. Control selection outlines use the highlight. Included keyboard intervals use their dedicated membership color, while the key cursor is white with a dark halo. Blue pairs
 its primary cyan with bright orange rather than salmon. Calibration severity colors stay fixed. Tuner channels use their
 own fixed palette slots, including a separate cyan slot, so changing the UI
 theme cannot recolor channel identification. Existing saved theme IDs are intact.
+
+Dedicated keyboard membership colors are deliberately mid-luminance rather than
+near-white tints: included keys remain distinct from both white and black excluded keys in
+all nine themes. A regression check requires at least 1.8:1 separation from
+shared white and 4.5:1 from black for these large graphical fills. These are
+graphical-state thresholds, not text accessibility claims. The cursor retains
+its shared white ring and black halo. Calibration severity and input-channel
+colors remain fixed independently of theme selection.
+
+Keyboard membership colors use the complementary medium hue, independent of
+general selection highlights. Violet and Neon are dimmed by 10% to retain
+contrast with white keys; all other themes use complementary medium exactly.
+These colors are derived at compile time, with no per-frame adjustment:
+
+
+| Palette | Included key fill |
+| --- | --- |
+| Blue | `#FF9000` |
+| LCD | `#787878` |
+| Amber | `#4EA5D9` |
+| Cyan | `#FF7F6A` |
+| Green | `#E56BCE` |
+| Violet | `#D9AD46` |
+| Ember | `#FF8C42` |
+| Neon | `#00CEE5` |
+| Azure | `#F72585` |
+
+The dedicated fill uses palette slot `0xA2`; `0xF2` remains the general selection
+highlight. General highlights are drawn on dark control/chart surfaces, not
+used to signify scale membership. Shared white/black keys and the cursor halo
+are unchanged. The new role consumes one existing palette entry, no extra
+framebuffer, and no per-frame color calculations.
+
+CAL retains one completed plot at PSRAM +13 MiB, separate from mutable route
+and live-scan drawing buffers. Startup prepares the empty plot for the saved
+graph setting. An unchanged completed plot is selected directly at the next
+scene publication, like TUNER, instead of copied/redrawn on every page visit.
+Leaving CAL does not reset its profile revision. Graph/profile changes and live
+acquisition still rebuild their plot; completed updates are copied in bounded
+batches and become reusable only after cache flush. Copies are prohibited while
+that retained image is scanned, and route painting cancels partial copies.
+The cache reservation now ends at +14 MiB, below the 16 MiB PSRAM boundary and
+boot-information area; firmware/runtime remain bounded below +8 MiB.
+
+Routes retains each mutable drawing bank across visits to direct TUNER and
+keyboard scenes. CAL invalidates only a bank it actually prepares; the first
+Routes visit after that still clears the bank before publishing it. Ordinary
+card selection and activity changes erase/repaint a bounded damage rectangle,
+including intersecting layers in original order, rather than the entire page.
+Imported interval strips retain their separate cache behavior. All writes still
+use the acknowledged back bank and flush before publication; no display timing,
+route engine, framebuffer allocation, or playback interrupt changes are needed.

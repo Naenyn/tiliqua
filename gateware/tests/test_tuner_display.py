@@ -610,7 +610,7 @@ def test_keyboard_fills_follow_mask_without_covering_edges_or_text(rotate_left):
             ctx.set(dut.keyboard_mask,mask)
             for note,(pos,black) in enumerate(keys):
                 center=164+pos*56+(0 if black else 28)
-                color=0xf2 if mask&(1<<note) else (0x09 if black else 0xf9)
+                color=0xa2 if mask&(1<<note) else (0x09 if black else 0xf9)
                 assert await sample(ctx,center,272 if black else 336)==color
                 left=165+pos*56-(18 if black else 0)
                 assert await sample(ctx,left,272 if black else 336)==0x49
@@ -623,7 +623,7 @@ def test_keyboard_fills_follow_mask_without_covering_edges_or_text(rotate_left):
                 for note in range(12):
                     tag=0xe0+octave*16+note
                     black=note in [1,3,6,8,10]
-                    expected=0xf2 if mask&(1<<note) else (0x09 if black else 0xf9)
+                    expected=0xa2 if mask&(1<<note) else (0x09 if black else 0xf9)
                     assert await sample(ctx,200,300+octave*140,tag)==expected
                     if not black:
                         body=expected
@@ -641,8 +641,8 @@ def test_keyboard_fills_follow_mask_without_covering_edges_or_text(rotate_left):
                     for included in (False,True):
                         ctx.set(dut.keyboard_mask,(1<<note) if included else 0)
                         ctx.set(dut.keyboard_mask_b,(1<<note) if included else 0)
-                        assert await sample(ctx,center,yy,tag)==(0xf2 if included else (0x09 if black else 0xf9))
-                        assert await sample(ctx,center,yy-3,tag)==(0xf2 if included else (0x09 if black else 0xf9))
+                        assert await sample(ctx,center,yy,tag)==(0xa2 if included else (0x09 if black else 0xf9))
+                        assert await sample(ctx,center,yy-3,tag)==(0xa2 if included else (0x09 if black else 0xf9))
                     ctx.set(dut.keyboard_focus,octave*16+note)
                     left=203 if black else 165
                     assert await sample(ctx,left+1,yy,tag)==0x09
@@ -661,7 +661,7 @@ def test_keyboard_fills_follow_mask_without_covering_edges_or_text(rotate_left):
                                 for yyy in (cy,height-1-cy):
                                     assert await sample(ctx,left+xx,top+yyy,tag)==expected
                     ctx.set(dut.keyboard_focus,31)
-                    assert await sample(ctx,left+2,yy,tag)==0xf2
+                    assert await sample(ctx,left+2,yy,tag)==0xa2
         ctx.set(dut.keyboard_second,1)
         # Text remains above the filled key, with the selected natural-key dark ink color.
         ctx.set(dut.keyboard_mask,1)

@@ -1,4 +1,5 @@
-//! Experimental score export only; never changes production pitch or outputs.
+//! Production NSDF acquisition and pitch scheduling, with opt-in score export.
+//! The continuous scheduler is required even when serial telemetry is disabled.
 #[cfg(not(tuner_nsdf_continuous))]
 use core::fmt::Write;
 #[cfg(not(tuner_nsdf_continuous))]

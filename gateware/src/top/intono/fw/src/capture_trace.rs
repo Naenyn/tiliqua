@@ -46,6 +46,7 @@ pub struct Trace {
     calibration_line: String<128>,
     #[cfg(intono_verbose_diagnostics)]
     boot_line: String<192>,
+    #[cfg(intono_verbose_diagnostics)]
     unstable_seen: bool,
     video_gaps: u16,
     background_errors: u8,
@@ -89,6 +90,7 @@ impl Trace {
     }
 
     /// Cumulative firmware-startup timings, drained by the existing bounded UART path.
+    #[cfg(intono_verbose_diagnostics)]
     pub fn with_boot_timings(&mut self, times: &[u32; 8]) {
         #[cfg(not(intono_verbose_diagnostics))]
         let _ = times;
@@ -103,6 +105,7 @@ impl Trace {
         self.background_errors = background_errors;
     }
 
+    #[cfg(intono_verbose_diagnostics)]
     pub fn display_state(&mut self, frame: u32, published: u64, preparing: bool, ready: bool) {
         #[cfg(not(intono_verbose_diagnostics))]
         let _ = (frame, published, preparing, ready);
@@ -115,10 +118,11 @@ impl Trace {
         }
     }
 
-    pub fn status_due(&self, now: u64, _calibration_active: bool) -> bool {
+    pub fn status_due(&self, now: u64) -> bool {
         self.offset != 0 || now >= self.due_at
     }
 
+    #[cfg(intono_verbose_diagnostics)]
     pub fn note_unstable(&mut self) {
         self.unstable_seen = true;
     }

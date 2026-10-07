@@ -2,6 +2,7 @@
 #![no_main]
 
 mod calibration_live;
+#[cfg(intono_status_diagnostics)]
 mod capture_trace;
 #[cfg(tuner_nsdf_wave_diag)]
 mod cv_probe;
@@ -23,7 +24,9 @@ mod route_group;
 mod pitch_math;
 mod quantizer_setup;
 mod scale;
+#[cfg(intono_status_diagnostics)]
 mod serial_report;
+#[cfg(intono_status_diagnostics)]
 mod stack_monitor;
 mod ui_canvas;
 mod static_guides { include!(concat!(env!("OUT_DIR"), "/static-guides.rs")); }
@@ -56,7 +59,6 @@ use core::fmt::Write;
 use critical_section::Mutex;
 use heapless::String;
 use irq::handler;
-use log::warn;
 use micromath::F32Ext;
 use riscv_rt::entry;
 
@@ -163,8 +165,10 @@ struct MultiQuant {
     configs: [quantizer_setup::Channel; 4],
     bound: [u8; 4],
     running: bool,
+    #[cfg(intono_verbose_diagnostics)]
     max_cycles: usize,
     last_cycle: usize,
+    #[cfg(intono_verbose_diagnostics)]
     max_gap: usize,
     phase: usize,
     samples: [u32; 4],
@@ -186,8 +190,10 @@ fn install_quant() {
     configs: quantizer_setup::DEFAULT,
     bound: [0; 4],
     running: false,
+    #[cfg(intono_verbose_diagnostics)]
     max_cycles: 0,
     last_cycle: 0,
+    #[cfg(intono_verbose_diagnostics)]
     max_gap: 0,
     phase: 0,
     samples: [0; 4],
@@ -308,7 +314,11 @@ impl MultiQuant {
             for n in 0..4 {if mask&(1<<n)!=0 || (mask==0 && !self.lanes[n].active) {self.lanes[n].status=reason;}}
             return;
         }
-        if !self.running {self.phase=0;self.last_cycle=0;self.max_cycles=0;self.max_gap=0;}
+        if !self.running {
+            self.phase=0;self.last_cycle=0;
+            #[cfg(intono_verbose_diagnostics)]
+            { self.max_cycles=0;self.max_gap=0; }
+        }
         for n in 0..4 {
             if mask&(1<<n)==0 {continue;}
             let mut c=channels[n];c.input=input;self.configs[n]=c;
@@ -504,7 +514,8 @@ fn timer0_handler() {
         let start = playback_cycles();
         if quant.last_cycle != 0 {
             let gap = start.wrapping_sub(quant.last_cycle);
-            quant.max_gap = quant.max_gap.max(gap);
+            #[cfg(intono_verbose_diagnostics)]
+            { quant.max_gap = quant.max_gap.max(gap); }
             if gap > pac::clock::sysclk() as usize / 200 {
                 quant.stop(&tuner, "STOPPED - SCHEDULING GAP");
                 return;
@@ -537,7 +548,8 @@ fn timer0_handler() {
           }}
         }
         let elapsed = playback_cycles().wrapping_sub(start);
-        quant.max_cycles = quant.max_cycles.max(elapsed);
+        #[cfg(intono_verbose_diagnostics)]
+        { quant.max_cycles = quant.max_cycles.max(elapsed); }
         if elapsed > pac::clock::sysclk() as usize / 2000 {
             quant.stop(&tuner, "STOPPED - CPU BUDGET");
         } else {
@@ -1690,6 +1702,7 @@ pub fn playback_visible() -> bool {
     outputs_running()
         || with_app(|app| matches!(app.ui.opts.tracker.page.value, Page::Play | Page::Quantizer))
 }
+#[cfg(intono_verbose_diagnostics)]
 pub fn write_playback_status(
     out: &mut impl core::fmt::Write,
     _value: ChannelMeasurement,
@@ -2800,7 +2813,9 @@ fn decode_profile(
 struct RuntimeResources {
     video: DMAFramebuffer0,
     uart: pac::UART0,
+    #[cfg(intono_status_diagnostics)]
     hardware_calibration: Option<(i32, i32, u8)>,
+    #[cfg(intono_status_diagnostics)]
     hardware_calibration_bits: u8,
     timer: Timer0,
     tuner: pac::TUNER_PERIPH,
@@ -2808,6 +2823,7 @@ struct RuntimeResources {
     persistence: Option<IntonoPersistence>,
     counts_per_v: f32,
     video_size: (u16, u16),
+    #[cfg(intono_verbose_diagnostics)]
     boot_ms: [u32;8],
 }
 
@@ -2850,16 +2866,19 @@ fn startup() -> RuntimeResources {
         .PLAYBACK_TIMER
         .enable()
         .write(|w| w.enable().bit(true));
+    #[cfg(intono_verbose_diagnostics)]
     let started = playback_cycles();
+    #[cfg(intono_verbose_diagnostics)]
     let elapsed = || playback_cycles().wrapping_sub(started) as u32 / (sysclk / 1000);
+    #[cfg(intono_verbose_diagnostics)]
     let mut boot_ms = [0;8];
     let timer = Timer0::new(peripherals.TIMER0, sysclk);
     let spiflash = SPIFlash0::new(peripherals.SPIFLASH_CTRL, SPIFLASH_BASE, SPIFLASH_SZ_BYTES);
 
     // Do not install the synchronous UART logger in the real-time tuner.
     // Calibration and option loading both log from inside peripheral access
-    // paths; if the USB/UART consumer is absent or backpressured, Serial0's
-    // blocking fmt::Write implementation can wedge startup before the timer
+    // paths; if the USB/UART consumer is absent or backpressured, a blocking
+    // fmt::Write implementation can wedge startup before the timer
     // interrupt (and therefore the encoder, LEDs and measurements) is enabled.
     // Runtime diagnostics here must use a bounded/non-blocking transport.
 
@@ -2910,14 +2929,16 @@ fn startup() -> RuntimeResources {
     });
     tuner_display.frame().write(|w| w.commit().set_bit());
     video.enable();
-    boot_ms[0] = elapsed();
+    #[cfg(intono_verbose_diagnostics)]
+    { boot_ms[0] = elapsed(); }
     boot_mark(b'V');
     // Never draw into the startup buffer after scanout is enabled.
     let mut cached = BackgroundCanvas::new(
         PSRAM_FB_BASE + ui_scene::cache_offset(Some(ui_scene::Scene::Spiral)),
         modeline.h_active, modeline.v_active, ROUND_DISPLAY);
     cached.clear();cached.draw_static_tuner();cached.finish();
-    boot_ms[1] = elapsed();
+    #[cfg(intono_verbose_diagnostics)]
+    { boot_ms[1] = elapsed(); }
     let mut opts = Opts::default();
     let persistence = if let Some(window) = bootinfo.manifest.get_option_storage_window() {
         let default = window.start..window.start.saturating_add(8192);
@@ -2926,13 +2947,9 @@ fn startup() -> RuntimeResources {
                 preferences::load(&mut storage, &mut opts).ok();
                 Some(storage)
             }
-            Err(_) => {
-                warn!("Invalid option storage window");
-                None
-            }
+            Err(_) => None,
         }
     } else {
-        warn!("No option storage region; settings will not persist");
         None
     };
     // Bank 1 is not visible at boot. Build the empty CAL dashboard here so
@@ -2956,7 +2973,14 @@ fn startup() -> RuntimeResources {
         ui_canvas::CAL_ERROR_SPAN_MC,
     );
     calibration_background.finish();
-    boot_ms[2] = elapsed();
+    let mut retained_calibration=BackgroundCanvas::new(
+        PSRAM_FB_BASE+ui_scene::CALIBRATION_CACHE,
+        modeline.h_active,modeline.v_active,ROUND_DISPLAY);
+    retained_calibration.copy_words(PSRAM_FB_BASE+0x100000,0,
+        modeline.h_active as usize*modeline.v_active as usize/4);
+    retained_calibration.finish();
+    #[cfg(intono_verbose_diagnostics)]
+    { boot_ms[2] = elapsed(); }
     // Cache immutable guides beyond the framebuffer and firmware regions.
     // memory.x bounds firmware below this reservation (enforced by build.rs).
     assert!(ui_scene::CACHE_END <= PSRAM_SZ_BYTES - 4096);
@@ -2967,7 +2991,8 @@ fn startup() -> RuntimeResources {
     circle.clear();
     circle.draw_border();
     circle.finish();
-    boot_ms[3] = elapsed();
+    #[cfg(intono_verbose_diagnostics)]
+    { boot_ms[3] = elapsed(); }
     let mut linear = BackgroundCanvas::new(
         PSRAM_FB_BASE + ui_scene::cache_offset(Some(ui_scene::Scene::Linear)),
         modeline.h_active, modeline.v_active, ROUND_DISPLAY);
@@ -2977,21 +3002,24 @@ fn startup() -> RuntimeResources {
         (bipolar::MIN_UV, bipolar::MAX_UV), (0, 6_000_000),
         CalibrationGraph::Pitch, ui_canvas::CAL_ERROR_SPAN_MC);
     linear.finish();
-    boot_ms[4] = elapsed();
+    #[cfg(intono_verbose_diagnostics)]
+    { boot_ms[4] = elapsed(); }
     let mut keyboard=BackgroundCanvas::new(PSRAM_FB_BASE+ui_scene::KEYBOARD_CACHE,
         modeline.h_active,modeline.v_active,ROUND_DISPLAY);
     keyboard.clear();keyboard.draw_scale_keyboard(false);keyboard.finish();
     let mut single=BackgroundCanvas::new(PSRAM_FB_BASE+ui_scene::SINGLE_KEYBOARD_CACHE,
         modeline.h_active,modeline.v_active,ROUND_DISPLAY);
     single.copy_words(circle_base,0,words);single.draw_scale_keyboard(true);single.finish();
-    boot_ms[5] = elapsed();
+    #[cfg(intono_verbose_diagnostics)]
+    { boot_ms[5] = elapsed(); }
 
     let mut pmod = EurorackPmod0::new(peripherals.PMOD0_PERIPH);
     let counts_per_v = pmod.counts_per_v() as f32;
     // Preserve load_or_default behavior, but retain read-only diagnostics so
     // a missing EEPROM record cannot masquerade as factory-calibrated zero.
+    #[cfg(intono_status_diagnostics)]
     let hardware_calibration_bits = pmod.f_bits();
-    let hardware_calibration = calibration::CalibrationConstants::from_eeprom(&mut I2c1::new(
+    let _hardware_calibration = calibration::CalibrationConstants::from_eeprom(&mut I2c1::new(
         peripherals.I2C1,
     ))
     .map(|constants| {
@@ -3003,7 +3031,8 @@ fn startup() -> RuntimeResources {
         )
     });
 
-    boot_ms[6] = elapsed();
+    #[cfg(intono_verbose_diagnostics)]
+    { boot_ms[6] = elapsed(); }
     // Recall instrument settings, not the navigation position saved alongside
     // them. Start at the INTONO tuning page heading on every boot, outside edit mode.
     opts.tracker.page.value = Page::Tuner;
@@ -3019,9 +3048,11 @@ fn startup() -> RuntimeResources {
         app.ui.set_menu_visible(false);
     });
 
-    boot_ms[7] = elapsed();
+    #[cfg(intono_verbose_diagnostics)]
+    { boot_ms[7] = elapsed(); }
     RuntimeResources {
         video,
+        #[cfg(intono_verbose_diagnostics)]
         boot_ms,
         timer,
         tuner: peripherals.TUNER_PERIPH,
@@ -3030,7 +3061,9 @@ fn startup() -> RuntimeResources {
         counts_per_v,
         video_size: (modeline.h_active, modeline.v_active),
         uart: peripherals.UART0,
-        hardware_calibration,
+        #[cfg(intono_status_diagnostics)]
+        hardware_calibration: _hardware_calibration,
+        #[cfg(intono_status_diagnostics)]
         hardware_calibration_bits,
     }
 }
@@ -3061,7 +3094,9 @@ fn run(resources: &mut RuntimeResources) -> ! {
     let RuntimeResources {
         video,
         uart,
+        #[cfg(intono_status_diagnostics)]
         hardware_calibration,
+        #[cfg(intono_status_diagnostics)]
         hardware_calibration_bits,
         timer,
         tuner,
@@ -3069,6 +3104,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
         persistence,
         counts_per_v,
         video_size,
+        #[cfg(intono_verbose_diagnostics)]
         boot_ms,
     } = resources;
     // Borrow the single flash buffer in main instead of retaining another
@@ -3090,10 +3126,12 @@ fn run(resources: &mut RuntimeResources) -> ! {
         let mut nsdf_sequences = [nsdf_trace::Sequence::default(); 4];
         let mut calibration = unsafe { init_calibration_state() };
         let mut calibration_controls: Option<RuntimeControls> = None;
+        #[cfg(intono_status_diagnostics)]
         let mut capture_trace = capture_trace::Trace::with_calibration(
             *hardware_calibration,
             *hardware_calibration_bits,
         );
+        #[cfg(intono_verbose_diagnostics)]
         capture_trace.with_boot_timings(boot_ms);
         #[cfg(tuner_nsdf_wave_diag)]
         let mut cv_probe = cv_probe::Probe::default();
@@ -3120,12 +3158,17 @@ fn run(resources: &mut RuntimeResources) -> ! {
             with_app(|app| app.ui.opts.calibrate.graph.value),
             ui_canvas::CAL_ERROR_SPAN_MC);
         let mut calibration_plot_dirty = false;
+        let mut retained_calibration=ui_scene::CalibrationCache::prepared(calibration_revision);
+        let mut retained_calibration_visible=false;
+        let mut retained_error_span=ui_canvas::CAL_ERROR_SPAN_MC;
         let mut live_trace = ui_scene::LiveTrace::new();
         let mut text_scenes = [None; 2];
         // Compact occupancy only: 512 bytes total, not an 8-KiB text shadow.
         let mut text_occupied = [ui_text::Occupied::new(), ui_text::Occupied::new()];
         let mut last_ui_ms = 0;
+        #[cfg(intono_verbose_diagnostics)]
         let mut marked_ui = false;
+        #[cfg(intono_verbose_diagnostics)]
         let mut last_published_ms = 0;
         loop {
             riscv::asm::wfi();
@@ -3192,7 +3235,10 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     calibration.active().then_some(calibration.input),
                     with_app(|app| app.ui.opts.tracker.page.value == options::Page::Tuner),
                 );
-                let status_due = capture_trace.status_due(now, calibration.active());
+                #[cfg(not(intono_status_diagnostics))]
+                let status_due = false;
+                #[cfg(intono_status_diagnostics)]
+                let status_due = capture_trace.status_due(now);
 
                 nsdf_trace.tick_serial(
                     uart,
@@ -3202,6 +3248,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     !transferring,
                 );
 
+                #[cfg(intono_status_diagnostics)]
                 if !transferring && status_due && nsdf_trace.serial_idle() {
                     // One owner at a time, including under UART backpressure.
                     // Reuse the existing report storage; no new RAM buffer.
@@ -3267,6 +3314,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
 
             let ui_frame = poll_ui_frame(&calibration,calibration_controls);
 
+            #[cfg(intono_verbose_diagnostics)]
             if !marked_ui {
                 boot_mark(b'U');
                 marked_ui = true;
@@ -3451,6 +3499,8 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 let (r,g,b)=ui_theme::highlight(theme);
                 video.set_palette_rgb(15,2,r,g,b);
                 video.set_palette_rgb(13,2,r,g,b);
+                let (r,g,b)=ui_theme::keyboard_highlight(theme);
+                video.set_palette_rgb(10,2,r,g,b);
                 applied_palette=theme;
             }
             if save_feedback.tick(feedback_ms) {
@@ -3525,9 +3575,11 @@ fn run(resources: &mut RuntimeResources) -> ! {
             let entering_or_leaving=critical_section::with(|cs| {
                 let mut paint=ROUTE_PAINT.borrow_ref_mut(cs);
                 if paint.resident==route_view_active {return false;}
-                paint.resident=route_view_active;paint.invalidate_imported();paint.copied=[0;2];paint.banks=[ui_route::Drawing::new();2];true
+                // Direct tuner/keyboard scanout does not modify these banks.
+                // Retain route geometry until CAL actually writes a bank.
+                paint.resident=route_view_active;paint.invalidate_imported();true
             });
-            if entering_or_leaving {backgrounds.invalidate_calibration();}
+            if entering_or_leaving {backgrounds.invalidate_calibration();retained_calibration.cancel_copy();}
             let mut route_background_ready=false;
             let calibration_view = matches!(
                 ui_frame.controls.mode,
@@ -3558,15 +3610,18 @@ fn run(resources: &mut RuntimeResources) -> ! {
             // Profile scans and their wide hash arithmetic are only needed
             // while preparing the calibration scene. Routes and tuner guides
             // do not depend on the stored profile.
-            let plot_profile = if calibration_prepared {
-                calibration_plot_profile(&calibration)
-            } else { None };
+            // Background banks may prepare while another page is visible.
+            // Keep the actual CAL data; leaving its page is not a revision.
+            let plot_profile = calibration_plot_profile(&calibration);
             let plot_range = calibration_plot_range(&calibration, plot_profile);
             let plot_anchor = calibration_plot_anchor(&calibration, plot_profile);
             let graph = ui_frame.controls.calibration_graph;
-            let error_span_mc = if calibration_prepared && graph == CalibrationGraph::Error {
-                calibration_plot_error_span(&calibration, plot_profile)
-            } else { ui_canvas::CAL_ERROR_SPAN_MC };
+            if calibration_prepared {
+                retained_error_span=if graph==CalibrationGraph::Error {
+                    calibration_plot_error_span(&calibration,plot_profile)
+                } else {ui_canvas::CAL_ERROR_SPAN_MC};
+            }
+            let error_span_mc=retained_error_span;
             let live_points = calibration.acquiring_points();
             let live_first = live_points.and_then(|points| points.first())
                 .map(|point| (point.microvolts, point.millicents));
@@ -3576,12 +3631,24 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 live_points.is_some(), live_first, live_last,
                 live_points.map_or(0, |points| points.len()),
             );
-            let plot_revision = calibration_plot_revision(
-                plot_profile, plot_range, plot_anchor, graph, error_span_mc);
+            let plot_revision = if calibration_prepared {
+                calibration_plot_revision(plot_profile,plot_range,plot_anchor,graph,error_span_mc)
+            } else {calibration_revision};
             if plot_revision != calibration_revision || stale_live_trace {
                 calibration_revision = plot_revision;
                 backgrounds.invalidate_calibration();
+                retained_calibration.cancel_copy();
                 calibration_plot_dirty = true;
+            }
+            // A scan may overwrite the source of an incomplete snapshot even
+            // before its first point changes the completed-profile revision.
+            if calibration.active() {retained_calibration.cancel_copy();}
+            let cached_calibration=calibration_prepared && live_points.is_none()
+                && !calibration.active() && retained_calibration.ready(plot_revision);
+            // Leaving direct scanout must adopt a completed mutable bank even
+            // if an empty new scan has not changed the plot revision yet.
+            if calibration_prepared && !cached_calibration && retained_calibration_visible {
+                calibration_plot_dirty=true;
             }
             let mut swap_background = false;
             let exchange = tuner_display.frame().read();
@@ -3608,7 +3675,9 @@ fn run(resources: &mut RuntimeResources) -> ! {
                         if end==words {canvas.draw_border();canvas.finish();route_background_ready=true;}
                         critical_section::with(|cs|ROUTE_PAINT.borrow_ref_mut(cs).copied[bank]=end);
                     } else {route_background_ready=true;}
-                } else {match backgrounds.step(
+                } else if calibration_prepared && !cached_calibration {
+                    critical_section::with(|cs|ROUTE_PAINT.borrow_ref_mut(cs).invalidate_bank(bank));
+                    match backgrounds.step(
                     bank,
                     prepare_scene,
                     video_size.0 as usize * video_size.1 as usize / 4,
@@ -3645,17 +3714,28 @@ fn run(resources: &mut RuntimeResources) -> ! {
                                 }
                             }
                         }
-                        swap_background = (calibration_prepared && requested_scene != scene)
+                        if calibration_prepared && live_points.is_none() && !calibration.active() {
+                            let words=video_size.0 as usize*video_size.1 as usize/4;
+                            if let Some((source,first,end))=retained_calibration.step(
+                                plot_revision,bank,words,retained_calibration_visible) {
+                                let mut retained=BackgroundCanvas::new(
+                                    PSRAM_FB_BASE+ui_scene::CALIBRATION_CACHE,
+                                    video_size.0,video_size.1,ROUND_DISPLAY);
+                                retained.copy_words(PSRAM_FB_BASE+source*0x100000,first,end);
+                                if end==words {retained.finish();retained_calibration.flushed(plot_revision,words);}
+                            }
+                        }
+                        swap_background = !cached_calibration && ((calibration_prepared && requested_scene != scene)
                             || (calibration_prepared && calibration_plot_dirty)
-                            || (calibration_prepared && live_updated);
+                            || (calibration_prepared && live_updated));
                     }
                 }}
             }
 
-            let direct_tuner = requested_scene != ui_scene::Scene::Calibration;
-            let change_tuner = direct_tuner && requested_scene != scene;
+            let direct_background = requested_scene != ui_scene::Scene::Calibration || cached_calibration;
+            let change_direct_background = direct_background && requested_scene != scene;
             frame_ticks = frame_ticks.saturating_add(1);
-            if frame_ticks >= FRAME_PERIOD_TICKS || swap_background || change_tuner {
+            if frame_ticks >= FRAME_PERIOD_TICKS || swap_background || change_direct_background {
                 frame_ticks = 0;
                 let controls = ui_frame.controls;
                 if discard_refinement {
@@ -3743,7 +3823,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                         counts_per_v,
                         input,
                     );
-                    #[cfg(tuner_nsdf_continuous)]
+                    #[cfg(all(tuner_nsdf_continuous, tuner_nsdf_telemetry))]
                     nsdf_trace.observe_baseline(
                         input,
                         measurement.frequency_hz,
@@ -3787,6 +3867,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 if calibration.active() {
                     calibration_controls = Some(active_controls);
                 }
+                #[cfg(intono_verbose_diagnostics)]
                 let previous_unstable_count = calibration.scan_warnings.unstable;
 
                 calibration.tick(
@@ -3796,6 +3877,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     ui_frame.now_ms,
                 );
                 // Record the first unstable point in the serial status report.
+                #[cfg(intono_verbose_diagnostics)]
                 if calibration.scan_warnings.unstable > previous_unstable_count {
                     capture_trace.note_unstable();
                 }
@@ -3806,10 +3888,11 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 // stopped or still owns a pending frame, keep servicing the
                 // reference output and UI and try a fresh snapshot next time.
                 let page=with_app(|app|app.ui.opts.tracker.page.value);
-                let preparing_background = matches!(page, Page::Tuner | Page::Calibrate)
-                    && ((!direct_tuner && requested_scene != scene)
+                let preparing_background = !cached_calibration && matches!(page, Page::Tuner | Page::Calibrate)
+                    && ((!direct_background && requested_scene != scene)
                         || (calibration_prepared && calibration_plot_dirty));
                 let holding_key = (requested_scene, page);
+                #[cfg(intono_verbose_diagnostics)]
                 capture_trace.display_state(tuner_display.frame().read().bits() as u32,
                     last_published_ms, preparing_background, swap_background);
                 if !publication_hold.allow(holding_key, preparing_background, swap_background) {
@@ -3821,7 +3904,8 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 if frame.busy().bit() || (route_view_active && !route_background_ready) {
                     continue;
                 }
-                if swap_background || change_tuner {
+                if cached_calibration {calibration_plot_dirty=false;}
+                if swap_background || change_direct_background {
                     scene = requested_scene;
                     if calibration_prepared {
                         calibration_plot_dirty = false;
@@ -3942,19 +4026,12 @@ fn run(resources: &mut RuntimeResources) -> ! {
                         (paint.banks[bank],imported_view && paint.plot_cached(bank,with_app(|a|a.quant_selected)))
                     });
                     let changed=drawing.changed(&old);
+                    let damage=if imported_view {None}else{drawing.damage(&old)};
                     let mut canvas=BackgroundCanvas::new(PSRAM_FB_BASE+bank*0x100000,video_size.0,video_size.1,ROUND_DISPLAY);
                     if changed || (imported_view && !plot_cached) {
-                    for (shapes,erase) in [(&old,true),(&drawing,false)] {
-                        for shape in shapes.shapes[..shapes.len as usize].iter().copied() {
-                            // The interval strip is immutable during navigation.
-                            // Retain it independently in each background bank.
-                            if plot_cached && shape.kind==ui_route::ShapeKind::Rectangle && shape.rect()==ui_imported::STRIP {continue;}
-                            let color=if erase {0}else{shape.color};
-                            if shape.kind==ui_route::ShapeKind::RoundedFill {ui_canvas::rounded_rectangle(shape.rect(),6,color,color,|p,c|canvas.put_panel_pixel(p.x,p.y,c));}
-                            else if shape.kind==ui_route::ShapeKind::Rectangle {for y in shape.y..shape.y+shape.h {for x in shape.x..shape.x+shape.w {canvas.put_panel_pixel(x as i32,y as i32,color);}}}
-                            else {ui_canvas::rounded_outline(shape.rect(),color,|p,c|canvas.put_panel_pixel(p.x,p.y,c));}
-                        }
-                    }
+                    drawing.repaint(&old,damage,
+                        if plot_cached {Some(ui_imported::STRIP)}else{None},
+                        |p,c|canvas.put_panel_pixel(p.x,p.y,c));
                     if imported_view && !plot_cached {
                         let table=critical_section::with(|cs|MULTI_QUANT.borrow_ref(cs).lanes[with_app(|a|a.quant_selected as usize)].imported);
                         if let Some(table)=table {ui_imported::plot(table,|p,c|canvas.put_panel_pixel(p.x,p.y,c));}
@@ -3974,7 +4051,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
                 // Text-only pages and a preparing instrument retain the common
                 // outer circle without exposing any old guide or graph pixels.
                 let circle_view = !piano_view && ((calibration_view
-                    && (!calibration_dashboard || scene != ui_scene::Scene::Calibration))
+                    && (!calibration_dashboard || scene != ui_scene::Scene::Calibration || calibration_plot_dirty))
                     || !matches!(page,Page::Tuner|Page::Calibrate)
                     || requested_scene != scene);
                 tuner_display
@@ -3996,8 +4073,9 @@ fn run(resources: &mut RuntimeResources) -> ! {
                             w.ui_focus().bits(menu.entries.iter().position(|e|e.as_ref().is_some_and(|e|e.selected)).unwrap_or(31) as u8);
                         } w});
                 tuner_display.keyboard_b().write(|w| unsafe {w.mask().bits((keyboard_mask>>12) as u16)});
+                retained_calibration_visible=cached_calibration && !circle_view && !route_view_active && !piano_view;
                 tuner_display.frame().write(|w| {
-                    unsafe { w.background_source().bits(if route_view_active {0} else if circle_view {4} else if piano_view {if with_app(|app|app.quant_channels[app.quant_selected as usize].octaves)==1 {5}else{3}} else {match scene {
+                    unsafe { w.background_source().bits(if retained_calibration_visible {6} else if route_view_active {0} else if circle_view {4} else if piano_view {if with_app(|app|app.quant_channels[app.quant_selected as usize].octaves)==1 {5}else{3}} else {match scene {
                         ui_scene::Scene::Spiral => 1,
                         ui_scene::Scene::Linear => 2,
                         ui_scene::Scene::Calibration => 0,
@@ -4006,7 +4084,8 @@ fn run(resources: &mut RuntimeResources) -> ! {
                     w.commit().set_bit()
                 });
 
-                last_published_ms = ui_frame.now_ms;
+                #[cfg(intono_verbose_diagnostics)]
+                { last_published_ms = ui_frame.now_ms; }
                 publication_hold.published(holding_key, preparing_background, swap_background);
             }
         }
@@ -4015,6 +4094,7 @@ fn run(resources: &mut RuntimeResources) -> ! {
 
 #[entry]
 fn main() -> ! {
+    #[cfg(intono_status_diagnostics)]
     unsafe { stack_monitor::paint(); }
     boot_mark(b'M');
     run(&mut startup())
